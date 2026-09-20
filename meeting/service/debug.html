@@ -5,22 +5,23 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>meeting · 骨架自检页 /debug</title>
 <!--
-  骨架自检页（phase1 §3.8）—— 零依赖、无构建，纯 HTML + 原生 fetch。
+  骨架自检页（phase1 §3.8 建页；phase2 §3.11 接通动作与事件流）。
 
   这一页的定位由契约冻结：
-    * 它是骨架自检页，服务的是「半夜复核服务到底活着没、状态长什么样」这种场景；
-    * 产品界面是 `/` 上那个 React 应用（c62dec56 的活），跟这一页是两回事 ——
-      这一页只做骨架自检，将来产品界面上了也照旧留在 `/debug`（契约 §3.8 与冻结项 18
-      要求该页显式标注定位），不进产品导航；
-    * 它不承担任何告警职责：告警只走状态与界面，这一页只把原始快照摆出来。
+    * 它是**骨架自检页，非产品界面**，服务的是「半夜复核服务到底活着没、状态长什么样」
+      这种场景；产品界面是 `/` 上那个 React 应用（c62dec56 的活），跟这一页是两回事；
+    * 它**不承担任何告警职责**：告警只走状态与界面，这一页只把原始快照与原始应答摆出来；
+    * 它**不往 localStorage 写任何东西**（状态只由服务推出来，客户端不自己记状态）。
 
-  本 Phase 接通的部分：
-    * 读原始快照（GET /api/state）；
-    * 显示服务信息（版本 / 端口 / URL / 输出根 / log 路径）。
+  这一页做四件事（phase2 §3.11）：
+    1. 读原始快照：fetch("/api/state")；
+    2. 按开始 / 结束：fetch("/api/actions", {method:"POST"})，必须带
+       Content-Type: application/json 与 X-Meeting-Service: 1（否则 403）；
+    3. 显示事件流：EventSource("/api/events")，每条显示 event 名 + data 原文 + id；
+    4. 显示 GET /api/heartbeat 的原始应答（便于肉眼核 recording_alive /
+       seconds_since_last_tick）。
 
-  本 Phase 留成「未接入」占位的部分（phase2 接通时替换这些占位，别把它们留成静默死按钮）：
-    * 按开始 / 按结束 —— 归 POST /api/actions；
-    * 事件流面板 —— 归 GET /api/events（SSE）。
+  页面与代码里都显式标注「骨架自检页，非产品界面；不承担任何告警职责」。
 -->
 <style>
   :root { color-scheme: light dark; }
@@ -33,16 +34,17 @@
   td { padding: 2px 14px 2px 0; vertical-align: top; }
   td.k { color: #98a0b3; white-space: nowrap; }
   .pill { display: inline-block; padding: 1px 8px; border: 1px solid #3a4257; border-radius: 999px; font-size: 12px; color: #cfd6e6; }
-  .pending { border-style: dashed; border-color: #5a4a2a; background: #1e1a12; }
-  .pending h2 { color: #e0c07a; }
+  button { font: inherit; padding: 4px 12px; margin-right: 8px; border: 1px solid #3a4257; border-radius: 6px; background: #1d2130; color: #e6e8ee; cursor: pointer; }
   button[disabled] { opacity: .55; cursor: not-allowed; }
   pre { margin: 8px 0 0; padding: 10px; background: #0f1116; border: 1px solid #232838; border-radius: 6px; overflow: auto; max-height: 420px; }
   .err { color: #ff8f8f; }
+  .ok { color: #8fe0a8; }
+  .tag { color: #e0c07a; }
 </style>
 </head>
 <body>
 <h1>meeting · 骨架自检页</h1>
-<div class="sub">非产品界面 · 零依赖 · 无构建 · 不承担任何告警职责（告警只走状态与界面）</div>
+<div class="sub">骨架自检页，非产品界面 · 零依赖 · 无构建 · 不承担任何告警职责（告警只走状态与界面）</div>
 
 <section id="service">
   <h2>服务信息</h2>
@@ -60,43 +62,60 @@
 
 <section>
   <h2>原始快照（GET /api/state）</h2>
-  <div class="sub">这一页只读一次快照；本 Phase 还没有实时推送。</div>
+  <div class="sub">事件流每来一条 <code>state</code>，这里就跟着刷新一次。</div>
   <button id="reload" type="button">重新读一次快照</button>
   <pre id="snapshot">（还没读到）</pre>
 </section>
 
-<section class="pending" id="actions-pending">
-  <h2>按开始 / 按结束 —— 未接入</h2>
-  <p>
-    这一块是 <strong>可见的「未接入」占位</strong>：动作端点 <code>POST /api/actions</code>
-    归 phase2，本 Phase 的服务端只备好了它的两道头部校验
-    （<code>Content-Type: application/json</code> 与 <code>X-Meeting-Service: 1</code>）。
+<section id="actions">
+  <h2>按开始 / 按结束（POST /api/actions）</h2>
+  <p class="sub">
+    请求带 <code>Content-Type: application/json</code> 与 <code>X-Meeting-Service: 1</code>
+    （缺任一条服务端回 403）。默认 null 采集后端下「开始」会拿到
+    <code>503 capture_unavailable</code> —— 如实报「采集后端未接入」，不假装能录；
+    想真跑一场：<code>MEETING_CAPTURE=dev meeting web</code>。
   </p>
-  <p>
-    另外两个原因让「开始录音」现在也确实起不来：
-    采集后端默认是 <code>null</code> 替身，如实报「采集后端未接入」（不假装能录）；
-    四态状态机与场次目录同样归 phase2。
-  </p>
-  <button type="button" disabled>开始录音</button>
-  <button type="button" disabled>结束录音</button>
+  <button id="act-start" type="button">开始录音</button>
+  <button id="act-stop" type="button">结束录音</button>
+  <button id="act-mute" type="button">本场静音</button>
+  <div><span class="k">应答</span> <span id="f-action-state">（还没按过）</span></div>
+  <pre id="action-response">（还没按过）</pre>
 </section>
 
-<section class="pending" id="events-pending">
-  <h2>事件流 —— 未接入</h2>
-  <p>
-    这一块是 <strong>可见的「未接入」占位</strong>：实时推送通道
-    <code>GET /api/events</code>（SSE 三通道 + 首帧快照）归 phase2。
-  </p>
-  <pre>（事件流面板等 phase2 接通 SSE 后出现在这里）</pre>
+<section id="events">
+  <h2>事件流（GET /api/events）</h2>
+  <div class="sub">
+    每条显示 <code>event:</code> 名 + <code>data</code> 原文 + <code>id</code>；
+    第一帧一定是 <code>snapshot</code>，之后是 <code>state</code> / <code>levels</code> /
+    <code>transcript</code>。
+  </div>
+  <div><span class="k">连接</span> <span id="f-events-state">连接中…</span></div>
+  <pre id="events-log">（还没有事件）</pre>
+</section>
+
+<section id="heartbeat">
+  <h2>心跳原始应答（GET /api/heartbeat）</h2>
+  <div class="sub">
+    每 2 秒问一次；<code>recording_alive</code> 与 <code>seconds_since_last_tick</code>
+    由服务侧的采集帧时钟算出来（HTTP 通着但录音停了，这里就能看出来）。
+  </div>
+  <pre id="heartbeat">（还没读到）</pre>
 </section>
 
 <script>
 (function () {
   "use strict";
 
+  var ACTION_HEADERS = {
+    "Content-Type": "application/json",
+    "X-Meeting-Service": "1"
+  };
+
   function text(id, value) {
     var node = document.getElementById(id);
-    if (node) { node.textContent = (value === null || value === undefined || value === "") ? "—" : String(value); }
+    if (node) {
+      node.textContent = (value === null || value === undefined || value === "") ? "—" : String(value);
+    }
   }
 
   function fillService(snapshot) {
@@ -110,6 +129,11 @@
     text("f-revision", snapshot ? snapshot.revision : null);
   }
 
+  function showSnapshot(snapshot) {
+    fillService(snapshot);
+    document.getElementById("snapshot").textContent = JSON.stringify(snapshot, null, 2);
+  }
+
   function loadSnapshot() {
     text("f-fetch-state", "读取中…");
     fetch("/api/state", { headers: { "Accept": "application/json" } })
@@ -117,10 +141,7 @@
         text("f-fetch-state", "HTTP " + response.status);
         return response.json();
       })
-      .then(function (snapshot) {
-        fillService(snapshot);
-        document.getElementById("snapshot").textContent = JSON.stringify(snapshot, null, 2);
-      })
+      .then(showSnapshot)
       .catch(function (error) {
         text("f-fetch-state", "读不到");
         var box = document.getElementById("snapshot");
@@ -129,8 +150,85 @@
       });
   }
 
+  function postAction(action, args) {
+    var body = { action: action };
+    if (args) { body.args = args; }
+    text("f-action-state", "发送中…");
+    fetch("/api/actions", {
+      method: "POST",
+      headers: ACTION_HEADERS,
+      body: JSON.stringify(body)
+    })
+      .then(function (response) {
+        text("f-action-state", "HTTP " + response.status);
+        return response.text();
+      })
+      .then(function (raw) {
+        var box = document.getElementById("action-response");
+        try {
+          box.textContent = JSON.stringify(JSON.parse(raw), null, 2);
+        } catch (error) {
+          box.textContent = raw;
+        }
+        loadSnapshot();
+      })
+      .catch(function (error) {
+        text("f-action-state", "打不通");
+        document.getElementById("action-response").textContent = String(error);
+      });
+  }
+
+  function loadHeartbeat() {
+    fetch("/api/heartbeat", { headers: { "Accept": "application/json" } })
+      .then(function (response) { return response.text(); })
+      .then(function (raw) {
+        var box = document.getElementById("heartbeat");
+        try {
+          box.textContent = JSON.stringify(JSON.parse(raw), null, 2);
+        } catch (error) {
+          box.textContent = raw;
+        }
+      })
+      .catch(function (error) {
+        document.getElementById("heartbeat").textContent = "读心跳失败：" + error;
+      });
+  }
+
+  var eventsBox = document.getElementById("events-log");
+  var eventLines = [];
+
+  function appendEvent(name, data, id) {
+    var line = "event: " + name + (id === null || id === undefined ? "" : "   id: " + id) + "\n" + data;
+    eventLines.push(line);
+    if (eventLines.length > 200) { eventLines = eventLines.slice(-200); }
+    eventsBox.textContent = eventLines.join("\n\n");
+    eventsBox.scrollTop = eventsBox.scrollHeight;
+  }
+
+  function connectEvents() {
+    var source = new EventSource("/api/events");
+    source.onopen = function () { text("f-events-state", "已连接"); };
+    source.onerror = function () { text("f-events-state", "断开 / 正在自动重连"); };
+    ["snapshot", "state", "levels", "transcript"].forEach(function (name) {
+      source.addEventListener(name, function (event) {
+        appendEvent(name, event.data, event.lastEventId);
+        if (name === "state" || name === "snapshot") {
+          try { showSnapshot(JSON.parse(event.data)); } catch (error) { /* 原文已进事件流 */ }
+        }
+        if (name === "levels") { text("f-events-state", "已连接（levels " + new Date().toLocaleTimeString() + "）"); }
+      });
+    });
+  }
+
   document.getElementById("reload").addEventListener("click", loadSnapshot);
+  document.getElementById("act-start").addEventListener("click", function () { postAction("start"); });
+  document.getElementById("act-stop").addEventListener("click", function () { postAction("stop"); });
+  document.getElementById("act-mute").addEventListener("click", function () { postAction("mute_session"); });
+
   loadSnapshot();
+  loadHeartbeat();
+  connectEvents();
+  setInterval(loadHeartbeat, 2000);
 })();
 </script>
 </body>

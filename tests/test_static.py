@@ -1,4 +1,5 @@
-"""`tests/test_static.py` —— 静态产物、`/debug`、三道防线与最小版快照（phase1 §5 第 3 / 8 条）。
+"""`tests/test_static.py` —— 静态产物、`/debug`、三道防线与完整版快照（phase1 §5 第 3 / 8 条；
+phase2 §2.2 / §2.3 的同源替换落在本文件）。
 
 ASGI 层断言一律用 `with TestClient(app, base_url="http://127.0.0.1")` 的**上下文管理器形式**
 （只有 `with` 才触发应用的生命周期钩子，`ServiceRuntime.startup()` 与快照的服务信息字段
@@ -9,22 +10,27 @@ ASGI 层断言一律用 `with TestClient(app, base_url="http://127.0.0.1")` 的*
   - 指到带 `index.html` 的真目录 → `GET /` 挂的是那份产物；
   - `/api/*` 的应答头带 `Cache-Control: no-store`（并且不发 CORS 头）；
   - `Host: evil.example` 得 **403**；裸 `POST /api/actions`（缺头 / 缺 `Content-Type`）得 **403**、
-    头齐的 `POST /api/actions` 得 **404**（端点本体归 phase2，本 Phase 的定死应答是 404）；
-  - `GET /api/state` 最小版的结构（顶层键全集、`sources` 两项、`service` 六字段、`settings` 顶层四键）；
+    **头齐的 `POST /api/actions` 由真实应答替换旧的 `404` 断言**（phase2 §2.3 第 8 条）；
+  - `GET /api/state` 完整版的结构（顶层键全集、`sources` 两项且 `envelope` 逐字为空数组 `[]`、
+    `service` 六字段且 `version` 非空、四态真值、`settings` 四键与 `asr` 五子键齐、
+    `devices` 是空对象）；
   - 空闲态的可观察物：没有新建场次目录、没有 `session.json`、主 log 里没有场次开始行；
   - 启动序列第 5 步「打开浏览器」：`MEETING_NO_BROWSER=1` 时不开、不设时真的开（并落一行含
     被打开 URL 的 INFO）、失败只警告且服务照常起来。**这几条全在进程内**，`webbrowser.open`
     一律用 `monkeypatch` 换成只把 URL 记进 `calls` 的假实现 —— `meeting.service.app.webbrowser`
     在本进程里是标准库那个模块对象，换掉它的 `open` 之后，本进程内任何一条路径都碰不到真浏览器
-    （子进程里那一支的隔离手段见 `tests/test_port_policy.py` 与 `tests/_helpers.py`）；
+    （子进程里那一支的隔离手段见 `tests/test_port_policy.py` 与 `tests/_helpers.py`；
+    `tests/conftest.py` 另有一层 autouse 兜底）；
   - 未装配即取快照**抛错**（不留退化的空值）、`/api/heartbeat` 的兜底应答自洽。
 
-**本 Phase 不断言 `top_state` 的取值**，也不断言 `revision` 的具体初始值（§5 第 8 条 / 冻结项 19）。
+**不断言 `revision` 的具体初始值**（phase1 契约冻结项 19 / phase2 §2.3 第 2 条）：
+只断言「存在、是 int、单调递增」。
 """
 
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -59,6 +65,20 @@ SOURCE_KEYS = {
 }
 TRANSCRIPT_KEYS = {"health", "last_line_at", "buffered_lines", "failed_segments"}
 SETTINGS_TOP_KEYS = {"alarm_sound", "heartbeat_interval_seconds", "asr", "devices"}
+#: phase2 §2.3 第 3 条：`asr` 的五个子键（取当前生效值）、`devices` 是空对象
+ASR_KEYS = {
+    "max_segment_seconds",
+    "timeout_seconds",
+    "max_new_tokens",
+    "repeat_max_unit",
+    "repeat_min_coverage",
+}
+#: 顶层四态（phase2 §3.1.1）
+TOP_STATES = {"idle", "recording", "alert", "ended"}
+#: `sources[*].health` 的七取值（phase2 §3.1.2）
+SOURCE_HEALTH = {
+    "unprobed", "ready", "probe_failed", "capturing", "lost", "restored", "stopped",
+}
 
 
 @pytest.fixture()
@@ -130,7 +150,7 @@ def test_root_serves_dist_when_present(tmp_path, client_factory):
 
 
 def test_debug_page_is_served_from_the_package(tmp_path, client_factory):
-    """`/debug` 常驻可访问，且是从**包内**读取的骨架自检页（未接通处是可见占位）。"""
+    """`/debug` 常驻可访问，且是从**包内**读取的骨架自检页（action 与事件流已接通）。"""
     home = tmp_path / "home_for_debug"
     home.mkdir()
     client = client_factory({"web.dist_dir": str(helpers.missing_dist_dir(home))})
@@ -138,12 +158,17 @@ def test_debug_page_is_served_from_the_package(tmp_path, client_factory):
     response = client.get("/debug")
     assert response.status_code == 200
     text = response.text
-    assert "未接入" in text
-    assert "/api/actions" in text
-    assert "/api/events" in text
+    # 非产品路径标注保留（phase2 §3.11）
+    assert "非产品界面" in text
     assert "不承担任何告警职责" in text
+    # 两块占位已接通：动作端点 + 事件流（phase2 §3.11 / §5.1 的静态断言口径）
+    assert "/api/actions" in text
+    assert "X-Meeting-Service" in text
+    assert "EventSource" in text
+    assert "/api/events" in text
+    assert "/api/heartbeat" in text
     # 自检页从包内读：同一份内容应当就在包里
-    assert "未接入" in helpers.read_text(
+    assert "EventSource" in helpers.read_text(
         __import__("meeting.service.static", fromlist=["debug_page_path"]).debug_page_path()
     )
 
@@ -298,19 +323,43 @@ def test_action_request_without_json_content_type_is_forbidden(tmp_path, client_
     assert response.status_code == 403
 
 
-def test_action_request_with_both_headers_gets_404(tmp_path, client_factory):
-    """头齐的完整动作请求 → 本 Phase 定死的 `404`（端点本体归 phase2）。"""
+def test_action_request_with_both_headers_gets_a_real_answer(tmp_path, client_factory):
+    """头齐的完整动作请求 → **真实应答**（phase2 §2.3 第 8 条：旧的「路由还没有」404 一条不留）。
+
+    默认（null 采集后端）下 `start` 的真实结果是 `503 capture_unavailable` 且盘上不留任何
+    场次目录；同时这条应答证明请求确实被 `POST /api/actions` 的端点接走了（不是末端 404）。
+    """
     home = tmp_path / "home_for_actions_ok"
     home.mkdir()
-    client = client_factory({"web.dist_dir": str(helpers.missing_dist_dir(home))})
+    out_root = tmp_path / "out_for_actions_ok"
+    out_root.mkdir()
+    client = client_factory(
+        {"web.dist_dir": str(helpers.missing_dist_dir(home)), "output.root": str(out_root)}
+    )
 
     response = client.post(
         "/api/actions",
         json={"action": "start"},
         headers={"X-Meeting-Service": "1"},
     )
-    assert response.status_code == 404
+    # 真实应答：默认 null 后端如实回 503 capture_unavailable（信封里的 code 是机器可读的那一个）
+    assert response.status_code == 503
     assert response.headers["cache-control"] == "no-store"
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["code"] == "capture_unavailable"
+    assert payload["message"]
+    # 默认后端下 start 的真实结果是「盘上不留任何场次目录」
+    assert sorted(item.name for item in out_root.iterdir()) == []
+
+    # 未知动作名同样由端点给出真实应答（不是末端 404）
+    unknown = client.post(
+        "/api/actions",
+        json={"action": "definitely_not_an_action"},
+        headers={"X-Meeting-Service": "1"},
+    )
+    assert unknown.status_code == 400
+    assert unknown.json()["code"] == "invalid_setting"
 
 
 # ---------------------------------------------------------------------------
@@ -318,8 +367,8 @@ def test_action_request_with_both_headers_gets_404(tmp_path, client_factory):
 # ---------------------------------------------------------------------------
 
 
-def test_api_state_minimal_shape(tmp_path, client_factory):
-    """顶层键全集齐、嵌套字段按冻结形状、`settings` 顶层四键齐。"""
+def test_api_state_shape_is_the_full_one(tmp_path, client_factory):
+    """顶层键全集齐、嵌套字段按冻结形状、取值取到**真值**（phase2 §2.2 / §2.3 第 1 / 2 / 3 / 4 条）。"""
     home = tmp_path / "home_for_state"
     home.mkdir()
     client = client_factory({"web.dist_dir": str(helpers.missing_dist_dir(home))})
@@ -329,10 +378,15 @@ def test_api_state_minimal_shape(tmp_path, client_factory):
     snapshot = json.loads(response.text)
 
     assert set(snapshot) == TOP_LEVEL_KEYS
+    # ① `revision`：存在、是 int、**初始值不钉成常数**
     assert isinstance(snapshot["revision"], int)
+    # ② 四态取真值（空闲态就是 idle）
+    assert snapshot["top_state"] in TOP_STATES
+    assert snapshot["top_state"] == "idle"
 
     service = snapshot["service"]
     assert set(service) == SERVICE_KEYS
+    # ③ `service.version` 是**非空字符串**（null 与空串都不合格）
     assert isinstance(service["version"], str) and service["version"]
     assert service["port"] == 8765  # ASGI 层夹具把绑定设成回环 8765
     assert service["url"] == "http://127.0.0.1:8765"
@@ -345,8 +399,10 @@ def test_api_state_minimal_shape(tmp_path, client_factory):
     assert [item["label"] for item in sources] == ["本地", "远端"]
     for item in sources:
         assert set(item) == SOURCE_KEYS
+        # `envelope` 的空形态**逐字断言为空数组 `[]`**；health 落在七取值域里
         assert item["envelope"] == []
-        assert item["health"] == "unprobed"
+        assert item["health"] in SOURCE_HEALTH
+        assert item["health"] == "unprobed"  # 空闲态 + null 替身如实报「未探测」
         assert item["device_name"] is None
 
     assert snapshot["alerts"] == {"critical": None, "hints": []}
@@ -357,6 +413,7 @@ def test_api_state_minimal_shape(tmp_path, client_factory):
         "buffered_lines": 0,
         "failed_segments": 0,
     }
+    # 空闲态的真值：没有会话、没有收尾摘要、没有提示
     assert snapshot["session"] is None
     assert snapshot["ended"] is None
     assert snapshot["notice"] is None
@@ -365,12 +422,69 @@ def test_api_state_minimal_shape(tmp_path, client_factory):
     assert set(settings) == SETTINGS_TOP_KEYS
     assert isinstance(settings["alarm_sound"], bool)
     assert isinstance(settings["heartbeat_interval_seconds"], int)
-    assert settings["asr"] == {}
+    # `asr` 五子键齐且取当前生效值；`devices` 是空对象 `{}`
+    assert set(settings["asr"]) == ASR_KEYS
+    assert settings["asr"]["timeout_seconds"] == 20
     assert settings["devices"] == {}
 
 
-def test_api_heartbeat_minimal_shape(tmp_path, client_factory):
-    """`GET /api/heartbeat` 最小版：六字段齐，`service` 字面量必须有。"""
+def test_api_state_revision_grows_by_one_per_state_change(tmp_path, client_factory):
+    """`revision` 每次状态变更单调 `+1`；被拒绝的请求**不涨 `revision`**（phase2 §2.3 第 2 条）。"""
+    home = tmp_path / "home_for_revision"
+    home.mkdir()
+    out_root = tmp_path / "out_for_revision"
+    out_root.mkdir()
+    client = client_factory(
+        {
+            "web.dist_dir": str(helpers.missing_dist_dir(home)),
+            "output.root": str(out_root),
+            "capture.backend": "dev",
+        }
+    )
+
+    before = client.get("/api/state").json()["revision"]
+    # 一次成功的 start 是一次状态变更 → 恰好 +1
+    started = client.post(
+        "/api/actions", json={"action": "start"}, headers={"X-Meeting-Service": "1"}
+    )
+    assert started.status_code == 200, started.text
+    after_start = started.json()["revision"]
+    assert after_start == before + 1
+
+    # 一次成功的 mute_session 也是一次状态变更 → 恰好 +1
+    muted = client.post(
+        "/api/actions", json={"action": "mute_session"}, headers={"X-Meeting-Service": "1"}
+    )
+    assert muted.status_code == 200, muted.text
+    assert muted.json()["revision"] == after_start + 1
+    assert client.get("/api/state").json()["revision"] == after_start + 1
+
+    # 被拒绝的请求（录音中再 start）**不产生第二次迁移、不涨 revision**
+    duplicate = client.post(
+        "/api/actions", json={"action": "start"}, headers={"X-Meeting-Service": "1"}
+    )
+    assert duplicate.status_code == 409
+    assert duplicate.json()["code"] == "already_recording"
+    assert client.get("/api/state").json()["revision"] == after_start + 1
+
+    # 完成收尾（一次 stop，收尾四步各自提交）之后 revision 仍在单调往上走
+    assert client.post(
+        "/api/actions", json={"action": "stop"}, headers={"X-Meeting-Service": "1"}
+    ).status_code == 200
+    deadline = time.monotonic() + 15.0
+    later = after_start + 1
+    while time.monotonic() < deadline:
+        snapshot = client.get("/api/state").json()
+        if snapshot["revision"] > after_start + 1 and snapshot["ended"] is not None:
+            if snapshot["ended"]["phase"] == "done":
+                later = snapshot["revision"]
+                break
+        time.sleep(0.05)
+    assert later > after_start + 1
+
+
+def test_api_heartbeat_shape_is_the_full_one(tmp_path, client_factory):
+    """`GET /api/heartbeat` 完整版：六字段齐、`service` 字面量必须有、空闲态两字段为 `null`。"""
     home = tmp_path / "home_for_heartbeat"
     home.mkdir()
     client = client_factory({"web.dist_dir": str(helpers.missing_dist_dir(home))})
@@ -386,6 +500,8 @@ def test_api_heartbeat_minimal_shape(tmp_path, client_factory):
     }
     assert payload["service"] == "meeting"
     assert isinstance(payload["revision"], int)
+    assert payload["top_state"] == "idle"
+    # 空闲态：两字段都是 null（没有采集事实帧在跑）
     assert payload["recording_alive"] is None
     assert payload["seconds_since_last_tick"] is None
 
@@ -400,9 +516,9 @@ def test_heartbeat_handler_keeps_the_service_literal_without_runtime():
     """
     import asyncio
 
-    from meeting.service import app as service_app
+    from meeting.service.routes import _api_heartbeat
 
-    response = asyncio.run(service_app._api_heartbeat(None))  # noqa: SLF001 - 直接钉住兜底分支
+    response = asyncio.run(_api_heartbeat(None))  # noqa: SLF001 - 直接钉住兜底分支
 
     assert response.status_code == 200
     payload = json.loads(response.body)

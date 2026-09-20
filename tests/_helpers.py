@@ -153,6 +153,24 @@ def wait_for(predicate, timeout: float = 20.0, interval: float = 0.05, what: str
     raise AssertionError(f"等待超时（{timeout}s）：{what}（最后观察值：{last!r}）")
 
 
+def wait_for_session_record(session_dir: Path, predicate, timeout: float = 20.0) -> dict:
+    """等到盘上那份 `session.json` 满足 `predicate`（返回它解析出来的那一版）。
+
+    用途：启动扫描的改写、收尾的逐步落盘都是**服务进程**在做，`wait_ready()` 只保证服务起来了，
+    不保证盘上已经写到哪一版；直接读文件会撞上「读到早一版」的偶发红。
+    """
+    path = Path(session_dir) / "session.json"
+
+    def loaded():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        return data if isinstance(data, dict) and predicate(data) else None
+
+    return wait_for(loaded, timeout=timeout, what=f"{path} 落到期望的那一版")
+
+
 # ---------------------------------------------------------------------------
 # 真服务子进程
 # ---------------------------------------------------------------------------
@@ -792,6 +810,7 @@ __all__ = [
     "spawn_service",
     "tcp_connect",
     "wait_for",
+    "wait_for_session_record",
     "write_config_json",
     "write_dist_dir",
 ]

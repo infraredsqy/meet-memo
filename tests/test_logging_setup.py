@@ -9,7 +9,11 @@
   - `detach_session_log()` 写失败**抛 `OSError`**；
   - **`EXIT_STARTUP_UNMET` 这一档的唯一断言处**：主 log 不可写（`log.dir = <普通文件>/sub/`）
     与 `config.json` 损坏（非法 JSON / 同名目录）各自的真子进程退出码断言；
-  - 启动扫描未收尾场次的 WARNING（只取最新的一场、每次启动最多一行、不改写、不建目录），
+  - 启动扫描未收尾场次的 WARNING（只取最新的一场、每次启动最多一行、不建目录），
+    **以及 phase2 的同源替换**：扫描命中后那份 `session.json` 被改写成
+    `state: "draining"` + `interrupted: true`（`drain.steps` 原样保留、不伪造终态），
+    场次目录里其余文件逐字不变、不新建任何目录、不动别的场次
+    （phase2 §2.3 第 7 条：phase1 那条「内容一字未变」assertion 的唯一落点在本文件），
     以及两类「最新一场未命中」的**条数口径**：`session.json` **不存在** → 一行警告都不落
     （与「输出根下没有场次目录」同口径）；`session.json` **存在却读不出来**（含非 UTF-8
     字节）→ 按未命中处理且恰落一行「读不出来」的 WARNING，服务照常起。
@@ -350,15 +354,26 @@ def _session_record(state: str, *, interrupted: bool = False) -> str:
 
 
 def test_scan_warns_once_for_the_latest_unfinished_session(tmp_path):
-    """最新一场未收尾 → 主 log 一行 WARNING；不改写那份记录、不新建目录。"""
+    """最新一场未收尾 → 主 log 一行 WARNING；那份记录被改写成「收尾中 + 已打断」。
+
+    phase2 §2.3 第 5 / 7 条的同源替换（**这一条是本文件里唯一的落点**）：
+      - phase1 的那行 `WARNING`（含场次目录与 `state` / `interrupted`）**逐字保留**，
+        断言照旧（每次启动恰一行「发现未收尾的场次」）；
+      - 追加：该场次记录被改写成 `state: "draining"` + `interrupted: true`，
+        **原 `steps` 原样保留、不伪造终态**；
+      - 场次目录里**其余文件逐字不变、不新建任何目录**（扫描动作只该有这一处写盘）。
+    """
     home = tmp_path / "home"
     home.mkdir()
     out_root = tmp_path / "out"
     session_dir = out_root / "250906"
     session_dir.mkdir(parents=True)
     record_path = session_dir / "session.json"
-    original = _session_record("recording")
-    record_path.write_text(original, encoding="utf-8")
+    original = json.loads(_session_record("recording"))
+    record_path.write_text(_session_record("recording"), encoding="utf-8")
+    # 场次目录里的另一个文件：扫描**不许**碰它（phase2 §2.3 第 7 条）
+    audio_path = session_dir / "meeting_audio_mic.pcm"
+    audio_path.write_bytes(b"\x00" * 32)
     helpers.write_config_json(home, {"web.port": 0, "output.root": str(out_root)})
 
     before_children = sorted(item.name for item in out_root.iterdir())
@@ -366,18 +381,33 @@ def test_scan_warns_once_for_the_latest_unfinished_session(tmp_path):
     proc = helpers.spawn_service(home)
     try:
         proc.wait_ready()
+        # 扫描的改写是**服务进程**在做：等盘上真的落到「收尾中 + 已打断」那一版再读
+        rewritten = helpers.wait_for_session_record(
+            session_dir, lambda data: data.get("state") == "draining"
+        )
         log_text = proc.log_text()
     finally:
         proc.terminate()
 
     warning_lines = helpers.lines_with(log_text, "WARNING")
-    unfinished = [line for line in warning_lines if "启动扫描" in line]
+    unfinished = [line for line in warning_lines if "启动扫描：发现未收尾" in line]
     assert len(unfinished) == 1, f"未收尾场次的 WARNING 应当只有一行：{unfinished}"
     assert "250906" in unfinished[0]
     assert "recording" in unfinished[0]
 
-    # 不改写那份 session.json（内容逐字不变）、不新建目录
-    assert record_path.read_text(encoding="utf-8") == original
+    # 那份 session.json 被改写成「收尾中 + 已打断」，原 steps 原样保留、不伪造终态
+    assert rewritten["state"] == "draining"
+    assert rewritten["interrupted"] is True
+    assert rewritten["drain"]["steps"] == original["drain"]["steps"]
+    assert rewritten["ended_at"] is None
+    # 改写后的盘上内容仍是合法 JSON、字段全集与 schema 一致
+    assert set(rewritten) == set(original)
+
+    # 场次目录里其余文件逐字不变、不新建任何目录、不动别的场次
+    assert audio_path.read_bytes() == b"\x00" * 32
+    assert sorted(item.name for item in session_dir.iterdir()) == [
+        "meeting_audio_mic.pcm", "session.json",
+    ]
     assert sorted(item.name for item in out_root.iterdir()) == before_children
     # 不自动开始录音：没有场次开始行
     assert not helpers.lines_with(log_text, "场次开始")
@@ -398,14 +428,21 @@ def test_scan_reports_only_the_newest_of_two_unfinished_sessions(tmp_path):
     proc = helpers.spawn_service(home)
     try:
         proc.wait_ready()
+        helpers.wait_for_session_record(newer, lambda data: data.get("state") == "draining")
         log_text = proc.log_text()
     finally:
         proc.terminate()
 
-    unfinished = [line for line in helpers.lines_with(log_text, "WARNING") if "启动扫描" in line]
+    unfinished = [
+        line for line in helpers.lines_with(log_text, "WARNING")
+        if "启动扫描：发现未收尾" in line
+    ]
     assert len(unfinished) == 1, f"只取最新的一场，WARNING 应当只有一行：{unfinished}"
     assert "260902" in unfinished[0]
     assert "260901" not in unfinished[0]
+    # 只看最新那一场：更早那一场不会被改写（phase2 §2.3 第 7 条「不动别的场次」）
+    assert json.loads((older / "session.json").read_text(encoding="utf-8"))["state"] == "recording"
+    assert json.loads((newer / "session.json").read_text(encoding="utf-8"))["state"] == "draining"
 
 
 def test_scan_is_silent_when_nothing_is_unfinished(tmp_path):

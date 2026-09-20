@@ -174,6 +174,150 @@ ENV_KEYS: dict[str, str] = {
 #: 关掉浏览器打开的开关（值为 `1` 时生效）
 ENV_NO_BROWSER = "MEETING_NO_BROWSER"
 
+# ---------------------------------------------------------------------------
+# `settings_update` 的键态三分表（phase2 §3.5.5）
+#
+# **只有下面逐条列出的字面键名合法，不按前缀归组、也没有任何前缀白名单**；
+# 表外的任何键名（含 `devices.*`）一律 `invalid_setting`(400)。
+# 21 个名字逐一取自上面的键全集（phase1 定死的顶层键 + `asr.*` 五个子键）。
+# ---------------------------------------------------------------------------
+
+#: 可热读的键（每段重新读）→ 落 `applied`
+APPLIED_SETTING_KEYS: tuple[str, ...] = tuple(HOT_KEYS)
+
+#: 其余键（写盘成功但要重启才生效）→ 落 `pending_restart`
+PENDING_RESTART_SETTING_KEYS: tuple[str, ...] = tuple(
+    key for key in DEFAULT_VALUES if key not in HOT_KEYS
+)
+
+#: 三分表本体：点号字面键名 → 归类（`applied` / `pending_restart`）
+SETTING_KEY_GROUPS: dict[str, str] = {
+    **{key: "applied" for key in APPLIED_SETTING_KEYS},
+    **{key: "pending_restart" for key in PENDING_RESTART_SETTING_KEYS},
+}
+
+
+def setting_group(key: str) -> str | None:
+    """某个字面键名在三分表里的归类；表外一律 `None`（调用方转 `invalid_setting`(400)）。"""
+    return SETTING_KEY_GROUPS.get(key)
+
+
+#: 快照 `settings.asr` 的五个子键 ↔ 配置键（**逐字同名**，只是去掉了 `asr.` 前缀）。
+#: 嵌套写法只出现在状态 JSON 里，**不进请求体、不进应答体、不进 `config.json`**
+#: （phase2 §3.5.5：请求 / 应答 / 配置文件 / 读取层四处一律用同一套点号扁平键名）。
+ASR_SETTING_KEYS: tuple[str, ...] = tuple(key.split(".", 1)[1] for key in HOT_KEYS)
+
+
+def is_setting_key(key: str) -> bool:
+    return key in SETTING_KEY_GROUPS
+
+
+def validate_setting_changes(
+    changes: dict[str, Any], *, current: "Config | None" = None
+) -> dict[str, Any]:
+    """`settings_update` 的写前校验：**表外键名与非法值一律在这里拦下**。
+
+    至少落地方案点名的「**超时必须大于段长**」（`asr.timeout_seconds >
+    asr.max_segment_seconds`）：这次没改到的那一半取生效配置里的当前值，
+    违规时 `ConfigValueError` 的 `key` 指向 `asr.timeout_seconds`。
+    """
+    if not isinstance(changes, dict) or not changes:
+        raise ConfigValueError(
+            "settings_update", changes, "「点号扁平键名 → 值」的非空映射",
+            "请求体 args 是「配置点号键名 → 值」的扁平映射，只有这一层、不按键前缀分组",
+        )
+
+    applied: dict[str, Any] = {}
+    for key, value in changes.items():
+        if not isinstance(key, str) or not is_setting_key(key):
+            raise ConfigValueError(
+                key if isinstance(key, str) else repr(key),
+                value,
+                "本服务定义过的键名",
+                "这个键名不在三分表里（表外键名含 devices.*，一律非法）",
+            )
+        if isinstance(value, dict):
+            raise ConfigValueError(
+                key, value, "标量值",
+                "嵌套形状不合法：args 是「配置点号键名 → 值」的扁平映射",
+            )
+        applied[key] = validate_value(key, value)
+
+    def effective(key: str) -> Any:
+        if current is not None:
+            return current.get(key)
+        return get(key)
+
+    segment = applied.get("asr.max_segment_seconds", effective("asr.max_segment_seconds"))
+    timeout = applied.get("asr.timeout_seconds", effective("asr.timeout_seconds"))
+    if float(timeout) <= float(segment):
+        raise ConfigValueError(
+            "asr.timeout_seconds",
+            timeout,
+            f"必须大于 asr.max_segment_seconds（当前 {segment}）",
+            "键间规则不成立（超时必须大于段长）",
+        )
+    return applied
+
+
+def split_setting_changes(changes: dict[str, Any]) -> tuple[list[str], list[str]]:
+    """把一次写盘的键名按三分表切成 `(applied, pending_restart)` 两个数组。
+
+    `applied` 的判据只有一条：**该键在三分表里归 `applied`，且本次写盘成功**。
+    「被环境变量压着」这件事不改分类（它只进主 log 的一条 warning）。
+    """
+    applied: list[str] = []
+    pending: list[str] = []
+    for key in changes:
+        group = setting_group(key)
+        if group == "applied":
+            applied.append(key)
+        elif group == "pending_restart":
+            pending.append(key)
+    return applied, pending
+
+
+def env_name_for(key: str) -> str | None:
+    """压住某个键的环境变量名（没有就 `None`）；只用于主 log 的那条 warning。"""
+    for env_name, mapped in ENV_KEYS.items():
+        if mapped == key:
+            return env_name
+    return None
+
+
+def write_config_values(
+    changes: dict[str, Any], *, path: str | None = None
+) -> str:
+    """`settings_update` 的原子写入口：**只写用户配置文件里已有的键 + 本次改动的键**。
+
+    落地读法（phase2 §3.5.5 的写盘拓扑）：先读回现有 `config.json`（文件不存在时按空对象起）
+    → 叠加本次改动的键 → 原子写回（同目录临时文件 + `os.replace` + flush）。
+    写回后文件里的键名集合 = 读回时的键名集合 ∪ 本次改动的键名（**不把代码默认值落盘**）。
+
+    写盘失败抛 `OSError`（调用方映射成 `persist_failed`(500)）；**内存里的生效值不许留在半途**。
+    """
+    target = config_path() if path is None else path
+    current = _read_config_file(target)  # 损坏 / 读不出来 → ConfigCorruptError（由调用方处理）
+    merged = dict(current)
+    merged.update(changes)
+
+    directory = os.path.dirname(os.path.abspath(target))
+    os.makedirs(directory, exist_ok=True)
+    tmp = os.path.join(directory, f".{CONFIG_FILE_NAME}.{os.getpid()}.tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8") as handle:
+            json.dump(merged, handle, ensure_ascii=False, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, target)
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.unlink(tmp)
+            except OSError:  # pragma: no cover - 清理失败不影响结果
+                pass
+    return target
+
 
 # ---------------------------------------------------------------------------
 # 家目录解析（测试的配置隔离靠重定向 HOME / USERPROFILE，不靠环境变量换路径）
@@ -486,6 +630,8 @@ def hot_keys() -> list[str]:
 
 
 __all__ = [
+    "APPLIED_SETTING_KEYS",
+    "ASR_SETTING_KEYS",
     "BACKEND_SELECTORS",
     "CONFIG_FILE_NAME",
     "Config",
@@ -496,6 +642,8 @@ __all__ = [
     "ENV_KEYS",
     "ENV_NO_BROWSER",
     "HOT_KEYS",
+    "PENDING_RESTART_SETTING_KEYS",
+    "SETTING_KEY_GROUPS",
     "as_dict",
     "config_dir",
     "config_path",
@@ -503,11 +651,17 @@ __all__ = [
     "default_for",
     "default_log_dir",
     "default_output_root",
+    "env_name_for",
     "format_applied",
     "get",
     "home_dir",
     "hot_keys",
+    "is_setting_key",
     "load",
     "set_current",
+    "setting_group",
+    "split_setting_changes",
+    "validate_setting_changes",
     "validate_value",
+    "write_config_values",
 ]

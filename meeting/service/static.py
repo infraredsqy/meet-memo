@@ -1,16 +1,15 @@
-"""前端产物挂载、产物缺失说明页与 `/debug` 自检页（phase1 §3.8）。
+"""前端产物挂载、产物缺失说明页与 `/debug` 自检页的读取（phase1 §3.8；phase2 §3.12 摘除注册）。
 
 - 构建产物目录由 `web.dist_dir` 指定，**默认 `web/dist`**（`c62dec56` 的 React 工程放 `web/`，
   产物落 `web/dist`）。
 - 目录存在 → 挂在 `/`（`StaticFiles(html=True)`）；**目录不存在 → 服务照常起**，`/` 给一页
   看得懂的说明，并**在终端与 log 各写一行**。
 - **`/` 的挂载是二选一的条件分支**；**注册次序的硬约束**：静态 / 说明页的挂载函数必须在
-  应用组装里**最后调用**，API（`/api/state` / `/api/heartbeat`）与自检页（`/debug`）
-  一律先注册 —— 路由按注册顺序匹配，说明页一旦写成通配处理器或挂载排在前面，就会把 API
-  与自检页一起吃走。
+  应用组装里**最后调用**，否则会把 API 与自检页一起吃走。
 - 说明页**不许**写成 catch-all 把 `/api/*` 与 `/debug` 也接走。
-- `/debug` 常驻：骨架自检页，落点 `meeting/service/debug.html`，从**包内**读取
-  （走 `package-data`），不依赖 `web/dist`。
+- **`/debug` 这条路由的唯一注册点在 `meeting/service/routes.py`**（phase2 §3.12）：
+  本模块只负责**从包内读出那一页**（`read_debug_page()`，走 `package-data`，不依赖 `web/dist`），
+  phase1 挂在这里的旧注册已摘除。
 """
 
 from __future__ import annotations
@@ -52,12 +51,18 @@ def read_debug_page() -> str:
 
 
 async def _debug_page(request) -> HTMLResponse:
+    """（旧注册点的处理体，保留给 `routes.py` 之外的直接调用；路由注册已搬走。）"""
     return HTMLResponse(read_debug_page())
 
 
 def debug_routes() -> list:
-    """`/debug` 路由（**先于**静态 / 说明页注册）。"""
-    return [Route("/debug", _debug_page, methods=["GET"])]
+    """**已摘除**：`/debug` 的唯一注册点搬到了 `meeting/service/routes.py`（phase2 §3.12）。
+
+    保留这个函数只为一个明确的目的：它**不返回任何路由**，于是任何还照着旧写法
+    `routes.extend(static_module.debug_routes())` 挂载的地方都挂不上第二条 `GET /debug`。
+    全应用五条路由只在 `routes.py` 注册一次（重复注册不报错但会让其中一份永远不生效）。
+    """
+    return []
 
 
 def _missing_dist_page() -> str:
