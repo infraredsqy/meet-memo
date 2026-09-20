@@ -1,0 +1,876 @@
+<!doctype html>
+<!--
+  meeting · 会中视图 · 布局方案 A（仪表盘式）
+  ---------------------------------------------------------------------------
+  这是 docs/ui-design.md 章 2.6「方向 A」的渲染稿，也是选中方向的候选稿。
+  纯设计稿：不进构建、不被服务引用、不引入任何依赖；只引用同目录的
+  tokens.css 与 ui.css，断网打开与联网一模一样。全站零外链、零外部字体。
+
+  切状态：live-a.html?state=<状态名>，取值见 docs/ui-design.md 章 4.5。
+  两版的差别只有两处，都是「A/B 根本分歧」本身：
+    A（本页）根节点 data-layout="a"；采集带 .m-band.m-band--split.m-band--tools，
+             里面 .m-chans 两列（1fr 1fr）左右并列，电平表用 .m-meter--v
+    B        根节点 data-layout="b"；采集带 .m-band.m-band--tools，
+             里面 .m-chans 单列整宽横条上下叠放，电平表用 .m-meter--h
+  除这两处以外，本页与另一版逐字一致（同一模板产出，已逐行比对）。
+-->
+<html lang="zh-CN" class="ui page--live" data-layout="a" data-state="idle">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>会中 · 布局 A 仪表盘式 · meeting 设计稿</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="ui.css">
+</head>
+<body class="page--live">
+
+<main class="shell">
+
+  <!-- 服务重启过（章 4.5）：只在空闲态回来、且日志里有未收尾记录时出现。
+       上一场没走完收尾就被打断，音频与 log 都还在，先把这两条路径给出来，
+       别让人以为这场会顺着重启一起没了。没有未收尾记录时这一行不出现 -->
+  <div class="restart-note hint" id="restart-note" hidden>服务重启过。上一场的收尾没走完，音频在 <span class="num">C:\会议\out\250906\</span>，日志在 <span class="num">C:\Users\<user>\.config\meeting\logs\meeting.log</span>。</div>
+
+  <!-- 顶栏三段：状态胶囊 / 时长 + 主按钮 / 次级操作 -->
+  <header class="topbar">
+    <div class="topbar__left">
+      <div class="statusline">
+        <span class="statusline__caps">
+          <span class="glyph glyph--rec" id="st-glyph" aria-hidden="true"></span>
+          <span class="statusline__name" id="st-name">录音中</span>
+        </span>
+        <span class="statusline__note" id="st-note">两路都在采</span>
+      </div>
+      <span class="recovered-note" id="hb-record" hidden>心跳已恢复，中断 42 秒</span>
+    </div>
+
+    <div class="topbar__main">
+      <span class="clock">
+        <span class="clock__label" id="clock-label">已录</span>
+        <span class="clock__value num" id="clock-value">01:12:34</span>
+      </span>
+      <button class="btn btn--primary btn--start" type="button">开始录音</button>
+      <button class="btn btn--primary btn--end" type="button">结束录音</button>
+    </div>
+
+    <div class="topbar__right">
+      <span class="kv">
+        <input type="checkbox" id="alarm-switch-main" checked>
+        <label class="kv__k" for="alarm-switch-main">告警出声</label>
+      </span>
+      <button class="btn btn--small" type="button" id="gear" aria-controls="drawer" aria-expanded="false">设置</button>
+    </div>
+  </header>
+
+  <!-- 采集带：方向 A 是「两路左右并列 + 右侧三分之一给总结」，方向 B 是整宽横条上下叠放 -->
+  <section class="band">
+    <div class="band__head">
+      <h2 class="band__title">采集</h2>
+      <div class="meter-legend">
+        <span class="meter-legend__item"><span class="m-ch__mark m-ch__mark--local" aria-hidden="true"></span>本地</span>
+        <span class="meter-legend__item"><span class="m-ch__mark m-ch__mark--remote" aria-hidden="true"></span>远端</span>
+        <span class="meter-legend__item">历史包络 2 秒一格</span>
+      </div>
+    </div>
+    <div class="band__body">
+      <div class="m-band m-band--split m-band--tools">
+        <div class="m-chans" id="m-chans">
+          <div class="m-ch" id="ch-local"></div>
+          <div class="m-ch" id="ch-remote"></div>
+        </div>
+        <div class="live-tools">
+          <div class="seg" id="summary-windows" role="group" aria-label="总结窗口">
+            <button class="seg__item" type="button">5 分钟</button>
+            <button class="seg__item seg__item--on" type="button">15 分钟</button>
+            <button class="seg__item" type="button">30 分钟</button>
+            <button class="seg__item" type="button">整场</button>
+          </div>
+          <button class="btn btn--primary btn--block" type="button" id="summary-btn">总结一下</button>
+          <p class="sumbar__why" id="summary-why" hidden>转写停了，总结没有材料可读</p>
+          <p class="sumbar__note" id="summary-run" hidden><span class="spinner" aria-hidden="true"></span> 正在总结刚才的 15 分钟…</p>
+          <button class="btn btn--ghost btn--block" type="button" id="summary-log-btn">本场总结记录（还没有）</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 每路健康：两条文字保证，任何宽度下都不折叠 -->
+  <section class="band band--quiet">
+    <div class="band__head">
+      <h2 class="band__title">每路健康</h2>
+    </div>
+    <div class="band__body">
+      <div class="m-chips" id="chips"></div>
+    </div>
+  </section>
+
+  <!-- 总结结果面板：只有几条、关掉即消失、不落文件（章 2.3 的结果面板）；
+       `?state=summary-log` 展开的是另一份内容——本场按过的几次总结（三次记录
+       各带窗口与时刻），那是「回看本次会的总结记录」这个入口的东西（章 5.1），
+       两者共用一个面板，靠脚本换标题与正文。
+       位置跟着总结入口走：总结入口在采集带右侧（主位第 5 项，章 2.2），
+       这块面板就排在每路健康之后、告警带之前——主位的一排在前面，
+       转写那类次级区块留在最后 -->
+  <section class="band band--quiet">
+    <div class="summary-card" id="summary-card">
+      <div class="summary-card__head">
+        <span class="summary-card__title" id="summary-card-title">刚才的 15 分钟</span>
+        <button class="btn btn--small btn--ghost" type="button" id="summary-close">关闭</button>
+      </div>
+      <div id="summary-card-body">
+        <p class="summary-card__sub">刚才在讲什么</p>
+        <p class="summary-card__item">迁移日期定在 10 月的第一个周末，灰度先走内部两个组。</p>
+        <p class="summary-card__sub">讲到哪儿了</p>
+        <p class="summary-card__item">正在过灰度名单。远端刚接回来，这块结论还要再补一遍。</p>
+        <p class="summary-card__sub">丢掉了什么</p>
+        <p class="summary-card__item">远端 20:57–21:10 这段没有内容，这 13 分钟里谁说了什么，会后靠离线那条补。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 告警区：有告警时才出现，整行横幅；插在采集带之外，不侵入任何一块电平表。
+       没有告警的（大多数）状态里这一条整块不占位置，主视图因此少一层噪音 -->
+  <section class="band band--alert" id="alert-band" aria-label="告警" hidden>
+    <div class="alert alert--fatal">
+      <div class="alert__head">
+        <span class="alert__glyph" aria-hidden="true">▲</span>
+        <span class="alert__where" id="fatal-where">远端这一路采不到了</span>
+        <span class="alert__since" id="fatal-since">从 20:57 起</span>
+        <span class="alert__elapsed" id="fatal-elapsed">已丢 13 分钟</span>
+      </div>
+      <div class="alert__acts">
+        <button class="btn btn--small" type="button" id="mute-session" aria-pressed="false">本次会不再出声</button>
+        <button class="btn btn--small btn--ghost" type="button" id="show-log-fatal">看日志</button>
+        <button class="btn btn--small btn--danger" type="button" id="end-from-alert">结束录音</button>
+      </div>
+      <div class="fail" id="fail-drain" hidden>
+        <div class="fail__why">转码失败：远端这条音频转不出来（文件被截断）</div>
+        <div class="fail__next">下一步：先别关机。这个文件留在场次目录里，重跑在命令行——界面上没有重跑按钮，重跑在命令行那一条路上。这个时候绝不说「可以关机」。</div>
+        <code class="codeblock">meeting post 250906</code>
+        <div class="fail__log">log：C:\Users\<user>\.config\meeting\logs\meeting.log</div>
+      </div>
+    </div>
+
+    <!-- 提示级那一条排在致命级横幅之后：告警带里从上往下就是「最要紧的先说」。
+         它单独出现时（转写落后那一档）也只占这一条细提示条的位置，
+         整块告警带的高度就是这一条 -->
+    <div class="alert alert--hint">
+      <span class="alert__glyph" aria-hidden="true">▲</span>
+      <span class="alert__since" id="hint-since">21:10</span>
+      <span>实时转写落后了 · 约 2 分钟</span>
+    </div>
+
+    <div class="fail" id="fail-start" hidden>
+      <div class="fail__why">远端这一路起不来：设备被别的程序占着</div>
+      <div class="fail__next">下一步：关掉占用这个设备的程序，回设置里换一个设备，再按开始。</div>
+      <div class="fail__log">log：C:\Users\<user>\.config\meeting\logs\meeting.log</div>
+    </div>
+
+    <div class="fail" id="fail-rejected" hidden>
+      <div class="fail__why">已经有一场在录（250906，已录 41 分钟）。同一时刻只录一场。</div>
+      <div class="fail__next">下一步：<button class="btn btn--small" type="button">打开那一场</button></div>
+    </div>
+
+    <!-- 心跳：迟到的弱提示（一行字、不出声、无横幅） -->
+    <div class="heartbeat heartbeat--inline" id="hb-late">心跳迟到 · 8 秒没收到应答</div>
+  </section>
+
+  <!-- 已结束·收尾中 / 已完成 / 收尾失败：能不能关机，只由这一条横幅回答。
+       收尾内部失败（转码失败 / 落盘失败 / log 写不下）时，它下面那块
+       #drain-fail 把同一件事的原因、可复制的命令与 log 路径写全，
+       横幅不再另说一套；这一档的告警带整块不出现（章 4.2 二、章 4.5）。
+       横幅与失败明细的放行规则都在 ui.css 的 11.1 节，三档并列写全——
+       已结束的两副面孔都在那三条里，屏幕上不会只剩一条空的红带子 -->
+  <section class="band band--alert" id="drain-band" aria-label="收尾" hidden>
+    <div class="alert alert--fatal">
+      <div class="alert__title" id="drain-title">正在落盘，先别关机</div>
+      <div class="alert__body" id="drain-body">落盘 / 转码 / log / 启动会后：四项都在跑，走完之前东西还没落好。这个时候说「已完成」，就等于让人关机丢掉这场会。</div>
+      <div class="alert__acts" id="drain-detail"></div>
+    </div>
+    <div class="fail" id="drain-fail" hidden>
+      <div class="fail__why">转码失败：远端这条音频转不出来（文件被截断）</div>
+      <div class="fail__next">下一步：先别关机。远端那条音频留在场次目录里，重跑在命令行。界面不说「可以关机」。</div>
+      <code class="codeblock">meeting post 250906</code>
+      <div class="fail__log">log：C:\Users\<user>\.config\meeting\logs\meeting.log</div>
+    </div>
+  </section>
+
+  <!-- 心跳失联那条判据的说明（章 4.5）：只在心跳失联出现。
+       它挂在告警带外面，因为告警带在失联时整块收起——失联说的是「界面看不见
+       服务、整场录音已中断」，那时候屏幕上关于「出事了」的话只有全屏横幅那一处。
+       这一条讲的是判据本身（为什么不看 HTTP 通不通），跟着横幅走 -->
+  <div class="hint" id="hb-guidance" hidden>失联这一条看的是应答里的录音存活字段：服务进程还活着、网页也打得开，但录音线程已经卡死，所以不能只看「HTTP 通不通」。</div>
+
+  <!-- 实时转写：临时稿。区里不出现保存 / 导出 / 正式记录这类字样。
+       空闲那一档给的是空态文案（章 2.5「空闲 → 空态文案」）：
+       这场还没开始，一行转写都还不存在。那几行正文照旧留在 DOM 里，
+       由脚本按状态收起与铺开，切状态不重建页面 -->
+  <section class="band transcript-block">
+    <div class="band__head">
+      <h2 class="band__title">实时转写</h2>
+      <span class="band__note" id="transcript-note">最近 200 行 · 向上可看更早</span>
+    </div>
+    <div class="band__body">
+      <div class="sumbar">
+        <span class="tag">临时稿 · 会后重建一份</span>
+        <span class="tag" id="transcript-health">正常</span>
+        <button class="btn btn--small transcript__toggle" type="button" id="transcript-toggle" aria-expanded="false" aria-controls="transcript">
+          展开 <span class="transcript__toggle-hint">最近一句</span>
+        </button>
+      </div>
+      <!-- 空闲态：这场还没开始录，这里没有任何一行可以给人瞄 -->
+      <p class="empty" id="transcript-empty" hidden>还没开始录，这里暂时是空的。按下「开始录音」之后，两路各自说的话会一行一行落在这里，带分钟级时间戳，标着是本地还是远端。</p>
+      <div class="transcript" id="transcript">
+        <!-- 这一份是「现在」= 20:57 的那一版，也就是远端从 20:57 起丢了之后
+             紧接着的那一版：远端那条「断了十几分钟、接上以后」是它接回来之后
+             才会出现的行，所以放在这里的是它丢之前的最后一句 -->
+        <div class="transcript__line">
+          <span class="transcript__time">[20:57]</span>
+          <span class="transcript__route">本地</span>
+          <span class="transcript__text">那这一段先按刚才说的记，回头对上远端那边的说法。</span>
+        </div>
+        <div class="transcript__line">
+          <span class="transcript__time">[20:56]</span>
+          <span class="transcript__route">远端</span>
+          <span class="transcript__text">行，我这边先不说了，你们接着过迁移日期那一条。</span>
+        </div>
+        <div class="transcript__line">
+          <span class="transcript__time">[20:55]</span>
+          <span class="transcript__route">本地</span>
+          <span class="transcript__text">会上先定两件事：一是迁移日期，二是谁来盯灰度。</span>
+        </div>
+        <div class="transcript__line">
+          <span class="transcript__time">[20:54]</span>
+          <span class="transcript__route">本地</span>
+          <span class="transcript__gap">[[识别失败: 超时 20s]]</span>
+        </div>
+        <div class="transcript__line">
+          <span class="transcript__time">[20:52]</span>
+          <span class="transcript__route">远端</span>
+          <span class="transcript__text">那我们把这一段先记下来，等离线那遍出来再核一遍。</span>
+        </div>
+        <!-- 心跳恢复那一档在末尾补的断口。它留在时间轴最上面那一行：
+             这一屏的「现在」是 20:58，断口是刚刚发生的那件事，转写区又是从新到旧
+             往下排，所以它排在最后一条转写之后，跟它自己的时刻对得上
+             （夹在 20:54 与 20:52 中间的那一版，行序是 20:57 → 20:56 → 20:55 →
+             20:54 → 【20:57–20:58 数据已停】 → 20:52，断口落在了比它晚的两行下面） -->
+        <div class="transcript__line" id="transcript-gap" hidden>
+          <span class="transcript__time">[20:57–20:58]</span>
+          <span class="transcript__route">数据已停</span>
+          <span class="transcript__gap">（这一段的转写收不上来。界面有 42 秒没收到服务的心跳。）</span>
+        </div>
+        <div class="transcript__jump">
+          <button class="btn btn--small btn--ghost" type="button">回到最新</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 复核用的旁路：默认不显示，地址后面加 ?nav=1 才出现。
+       它是给逐状态复核的人用的工具（切换状态、跳另一版、跳会后），
+       会中界面本身不含它——门槛 5「1440×900 不滚动」要的是界面本身，
+       这条导航条排在最底部，会把整页顶出 900 之外（章 8 门槛 5） -->
+  <footer class="viewswitch">
+    <span class="viewswitch__note">会中视图 · 布局 A 仪表盘式（两路并列，告警横幅插在采集带之外） · <span id="state-echo">?state=idle</span></span>
+    <!-- 状态切换器：给逐状态复核用的旁路，会中界面本身没有它 -->
+    <div class="viewswitch__tools">
+      <div class="list__row">
+        <label class="label" for="state-switch">切换状态</label>
+        <select class="field__input" id="state-switch"></select>
+      </div>
+      <div class="topbar__right">
+        <a class="btn btn--small" href="live-b.html">看布局 B 通道条式</a>
+        <a class="btn btn--small btn--ghost" href="post.html">看会后视图</a>
+      </div>
+    </div>
+  </footer>
+
+</main>
+
+<!-- 心跳失联：全局横幅，盖在任何状态之上（含空闲与已结束）；恢复后自动消失 -->
+<div class="heartbeat" id="hb-banner" role="alert">
+  <div class="heartbeat__title">录音已中断</div>
+  <div class="heartbeat__body">10 秒一次的应答，连续 2 次没收到（最后一次应答 20:57:31）。</div>
+  <div class="heartbeat__why">判据看的是应答里的录音存活字段：服务进程还活着、网页也打得开，但录音线程已经卡死，所以不能只看「HTTP 通不通」。</div>
+  <div class="heartbeat__do">先别关这台机器，也别关这个页面。到服务那边看一眼：<span class="num">Ctrl+C</span> 停掉再敲一次 <span class="num">meeting web</span>；日志在 <span class="num">C:\Users\<user>\.config\meeting\logs\meeting.log</span>。</div>
+</div>
+
+<!-- 设置抽屉：默认收起，不占主视图 -->
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" role="dialog" aria-label="设置" aria-modal="true">
+  <div class="drawer__title">设置</div>
+  <p class="drawer__group label">设备</p>
+  <div class="field">
+    <span class="field__label">本地 · 麦克风</span>
+    <div class="field__row">
+      <input class="field__input" id="dev-local" type="text" value="麦克风 (USB Audio)" readonly>
+      <button class="btn btn--small" type="button" data-pick="local">换一个</button>
+    </div>
+  </div>
+  <div class="field">
+    <span class="field__label">远端 · loopback</span>
+    <div class="field__row">
+      <input class="field__input" id="dev-remote" type="text" value="扬声器 (VB-CABLE 2ch)" readonly>
+      <button class="btn btn--small" type="button" data-pick="remote">换一个</button>
+    </div>
+    <p class="field__error" id="dev-remote-err" hidden>能打开，但没有信号。换一个端点再试。</p>
+  </div>
+
+  <p class="drawer__group label">告警</p>
+  <div class="field">
+    <div class="field__row">
+      <input type="checkbox" id="alarm-switch-drawer" checked>
+      <label for="alarm-switch-drawer">告警开关（与主视图同一个，跨场次记住）</label>
+    </div>
+  </div>
+  <div class="field">
+    <span class="field__label">心跳频率</span>
+    <div class="field__row">
+      <input class="field__input num" id="hb-period" type="text" value="10">
+      <span class="field__unit">秒</span>
+    </div>
+    <p class="field__hint">范围 1–60 秒。心跳应答带服务侧时间戳与录音存活字段。</p>
+    <p class="field__error" id="hb-period-err" hidden>只能填 1 到 60 秒。</p>
+  </div>
+
+  <p class="drawer__group label">ASR 参数</p>
+  <div class="field"><span class="field__label">段长</span><div class="field__row"><input class="field__input num" type="text" value="10s"><span class="field__unit">s</span></div></div>
+  <div class="field"><span class="field__label">单段超时</span><div class="field__row"><input class="field__input num" type="text" value="20s"><span class="field__unit">s</span></div></div>
+  <div class="field"><span class="field__label">生成 token 上限</span><div class="field__row"><input class="field__input num" type="text" value="400"></div></div>
+  <div class="field"><span class="field__label">周期上限</span><div class="field__row"><input class="field__input num" type="text" value="40"></div></div>
+  <div class="field"><span class="field__label">覆盖率</span><div class="field__row"><input class="field__input num" type="text" value="0.5"></div></div>
+  <p class="field__hint">取值范围以本地 ASR 后端节点为准；这一区只回答「这些参数摆在哪」。</p>
+
+  <p class="drawer__group"><button class="btn btn--small" type="button" id="drawer-close">收起设置</button></p>
+</aside>
+
+<script>
+/* ===========================================================================
+   会中视图 · 状态切换（极少原生 JS，无依赖、不联网）
+   ---------------------------------------------------------------------------
+   ?state=<状态名> 把状态类 is-<state> 放到 <html> 上，并就地换掉文案、读数和
+   信号床的 15 根柱。切状态只搬数据，不重建页面骨架。
+
+   三根硬线：
+   1. 这里的每个数字都是"服务推出来的读数"的替身；设计稿不自己造信号，
+      真实实现里它们全部来自服务（章 6 禁止事项）。
+   2. 心跳失联时两路电平冻结压灰、读数退成「—」、健康位写「数据已停」，
+      包络的时间戳停在数据停的那一刻：估出来的数据不继续画成在动。
+   3. 「某一路采不到了」那条致命横幅只属于 lost-one 与收尾失败（都是
+      "服务还在、某一路没了"）。心跳失联说的是"界面看不见服务、整场录音
+      已中断"，两句话不能同屏，所以心跳失联下整块告警区都不出现。
+   4. 同一屏里的时间必须互相自洽：各档的「现在」不一样（见下面 BASE_STAMP
+      那一段），包络时间戳与转写正文都跟着各自那一档的「现在」走。
+   =========================================================================== */
+(function () {
+  "use strict";
+
+  var ROOT = document.documentElement;
+  var LAYOUT_B = ROOT.dataset.layout === "b";
+
+  var CH = [
+    { id: "local", name: "本地 · 麦克风", device: "麦克风 (USB Audio)", mark: "local" },
+    { id: "remote", name: "远端 · loopback", device: "扬声器 (VB-CABLE 2ch)", mark: "remote" }
+  ];
+
+  /* 一格 = 2 秒，15 格 = 30 秒。mic 那一路永远有底噪（实测有信号秒 −35.2 dBFS），
+     loopback 无人说话时写下的是一串精确的数字零，所以两路的形状本来就不一样。 */
+  var LOCAL_LIVE = [42, 55, 38, 60, 72, 48, 66, 58, 35, 45, 62, 55, 40, 50, 44];
+  var REMOTE_LIVE = [30, 44, 26, 38, 20, 34, 42, 24, 36, 28, 40, 22, 32, 26, 18];
+  var RESTORED = [0, 0, 0, 12, 30, 44, 32, 48, 36, 28, 40, 30, 44, 36, 30];
+  var ZERO = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
+  function pct(db) { var v = (db + 60) / 60 * 100; return v < 0 ? 0 : (v > 100 ? 100 : v); }
+  /* 读数一律用 U+2212 这个减号（−35.2 dBFS），与刻度尺上的 −20 / −40 / −60
+     以及文档正文里引用的字符串是同一个字符。parseFloat 认不了它，先换回 ASCII
+     再解析——读数只在这里被量成柱高，别处不解析这个字符串 */
+  function dbOf(readout) {
+    return readout && readout.indexOf("dBFS") > -1 ? pct(parseFloat(readout.replace(/\u2212/g, "-"))) : 0;
+  }
+
+  /* 这套稿子的「现在」是按档各定一个的，规矩只有一条：**同一屏里的时间不许
+     自己打自己**。所以时间戳跟着各档的「现在」走，不是一个数字用到底：
+       idle 那几档还没开始录 → 包络时间戳给一个空位（没有历史可画）；
+       recording / 转写落后 / 心跳迟到 的「现在」是 20:57（远端正是从 20:57 起
+         采不到了），正文也就停在 20:57 那一版；
+       lost-one 的「现在」是 21:10（丢了 13 分钟还没回来）→ 包络时间戳 21:10，
+         正文跟着写到 21:10（本地这一路这 13 分钟照录，正文不该停在 13 分钟前）；
+       lost-one-restored 的「现在」是 21:11（远端 21:10 接回来）；
+       心跳失联停在最后一次应答 20:57:31，心跳恢复回到实时的 20:58；
+       收尾那几档停在最后落盘的 22:19。
+     这里只有三处带秒：已录时长、音频总时长、心跳失联的最后一次应答——它们
+     都是界面自己掌握精度的本地读数（章 8.10 那张表）。从归档转抄来的时间
+     （转写正文与 [HH:MM]、包络时间戳、2 秒一格的换算）一律分钟级，不写秒。
+     时长那一格（--size-clock 的读数）按 docs/ui-design.md 章 2.3 / 2.6 / 4.5
+     写的 01:12:34 走，三处文档与这一份稿子用的是同一个数。 */
+  var BASE_STAMP = "20:57";
+  var END_STAMP = "22:19";
+
+  /* 本场总结记录回看的那几份（章 5.1「回看本次会的总结记录」/ 章 4.5）。
+     存本场内存、会话结束即失、不落文件；三次记录各带窗口与时刻。
+     空闲那一档给空态文案：这场还没开始，一次总结都没按过 */
+  var LOG_EMPTY = {
+    title: "本场总结记录（还没有）",
+    sub: "这一场还没按过总结",
+    items: ["按下「总结一下」之后，每按一次就会在这里多一条记录：几点、取的哪个窗口、当时那几条。",
+            "记录只存在这一场里，页面关掉就没了；它跟会后那份纪要各管各的。"]
+  };
+
+  var LOG_THREE = {
+    title: "本场总结记录（3 次）",
+    sub: "这一场按过 3 次",
+    items: ["[20:41] 取的「15 分钟」——迁移日期定在 10 月的第一个周末，灰度先走内部两个组。",
+            "[21:03] 取的「5 分钟」——正在过灰度名单，远端刚接回来，这块结论还要再补一遍。",
+            "[21:40] 取的「整场」——会上提到的三件事：迁移日期、灰度名单、谁盯灰度；远端 20:57–21:10 那段没有内容。"]
+  };
+
+  /* 结果面板那三小段（章 2.3）：一组小标题配一条内容。
+     脚本按状态整块换正文，所以它与上面两份记录一起写在这里；
+     HTML 里那份是同一份内容的静态底样 */
+  var RESULT_THREE = {
+    title: "刚才的 15 分钟",
+    rows: [["刚才在讲什么", "迁移日期定在 10 月的第一个周末，灰度先走内部两个组。"],
+           ["讲到哪儿了", "正在过灰度名单。远端刚接回来，这块结论还要再补一遍。"],
+           ["丢掉了什么", "远端 20:57–21:10 这段没有内容，这 13 分钟里谁说了什么，会后靠离线那条补。"]]
+  };
+
+  function cardBody(cfg) {
+    if (cfg.rows) {
+      return cfg.rows.map(function (r) {
+        return '<p class="summary-card__sub">' + r[0] + '</p><p class="summary-card__item">' + r[1] + '</p>';
+      }).join("");
+    }
+    return '<p class="summary-card__sub">' + cfg.sub + '</p>' +
+      cfg.items.map(function (s) { return '<p class="summary-card__item">' + s + '</p>'; }).join("");
+  }
+
+  var S = {};
+  function base() {
+    S.name = "录音中"; S.note = "两路都在采";
+    S.clockLabel = "已录"; S.clock = "01:12:34";
+    S.start = false; S.live = true;
+    S.hbRecord = false; S.late = false; S.guidance = false;
+    S.fatal = false; S.hint = false;
+    S.stamp = BASE_STAMP; S.tape = null;
+    S.fail = ""; S.drainTitle = ""; S.drainBody = ""; S.drainDetail = null;
+    S.summary = ""; S.summaryDisabled = false; S.summaryWhyText = "转写停了，总结没有材料可读";
+    S.transcriptHealth = "正常";
+    S.since = "20:57";
+    S.local = buildCh("−35.2 dBFS", "本地 · 还在采");
+    S.remote = buildCh("−48.0 dBFS", "远端 · 还在采");
+  }
+
+  var STATES = {
+    idle: { name: "空闲", note: "尚未开始", clock: "00:00:00", start: true, summaryDisabled: true, summaryWhyText: "开始录音后才能总结",
+      local: { readout: "—", health: "ready", healthText: "已就绪", bars: ZERO, chipText: "本地 · 已就绪" },
+      remote: { readout: "—", health: "ready", healthText: "已就绪", bars: ZERO, chipText: "远端 · 已就绪" } },
+    "idle-untouched": { name: "空闲", note: "尚未开始", clock: "00:00:00", start: true, summaryDisabled: true, summaryWhyText: "开始录音后才能总结",
+      local: { readout: "—", health: "untouched", healthText: "未探测", bars: ZERO, chipGlyph: "idle", chipText: "本地 · 未探测" },
+      remote: { readout: "—", health: "untouched", healthText: "未探测", bars: ZERO, chipGlyph: "idle", chipText: "远端 · 未探测" } },
+    "idle-device-fail": { name: "空闲", note: "尚未开始", clock: "00:00:00", start: true, summaryDisabled: true, summaryWhyText: "开始录音后才能总结",
+      local: { readout: "—", health: "ready", healthText: "已就绪", bars: ZERO, chipText: "本地 · 已就绪 · 麦克风 (USB Audio)" },
+      remote: { readout: "—", health: "fail", healthText: "探测失败 · 能打开，但没有信号", bars: ZERO, hideBars: true, chipGlyph: "cross", chipText: "远端 · 探测失败 · 能打开，但没有信号" } },
+    /* 服务重启过：界面重新打开时向服务取状态，服务侧没有正在进行的会话，
+       所以还是空闲；日志里那条未收尾记录由顶部那一行说出来（章 4.5） */
+    "idle-restarted": { name: "空闲", note: "尚未开始 · 上次的收尾没走完", clock: "00:00:00", start: true, restart: true, summaryDisabled: true, summaryWhyText: "开始录音后才能总结",
+      local: { readout: "—", health: "ready", healthText: "已就绪", bars: ZERO, chipText: "本地 · 已就绪" },
+      remote: { readout: "—", health: "ready", healthText: "已就绪", bars: ZERO, chipText: "远端 · 已就绪" } },
+    recording: {},
+    "recording-transcript-behind": { hint: true, since: "20:55", transcriptHealth: "落后" },
+    "lost-one": { name: "告警", note: "一路仍在采，另一路采不到了", fatal: true, since: "20:57", stamp: "21:10",
+      /* 「现在」是 21:10，正文就写到 21:10：远端 20:57 起没了，本地这一路照录，
+         所以 20:57 之后那几行是本地写的，最后一行远端停在它失声之前 */
+      tape: [
+        ["[21:10]", "本地", "远端那条还没接回来，先按本地这一条记，回头再对一遍。"],
+        ["[21:07]", "本地", "灰度先走内部两个组，外部等下一轮。"],
+        ["[21:02]", "本地", "迁移日期就定 10 月第一个周末，远端那边回头补一句。"],
+        ["[20:57]", "本地", "远端从这会儿起就没声了，我先在这一行标一条。"],
+        ["[20:56]", "远端", "行，我这边先不说了，你们接着过迁移日期那一条。"],
+        ["[20:55]", "本地", "会上先定两件事：一是迁移日期，二是谁来盯灰度。"],
+        ["[20:54]", "本地", "[[识别失败: 超时 20s]]", true],
+        ["[20:52]", "远端", "那我们把这一段先记下来，等离线那遍出来再核一遍。"]
+      ],
+      remote: { readout: "−96.0 dBFS", health: "dead", healthText: "采不到了，从 20:57 起", bars: ZERO, dead: true, chipGlyph: "cross", chipText: "远端 · 采不到了，从 20:57 起" } },
+    "lost-one-restored": { note: "两路都在采 · 远端丢过一段，已接回", stamp: "21:11",
+      remote: { readout: "−48.0 dBFS", health: "restored", healthText: "已恢复（20:57–21:10 丢过 13 分钟）", bars: RESTORED, restored: true, chipGlyph: "restored", chipText: "远端 · 已恢复（20:57–21:10 丢过 13 分钟）" } },
+    "heartbeat-late": { late: true },
+    "heartbeat-lost": { note: "心跳失联 · 数据已停", stamp: "20:57:31",
+      guidance: true, summaryDisabled: true, summaryWhyText: "心跳失联，先看服务那边",
+      local: { readout: "—", health: "stopped", healthText: "数据已停", bars: LOCAL_LIVE, live: false, frozen: true, chipGlyph: "idle", chipText: "本地 · 数据已停" },
+      remote: { readout: "—", health: "stopped", healthText: "数据已停", bars: REMOTE_LIVE, live: false, frozen: true, chipGlyph: "idle", chipText: "远端 · 数据已停" } },
+    "heartbeat-recovered": { note: "心跳恢复 · 中断 42 秒，两路都在采", hbRecord: true, stamp: "20:58" },
+    "ended-draining": { name: "已结束 · 收尾中", note: "正在落盘，先别关机", clockLabel: "本场时长", clock: "02:19:23", stamp: END_STAMP, live: false, summaryDisabled: true, summaryWhyText: "这场已经结束，会中总结只在录音时按。",
+      drainTitle: "正在落盘，先别关机", drainBody: "音频还在转码、落盘，会后那一套也才刚起来。这几步走完之前，东西还没落好。",
+      drainDetail: [["落盘", "running"], ["转码", "running"], ["log", "done"], ["启动会后", "wait"]],
+      local: buildCh("−35.2 dBFS", "本地 · 已停止", "已停止"),
+      remote: buildCh("−48.0 dBFS", "远端 · 已停止", "已停止") },
+    "ended-done": { name: "已结束 · 已完成", note: "可以关机", clockLabel: "本场时长", clock: "02:19:23", stamp: END_STAMP, live: false, summaryDisabled: true, summaryWhyText: "这场已经结束，会中总结只在录音时按。",
+      drainTitle: "已完成，可以关机", drainBody: "音频已落盘、log 已写完这一场、会后那一套已经启动。",
+      drainDetail: [["落盘", "done"], ["转码", "done"], ["log", "done"], ["启动会后", "done"]],
+      local: buildCh("−35.2 dBFS", "本地 · 已停止", "已停止"),
+      remote: buildCh("−48.0 dBFS", "远端 · 已停止", "已停止") },
+    "ended-drain-failed": { name: "已结束 · 收尾中", note: "收尾失败 · 先别关机", clockLabel: "本场时长", clock: "02:19:23", stamp: END_STAMP, live: false, summaryDisabled: true, summaryWhyText: "这场已经结束，会中总结只在录音时按。", fatal: true, fail: "drain",
+      drainTitle: "收尾出事了，先别关机", drainBody: "远端这条音频转不出来：文件被截断。这个时候绝不说「可以关机」。",
+      drainDetail: [["落盘", "done"], ["转码", "fail"], ["log", "done"], ["启动会后", "wait"]],
+      local: buildCh("−35.2 dBFS", "本地 · 已停止", "已停止"),
+      remote: buildCh("−48.0 dBFS", "远端 · 已停止", "已停止") },
+    "summary-running": { summary: "running" },
+    "summary-result": { summary: "result" },
+    "summary-log": { summary: "log" },
+    "settings-open": { drawer: true },
+    "start-failed": { name: "空闲", note: "尚未开始 · 启动失败", clock: "00:00:00", start: true, fail: "start", summaryDisabled: true, summaryWhyText: "开始录音后才能总结",
+      local: { readout: "—", health: "ready", healthText: "已就绪", bars: ZERO, chipText: "本地 · 已就绪" },
+      remote: { readout: "—", health: "ready", healthText: "已就绪", bars: ZERO, chipText: "远端 · 已就绪" } },
+    "start-rejected": { name: "空闲", note: "尚未开始 · 已有一场在录", clock: "00:00:00", start: true, fail: "rejected", summaryDisabled: true, summaryWhyText: "开始录音后才能总结",
+      local: { readout: "—", health: "ready", healthText: "已就绪", bars: ZERO, chipText: "本地 · 已就绪" },
+      remote: { readout: "—", health: "ready", healthText: "已就绪", bars: ZERO, chipText: "远端 · 已就绪" } }
+  };
+
+  var GLYPH = {
+    idle: "glyph--idle", "idle-untouched": "glyph--idle", "idle-device-fail": "glyph--idle",
+    "idle-restarted": "glyph--idle",
+    "start-failed": "glyph--idle", "start-rejected": "glyph--idle",
+    "lost-one": "glyph--alert",
+    "ended-draining": "glyph--draining", "ended-drain-failed": "glyph--draining",
+    "ended-done": "glyph--done"
+  };
+
+  function chipGlyphClass(g) {
+    if (g === "cross") { return "glyph--cross"; }
+    if (g === "idle") { return "glyph--idle"; }
+    if (g === "restored") { return "glyph--dashed"; }
+    return "glyph--check";
+  }
+
+  /* 一路的默认样子：两种通道只有路名、设备名与读数不同，其余一致。
+     状态表里改的是这一份的个别字段，健康位与徽标的文案一起给，
+     免得出现「徽标写还在采、每路健康写已停止」这种同屏两说 */
+  function buildCh(readout, chip, healthText) {
+    return { readout: readout, health: "ok", healthText: healthText || "还在采", bars: readout === "−35.2 dBFS" ? LOCAL_LIVE : REMOTE_LIVE,
+      live: true, frozen: false, dead: false, restored: false, chipGlyph: "check", chipText: chip };
+  }
+
+  function healthGlyph(h) {
+    if (h === "ok" || h === "ready") { return "glyph--check"; }
+    if (h === "dead" || h === "fail") { return "glyph--cross"; }
+    return "glyph--dashed";
+  }
+
+  function channel(i, st) {
+    var c = CH[i];
+    var cls = "m-ch" + (st.dead ? " m-ch--dead" : "") + (st.restored ? " m-ch--restored" : "") + (st.frozen ? " m-ch--frozen" : "") + (st.live ? "" : " m-ch--idle");
+    var lv = dbOf(st.readout).toFixed(1);
+    /* 没有信号进来时，信号床的画法分三种，都不是"随便画一串柱"：
+       未开始/未探测 = 灰平线；探测失败 = 空床打斜纹；数据已停 = 灰平线压灰 */
+    var bars = st.hideBars ? "" : (st.bars || ZERO).map(function (h) { return '<span class="m-env__bar" style="--h:' + h + '%"></span>'; }).join("");
+
+    return '<section id="ch-' + c.id + '" class="' + cls + '" aria-label="' + c.name + '">' +
+      '<div class="m-ch__head">' +
+        '<span class="m-ch__mark m-ch__mark--' + c.mark + '" aria-hidden="true"></span>' +
+        '<span class="m-ch__name">' + c.name + '</span>' +
+        '<span class="m-ch__device">' + c.device + '</span>' +
+        '<span class="m-health m-health--' + st.health + '"><span class="glyph ' + healthGlyph(st.health) + '" aria-hidden="true"></span>' + st.healthText + '</span>' +
+        '<span class="m-ch__readout num">' + st.readout + '</span>' +
+      '</div>' +
+      '<div class="m-grid">' +
+        '<div class="m-meter m-meter--' + (LAYOUT_B ? "h" : "v") + '" style="--level: ' + lv + '%; --hold: ' + lv + '%;">' +
+          '<div class="m-meter__scale"><span>0</span><span>−20</span><span>−40</span><span>−60</span></div>' +
+          '<div class="m-meter__track">' +
+            '<span class="m-meter__ticks"></span>' +
+            '<span class="m-meter__fill"></span>' +
+            '<span class="m-meter__peak"></span>' +
+            '<span class="m-meter__mark">✕</span>' +
+          '</div>' +
+        '</div>' +
+        '<span class="m-ch__readout num">' + st.readout + '</span>' +
+        '<div class="m-scale" aria-hidden="true">' +
+          '<span style="left: 0%">0</span>' +
+          '<span style="left: 33.333%">−20</span>' +
+          '<span style="left: 66.667%">−40</span>' +
+          '<span style="left: 100%">−60 dBFS</span>' +
+        '</div>' +
+        '<div class="m-env"><span class="m-env__zero"></span>' + bars + '</div>' +
+        '<div class="m-env-note"><span>历史包络 30 秒 · 2 秒一格</span><span class="m-env__stamp" id="env-stamp-' + c.id + '">20:57</span></div>' +
+      '</div>' +
+      '</section>';
+  }
+
+  function apply(state) {
+    var cfg = STATES[state];
+    if (!cfg) { return false; }
+
+    base();
+    ["name", "note", "clock", "clockLabel", "start", "live", "summary", "summaryDisabled", "summaryWhyText",
+     "fatal", "hint", "fail", "drainTitle", "drainBody", "drainDetail", "late", "guidance", "hbRecord",
+     "restart", "drawer", "since", "transcriptHealth", "stamp", "tape"].forEach(function (k) {
+      if (cfg[k] !== undefined) { S[k] = cfg[k]; }
+    });
+    ["local", "remote"].forEach(function (k) {
+      if (!cfg[k]) { return; }
+      for (var p in cfg[k]) { if (Object.prototype.hasOwnProperty.call(cfg[k], p)) { S[k][p] = cfg[k][p]; } }
+    });
+
+    /* 0. 还没开始录的那几档没有历史可画：包络时间戳给一个空位。
+          写一个没发生过的时刻（比如 20:57）就是把不存在的历史画在屏幕上 */
+    if (S.clock === "00:00:00") { S.stamp = "—"; }
+
+    /* 0c. 空闲那几档：转写区换空态文案、总结记录的入口写着「还没有」。
+           这两条是章 2.5 那张表定的——空闲这一档还没开始录，一行转写都还不存在，
+           一次总结也还没按过。稿子照它走，不把录音中的内容留在屏幕上。
+           那几行正文留在 DOM 里由 hidden 收起，切回录音中就照旧铺开 */
+    var idleNow = S.clock === "00:00:00";
+    document.getElementById("transcript").hidden = idleNow;
+    document.getElementById("transcript-empty").hidden = !idleNow;
+    document.getElementById("transcript-toggle").hidden = idleNow;
+    document.getElementById("transcript-note").textContent = idleNow
+      ? "这场还没开始 · 开录之后一行一行落在这里"
+      : "最近 200 行 · 向上可看更早";
+    document.getElementById("summary-log-btn").textContent = idleNow
+      ? "本场总结记录（还没有）"
+      : "本场总结记录（3 次）";
+
+    /* 0b. 心跳失联是唯一一处「界面看不见服务」的状态：包络的时间戳停在
+           服务最后一次应答的那一刻（由那一档自己的 stamp 给），数据不继续
+           往前推；心跳恢复那一档的 stamp 回到实时的 20:58 */
+    var hbLost = state === "heartbeat-lost";
+
+    /* 1. 状态类：页面根节点上的 is-<state> 是 CSS 唯一的钩子 */
+    ROOT.className = ROOT.className.replace(/\bis-[a-z-]+\b/g, "").replace(/\s+/g, " ").trim();
+    ROOT.classList.add("is-" + state);
+    ROOT.dataset.state = state;
+
+    /* 2. 状态胶囊 + 时长 */
+    document.getElementById("st-glyph").className = "glyph " + (GLYPH[state] || "glyph--rec");
+    document.getElementById("st-name").textContent = S.name;
+    document.getElementById("st-note").textContent = S.note;
+    document.getElementById("hb-record").hidden = !S.hbRecord;
+    document.getElementById("clock-label").textContent = S.clockLabel;
+    document.getElementById("clock-value").textContent = S.clock;
+
+    /* 3. 采集带：两块通道。A 是 .m-band--split 的两列，B 是 .m-band 的整宽横条。
+          只换两个挂载点本身，采集带的骨架与总结区一格不动。
+          心跳失联时两路都换成「数据已停」，读数不再顶着估出来的值 */
+    if (hbLost) {
+      ["local", "remote"].forEach(function (k) {
+        S[k].health = "stopped";
+        S[k].healthText = "数据已停";
+        S[k].readout = "—";
+        S[k].chipGlyph = "idle";
+        S[k].chipText = (k === "local" ? "本地" : "远端") + " · 数据已停";
+      });
+    }
+    document.getElementById("ch-local").outerHTML = channel(0, S.local);
+    document.getElementById("ch-remote").outerHTML = channel(1, S.remote);
+    /* 两块的包络时间戳跟着状态走：心跳失联停在数据停的那一刻，收尾停在最后落盘 */
+    document.getElementById("env-stamp-local").textContent = S.stamp;
+    document.getElementById("env-stamp-remote").textContent = S.stamp;
+
+    /* 4. 每路健康：两条文字保证 */
+    document.getElementById("chips").innerHTML = [S.local, S.remote].map(function (st, i) {
+      return '<span class="m-chip" data-ch="' + CH[i].id + '"><span class="glyph ' + chipGlyphClass(st.chipGlyph) + '" aria-hidden="true"></span>' + st.chipText + '</span>';
+    }).join("");
+
+    /* 4b. 转写正文跟着「这一屏现在是几点」走。默认那一份的「现在」是 20:57；
+           lost-one 那一档的「现在」是 21:10（远端从 20:57 起丢了 13 分钟还没
+           回来），正文就得有 20:57 之后本地这一路继续录下来的那几行——不然
+           同一屏上横幅说「已丢 13 分钟」、正文却停在 13 分钟以前，两个时间
+           自己打自己。「回到最新」那个按钮留在原地不动 */
+    if (S.tape) {
+      var tape = document.getElementById("transcript");
+      var jump = tape.querySelector(".transcript__jump");
+      Array.prototype.slice.call(tape.querySelectorAll(".transcript__line")).forEach(function (el) {
+        el.parentNode.removeChild(el);
+      });
+      S.tape.forEach(function (L) {
+        var d = document.createElement("div");
+        d.className = "transcript__line";
+        d.innerHTML = '<span class="transcript__time">' + L[0] + '</span>' +
+          '<span class="transcript__route">' + L[1] + '</span>' +
+          (L[3] ? '<span class="transcript__gap">' + L[2] + '</span>'
+                : '<span class="transcript__text">' + L[2] + '</span>');
+        tape.insertBefore(d, jump);
+      });
+    }
+
+    /* 4c. 转写区：心跳恢复那一档在末尾补一条断口，把中断的 42 秒写在时间轴上 */
+    var gapLine = document.getElementById("transcript-gap");
+    if (gapLine) { gapLine.hidden = !S.hbRecord; }
+
+    /* 5. 告警：致命级横幅 / 提示级细条 / 启动失败与被拒。
+          没有告警的状态里整块告警区不占位置（hidden 属性压住它）。
+          「某一路采不到了」那条横幅只归 lost-one 那一档：心跳失联说的是
+          「界面看不见服务」，收尾失败说的是「这场已经录完、最后一步没走成」，
+          两条横幅叠上去都会把「哪一路死了」这件事搅浑，所以这两档的整块
+          告警区都不出现（收尾失败那一档的内容走下面第 6 步的收尾带） */
+    document.getElementById("alert-band").hidden = hbLost || !(S.fatal || S.hint || S.fail || S.late || S.guidance);
+    document.getElementById("hint-since").textContent = S.since;
+    document.getElementById("fatal-since").textContent = "从 " + S.since + " 起";
+    document.getElementById("fail-start").hidden = S.fail !== "start";
+    document.getElementById("fail-rejected").hidden = S.fail !== "rejected";
+    document.getElementById("fail-drain").hidden = S.fail !== "drain";
+    document.getElementById("hb-late").hidden = !S.late;
+    document.getElementById("hb-guidance").hidden = !S.guidance;
+    /* 服务重启那行：只有空闲态回来、日志里有未收尾记录时才出现（章 4.5） */
+    document.getElementById("restart-note").hidden = !S.restart;
+
+    /* 6. 收尾横幅：能不能关机只由这一条回答。收尾走完（或本来没收尾）时整块不出现。
+          收尾内部失败那一档，它在收尾带里的失败块要现身——原因、log 与可复制的
+          命令在这一块里说全（章 4.2 二）。告警带里那个 #fail-drain 只在
+          lost-one 的「看日志」按钮按下去时用，这一档它整块收着 */
+    document.getElementById("drain-band").hidden = !S.drainTitle;
+    document.getElementById("drain-fail").hidden = state !== "ended-drain-failed";
+    document.getElementById("drain-title").textContent = S.drainTitle;
+    document.getElementById("drain-body").textContent = S.drainBody;
+    document.getElementById("drain-detail").innerHTML = (S.drainDetail || []).map(function (d) {
+      var gi = d[1] === "done" ? "glyph--done" : d[1] === "fail" ? "glyph--cross" : d[1] === "running" ? "glyph--draining" : "glyph--idle";
+      var mark = d[1] === "done" ? "✓" : d[1] === "fail" ? "✕" : d[1] === "running" ? "…" : "□";
+      return '<span class="m-chip"><span class="glyph ' + gi + '" aria-hidden="true"></span>' + d[0] + " " + mark + '</span>';
+    }).join("");
+    document.getElementById("drain-fail").hidden = S.fail !== "drain";
+
+    /* 7. 总结区。
+       result 那一档给「刚才在讲什么 / 讲到哪儿了 / 丢掉了什么」这三小段；
+       log 那一档换成本场的总结记录——三次，各带窗口与时刻（章 4.5 / 章 5.1）。
+       两块内容共用一个面板，切状态时就地换标题与正文 */
+    var btn = document.getElementById("summary-btn");
+    btn.disabled = !!S.summaryDisabled;
+    btn.textContent = S.summary === "running" ? "正在总结刚才的 15 分钟…" : "总结一下";
+    document.getElementById("summary-why").hidden = !S.summaryDisabled;
+    document.getElementById("summary-why").textContent = S.summaryWhyText;
+    document.getElementById("summary-run").hidden = S.summary !== "running";
+
+    var cardTitle = document.getElementById("summary-card-title");
+    var cardBodyEl = document.getElementById("summary-card-body");
+    if (S.summary === "log") {
+      var lg = idleNow ? LOG_EMPTY : LOG_THREE;
+      cardTitle.textContent = lg.title;
+      cardBodyEl.innerHTML = cardBody(lg);
+    } else {
+      cardTitle.textContent = "刚才的 15 分钟";
+      cardBodyEl.innerHTML = cardBody(RESULT_THREE);
+    }
+
+    /* 8. 转写：临时稿的地位不变，只有健康位换字 */
+    var th = document.getElementById("transcript-health");
+    th.textContent = S.transcriptHealth;
+    th.title = S.transcriptHealth === "停" ? "转写已停 · 最后一行 20:57" : "";
+
+    /* 9. 抽屉 */
+    document.getElementById("drawer").classList.toggle("drawer--open", !!S.drawer);
+    document.getElementById("scrim").style.display = S.drawer ? "block" : "none";
+
+    /* 10. 心跳失联横幅是 fixed 的：量出它自己的高度，交给顶栏让位 */
+    ROOT.style.setProperty("--hb-h", document.getElementById("hb-banner").offsetHeight + "px");
+    return true;
+  }
+
+  /* ---- 状态切换器：复核时不用手改地址栏 ---- */
+  var name = new URLSearchParams(location.search).get("state");
+  if (!name || !Object.prototype.hasOwnProperty.call(STATES, name)) { name = "idle"; }
+  apply(name);
+
+  /* 底部那条复核用的导航条默认不显示（章 8 门槛 5）：地址后面加 ?nav=1 才出来。
+     它跟 ?state= 并存，两个参数各管各的 */
+  if (new URLSearchParams(location.search).get("nav") === "1") {
+    ROOT.classList.add("is-nav-shown");
+  }
+
+  var sel = document.getElementById("state-switch");
+  sel.innerHTML = Object.keys(STATES).map(function (k) {
+    return '<option value="' + k + '"' + (k === name ? " selected" : "") + ">?state=" + k + "</option>";
+  }).join("");
+  sel.addEventListener("change", function () {
+    var u = new URL(location.href);
+    u.searchParams.set("state", sel.value);
+    location.href = u.toString();
+  });
+  document.getElementById("state-echo").textContent = "?state=" + name;
+
+  /* ---- 就地可点的交互点：设计稿里只做界面上的后果，不发请求 ---- */
+  var drawer = document.getElementById("drawer");
+  function setDrawer(open) {
+    drawer.classList.toggle("drawer--open", open);
+    ROOT.classList.toggle("is-settings-open", open);
+    document.getElementById("gear").setAttribute("aria-expanded", open ? "true" : "false");
+    document.getElementById("scrim").style.display = open ? "block" : "none";
+  }
+  document.getElementById("gear").addEventListener("click", function () { setDrawer(!drawer.classList.contains("drawer--open")); });
+  document.getElementById("drawer-close").addEventListener("click", function () { setDrawer(false); });
+  document.getElementById("scrim").addEventListener("click", function () { setDrawer(false); });
+
+  var muteBtn = document.getElementById("mute-session");
+  muteBtn.addEventListener("click", function () {
+    muteBtn.textContent = "本场已静音";
+    muteBtn.setAttribute("aria-pressed", "true");
+    muteBtn.classList.add("btn--ghost");
+  });
+
+  var sw = document.getElementById("alarm-switch-drawer");
+  var swMain = document.getElementById("alarm-switch-main");
+  sw.addEventListener("change", function () { swMain.checked = sw.checked; });
+  swMain.addEventListener("change", function () { sw.checked = swMain.checked; });
+
+  var seg = document.getElementById("summary-windows");
+  function windowName() {
+    var on = seg.querySelector(".seg__item--on");
+    return on ? on.textContent.trim() : "15 分钟";
+  }
+  seg.addEventListener("click", function (e) {
+    if (!e.target.classList.contains("seg__item")) { return; }
+    Array.prototype.forEach.call(seg.children, function (b) { b.classList.toggle("seg__item--on", b === e.target); });
+    var w = windowName();
+    document.getElementById("summary-run").innerHTML = '<span class="spinner" aria-hidden="true"></span> 正在总结刚才的 ' + w + "…";
+    document.getElementById("summary-btn").textContent = "正在总结刚才的 " + w + "…";
+    /* 档位换过之后，结果面板那一份也跟着换窗口名。记录那一档不动：
+       记录里每一条记的是当时按的是哪个窗口，与现在选的档位无关（章 5.1） */
+    if (document.getElementById("summary-card-title").textContent.indexOf("本场总结记录") < 0) {
+      document.getElementById("summary-card-title").textContent = "刚才的 " + w;
+    }
+  });
+
+  document.getElementById("summary-btn").addEventListener("click", function () {
+    var w = windowName();
+    var run = document.getElementById("summary-run");
+    run.innerHTML = '<span class="spinner" aria-hidden="true"></span> 正在总结刚才的 ' + w + "…";
+    run.hidden = false;
+    this.textContent = "正在总结刚才的 " + w + "…";
+    showCard("刚才的 " + w);
+  });
+
+  var card = document.getElementById("summary-card");
+  function showCard(title) {
+    card.style.display = "block";
+    document.getElementById("summary-card-title").textContent = title;
+  }
+  document.getElementById("summary-close").addEventListener("click", function () { card.style.display = "none"; });
+  /* 「本场总结记录」那个入口：展开的是记录那一份，三次各带窗口与时刻（章 5.1）。
+     空闲态按过 0 次，展开的是空态文案 */
+  document.getElementById("summary-log-btn").addEventListener("click", function () {
+    showCard(document.getElementById("summary-log-btn").textContent.trim());
+  });
+
+  document.getElementById("transcript-toggle").addEventListener("click", function () {
+    var t = document.getElementById("transcript");
+    var open = t.classList.toggle("is-open");
+    this.setAttribute("aria-expanded", open ? "true" : "false");
+    this.innerHTML = (open ? "收起" : "展开") + ' <span class="transcript__toggle-hint">最近一句</span>';
+  });
+
+  /* 校验失败当场说，不弹原生 alert / confirm */
+  var hp = document.getElementById("hb-period");
+  hp.addEventListener("change", function () {
+    var v = parseFloat(this.value);
+    document.getElementById("hb-period-err").hidden = !(isNaN(v) || v < 1 || v > 60);
+  });
+  Array.prototype.forEach.call(document.querySelectorAll("[data-pick]"), function (b) {
+    b.addEventListener("click", function () {
+      document.getElementById("dev-remote-err").hidden = b.dataset.pick !== "remote";
+    });
+  });
+  document.getElementById("show-log-fatal").addEventListener("click", function () {
+    document.getElementById("fail-drain").hidden = false;
+  });
+})();
+</script>
+</body>
+</html>
