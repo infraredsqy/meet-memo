@@ -14,3 +14,7 @@ dist/
 
 # 运行与日志
 *.log
+
+# 测试与打包产生的元数据
+.pytest_cache/
+*.egg-info/

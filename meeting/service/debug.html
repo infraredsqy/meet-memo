@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>meeting · 骨架自检页 /debug</title>
+<!--
+  骨架自检页（phase1 §3.8）—— 零依赖、无构建，纯 HTML + 原生 fetch。
+
+  这一页的定位由契约冻结：
+    * 它是骨架自检页，服务的是「半夜复核服务到底活着没、状态长什么样」这种场景；
+    * 产品界面是 `/` 上那个 React 应用（c62dec56 的活），跟这一页是两回事 ——
+      这一页只做骨架自检，将来产品界面上了也照旧留在 `/debug`（契约 §3.8 与冻结项 18
+      要求该页显式标注定位），不进产品导航；
+    * 它不承担任何告警职责：告警只走状态与界面，这一页只把原始快照摆出来。
+
+  本 Phase 接通的部分：
+    * 读原始快照（GET /api/state）；
+    * 显示服务信息（版本 / 端口 / URL / 输出根 / log 路径）。
+
+  本 Phase 留成「未接入」占位的部分（phase2 接通时替换这些占位，别把它们留成静默死按钮）：
+    * 按开始 / 按结束 —— 归 POST /api/actions；
+    * 事件流面板 —— 归 GET /api/events（SSE）。
+-->
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 14px/1.6 ui-monospace, Consolas, "Courier New", monospace; margin: 0; padding: 24px; background: #12141a; color: #e6e8ee; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { color: #98a0b3; margin-bottom: 20px; }
+  section { border: 1px solid #2b3040; border-radius: 8px; padding: 14px 16px; margin-bottom: 16px; background: #171a22; }
+  h2 { font-size: 14px; margin: 0 0 10px; color: #cfd6e6; }
+  table { border-collapse: collapse; }
+  td { padding: 2px 14px 2px 0; vertical-align: top; }
+  td.k { color: #98a0b3; white-space: nowrap; }
+  .pill { display: inline-block; padding: 1px 8px; border: 1px solid #3a4257; border-radius: 999px; font-size: 12px; color: #cfd6e6; }
+  .pending { border-style: dashed; border-color: #5a4a2a; background: #1e1a12; }
+  .pending h2 { color: #e0c07a; }
+  button[disabled] { opacity: .55; cursor: not-allowed; }
+  pre { margin: 8px 0 0; padding: 10px; background: #0f1116; border: 1px solid #232838; border-radius: 6px; overflow: auto; max-height: 420px; }
+  .err { color: #ff8f8f; }
+</style>
+</head>
+<body>
+<h1>meeting · 骨架自检页</h1>
+<div class="sub">非产品界面 · 零依赖 · 无构建 · 不承担任何告警职责（告警只走状态与界面）</div>
+
+<section id="service">
+  <h2>服务信息</h2>
+  <table>
+    <tr><td class="k">版本</td><td id="f-version">—</td></tr>
+    <tr><td class="k">端口</td><td id="f-port">—</td></tr>
+    <tr><td class="k">URL</td><td id="f-url">—</td></tr>
+    <tr><td class="k">输出根</td><td id="f-out-root">—</td></tr>
+    <tr><td class="k">log 路径</td><td id="f-log-path">—</td></tr>
+    <tr><td class="k">顶层状态</td><td><span class="pill" id="f-top-state">—</span></td></tr>
+    <tr><td class="k">revision</td><td id="f-revision">—</td></tr>
+    <tr><td class="k">快照读取</td><td id="f-fetch-state">—</td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>原始快照（GET /api/state）</h2>
+  <div class="sub">这一页只读一次快照；本 Phase 还没有实时推送。</div>
+  <button id="reload" type="button">重新读一次快照</button>
+  <pre id="snapshot">（还没读到）</pre>
+</section>
+
+<section class="pending" id="actions-pending">
+  <h2>按开始 / 按结束 —— 未接入</h2>
+  <p>
+    这一块是 <strong>可见的「未接入」占位</strong>：动作端点 <code>POST /api/actions</code>
+    归 phase2，本 Phase 的服务端只备好了它的两道头部校验
+    （<code>Content-Type: application/json</code> 与 <code>X-Meeting-Service: 1</code>）。
+  </p>
+  <p>
+    另外两个原因让「开始录音」现在也确实起不来：
+    采集后端默认是 <code>null</code> 替身，如实报「采集后端未接入」（不假装能录）；
+    四态状态机与场次目录同样归 phase2。
+  </p>
+  <button type="button" disabled>开始录音</button>
+  <button type="button" disabled>结束录音</button>
+</section>
+
+<section class="pending" id="events-pending">
+  <h2>事件流 —— 未接入</h2>
+  <p>
+    这一块是 <strong>可见的「未接入」占位</strong>：实时推送通道
+    <code>GET /api/events</code>（SSE 三通道 + 首帧快照）归 phase2。
+  </p>
+  <pre>（事件流面板等 phase2 接通 SSE 后出现在这里）</pre>
+</section>
+
+<script>
+(function () {
+  "use strict";
+
+  function text(id, value) {
+    var node = document.getElementById(id);
+    if (node) { node.textContent = (value === null || value === undefined || value === "") ? "—" : String(value); }
+  }
+
+  function fillService(snapshot) {
+    var service = (snapshot && snapshot.service) || {};
+    text("f-version", service.version);
+    text("f-port", service.port);
+    text("f-url", service.url);
+    text("f-out-root", service.out_root);
+    text("f-log-path", service.log_path);
+    text("f-top-state", snapshot ? snapshot.top_state : null);
+    text("f-revision", snapshot ? snapshot.revision : null);
+  }
+
+  function loadSnapshot() {
+    text("f-fetch-state", "读取中…");
+    fetch("/api/state", { headers: { "Accept": "application/json" } })
+      .then(function (response) {
+        text("f-fetch-state", "HTTP " + response.status);
+        return response.json();
+      })
+      .then(function (snapshot) {
+        fillService(snapshot);
+        document.getElementById("snapshot").textContent = JSON.stringify(snapshot, null, 2);
+      })
+      .catch(function (error) {
+        text("f-fetch-state", "读不到");
+        var box = document.getElementById("snapshot");
+        box.textContent = "读快照失败：" + error;
+        box.className = "err";
+      });
+  }
+
+  document.getElementById("reload").addEventListener("click", loadSnapshot);
+  loadSnapshot();
+})();
+</script>
+</body>
+</html>

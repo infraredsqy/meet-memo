@@ -1,0 +1,51 @@
+# meeting —— 本地会议录制服务骨架（V2 第一个工程节点）
+#
+# 依赖禁忌（phase1 §3.2，写进本文件以免下游照抄错）：
+#   - 不引 sse-starlette（SSE 手写）
+#   - 不引 FastAPI（技术栈是 Starlette + uvicorn）
+#   - 不引 pytest-asyncio（测试一律同步写）
+#   - 不引 websockets
+# 运行时依赖只有 starlette 与 uvicorn 两条；模型 / 音频依赖一律放 optional extra，
+# 保证 `meeting web` 的 import 链不碰重依赖、启动在秒级完成（B11 / E10）。
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "meeting"
+version = "0.1.0"
+description = "本地会议录制服务：单进程、只监听 127.0.0.1"
+requires-python = ">=3.13"
+dependencies = [
+    "starlette",
+    "uvicorn",
+]
+
+[project.scripts]
+meeting = "meeting.cli:main"
+
+[project.optional-dependencies]
+# 本 Phase 只留空壳 extra 声明，由下游节点各自加（§3.2）。
+capture = []
+asr = []
+# 测试层：httpx 只服务测试层的真服务子进程；运行时的端口探针走标准库 socket。
+test = [
+    "pytest",
+    "httpx",
+]
+
+[tool.setuptools]
+# 显式列出包：与目录树一一对应（三个包标记都必须在位）。
+packages = ["meeting", "meeting.service", "meeting.backends"]
+
+[tool.setuptools.package-data]
+# debug.html 住在包里：pip install 之后 /debug 那页也得在。
+"meeting.service" = ["*.html"]
+
+[tool.pytest.ini_options]
+# 测试进程的导入路径定死一条：pythonpath 按 rootdir 解析，
+# pyproject.toml 与 tests/ 同在仓库根，从仓库根跑 `python -m pytest` 时 rootdir 落在仓库根，
+# 干净检出、未安装包的状态下 `import meeting` 因此成立。
+pythonpath = ["."]
+testpaths = ["tests"]
