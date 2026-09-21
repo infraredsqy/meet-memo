@@ -25,7 +25,7 @@
 | | `settings-update-ok.json` | 同上 | 成功体含 `applied` / `pending_restart` **两数组**、**没有 `message`** |
 | | `fail-already-recording.json` | 录音中再 `start` | 409 + `detail` 三键 |
 | | `fail-draining.json` | 失败停留档里再 `start` | 409 + `detail` 四键（含 `failed_steps`） |
-| | `fail-capture-unavailable.json` | 进程内 TestClient（`capture.backend: auto` → null 替身） | 503 + `detail` 三键（`{session_id, dir, reason}` 那一档） |
+| | `fail-capture-unavailable.json` | 进程内 TestClient（显式配 `capture.backend: null` 替身；默认 `auto` 已接真采集，`start` 会真开一场） | 503 + `detail` 三键（`{session_id, dir, reason}` 那一档） |
 | | `fail-not-recording.json` | 空闲态 `stop` | 409 + **空对象** `detail` |
 | | `fail-invalid-setting.json` | `start` 带 `mode: "burst"` | 400 + `detail` 三键（`{key, value, legal}`） |
 | | `fail-invalid-setting-unknown-action.json` | 打一个不认识的动作名 | 400 + `detail` 两键（`{action, known}`） |

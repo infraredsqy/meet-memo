@@ -8,7 +8,7 @@
   - `already_recording`(409，带 `session_id` / `dir` / `elapsed_seconds`)、
     `draining`(409，`detail` 带场次目录 + 失败步 + 场次 log 路径)；
   - `not_recording`(409) 且**重复调用不产生第二次迁移**；
-  - `capture_unavailable`(503，默认 null 后端下 `start` 的真实结果，且盘上不留目录)；
+  - `capture_unavailable`(503，显式配 `null` 替身时 `start` 的真实结果，且盘上不留目录)；
   - `mute_session` 立刻改 `muted`、**不动** `alarm.sound`、**下一场 `start` 复位**；
   - `settings_update` 的 `applied`（`asr.*` 五个点号键名）与 `pending_restart`（三分表里其余
     16 个键，含 `alarm.sound`）分类、**写盘拓扑**（只写已有键 + 本次改动的键）、
@@ -223,7 +223,7 @@ def test_start_returns_already_recording_with_the_three_fields(tmp_path):
 
 
 def test_start_unavailable_on_the_default_null_backend_leaves_nothing_on_disk(tmp_path):
-    """默认 null 后端：`capture_unavailable`(503) 带人话，**盘上不留任何场次目录**。"""
+    """显式配 `null` 替身：`capture_unavailable`(503) 带人话，**盘上不留任何场次目录**。"""
     with live(tmp_path, {"capture.backend": "null"}) as (client, _runtime, _home, out_root):
         response = post(client, "start")
         assert response.status_code == 503

@@ -69,7 +69,7 @@
 | `NullCaptureBackend` | **两路都 `unprobed`**、`device_name` 为 `null`；`start()` 抛 `CaptureUnavailable`（`code = capture_unavailable`，带一句人话「采集后端未接入：当前是 null 替身，不会真的录音」）；`finalize()` / `transcode()` / `stop()` 是安全空实现 |
 | `NullTranscriberBackend` | 恒 `health = normal`、`backlog_depth() = 0`、`segment_timeout() = 20.0`；起停是安全空实现 |
 
-这是**默认**行为：什么都没配时服务照常起、照常发页面，只是不会有任何东西被录下来。此时 `start` 回 `503 capture_unavailable`，盘上不留任何场次目录。
+替身那一档**只在显式配置时出现**（`capture.backend = null`，或解析失败回退）：`start` 回 `503 capture_unavailable`，盘上不留任何场次目录。现在的**默认取值是 `auto`**，它解析到真采集后端（`meeting.backends.capture:CaptureBackend`）：设备探测与试开在 `probe()`，`start` 真的开一场、真的会把声音录下来；只有设备全起不来时才回 `503 capture_unavailable`（`detail.reason` 写明哪一路为什么）。
 
 `null` 替身**不长**合成电平或故障注入那类测试逻辑 —— 那是开发替身（`backends/dev.py`）的事。
 
