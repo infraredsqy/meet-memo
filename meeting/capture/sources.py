@@ -33,10 +33,6 @@ from meeting.capture.devices import (
     measure_samples,
 )
 
-#: 本模块依赖的两个声卡库（`capture_readiness()` 报给调用方看）
-SOUNDDEVICE_MODULE = "sounddevice"
-SOUNDCARD_MODULE = "soundcard"
-
 #: `soundcard` 的默认 render 端点在本模块的端点表里恒排第 0 条（`select_loopback()` 的
 #: 「系统默认 render 端点」那一档因此不必再知道库的存在）
 DEFAULT_RENDER_INDEX = 0
@@ -55,16 +51,6 @@ def _import_soundcard() -> Any:
     import soundcard  # noqa: PLC0415 - 惰性 import 是有意的（见模块说明）
 
     return soundcard
-
-
-def capture_readiness() -> dict[str, bool]:
-    """两个声卡库在不在（只报事实，不抛错）。"""
-    import importlib.util
-
-    return {
-        SOUNDDEVICE_MODULE: importlib.util.find_spec(SOUNDDEVICE_MODULE) is not None,
-        SOUNDCARD_MODULE: importlib.util.find_spec(SOUNDCARD_MODULE) is not None,
-    }
 
 
 def _error_text(exc: BaseException) -> str:
@@ -114,10 +100,40 @@ def _flatten(data: Any) -> list[Any]:
 # ---------------------------------------------------------------------------
 
 
+def _default_input_index(sounddevice: Any) -> int | None:
+    """系统默认输入端点的序号（**只读**，不开流、不采集任何声音）。
+
+    先读 `sd.default.device`（`(输入, 输出)` 一对；`-1` 表示「按 PortAudio 的默认来」），
+    读不出来或拿到 `-1` 时退到 `sd.query_devices(kind="input")`，由库把默认值解析成一个真实
+    序号。两条都是只读枚举。本机实测两条都给 `1`（MME `Analogue 1 + 2 (2- Focusrite US`）。
+
+    这个序号就是 `mic_candidates()` 在没配 `devices.mic` 时的种子取值口。本机读数：
+    `#1` 是 Focusrite；序号最小的 `#0` 是 `Microsoft 声音映射器 - Input`（Windows 的
+    WAVE_MAPPER，跟随系统默认输入设备），把它当成种子报出来的是一个 mapper 别名，
+    并且会把「系统默认输入当下是什么」原样带进 mic 那一侧。
+    """
+    index: int | None = None
+    try:
+        index = int(sounddevice.default.device[0])
+    except Exception:  # noqa: BLE001 - 读不出来按「没有默认输入」处理，退到下面那条
+        index = None
+    if index is not None and index >= 0:
+        return index
+    try:
+        return int(sounddevice.query_devices(kind="input")["index"])
+    except Exception:  # noqa: BLE001 - 同上的口径：退不出来就当没有默认输入端点
+        return None
+
+
 def list_input_endpoints() -> list[DeviceEndpoint]:
-    """`sounddevice` 的输入端点表（抓取型；含各 host API 下的同名端点）。"""
+    """`sounddevice` 的输入端点表（抓取型；含各 host API 下的同名端点）。
+
+    `max_input_channels < 1` 的条目在这里就被滤掉（V1 的 `d.get("max_input_channels", 0) > 0`
+    那一判），系统默认输入那一条按 `_default_input_index()` 标成 `is_default=True`。
+    """
     sounddevice = _import_sounddevice()
     host_apis = [str(item.get("name") or "") for item in sounddevice.query_hostapis()]
+    default_index = _default_input_index(sounddevice)
     endpoints: list[DeviceEndpoint] = []
     for index, device in enumerate(sounddevice.query_devices()):
         try:
@@ -137,6 +153,7 @@ def list_input_endpoints() -> list[DeviceEndpoint]:
                 role="input",
                 index=index,
                 channels=channels,
+                is_default=index == default_index,
             )
         )
     return endpoints
@@ -256,9 +273,6 @@ def test_open_loopback(endpoint: DeviceEndpoint) -> OpenAttempt:
 
 __all__ = [
     "DEFAULT_RENDER_INDEX",
-    "SOUNDCARD_MODULE",
-    "SOUNDDEVICE_MODULE",
-    "capture_readiness",
     "list_input_endpoints",
     "list_render_endpoints",
     "loopback_recorder",

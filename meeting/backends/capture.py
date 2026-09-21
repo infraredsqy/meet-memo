@@ -33,9 +33,6 @@ from meeting.capture import sources as sources_module
 
 _log = logging.getLogger("meeting.backends.capture")
 
-#: 两路的固定次序（与 `meeting/backends/base.py` 的 `SOURCE_IDS` 一致）
-SOURCE_ORDER: tuple[str, ...] = ("mic", "loopback")
-
 #: `start()` 的拒绝文案（这一段不做采集引擎，如实说清而不是假装能录）
 CAPTURE_ENGINE_PENDING_REASON = "采集引擎在下一执行单元接入：这一段只交设备层，不会真的录"
 
@@ -195,7 +192,6 @@ class CaptureBackend:
 
 __all__ = [
     "CAPTURE_ENGINE_PENDING_REASON",
-    "SOURCE_ORDER",
     "CaptureBackend",
     "CaptureUnavailable",
 ]

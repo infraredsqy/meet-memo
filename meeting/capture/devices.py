@@ -10,7 +10,7 @@
   1. `self.mic_device` / `self.loopback_device` → 调用方交进来的配置值（`configured` 形参）；
   2. `self` 方法 → 模块级函数；
   3. `sd.query_devices()` / `sc.all_speakers()` 的产物 → 调用方交进来的**端点表**
-     （`DeviceEndpoint`，带 `name` / `host_api` / `index` / `channels`）；
+     （`DeviceEndpoint`，带 `name` / `host_api` / `index` / `channels` / `is_default`）；
   4. 返回值：V1 交回设备索引 / speaker 对象，这里交回端点对象与一句人话（`SelectionOutcome`），
      好让 `probe()` 能如实报 `SourceProbe` 的三档。
 
@@ -38,11 +38,17 @@
     16k 打开失败），故按 host API 优先级（WASAPI→DirectSound→MME）逐个试开 SAMPLE_RATE，
     返回第一个能开的。
 
-## 本机实测（供后来人对照；`phase1/report.md` 里有原始输出）
+## 本机实测（供后来人对照；原始输出见 `phase1/report.md` 与 `phase1/fix3.md`）
 
-本机装着 VB-Cable，系统默认输入就是 `CABLE Output (VB-Audio Virtual Cable)` —— 它是一条
-**抓取型**（capture）端点，抓的是「往 CABLE Input 播出去的声音」，也就是远端那一路。
-把它当麦克风录下来，mic 与 loopback 会抓到同一路内容（spec 第 22 行的 C6）。因此**在 V1 的
+本机装着 VB-Cable。**系统默认输入是 `Analogue 1 + 2 (2- Focusrite US`（MME #1）**，只读读数是
+`sd.default.device = [1, 6]`、`sd.query_devices(kind="input")["index"] == 1`、
+`query_hostapis()[MME]["default_input_device"] == 1`。序号最小的那条 `#0` 是 MME 的
+`Microsoft 声音映射器 - Input` —— Windows 的 **WAVE_MAPPER**：它跟随系统默认输入设备，
+报出来的是一个跟着变的别名。旧稿按「序号最小」取种子，落到的就是它（C1）。
+
+VB-Cable 的抓取侧 `CABLE Output ...` 是一条**抓取型**（capture）端点，抓的是「往 CABLE Input
+播出去的声音」，也就是远端那一路。把它当麦克风录下来，mic 与 loopback 会抓到同一路内容
+（spec 第 22 行的 C6）—— 而 mapper 恰好会把「系统默认输入当下是什么」原样带进来。因此**在 V1 的
 候选筛选之上多一条**：抓取型虚拟端点不进候选（判据是模块级两个常量，见 `is_pseudo_capture()`）；
 用户显式配了这类端点时照办，只在 `detail` 里留一句提醒。
 """
@@ -84,14 +90,18 @@ HOST_RANK_KEYS: tuple[str, ...] = ("WASAPI", "DirectSound", "MME")
 #: V1 里没命中上面三条时的 rank（搬自 `mnotes_core/recorder.py:399` 的 `return 9`）
 HOST_RANK_FALLBACK = 9
 
-#: 抓取型虚拟端点的**排除词**（小写子串）
+#: 抓取型虚拟端点的**排除词**（小写子串）：名字里带它的是这条虚拟线的抓取侧
 PSEUDO_CAPTURE_EXCLUDE_TOKEN = "cable output"
-#: 抓取型虚拟端点的**标记词**（小写子串）：两个都命中才算抓取型
-PSEUDO_CAPTURE_MARKER = "vb-audio virtual"
+#: 抓取型虚拟端点的**牌子标记**（小写子串）：两个都命中才算抓取型。
+#:
+#: 只取牌子名 `vb-audio`，不取更长的 `vb-audio virtual`：VB-Cable 在 WDM-KS 下的抓取侧
+#: 叫 `CABLE Output (VB-Audio Point)`（本机实测 #25），名字里没有 "virtual"，取长写法会把
+#: 它漏掉（任务书 §3.1 要求这类端点「一律不进候选」）。
+PSEUDO_CAPTURE_MARKER = "vb-audio"
 
-#: loopback 候选的**选中词**（V1 的 `"CABLE Input" in s.name`）
+#: loopback 候选的**选中词**（V1 的 `"CABLE Input" in s.name`：原样子串，不折形）
 LOOPBACK_PREFERRED_TOKEN = "CABLE Input"
-#: loopback 候选的**排除词**（V1 的 `"16ch" not in s.name`）
+#: loopback 候选的**排除词**（V1 的 `"16ch" not in s.name`：原样子串，不折形）
 LOOPBACK_EXCLUDED_TOKEN = "16ch"
 
 #: 两档探测结论（后端 `probe()` 的 `SourceProbe.status`）
@@ -114,8 +124,18 @@ class DeviceEndpoint:
     `name` —— 端点名（MME 的名字会被 Windows 截断，本机形如
     `Analogue 1 + 2 (2- Focusrite US`，照原样留着：它就是 `device_name` 要报出去的值）；
     `host_api` —— host API 名（`WASAPI` / `DirectSound` / `MME` / `Windows WDM-KS` …）；
-    `index` —— `sounddevice` 的设备序号（V1 的 `_resolve_mic_device` 交回的就是它）；
-    `channels` —— 端点声明的通道数（V1 的 `d.get("max_input_channels", 0) > 0` 用的是它）。
+    `index` —— `sounddevice` 的设备序号（V1 的 `_resolve_mic_device` 交回的就是它，
+    试开时也拿它当 `device=`）；
+    `channels` —— 端点声明的通道数。**筛选用的不是这个字段**：V1 的
+    `d.get("max_input_channels", 0) > 0` 由 `meeting/capture/sources.py` 的
+    `list_input_endpoints()` 在造表时就做完了（`:124-128` 的 `if channels < 1: continue`），
+    本模块不读它；留在端点对象上只是让这一行的读数跟着走。
+    `is_default` —— 这条是不是**系统默认输入端点**：`sources.list_input_endpoints()` 按只读的
+    `sd.default.device[0]`（读不出来时退到 `sd.query_devices(kind="input")`）标出来。
+    没配 `devices.mic` 时，种子的取值口就是它（见 `mic_candidates()`）—— 本机因此落在
+    MME `#1`（Focusrite）。同表里序号最小的 `#0` 是 MME 的
+    `Microsoft 声音映射器 - Input`（Windows 的 WAVE_MAPPER，跟随系统默认输入设备），
+    它的读数会跟着系统默认输入一起变。
     """
 
     name: str
@@ -123,6 +143,7 @@ class DeviceEndpoint:
     role: str
     index: int | None = None
     channels: int = 0
+    is_default: bool = False
 
     def __post_init__(self) -> None:
         if self.role not in ENDPOINT_ROLES:
@@ -244,14 +265,6 @@ class SelectionOutcome:
     def device_name(self) -> str | None:
         return None if self.endpoint is None else self.endpoint.name
 
-    def skipped(self) -> list[str]:
-        """试过、但没选上的端点与原因（`detail` 用）。"""
-        return [
-            f"{record.endpoint.label()}：{record.reason}"
-            for record in self.attempts
-            if record.endpoint != self.endpoint
-        ]
-
 
 # ---------------------------------------------------------------------------
 # 名字匹配
@@ -275,7 +288,11 @@ def token_form(name: str) -> str:
 
 
 def _contains(name: str, token: str) -> bool:
-    """`name` 里含不含标记词 `token`（先按 `token_form()` 折过，再按去标点的形态兜一次）。"""
+    """`name` 里含不含标记词 `token`（先按 `token_form()` 折过，再按去标点的形态兜一次）。
+
+    只给 `is_pseudo_capture()` 的两个常量用；loopback 那一级的两个子串判据走的是 V1 原文的
+    `in`（原样子串、不折形），不经过这里。
+    """
     folded = token_form(name)
     if token in folded:
         return True
@@ -302,22 +319,6 @@ def name_matches(configured: str, endpoint_name: str) -> tuple[bool, bool]:
     return (False, False)
 
 
-def find_by_name(
-    configured: str, endpoints: Iterable[DeviceEndpoint]
-) -> tuple[DeviceEndpoint, bool] | None:
-    """按显式配置的名字找端点：精确名优先，再前缀兜一次。"""
-    items = list(endpoints)
-    for endpoint in items:
-        matched, prefix = name_matches(configured, endpoint.name)
-        if matched and not prefix:
-            return (endpoint, False)
-    for endpoint in items:
-        matched, prefix = name_matches(configured, endpoint.name)
-        if matched and prefix:
-            return (endpoint, True)
-    return None
-
-
 # ---------------------------------------------------------------------------
 # 抓取型虚拟端点
 # ---------------------------------------------------------------------------
@@ -326,9 +327,13 @@ def find_by_name(
 def is_pseudo_capture(name: str) -> bool:
     """这条输入端点是不是**抓取型虚拟端点**（判据 = 模块级两个常量同时命中）。
 
-    V1 没有这一条（它的 `mic_device` 由用户点名物理麦）；V2 的默认配置下必须挡住：
-    `CABLE Output (VB-Audio Virtual Cable)` 抓的是「往 `CABLE Input` 播出去的声音」，
-    也就是远端那一路；把它当麦克风录下来，mic 与 loopback 就是同一路内容。
+    V1 没有这一条（它的 `mic_device` 由用户点名物理麦）；V2 必须挡住：抓取侧的
+    `CABLE Output ...` 抓的是「往 `CABLE Input` 播出去的声音」，也就是远端那一路；
+    把它当麦克风录下来，mic 与 loopback 就是同一路内容（任务书 §3.1）。
+
+    排除词 + 牌子标记同时命中才算，本机真表上命中的是四条：MME `#2` 与 DirectSound `#11`
+    的 `CABLE Output (VB-Audio Virtual Cable)`、WASAPI `#21` 的同名条目、以及 WDM-KS `#25`
+    的 `CABLE Output (VB-Audio Point)`（最后这条的牌子标记里没有 "virtual"，见常量注释）。
     """
     return _contains(name, PSEUDO_CAPTURE_EXCLUDE_TOKEN) and _contains(
         name, PSEUDO_CAPTURE_MARKER
@@ -385,16 +390,22 @@ def mic_candidates(
             log.warning("mic device '%s' not found, using default input", name)
             return None
 
-    两处 V2 的差异（都写在下面，各自的理由都在）：
-
     三处 V2 的差异（都写在下面，各自的理由都在）：
 
       - `if not name: return None` 这一档（交给 `sd.InputStream` 用系统默认输入）换成
-        「拿系统默认输入那条端点的名字当候选名的种子」：本段的交付要求是快照里报得出两路的
-        **真实设备名**，`device=None` 那条路报不出名字来。种子取端点表里序号最小的输入端点
-        （`sounddevice` 的默认输入就是它），随后的筛选 / 排序 / 试开照 V1 走；
-      - 候选里再滤掉抓取型虚拟端点（见 `is_pseudo_capture()`）。本机的系统默认输入正是
-        `CABLE Output`，不滤会把远端当成麦克风录一遍；
+        「拿**系统默认输入端点**的名字当候选名的种子」：本段的交付要求是快照里报得出两路的
+        **真实设备名**，`device=None` 那条路报不出名字来。种子的取值口是端点表上
+        `is_default=True` 的那条（`sources.list_input_endpoints()` 按只读的
+        `sd.default.device[0]` 标出来，本机 = MME `#1` Focusrite），随后的筛选 / 排序 /
+        试开照 V1 走。本机那张表里序号最小的 `#0` 是 MME 的
+        `Microsoft 声音映射器 - Input`（Windows 的 WAVE_MAPPER，跟随系统默认输入设备）：
+        旧稿按序号最小取种子，报出来的就是这个 mapper 别名 —— 它与机主插的那块声卡对不上，
+        而且会把「系统默认输入当下是什么」原样带进 mic 那一侧（默认输入切到 `CABLE Output`
+        时，mic 与 loopback 就录同一路）；系统默认输入端点本身是抓取型的，或表里一条都没标，
+        就退回按 host API 排序的第一条非抓取型候选；
+      - 候选里再滤掉抓取型虚拟端点（见 `is_pseudo_capture()`）。本机真表里
+        `CABLE Output (VB-Audio Virtual Cable)` 三条与 WDM-KS 的 `CABLE Output (VB-Audio
+        Point)` 一条都在表内，不滤会把远端当成麦克风录一遍；
       - 名字的两档匹配**落到候选集合上**（`name_matches()` 同时给出「中没中」与「是不是靠
         前缀兜的」）：先取**精确名**命中的那些候选（V1 的 `d.get("name") == name`），精确
         命中为空时才用前缀兜一次。V1 只有精确名这一档，截断名那条兜底是 V2 为 MME 加的；
@@ -408,14 +419,24 @@ def mic_candidates(
     matched_prefix = False
 
     if not name:
-        # V1 这一档是「交给系统默认输入」：这里换成默认输入那条端点的名字，
-        # 于是它照样走下面的筛选 / 排序 / 试开（交付要求：`device_name` 要报得出真名）
-        seed_pool = [item for item in inputs if not is_pseudo_capture(item.name)]
-        with_index = [item for item in seed_pool if item.index is not None]
-        if not with_index:
-            return ([], False, False)
-        default_index = min(item.index for item in with_index)
-        name = next(item.name for item in with_index if item.index == default_index)
+        # V1 这一档是「交给系统默认输入」（`if not name: return None`）：这里换成**系统默认
+        # 输入那条端点**的名字，于是它照样走下面的筛选 / 排序 / 试开（交付要求：`device_name`
+        # 要报得出真名）。抓取型的默认输入不进候选 —— 那样 mic 与 loopback 会录同一路
+        # （任务书 §3.1），退回按 host API 排序的第一条非抓取型候选。
+        seed = next(
+            (
+                endpoint
+                for endpoint in inputs
+                if endpoint.is_default and not is_pseudo_capture(endpoint.name)
+            ),
+            None,
+        )
+        if seed is None:
+            real = [endpoint for endpoint in inputs if not is_pseudo_capture(endpoint.name)]
+            if not real:
+                return ([], False, False)
+            seed = sort_candidates(real)[0]
+        name = seed.name
 
     # 第一档：**精确名**（V1 的 `d.get("name") == name`）命中几条就是几条
     cands = [
@@ -613,6 +634,10 @@ def loopback_candidates(
     「系统默认输出」那一档由调用方交进来的端点表**第一条**承担
     （`sources.list_render_endpoints()` 把 `default_speaker()` 排在第一位，
     见 `DEFAULT_RENDER_INDEX`）。
+
+    两个子串判据**逐字用 V1 的 `in` 表达式**（大小写敏感的原样子串，两条常量就是那两个字面量）：
+    V1 原文是 `"CABLE Input" in s.name and "16ch" not in s.name`，这里不做折形
+    （旧稿曾走 `_contains()` 折大小写与连字符，比 V1 宽，已按 V1 原文收回）。
     """
     renders = [endpoint for endpoint in endpoints if endpoint.role == "render"]
     name = (configured or "").strip()
@@ -625,8 +650,8 @@ def loopback_candidates(
         (
             endpoint
             for endpoint in renders
-            if _contains(endpoint.name, LOOPBACK_PREFERRED_TOKEN)
-            and not _contains(endpoint.name, LOOPBACK_EXCLUDED_TOKEN)
+            if LOOPBACK_PREFERRED_TOKEN in endpoint.name
+            and LOOPBACK_EXCLUDED_TOKEN not in endpoint.name
         ),
         None,
     )
@@ -745,7 +770,6 @@ __all__ = [
     "SelectionOutcome",
     "TestSample",
     "attempt_reason",
-    "find_by_name",
     "host_api_rank",
     "host_rank",
     "is_pseudo_capture",

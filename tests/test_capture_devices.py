@@ -41,6 +41,10 @@ from meeting.capture.devices import (
 #: **同名多候选**的一张端点表：一块 Focusrite 在 DirectSound / WASAPI / MME 下同名，
 #: 另有一条 MME 的 Realtek 与一条 `CABLE Output`（抓取型）。名字照本机实测原文，
 #: MME 的截断名也照抄（V1 的注释里点过 Windows 会截断）。
+#:
+#: `is_default=True` 标在 **MME #1** 上：本机只读实测的系统默认输入端点
+#: （`sd.default.device = [1, 6]`、`query_devices(kind="input")["index"] == 1`）就是它，
+#: 而**序号最小**的是 `Microsoft 声音映射器 - Input`（#0，Windows 的 WAVE_MAPPER）。
 MACHINE_INPUTS: tuple[DeviceEndpoint, ...] = (
     DeviceEndpoint(
         "Analogue 1 + 2 (2- Focusrite USB Audio)", "Windows WASAPI", "input", index=18,
@@ -50,7 +54,8 @@ MACHINE_INPUTS: tuple[DeviceEndpoint, ...] = (
         "Analogue 1 + 2 (2- Focusrite USB Audio)", "Windows DirectSound", "input", index=8,
         channels=4,
     ),
-    DeviceEndpoint("Analogue 1 + 2 (2- Focusrite US", "MME", "input", index=1, channels=4),
+    DeviceEndpoint("Analogue 1 + 2 (2- Focusrite US", "MME", "input", index=1, channels=4,
+                   is_default=True),
     DeviceEndpoint("Microsoft 声音映射器 - Input", "MME", "input", index=0, channels=2),
     DeviceEndpoint("CABLE Output (VB-Audio Virtual Cable)", "MME", "input", index=2,
                    channels=16),
@@ -183,7 +188,7 @@ def test_sort_candidates_uses_host_rank():
 
 
 def test_pseudo_capture_needs_both_tokens():
-    """抓取型判据 = 两个模块级常量同时命中（`CABLE Output` + `VB-Audio Virtual`）。"""
+    """抓取型判据 = 两个模块级常量同时命中（`CABLE Output` + `VB-Audio` 牌子）。"""
     assert devices_module.is_pseudo_capture("CABLE Output (VB-Audio Virtual Cable)") is True
     assert devices_module.is_pseudo_capture("CABLE Output (VB-Audio Virtual ") is True
     # `CABLE Input` 是 render 端点（播出去的那一侧），不在抓取型判据里
@@ -193,24 +198,99 @@ def test_pseudo_capture_needs_both_tokens():
     assert devices_module.is_pseudo_capture("立体声混音 (Realtek High Definition Audio)") is False
 
 
+def test_pseudo_capture_recognises_the_wdm_ks_point_spelling():
+    """本机真表里那条 WDM-KS 的 `CABLE Output (VB-Audio Point)`（#25, ch=16）也算抓取型。
+
+    它的名字里**没有** "virtual"：牌子标记只取 `vb-audio`，取长写法会把这条漏掉，于是同一块
+    VB-Cable 的抓取侧在这一档上照进候选（任务书 §3.1 要求这类端点「一律不进候选」）。
+    表里另有三条带 "Virtual" 的抓取侧（MME #2 / DirectSound #11 / WASAPI #21）作为对照。
+    """
+    assert devices_module.PSEUDO_CAPTURE_MARKER == "vb-audio"
+    assert devices_module.is_pseudo_capture("CABLE Output (VB-Audio Point)") is True
+    assert devices_module.is_pseudo_capture("CABLE Output (VB-Audio Virtual Cable)") is True
+    # 同一块虚拟线的 render 侧（`CABLE Input`）与 `Input (VB-Audio Point)` 都不是抓取侧
+    assert devices_module.is_pseudo_capture("CABLE Input (VB-Audio Virtual Cable)") is False
+    assert devices_module.is_pseudo_capture("Input (VB-Audio Point)") is False
+    # 真表的四条抓取侧逐条点名（假表的形状照抄本机）
+    table = MACHINE_INPUTS + (DeviceEndpoint(
+        "CABLE Output (VB-Audio Point)", "Windows WDM-KS", "input", index=25, channels=16,
+    ),)
+    pseudo = [item.name for item in table if devices_module.is_pseudo_capture(item.name)]
+    assert pseudo == [
+        "CABLE Output (VB-Audio Virtual Cable)",
+        "CABLE Output (VB-Audio Virtual Cable)",
+        "CABLE Output (VB-Audio Point)",
+    ]
+    candidates, explicit_pseudo, _prefix = devices_module.mic_candidates(table, None)
+    assert explicit_pseudo is False
+    assert all("CABLE Output" not in item.name for item in candidates)
+    # 显式配那条 WDM-KS 抓取侧：照办，但提醒一句都不少
+    outcome = select_microphone(table, "CABLE Output (VB-Audio Point)",
+                               lambda endpoint: open_with(WAVE))
+    assert outcome.explicit_pseudo is True
+    assert "抓取型虚拟端点" in outcome.detail
+
+
 def test_marker_tokens_survive_hyphenated_spellings():
-    """标记词在连字符写法下照样认得出（牌子在不同库里写法不一）。"""
+    """牌子标记在连字符写法下照样认得出（VB-Audio 的牌子在不同库里写法不一）。
+
+    这一条只管**标记词**（`is_pseudo_capture()` 的那两个常量）：记号词按 `token_form()` 折过。
+    loopback 那两级判据走的是 V1 原文的 `in`（原样子串、不折形），见下一条。
+    """
     assert devices_module.token_form("CABLE-In-16ch (VB-Audio Virtual Cable)") == (
         "cable in 16ch (vb audio virtual cable)"
     )
     assert devices_module.is_pseudo_capture("CABLE-Output (VB-Audio-Virtual-Cable)") is True
-    renders = (
-        DeviceEndpoint("扬声器 (Focusrite USB Audio)", "", "render", index=0),
-        DeviceEndpoint("CABLE-In-16ch (VB-Audio Virtual Cable)", "", "render", index=1),
-        DeviceEndpoint("CABLE-Input (VB-Audio Virtual Cable)", "", "render", index=2),
+    assert devices_module.is_pseudo_capture("CABLE-Output (VB-Audio-Point)") is True
+
+
+def test_loopback_tokens_are_v1_literal_substrings():
+    """loopback 的两个子串判据**逐字照 V1**（`"CABLE Input" in s.name`，大小写敏感）。
+
+    V1 原文不做折形，V2 也不做：`CABLE-Input` / `cable input` 这些写法在 V1 不命中，在这里
+    同样不命中（旧稿曾走 `_contains()` 折大小写与连字符，比 V1 宽，已按 V1 原文收回）。
+    """
+    render = "CABLE Input (VB-Audio Virtual Cable)"
+    hyphenated = "CABLE-Input (VB-Audio Virtual Cable)"
+    plain_speaker = "扬声器 (2- Focusrite USB Audio)"
+
+    literal, tier = devices_module.loopback_candidates(
+        (
+            DeviceEndpoint(plain_speaker, "", "render", index=0),
+            DeviceEndpoint(render, "", "render", index=1),
+        ),
+        None,
     )
-    cable, tier = devices_module.loopback_candidates(renders, None)
     assert tier == "cable"
-    assert [item.name for item in cable] == ["CABLE-Input (VB-Audio Virtual Cable)"]
+    assert [item.name for item in literal] == [render]
+
+    # 折形写法不命中 → 落到「系统默认输出」那一档（V1 的 `in` 也不命中）
+    folded, tier = devices_module.loopback_candidates(
+        (
+            DeviceEndpoint(plain_speaker, "", "render", index=0),
+            DeviceEndpoint(hyphenated, "", "render", index=1),
+        ),
+        None,
+    )
+    assert tier == "default_speaker"
+    assert [item.name for item in folded] == [plain_speaker]
+
+    # 排除词同样逐字比：`16ch` 原样命中，`16 ch` 不算（V1 的 `"16ch" not in s.name`）
+    spaced, tier = devices_module.loopback_candidates(
+        (
+            DeviceEndpoint(plain_speaker, "", "render", index=0),
+            DeviceEndpoint("CABLE Input (16 ch) (VB-Audio Virtual Cable)", "", "render", index=1),
+        ),
+        None,
+    )
+    assert tier == "cable"
+    assert [item.name for item in spaced] == [
+        "CABLE Input (16 ch) (VB-Audio Virtual Cable)"
+    ]
 
 
 def test_pseudo_capture_endpoints_stay_out_of_the_mic_candidates():
-    """抓取型虚拟端点不进候选（本机系统默认输入就是它）。"""
+    """抓取型虚拟端点不进候选（任务书 §3.1：不挡就会把远端声音当成麦克风录一遍）。"""
     # 显式点名那条虚拟线：候选收窄到它，并标记成「显式配的抓取型端点」
     candidates, explicit_pseudo, matched_prefix = devices_module.mic_candidates(
         MACHINE_INPUTS, "CABLE Output (VB-Audio Virtual Cable)"
@@ -219,14 +299,15 @@ def test_pseudo_capture_endpoints_stay_out_of_the_mic_candidates():
     assert matched_prefix is False
     assert [item.name for item in candidates] == ["CABLE Output (VB-Audio Virtual Cable)"] * 2
 
-    # 没配名字时：种子取序号最小的**非抓取型**输入端点（`Microsoft 声音映射器 - Input` #0），
-    # 于是那条虚拟线一条都不进候选
+    # 没配名字时：种子取**系统默认输入**那条（`is_default`，本机 = MME #1 Focusrite），
+    # 那条虚拟线一条都不进候选
     candidates, explicit_pseudo, matched_prefix = devices_module.mic_candidates(
         MACHINE_INPUTS, None
     )
     assert explicit_pseudo is False
     assert matched_prefix is False
-    assert [item.name for item in candidates] == ["Microsoft 声音映射器 - Input"]
+    assert [item.name for item in candidates] == ["Analogue 1 + 2 (2- Focusrite US"]
+    assert all(not devices_module.is_pseudo_capture(item.name) for item in candidates)
 
 
 # ---------------------------------------------------------------------------
@@ -367,12 +448,68 @@ def test_no_candidate_reports_probe_failed():
 
 
 def test_default_input_is_used_when_nothing_is_configured():
-    """没配名字：种子取默认输入那条端点，显式配置那一栏的提醒一句都不出现。"""
+    """没配名字：种子取**系统默认输入端点**（`is_default`），显式配置那一栏的提醒一句都不出现。
+
+    本机那张表的形状：默认输入是 MME `#1` Focusrite（`is_default=True`），而**序号最小**的
+    `#0` 是 MME 的 `Microsoft 声音映射器 - Input`（Windows 的 WAVE_MAPPER，跟随系统默认
+    输入设备）。C1 点名的就是这两者的区别：按序号最小取会落到 mapper 上，报出来的
+    `device_name` 与机主插的那块声卡对不上，而且把「系统默认输入」这条路原样留着。
+    """
     test_open = opener({}, default=open_with(WAVE))
     outcome = select_microphone(MACHINE_INPUTS, None, test_open)
     assert outcome.status == PROBE_READY
-    assert outcome.device_name() == "Microsoft 声音映射器 - Input"
+    assert outcome.device_name() == "Analogue 1 + 2 (2- Focusrite US"
+    assert outcome.device_name() != "Microsoft 声音映射器 - Input"
     assert "显式配置" not in outcome.detail
+
+
+def test_default_seed_is_the_marked_endpoint_not_the_lowest_index():
+    """种子的取值口跟着表上标出的 `is_default` 那一条走（C1 的回归钉子）。
+
+    本机那张表把 `is_default` 标在 MME `#1` Focusrite 上；同一张表把它挪到 WASAPI 那条
+    （序号 #18）上，种子跟着挪。序号最小的 `#0` 是 MME 的 WAVE_MAPPER，这个桩子钉的就是
+    「种子跟着标记走」这件事：谁把取值口改回 `min(index)`，这两条断言当场红。
+    """
+    candidates, _pseudo, _prefix = devices_module.mic_candidates(MACHINE_INPUTS, None)
+    assert [item.index for item in candidates] == [1]
+    assert [item.host_api for item in candidates] == ["MME"]
+
+    moved = tuple(
+        DeviceEndpoint(item.name, item.host_api, item.role, item.index, item.channels,
+                       is_default=(item.index == 18))
+        for item in MACHINE_INPUTS
+    )
+    candidates, _pseudo, _prefix = devices_module.mic_candidates(moved, None)
+    # 标记在 WASAPI 那条上，它的名字是全名 —— 同名的 DirectSound 那条一起进候选
+    assert [item.index for item in candidates] == [18, 8]
+    assert [item.host_api for item in candidates] == ["Windows WASAPI", "Windows DirectSound"]
+    assert 1 not in [item.index for item in candidates]
+
+
+def test_pseudo_default_input_falls_back_to_the_first_real_candidate():
+    """系统默认输入端点本身是抓取型（`CABLE Output` 这类）时，它不进候选、也不当种子。
+
+    退回按 host API 排序的第一条非抓取型候选（任务书 §3.1 的落点：默认输入一旦是它，
+    mic 与 loopback 就会录同一路）。
+    """
+    endpoints = (
+        DeviceEndpoint("CABLE Output (VB-Audio Virtual Cable)", "MME", "input", index=0,
+                       channels=16, is_default=True),
+        DeviceEndpoint("Analogue 1 + 2 (2- Focusrite USB Audio)", "Windows WASAPI", "input",
+                       index=18, channels=2),
+        DeviceEndpoint("Analogue 1 + 2 (2- Focusrite US", "MME", "input", index=1, channels=4),
+    )
+    candidates, explicit_pseudo, _prefix = devices_module.mic_candidates(endpoints, None)
+    assert explicit_pseudo is False
+    assert [item.name for item in candidates] == ["Analogue 1 + 2 (2- Focusrite USB Audio)"]
+
+    # 表里一条都没标 `is_default`（老表 / 读不出默认输入）时同样退回按 host API 排序的第一条
+    unmarked = tuple(
+        DeviceEndpoint(item.name, item.host_api, item.role, item.index, item.channels)
+        for item in endpoints
+    )
+    candidates, _pseudo, _prefix = devices_module.mic_candidates(unmarked, None)
+    assert [item.name for item in candidates] == ["Analogue 1 + 2 (2- Focusrite USB Audio)"]
 
 
 # ---------------------------------------------------------------------------

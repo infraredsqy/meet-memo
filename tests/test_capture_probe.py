@@ -10,7 +10,7 @@
      **没有** `inject_fault`（`dev_inject` 因此在真后端上照旧不可用）；
   3. 选择面：`capture.backend` 默认的 `auto` 解析到真类（`registry` 的约定路径）、
      快照 `settings.devices` 两个子键、`settings_update` 写 `devices.mic` 落盘、
-     `reprobe` 动作在 four 态下的行为与 `ACTION_NAMES` 的形状。
+     `reprobe` 动作在四态下的行为与 `ACTION_NAMES` 的形状。
 """
 
 from __future__ import annotations
@@ -40,10 +40,11 @@ SILENCE = [0] * 120
 
 #: 假端点表摆成**本机实测的那副样子**：同一块 Focusrite 在 WASAPI / DirectSound / MME
 #: 三个 host API 下同名（`_resolve_mic_device` 的排序与试开那段就是为这个形状写的），
-#: 外加一条抓取型虚拟端点 `CABLE Output`。MME 那条序号最小 = 默认输入。
+#: 外加一条抓取型虚拟端点 `CABLE Output`。MME 那条带 `is_default=True` = 系统默认输入端点
+#: （本机只读实测 `sd.default.device[0] == 1`）；序号最小的则是 MME #0 的 WAVE_MAPPER。
 FAKE_MIC_NAME = "假-Focusrite Analogue 1 + 2"
 FAKE_INPUTS: tuple[DeviceEndpoint, ...] = (
-    DeviceEndpoint(FAKE_MIC_NAME, "MME", "input", index=0, channels=4),
+    DeviceEndpoint(FAKE_MIC_NAME, "MME", "input", index=0, channels=4, is_default=True),
     DeviceEndpoint(FAKE_MIC_NAME, "Windows WASAPI", "input", index=18, channels=2),
     DeviceEndpoint(FAKE_MIC_NAME, "Windows DirectSound", "input", index=8, channels=4),
     DeviceEndpoint("假-CABLE-Output (VB-Audio Virtual Cable)", "MME", "input", index=2,
@@ -52,7 +53,7 @@ FAKE_INPUTS: tuple[DeviceEndpoint, ...] = (
 
 FAKE_RENDERS: tuple[DeviceEndpoint, ...] = (
     DeviceEndpoint("假-扬声器 (Focusrite USB Audio)", "", "render", index=0),
-    DeviceEndpoint("假-CABLE-Input (VB-Audio Virtual Cable)", "", "render", index=1),
+    DeviceEndpoint("假-CABLE Input (VB-Audio Virtual Cable)", "", "render", index=1),
 )
 
 
@@ -236,8 +237,8 @@ def test_probe_reports_the_real_endpoint_name_for_loopback():
     probes, fake, _backend = probe_with()
     loopback = probes[1]
     assert loopback.status == "ready"
-    assert loopback.device_name == "假-CABLE-Input (VB-Audio Virtual Cable)"
-    assert fake.loopback_calls == ["假-CABLE-Input (VB-Audio Virtual Cable)@"]
+    assert loopback.device_name == "假-CABLE Input (VB-Audio Virtual Cable)"
+    assert fake.loopback_calls == ["假-CABLE Input (VB-Audio Virtual Cable)@"]
 
 
 def test_probe_honours_an_explicitly_configured_device():
@@ -582,7 +583,7 @@ def test_service_startup_lands_the_probe_results_in_the_snapshot(tmp_path, monke
         assert sources["mic"]["health"] == "ready"
         assert sources["mic"]["device_name"] == FAKE_MIC_NAME
         assert sources["loopback"]["health"] == "ready"
-        assert sources["loopback"]["device_name"] == "假-CABLE-Input (VB-Audio Virtual Cable)"
+        assert sources["loopback"]["device_name"] == "假-CABLE Input (VB-Audio Virtual Cable)"
         assert sources["mic"]["device_name"] not in ("dev-mic", "null")
 
         # 两路真设备名同时写进 `session.json`（开场前定下来的那一份）
@@ -692,7 +693,105 @@ def test_devices_module_has_no_module_level_audio_imports():
 
 
 # ---------------------------------------------------------------------------
-# ⑥ 看门抛的异常穿得过试开那两步（`sources.py` 的两处 `except` 口径）
+# ⑥ `list_input_endpoints()` 给**系统默认输入端点**打标记（C1 的接线口）
+# ---------------------------------------------------------------------------
+#
+# 这一节的读数是许可以内的那一档：**只读枚举**（`query_devices` / `query_hostapis` /
+# `default.device`），一次流都不开。真库在这里被换成替身，所以本节连真机枚举都不碰。
+
+
+class _FakeDefault:
+    """`sd.default` 的替身（只带 `.device` 这一对读数）。"""
+
+    def __init__(self, value: tuple[int, int] | None) -> None:
+        if value is not None:
+            self.device = value
+
+
+class _FakeSoundDevice:
+    """`sounddevice` 枚举面的替身：`query_devices()` / `query_hostapis()` / `default.device`。
+
+    表照本机实测那副样子摆：`#0` 是 MME 的 `Microsoft 声音映射器 - Input`（WAVE_MAPPER，
+    跟随系统默认输入设备）、`#1` 是 MME 的 Focusrite（**系统默认输入**）、另有一条
+    `max_input_channels=0` 的播放端点（枚举时就该被滤掉）。
+    """
+
+    def __init__(
+        self,
+        *,
+        default: tuple[int, int] | None = (1, 6),
+        default_input_raises: bool = False,
+        kind_input: dict | None = None,
+    ) -> None:
+        self.devices = [
+            {"name": "Microsoft 声音映射器 - Input", "hostapi": 0, "max_input_channels": 2},
+            {"name": "Analogue 1 + 2 (2- Focusrite US", "hostapi": 0, "max_input_channels": 4},
+            {"name": "扬声器 (2- Focusrite USB Audio)", "hostapi": 1, "max_output_channels": 2},
+        ]
+        self.hostapis = [{"name": "MME"}, {"name": "Windows WASAPI"}]
+        self.default = _FakeDefault(default)
+        self.default_input_raises = default_input_raises
+        self.kind_input = kind_input or {"index": 1, "name": "Analogue 1 + 2 (2- Focusrite US"}
+
+    def query_devices(self, kind: str | None = None):  # noqa: ANN201 - 替身，形状随库
+        if kind == "input":
+            if self.default_input_raises:
+                raise OSError("假件：PortAudio 报不出默认输入")
+            return self.kind_input
+        return self.devices
+
+    def query_hostapis(self):
+        return self.hostapis
+
+
+def _enumerate_with(fake: _FakeSoundDevice, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(sources_module, "_import_sounddevice", lambda: fake)
+    return sources_module.list_input_endpoints()
+
+
+def test_enumeration_marks_the_system_default_input_endpoint(monkeypatch):
+    """`is_default` 落在系统默认输入那条上（本机形态：默认输入 `#1`，序号最小的是 `#0`）。"""
+    endpoints = _enumerate_with(_FakeSoundDevice(), monkeypatch)
+    assert [(item.index, item.is_default) for item in endpoints] == [(0, False), (1, True)]
+    assert [item.channels for item in endpoints] == [2, 4]
+    # 播放端点（`max_input_channels=0`）在枚举这一步就被滤掉：表里没有它
+    assert "扬声器 (2- Focusrite USB Audio)" not in [item.name for item in endpoints]
+
+    # 换一份默认输入读数：标记跟着读数走（读数说哪条，`is_default` 就标在哪条上）
+    moved = _FakeSoundDevice(kind_input={"index": 0, "name": "Microsoft 声音映射器 - Input"})
+    moved.default = _FakeDefault((0, 6))
+    endpoints = _enumerate_with(moved, monkeypatch)
+    assert [(item.index, item.is_default) for item in endpoints] == [(0, True), (1, False)]
+
+
+def test_default_input_falls_back_to_the_query_and_survives_a_missing_one(monkeypatch):
+    """`default.device[0]` 是 `-1` 时退到 `query_devices(kind="input")`；两条都读不出来时无人带标记。"""
+    unresolved = _FakeSoundDevice(default=(-1, -1))
+    endpoints = _enumerate_with(unresolved, monkeypatch)
+    assert [(item.index, item.is_default) for item in endpoints] == [(0, False), (1, True)]
+
+    silent = _FakeSoundDevice(default=None, default_input_raises=True)
+    monkeypatch.setattr(sources_module, "_import_sounddevice", lambda: silent)
+    assert sources_module._default_input_index(silent) is None
+    endpoints = sources_module.list_input_endpoints()
+    assert [item.is_default for item in endpoints] == [False, False]
+
+
+def test_mic_without_config_lands_on_the_enumerated_default(monkeypatch):
+    """接线口：没配 `devices.mic` 时，挑选落在枚举标出的那条系统默认输入上。
+
+    本机读数就是这一条：默认输入是 MME `#1` Focusrite，报出来的 `device_name` 是 MME 那条
+    的截断名（同一块声卡的 WASAPI / DirectSound 条目带着完整名，靠前缀也能兜上，但精确名
+    先命中，所以候选集合收在 MME 那一条上）。
+    """
+    endpoints = _enumerate_with(_FakeSoundDevice(), monkeypatch)
+    candidates, _pseudo, matched_prefix = devices_module.mic_candidates(endpoints, None)
+    assert [item.name for item in candidates] == ["Analogue 1 + 2 (2- Focusrite US"]
+    assert matched_prefix is False
+
+
+# ---------------------------------------------------------------------------
+# ⑦ 看门抛的异常穿得过试开那两步（`sources.py` 的两处 `except` 口径）
 # ---------------------------------------------------------------------------
 
 #: 看门装的桩的记号（`tests/conftest.py` 的 `_forbid_real_capture()` 里那个内层函数名）

@@ -253,9 +253,12 @@ describe('嵌套契约对象逐层收严（N1）', () => {
     }
   });
 
-  it('settings.devices 的键位此刻空着 —— 加进来的子键照收，取值不挑形状', () => {
-    // 这一格有意**不收严**：契约把子键留给 `dca4539b` 定名，服务补上子键属于加性变更，
-    // 前端不该在那一刻开始拒收整份快照。这里把这条边界钉住，免得日后被顺手改成 strict。
+  it('settings.devices 的两个子键已定名 —— 加进来的键照收，取值不挑形状', () => {
+    // 子键此刻是 `{"mic": null, "loopback": null}`（`dca4539b` 定的名，契约正文见
+    // `docs/contract.md`），`mic` 的值是设备名字符串、没配就是 `null`。这一格有意**不收严
+    // 取值的形状**：`z.record(z.string(), z.unknown())` 只保证键是字符串，服务把某个子键
+    // 换成对象 / 数字 / 数组都属于加性变更，前端不该在那一刻开始拒收整份快照。这里把这条
+    // 边界钉住，免得日后被顺手改成 strict。
     expect(
       snapshotAccepts((s) => {
         const devices = (s['settings'] as Record<string, unknown>)['devices'] as Record<
