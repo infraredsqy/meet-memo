@@ -323,9 +323,10 @@ X-Meeting-Service: 1
 | `stop` | 409 `not_recording` | 200 | 200（进 `ended` 不必先回 `recording`） | 409 `not_recording` | 409 `not_recording` |
 | `mute_session` | 409 `not_recording` | 200 | 200 | 409 `not_recording` | 409 `not_recording` |
 | `settings_update` | 200 | 200 | 200 | 200 | 200 |
+| `reprobe` | 200（重新枚举并试开设备，两路快照随之更新、`revision +1`） | 409 `already_recording` | 409 `already_recording` | 200 | 200（采集已经停了，重新探测不干扰在飞的东西） |
 | `dev_inject` | 409 `not_recording` | 200（非 dev 后端 404） | 200（非 dev 后端 404） | 409 `not_recording` | 409 `not_recording` |
 
-`settings_update` 写的是配置文件，与「这一场录到哪儿」无关，因此**任何状态下都可用**。`mute_session` 只在本场收尾之前可用 —— 收尾完成后本场已无可静音，复位发生在下一场 `start`。
+`settings_update` 写的是配置文件，与「这一场录到哪儿」无关，因此**任何状态下都可用**。`mute_session` 只在本场收尾之前可用 —— 收尾完成后本场已无可静音，复位发生在下一场 `start`。`reprobe` 只在**没有场次在跑**的时候可用（`recording` / `alert` 两态回 `already_recording`）：设备在开场前定下来，会中换设备是明文不做的那一档。
 
 ### 4.6 `settings_update`：23 键清单与两档
 

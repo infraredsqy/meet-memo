@@ -26,12 +26,14 @@
     绝不回落一个从没打开过的候选 —— V1 没有 `probe_failed` 这一态可报，V2 有。
 
 **唯一预批准的补强**：试开那一步读回一小段样本（`_has_sound()`），把「能打开」与「真的出声音」
-分开。V1 自己的注释里就写了「DirectSound 可能开得起来却全是零」（`recorder.py:376-377`），
-读回样本是把那条注解变成判定。
+分开。「DirectSound 端点开得起来、交回的却是一整块精确全零」这条静默失败是**本机实测**的读数
+（见下面「本机实测」一节，阈值标定在 `:78-85`），读回样本是本模块把那条读数落成判定的一步。
+V1 自己那句注释讲的是另一件事：WASAPI 端点常不支持 16k、开都开不起来（`recorder.py:374-377`）；
+V1 文档侧的说法在本项目 `docs/legacy-assets.md` 的 C3 条目里。
 
 ## 为什么候选要排序（V1 的原话）
 
-`recorder.py:372-377`：
+`recorder.py:374-377`：
 
     Focusrite 等设备在 DirectSound/WASAPI 多个 host API 下同名，sounddevice 按名字匹配会抛
     'Multiple input devices found'。且 WASAPI 端点常不支持 SAMPLE_RATE（如 Focusrite 48k 下
@@ -204,12 +206,12 @@ def measure_samples(frames: Sequence[int]) -> TestSample:
 
 
 def _has_sound(attempt: OpenAttempt) -> bool:
-    """这一块样本里有没有真实波形（**加在 V1 骨架上的那一步**）。
+    """这一块样本里有没有真实波形（**加在 V1 骨架上的那一步，判定是 V2 自己的**）。
 
     两个条件同时成立才算有：峰值到 `SOURCE_PEAK_THRESHOLD`、且有相邻样本差到
     `WAVEFORM_MIN_STEP`。V1 在试开那一步只判「开起来了没有」（`with sd.InputStream(...)`
-    顺利退出即算能开），本机实测 DirectSound 的端点能这样顺利打开、交回的却是精确全零，
-    所以这里多读一小段样本再判。
+    顺利退出即算能开）；「能打开 ≠ 有声音」这一档是 V2 按**本机实测**补的：DirectSound 的
+    端点能这样顺利打开、交回的却是精确全零（阈值标定见 `:78-85`），所以这里多读一小段样本再判。
     """
     if not attempt.opened or attempt.sample is None:
         return False
@@ -217,7 +219,10 @@ def _has_sound(attempt: OpenAttempt) -> bool:
 
 
 def attempt_reason(attempt: OpenAttempt) -> str:
-    """这次试开为什么没成（写进 `detail` 的人话）。"""
+    """这次试开为什么没成（写进 `detail` 的人话）。
+
+    「能打开、但样本里没有波形」这一档是 V2 自己的判定（V1 的试开只判「开起来了没有」）。
+    """
     if attempt.opened:
         if attempt.sample is None:
             return "能打开，但一块样本都没读回来"
