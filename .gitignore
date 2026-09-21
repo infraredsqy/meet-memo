@@ -9,8 +9,19 @@ venv/
 
 # Node / 前端构建产物
 node_modules/
+web/node_modules/
 dist/
 *.local
+
+# TypeScript 的增量构建信息（`tsc -b` / `tsc --build` 的产物）。
+# **当前 build 链路不产这个文件**：`npm run build` 走的是 `tsc --noEmit -p`（见
+# `web/package.json` 的 typecheck 两条），`--noEmit` 不写 .tsbuildinfo。
+# 这一行留着，是因为两条线本来可以合回 `tsc -b`：合不过去的真实成因是**版本线冲突** ——
+# vitest 2 自带一条 vite 5，工程用 vite 6，两者的 `Plugin` 类型对不上，`tsc -b` 会
+# 顺着 project references 把 vitest 的类型也拉进来报一长串错（这就是 `vitest.config.ts`
+# 单独成文件的那条理由，见那个文件开头的说明）。一旦哪天 `tsc -b` 又跑得起来，
+# 它会开始产这个文件 —— 忽略规则在这儿等着，而不是那时才发现 `git status` 里多了两个二进制文件。
+*.tsbuildinfo
 
 # 运行与日志
 *.log

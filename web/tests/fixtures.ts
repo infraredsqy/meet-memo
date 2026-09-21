@@ -1,0 +1,79 @@
+import { readFileSync, readdirSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+/**
+ * golden 样本的读取工具。
+ *
+ * 路径**从本文件的位置往上找**，不去猜当前工作目录 —— 这样从仓库任意位置跑
+ * `npx vitest run`、`npm test`、还是 IDE 里点单条用例，读到的都是同一批样本。
+ */
+
+/** `web/tests/fixtures.ts` → `web/tests` → `web` → 仓库根。 */
+const here = dirname(fileURLToPath(import.meta.url));
+export const FIXTURES_DIR = resolve(here, '..', '..', 'contract', 'fixtures');
+
+export type FixtureGroup = 'snapshot' | 'sse' | 'actions' | 'heartbeat';
+
+/** 读一份样本的原文。 */
+export function readFixtureText(group: FixtureGroup, name: string): string {
+  return readFileSync(join(FIXTURES_DIR, group, `${name}.json`), 'utf8');
+}
+
+/**
+ * 读一份样本并解析成 JSON。
+ *
+ * 返回值的顶层按键取 `unknown`：样本是**没被 schema 校验过**的盘上原文，用例通常拿它
+ * 直接喂 `schema.parse()`。想按键取值的用例自己收窄（`as Record<string, unknown>`），
+ * 这样「哪些地方按未校验的形状在读数」在用例里是显式的。
+ */
+export function readFixture(group: FixtureGroup, name: string): unknown {
+  return JSON.parse(readFixtureText(group, name));
+}
+
+/** 列出某个目录里的全部样本名（去掉 `.json`）。 */
+export function listFixtures(group: FixtureGroup): string[] {
+  return readdirSync(join(FIXTURES_DIR, group))
+    .filter((file) => file.endsWith('.json'))
+    .map((file) => file.slice(0, -'.json'.length))
+    .sort();
+}
+
+/** 六个快照样本的名字。 */
+export const SNAPSHOT_FIXTURES = [
+  'idle',
+  'idle-notice',
+  'recording',
+  'alert',
+  'ended-done',
+  'ended-draining',
+] as const;
+
+/** 五帧 SSE 样本的名字。 */
+export const SSE_FIXTURES = [
+  'first-snapshot',
+  'state',
+  'levels',
+  'transcript',
+  'resync-snapshot',
+] as const;
+
+/** 十二个动作样本：四个成功 + 七个失败 `code` 各一 + 未知动作档。 */
+export const ACTION_FIXTURES = [
+  'start-ok',
+  'stop-ok',
+  'mute-session-ok',
+  'settings-update-ok',
+  'fail-already-recording',
+  'fail-draining',
+  'fail-capture-unavailable',
+  'fail-not-recording',
+  'fail-invalid-setting',
+  'fail-invalid-setting-unknown-action',
+  'fail-persist-failed',
+  'fail-action-unavailable',
+] as const;
+
+/** 两个心跳样本。 */
+export const HEARTBEAT_FIXTURES = ['idle', 'recording'] as const;
+
