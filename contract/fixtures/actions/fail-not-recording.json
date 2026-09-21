@@ -1,0 +1,11 @@
+{
+  "action": "stop",
+  "args": {},
+  "status": 409,
+  "body": {
+    "ok": false,
+    "code": "not_recording",
+    "message": "现在没有在录的场次，结束动作无效",
+    "detail": {}
+  }
+}

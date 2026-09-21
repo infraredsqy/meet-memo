@@ -1,0 +1,106 @@
+{
+  "event": "snapshot",
+  "id": "3",
+  "data": {
+    "revision": 3,
+    "service": {
+      "started_at": "<iso>",
+      "version": "0.1.0",
+      "port": "<port>",
+      "url": "<url>",
+      "log_path": "<path>",
+      "out_root": "<path>"
+    },
+    "top_state": "recording",
+    "session": {
+      "id": "<session-id>",
+      "dir": "<path>",
+      "started_at": "<iso>",
+      "mode": "both",
+      "elapsed_seconds": 0,
+      "frozen": false
+    },
+    "sources": [
+      {
+        "id": "mic",
+        "label": "本地",
+        "device_name": "dev-mic",
+        "health": "capturing",
+        "lost_since": null,
+        "restored": false,
+        "level_dbfs": "<dbfs>",
+        "peak_dbfs": "<dbfs>",
+        "envelope": [
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>"
+        ]
+      },
+      {
+        "id": "loopback",
+        "label": "远端",
+        "device_name": "dev-loopback",
+        "health": "capturing",
+        "lost_since": null,
+        "restored": false,
+        "level_dbfs": "<dbfs>",
+        "peak_dbfs": "<dbfs>",
+        "envelope": [
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>"
+        ]
+      }
+    ],
+    "alerts": {
+      "critical": null,
+      "hints": []
+    },
+    "transcript": {
+      "health": "normal",
+      "last_line_at": null,
+      "buffered_lines": 0,
+      "failed_segments": 0
+    },
+    "ended": null,
+    "settings": {
+      "alarm_sound": true,
+      "heartbeat_interval_seconds": 10,
+      "asr": {
+        "max_segment_seconds": 10,
+        "timeout_seconds": 20,
+        "max_new_tokens": 400,
+        "repeat_max_unit": 40,
+        "repeat_min_coverage": 0.5
+      },
+      "devices": {}
+    },
+    "notice": null,
+    "resync": true,
+    "dropped": 1
+  }
+}

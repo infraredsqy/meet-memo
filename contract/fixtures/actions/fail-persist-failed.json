@@ -1,0 +1,15 @@
+{
+  "action": "settings_update",
+  "args": {
+    "asr.timeout_seconds": 30
+  },
+  "status": 500,
+  "body": {
+    "ok": false,
+    "code": "persist_failed",
+    "message": "配置写盘失败（OSError: 注入的写盘失败）；这次改动一处都没生效",
+    "detail": {
+      "error": "OSError: 注入的写盘失败"
+    }
+  }
+}

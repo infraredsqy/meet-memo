@@ -1,0 +1,17 @@
+{
+  "action": "start",
+  "args": {
+    "mode": "both"
+  },
+  "status": 409,
+  "body": {
+    "ok": false,
+    "code": "already_recording",
+    "message": "已经有一场在录",
+    "detail": {
+      "session_id": "<session-id>",
+      "dir": "<path>",
+      "elapsed_seconds": 0
+    }
+  }
+}

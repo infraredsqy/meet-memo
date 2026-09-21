@@ -1,0 +1,8 @@
+{
+  "service": "meeting",
+  "server_time": "<iso>",
+  "revision": 1,
+  "top_state": "idle",
+  "recording_alive": null,
+  "seconds_since_last_tick": null
+}

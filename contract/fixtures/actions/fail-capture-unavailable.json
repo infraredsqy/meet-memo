@@ -1,0 +1,15 @@
+{
+  "action": "start",
+  "args": {},
+  "status": 503,
+  "body": {
+    "ok": false,
+    "code": "capture_unavailable",
+    "message": "采集后端未接入：当前是 null 替身，不会真的录音",
+    "detail": {
+      "session_id": "<session-id>",
+      "dir": "<path>",
+      "reason": "采集后端未接入：当前是 null 替身，不会真的录音"
+    }
+  }
+}

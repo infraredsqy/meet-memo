@@ -1,0 +1,9 @@
+{
+  "action": "mute_session",
+  "args": {},
+  "status": 200,
+  "body": {
+    "ok": true,
+    "revision": 3
+  }
+}

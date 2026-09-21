@@ -1,0 +1,23 @@
+{
+  "action": "start",
+  "args": {
+    "mode": "both"
+  },
+  "status": 409,
+  "body": {
+    "ok": false,
+    "code": "draining",
+    "message": "上一场还在收尾（或收尾失败后停留），这一场不能开",
+    "detail": {
+      "session_id": "<session-id>",
+      "dir": "<path>",
+      "failed_steps": [
+        {
+          "id": "post",
+          "error": "会后流程启动失败：RuntimeError: 假会后钩子按要求抛错；可复制命令：meeting post <path>；log 路径：<path>"
+        }
+      ],
+      "log_path": "<path>"
+    }
+  }
+}

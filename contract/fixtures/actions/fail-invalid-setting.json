@@ -1,0 +1,21 @@
+{
+  "action": "start",
+  "args": {
+    "mode": "burst"
+  },
+  "status": 400,
+  "body": {
+    "ok": false,
+    "code": "invalid_setting",
+    "message": "mode 取值非法：'burst'（只能是 both / mic / loopback）",
+    "detail": {
+      "key": "mode",
+      "value": "burst",
+      "legal": [
+        "both",
+        "mic",
+        "loopback"
+      ]
+    }
+  }
+}

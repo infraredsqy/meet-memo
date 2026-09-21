@@ -1,6 +1,11 @@
-"""`tests/conftest.py` —— **只放 fixture**（phase2 §4 / §5.4 的五个夹具名在本 Phase 冻结）。
+"""`tests/conftest.py` —— **夹具与 pytest hook**（phase2 §4 / §5.4 的五个夹具名在本 Phase 冻结）。
 
-五个夹具（名字与语义由 phase2 定义并冻结，phase3 只复用、不得重定义同名 fixture）：
+本文件装两样东西：下面的**七个夹具**，以及两条 pytest hook（`pytest_addoption` 注册
+`--regen-contract`；耗时看门那两个 hook 在文末）。**hook 不属于夹具语义**，它们在这里的
+唯一理由是 pytest 只认 conftest / 插件里的 `pytest_addoption`（写进测试模块会被静默忽略），
+详见下文各自那一段。**本文件里没有一条用例**。
+
+七个夹具由 phase2 定义并冻结、phase3 只复用，不得重定义同名 fixture：
 
   - `service_process`：**真服务子进程夹具**（内部包 `tests/_service.py` 的 `ServiceProcess`，
     起进程即传环境变量覆盖、家目录 `HOME` 与 `USERPROFILE` 两项都设）；
@@ -19,8 +24,8 @@ phase3 追加两个夹具（名字固定，与上面五个不重名）：
     断言）要求宿主进程 env 里也没有这一项，四条 `tests/test_e2e_*.py` 全部同源；
   - `sse_client`：**在 `service_process` 上开一条 SSE 订阅并保证关闭**。
 
-**本文件只放 fixture**：`parse_sse_frame()` / `read_sse_frames()` / `wait_until()` 这类解析与
-等待助手、`ServiceProcess` / `SseClient` / `post_action()` 这几个驱动件的实现**都在
+**夹具都在这里，hook 只有两条**：`parse_sse_frame()` / `read_sse_frames()` / `wait_until()` 这类
+解析与等待助手、`ServiceProcess` / `SseClient` / `post_action()` 这几个驱动件的实现**都在
 `tests/_service.py`**，这里只 import 并包装成 fixture；假件一律放 `tests/_drain_fakes.py`。
 **本文件里没有一条用例**（审查问题 m4）：原先那条「`isolated_config_dir` 与 `app_client`
 指向同一个家目录」的用例搬到了 `tests/test_config.py`
@@ -49,6 +54,24 @@ import pytest
 
 from tests import _helpers as helpers
 from tests._service import ServiceProcess, SseClient
+
+
+# ---------------------------------------------------------------------------
+# `--regen-contract`：重写 `contract/fixtures/`（c62dec56 phase1 的 golden 再生成开关）
+#
+# 这条 hook 只能注册在 conftest / 插件里（测试模块里写 `pytest_addoption` 会被 pytest
+# 静默忽略），因此它落在本文件 —— 与夹具放在一起，但它不承载任何夹具语义：
+# 默认模式下 fixtures 逐文件比对、不一致即红；给出本选项时改写 fixtures。
+# ---------------------------------------------------------------------------
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--regen-contract",
+        action="store_true",
+        default=False,
+        help="重写 contract/fixtures/（默认模式是逐文件比对，不一致即 fail）",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -321,9 +344,10 @@ def sse_client(service_process: Callable[..., Any]) -> Iterator[Callable[..., Ss
 # ---------------------------------------------------------------------------
 # 耗时看门（**用户硬要求**：每一条用例 setup + call + teardown 合计 ≤ 5.0 秒）
 #
-# 契约里写的是「`conftest.py` 只放 fixture」；这一条 hook 是指挥者授权的显式偏差
-# （用户把「单条用例 ≤ 5 秒」定为与修审查问题同级的硬要求，并要求加一道**自动看门**
-# 而不是只在报告里声明）。它不改任何夹具语义，只汇总 pytest 自己的三段耗时。
+# 契约里写的是「`conftest.py` 只放 fixture」；这一条 hook 与 `pytest_addoption` 同属那条例外的
+# 另一半（用户把「单条用例 ≤ 5 秒」定为与修审查问题同级的硬要求，并要求加一道**自动看门**，
+# 看门要落在 pytest 里跑得起来的地方，光在报告里声明一句不够）。两条 hook 都不改任何夹具语义：
+# `pytest_addoption` 只是登记一个开关，这一条只汇总 pytest 自己的三段耗时。
 # ---------------------------------------------------------------------------
 
 #: 单条用例（setup + call + teardown 三段合计）的墙钟上限（秒）

@@ -1,0 +1,14 @@
+{
+  "action": "dev_inject",
+  "args": {
+    "source": "mic",
+    "fault": "stall"
+  },
+  "status": 404,
+  "body": {
+    "ok": false,
+    "code": "action_unavailable",
+    "message": "dev_inject 只在 dev 采集替身在场时可用（当前后端不支持）",
+    "detail": {}
+  }
+}

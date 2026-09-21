@@ -1,0 +1,11 @@
+{
+  "action": "start",
+  "args": {
+    "mode": "both"
+  },
+  "status": 200,
+  "body": {
+    "ok": true,
+    "revision": 2
+  }
+}

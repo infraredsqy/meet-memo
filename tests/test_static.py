@@ -149,6 +149,46 @@ def test_root_serves_dist_when_present(tmp_path, client_factory):
     assert client.get("/debug").status_code == 200
 
 
+def test_root_switches_between_page_and_dist_per_request(tmp_path, client_factory):
+    """`/` 的目录存在性按**每请求**判定：产物建好刷新即可见、删掉刷新回说明页。
+
+    同一个进程、同一个应用实例里走完三步（启动缺失 → 建出 → 再删），中间不重启——
+    这正是说明页文案「产物目录一建好，刷新就能看到真正的界面」的可观察判据。
+    """
+    import shutil
+
+    home = tmp_path / "home_for_switch"
+    home.mkdir()
+    dist = helpers.missing_dist_dir(home)
+    client = client_factory({"web.dist_dir": str(dist)})
+
+    # ① 启动时无产物目录：说明页
+    missing = client.get("/")
+    assert missing.status_code == 200
+    assert DIST_MISSING_MESSAGE in missing.text
+
+    # ② 同一进程内建出目录：再 GET / 返回产物（不重启）
+    dist.mkdir(parents=True)
+    (dist / "index.html").write_text(
+        "<!doctype html><meta charset=\"utf-8\"><title>built-later</title>"
+        "<h1>built-later</h1>",
+        encoding="utf-8",
+    )
+    built = client.get("/")
+    assert built.status_code == 200
+    assert "built-later" in built.text
+    assert DIST_MISSING_MESSAGE not in built.text
+    # API 与自检页没有被静态挂载吃走
+    assert client.get("/api/heartbeat").status_code == 200
+    assert client.get("/debug").status_code == 200
+
+    # ③ 目录又被删：回到说明页
+    shutil.rmtree(dist)
+    removed = client.get("/")
+    assert removed.status_code == 200
+    assert DIST_MISSING_MESSAGE in removed.text
+
+
 def test_debug_page_is_served_from_the_package(tmp_path, client_factory):
     """`/debug` 常驻可访问，且是从**包内**读取的骨架自检页（action 与事件流已接通）。"""
     home = tmp_path / "home_for_debug"

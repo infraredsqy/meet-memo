@@ -1,0 +1,55 @@
+{
+  "event": "levels",
+  "id": null,
+  "data": {
+    "revision": 2,
+    "frames": {
+      "mic": {
+        "ts": null,
+        "dbfs": "<dbfs>",
+        "peak": "<dbfs>",
+        "bar": "<dbfs>",
+        "envelope": [
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>"
+        ]
+      },
+      "loopback": {
+        "ts": null,
+        "dbfs": "<dbfs>",
+        "peak": "<dbfs>",
+        "bar": "<dbfs>",
+        "envelope": [
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>",
+          "<dbfs>"
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "action": "stop",
+  "args": {},
+  "status": 200,
+  "body": {
+    "ok": true,
+    "revision": 3
+  }
+}

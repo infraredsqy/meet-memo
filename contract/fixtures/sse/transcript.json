@@ -1,0 +1,13 @@
+{
+  "event": "transcript",
+  "id": null,
+  "data": {
+    "revision": 2,
+    "line": {
+      "ts": 1.5,
+      "source": "mic",
+      "text": "假转写后端的样本行",
+      "kind": "line"
+    }
+  }
+}

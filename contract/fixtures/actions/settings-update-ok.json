@@ -1,0 +1,15 @@
+{
+  "action": "settings_update",
+  "args": {
+    "asr.timeout_seconds": 30
+  },
+  "status": 200,
+  "body": {
+    "ok": true,
+    "revision": 3,
+    "applied": [
+      "asr.timeout_seconds"
+    ],
+    "pending_restart": []
+  }
+}
