@@ -2,7 +2,7 @@
 
 > 这份文档写服务与后端之间的接缝：三个协议的成员、数据结构、缺省值，以及后端怎么被找到、怎么被注入。
 >
-> 现状：**协议本身已经定死，真实实现一个都还没有。** 服务里现在生效的是两个 `null` 替身（默认），外加一个只给开发与测试用的 dev 采集替身（默认关闭）。真实的采集、转写、会后钩子由各自的节点落地，落地时按这份协议接进来，服务这一侧不需要改代码。
+> 现状：**协议本身已经定死，三个位置里真采集已经落地。** `capture.backend` 的默认值 `auto` 解析到真采集后端（`meeting.backends.capture:CaptureBackend`，真探测、真起两路、真落盘与真转码）；转写与会后钩子眼下还是 `null` 替身（各自归属的节点落地时按这份协议接进来，服务这一侧不需要改代码）。另有一个只给开发与测试用的 dev 采集替身（默认关闭）。
 >
 > 协议与数据结构住在 `meeting/backends/base.py`（**只放协议与数据结构**，实现全在下游自己的模块里），替身住在 `meeting/backends/null.py` 与 `meeting/backends/dev.py`，解析的唯一入口是 `meeting/backends/registry.py`。
 
@@ -105,7 +105,7 @@
 
 判定规则：`has_implementation == false` → 该步记 **`skipped`**；`has_implementation == true` 且 `run_ok == false` → 该步记 **`failed`**。**缺席记「跳过」，在场却抛错记「失败」** —— `has_implementation` 只由解析结果回答，调用阶段的异常只许写进 `run_ok`。
 
-`capabilities_of(implementation)` 另外回答采集实现有没有 `finalize` / `transcode` / `dev_inject` 三项能力：`null` / `dev` 这类不写真实音频的替身没有前两项，于是收尾第 1、2 步记 `skipped`；真采集后端（`meeting.backends.capture:CaptureBackend`）前两项都是 `True`，收尾第 1、2 步因此会真的调它（第 2 步的转写侧闸门见 `docs/state.md` 的「收尾四步与终态」）；`dev_inject` 这一项只有 dev 替身在 —— 真后端**有意不加** `inject_fault`，给真后端加上它会把开发替身的非产品动作在真后端上打开。
+`capabilities_of(implementation)` 另外回答采集实现有没有 `finalize` / `transcode` / `dev_inject` 三项能力：`null` / `dev` 这类不写真实音频的替身没有前两项，于是收尾第 1、2 步记 `skipped`；真采集后端（`meeting.backends.capture:CaptureBackend`）前两项都是 `True`，收尾第 1、2 步因此会真的调它（这两步的闸门**只看采集侧**：解析结论与 `capture_capabilities["finalize"]` / `["transcode"]`，transcode 是采集后端的能力，转写后端在不在场与这道闸门无关 —— 见 `docs/state.md` 的「收尾四步与终态」）；`dev_inject` 这一项只有 dev 替身在 —— 真后端**有意不加** `inject_fault`，给真后端加上它会把开发替身的非产品动作在真后端上打开。
 
 ## 4. 注入与构造规则
 

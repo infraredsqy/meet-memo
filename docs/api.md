@@ -156,7 +156,7 @@ curl.exe -s -X POST http://127.0.0.1:8765/api/actions `
   -d '{\"action\":\"start\"}'
 ```
 
-默认 `null` 采集后端下 `start` 会回 `503 capture_unavailable`（如实报「采集后端未接入」，盘上不留任何场次目录）；换成 dev 替身才真的能开一场。
+默认 `capture.backend = auto` 解析到真采集后端：设备起得来时 `start` 真的开一场（设备全起不来才回 `503 capture_unavailable`，`detail.reason` 写明哪一路为什么）；显式配 `null` 替身时 `start` 回 `503 capture_unavailable`（如实报「采集后端未接入」，盘上不留任何场次目录）；dev 替身给开发与测试用（合成电平 + 故障注入，不写真实音频）。
 
 ## 7. 相关文档
 
