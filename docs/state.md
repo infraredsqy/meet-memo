@@ -48,11 +48,11 @@
 
 每步的 `status` 取五档之一：`waiting` / `running` / `done` / `failed` / `skipped`。
 
-- **`skipped` = 这个构建里没有真实实现**（采集替身不写真实音频、转写后端缺席、会后钩子缺席）。它不阻塞 `done`，只留一行 warning。
+- **`skipped` = 这个构建里没有真实实现**（采集替身不写真实音频、会后钩子缺席）。它不阻塞 `done`，只留一行 warning。
 - **`failed` = 有实现，但这次调用抛错**。它带 `error`。
 - 判「缺席」只看后端的解析结果（`meeting/backends/registry.py`），不看调用时抛了什么异常。
 
-**第 1、2 步的闸门**（`meeting/service/runtime.py` 的 `_drain_flush()` / `_drain_transcode()`）：第 1 步看解析结论**与** `capture_capabilities["finalize"]`；第 2 步看解析结论**与** `capture_capabilities["transcode"]` —— 后两项由 `registry.capabilities_of()` 按「实现在不在场」回答，真采集后端（`meeting.backends.capture:CaptureBackend`）两项都是 `True`，`null` / `dev` 两个替身都是 `False`。因此**真采集那一场**这两步记 `done`、产物是场次目录里的两份 `.mp3`；替身那一场照旧 `skipped`。另外第 2 步的闸门还带着转写侧的解析结论，转写后端缺席（眼下就是这一档，`meeting.backends.transcribe` 还没落地）时它同样记 `skipped` —— 采集侧的 `transcode()` 本身已经可用，只是收尾编排还没放它单独跑。
+**第 1、2 步的闸门**（`meeting/service/runtime.py` 的 `_drain_flush()` / `_drain_transcode()`）：两步都只看**采集侧**——解析结论**与** `capture_capabilities["finalize"]` / `capture_capabilities["transcode"]`，后者由 `registry.capabilities_of()` 按「实现在不在场」回答：真采集后端（`meeting.backends.capture:CaptureBackend`）两项都是 `True`，`null` / `dev` 两个替身都是 `False`。因此**真采集那一场**这两步记 `done`、产物是场次目录里的两份 `.mp3`；替身那一场照旧 `skipped`。transcode 是采集后端的能力，转写后端在不在场与这道闸门无关（转写缺席不影响第 2 步记账，解析结论与 `run_ok` 也记在采集侧）。
 
 **终态判定只在一处**（`finish_drain()`）：
 
@@ -61,9 +61,9 @@
 | 四步全部落定（`done` / `skipped`）且无 `failed` | `done` | 停在 `ended` | 保留（时长冻结，界面画「已结束·已完成」） | 放行，从 `ended` 直接进 `recording` |
 | 有任一步 `failed`，或四步没全落定就走到了出口 | 保持 `draining` | 停在 `ended` | 保留 | `draining`(409)，`detail` 带失败步与场次 log 路径 |
 
-骨架构建（默认 `null` 替身或 dev 替身 + 转写缺席 + 钩子缺席）跑一场会的预期终态是固定的：`flush: skipped` / `transcode: skipped` / `log: done` / `post: skipped`，于是 `ended.phase == "done"`。
+骨架构建（默认 `null` 替身或 dev 替身 + 钩子缺席）跑一场会的预期终态是固定的：`flush: skipped` / `transcode: skipped` / `log: done` / `post: skipped`，于是 `ended.phase == "done"`。
 
-**真采集那一场**（`capture.backend` 取默认值 `auto`，解析到 `meeting.backends.capture:CaptureBackend`）的终态是 `flush: done` / `log: done` / `post: skipped`，第 2 步的 `transcode` 在**转写后端落地之前**仍是 `skipped`（闸门见上）；收尾跑完之后场次目录里躺着两路归档：`meeting_audio_mic.pcm` + `.mp3`、`meeting_audio_loopback.pcm` + `.mp3`（未选中的那一路是 0 字节的 `.pcm`，不产 `.mp3`）。第 1 步落盘失败（例如磁盘满）与第 2 步转码失败（例如 `ffmpeg` 不在 PATH 上）各记 `failed`，**PCM 一个字节都不删**。
+**真采集那一场**（`capture.backend` 取默认值 `auto`，解析到 `meeting.backends.capture:CaptureBackend`）的终态是 `flush: done` / `transcode: done` / `log: done` / `post: skipped`；收尾跑完之后场次目录里躺着两路归档：`meeting_audio_mic.pcm` + `.mp3`、`meeting_audio_loopback.pcm` + `.mp3`（未选中的那一路是 0 字节的 `.pcm`，不产 `.mp3`）。第 1 步落盘失败（例如磁盘满）与第 2 步转码失败（例如 `ffmpeg` 不在 PATH 上）各记 `failed`，**PCM 一个字节都不删**。
 
 ### 收尾怎么跑：触发、共享预算、超时与中断
 

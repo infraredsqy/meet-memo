@@ -95,7 +95,7 @@
       {
         "id": "transcode",
         "status": "skipped",
-        "detail": "这一场没有可转码的产物（转写后端缺席 / 采集替身不写真实音频；转码归 dca4539b）",
+        "detail": "这一场没有可转码的产物（未接真采集后端 / 采集替身没有 transcode 能力；转码归 dca4539b）",
         "error": null
       },
       {

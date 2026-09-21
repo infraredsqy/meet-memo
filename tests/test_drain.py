@@ -715,8 +715,9 @@ def test_skipped_and_failed_follow_registry_resolution_without_exception_swallow
     """沿用 registry 的解析结论：**缺席记 `skipped`、有实现却抛错记 `failed`**。
 
     行为断言证明「异常吞成 `skipped`」这条路不在实现里：给在场实现注入一个非预期异常
-    （`finalize()` 抛 `OSError`），那一步必须落到 `failed`；同一趟里转写后端缺席，
-    `transcode` 那一步照同一套规则落 `skipped`。
+    （`finalize()` 抛 `OSError`），那一步必须落到 `failed`；同一趟里采集假件带着
+    `transcode` 能力，第 2 步照常真的跑完、落 `done`（「缺席记 `skipped`」那一档由
+    替身构建的用例钉住，如 `test_state_machine.py` 的 dev 替身那一条）。
     """
     plugin = fakes.write_failing_capture_plugin(meeting_env.home)
     fakes.write_plugin_config(meeting_env.home, plugin)
@@ -730,7 +731,7 @@ def test_skipped_and_failed_follow_registry_resolution_without_exception_swallow
     statuses = _step_statuses(snapshot["ended"]["steps"])
     detail = _service_log_text(meeting_env)
     assert statuses["flush"] == "failed", _drain_evidence(snapshot, detail)
-    assert statuses["transcode"] == "skipped"  # 构建期缺席 → skipped（同一套规则的另一档）
+    assert statuses["transcode"] == "done"  # 采集假件带 transcode 能力 → 第 2 步真的跑完
     assert statuses["log"] == "done"
     flush = next(step for step in snapshot["ended"]["steps"] if step["id"] == "flush")
     assert flush["error"] and "OSError" in flush["error"]
@@ -796,8 +797,8 @@ def test_drain_wait_limit_follows_backlog_budget(service_process, meeting_env):
     elapsed = time.monotonic() - began
 
     statuses = _step_statuses(snapshot["ended"]["steps"])
-    # 拖长的是 `flush` 与 `post` 两步；`transcode` 在这一趟里有真实实现（假转写后端在场），
-    # 于是它跑到 `done`（骨架构建下它是 `skipped`，两档都算落定）
+    # 拖长的是 `flush` 与 `post` 两步；`transcode` 在这一趟里也有真实实现（假采集后端
+    # 带着 transcode 能力），于是它跑到 `done`（替身构建下它是 `skipped`，两档都算落定）
     assert statuses["flush"] == "done", snapshot["ended"]
     assert statuses["post"] == "done", snapshot["ended"]
     assert statuses["transcode"] in ("done", "skipped")
@@ -1098,26 +1099,13 @@ def test_drain_steps_share_one_deadline_with_shrinking_remaining_budget(tmp_path
         has_implementation=True,
         detail="本用例造的现场（进程内直接注入运行时成员）",
     )
-    # **四步都要真的经 `_drain_wait()`**（§3.1 第 3 条的「无一例外」）：转写侧与会后钩子侧
-    # 在这一档也各给一个在场、立刻返回的假件 —— 不然第 2 / 第 4 步会因为「构建期缺席」记
-    # `skipped`、根本不进等待层，四步里只剩两步能给出「共享同一条 deadline」的证据。
-    # 假件一律从共享支持模块取（`FakeTranscriberBackend` / `FakePostHook`），本文件不另写一份。
-    transcriber = fakes.FakeTranscriberBackend()
+    # **四步都要真的经 `_drain_wait()`**（§3.1 第 3 条的「无一例外」）：第 2 步的闸门只看
+    # **采集侧**（上面已给足 `capture_resolution` 与 transcode 能力，转写侧与它无关），
+    # 这里只差会后钩子侧一个在场、立刻返回的假件 —— 不然第 4 步会因为「构建期缺席」记
+    # `skipped`、根本不进等待层，四步里就少一步能给出「共享同一条 deadline」的证据。
+    # 假件从共享支持模块取（`FakePostHook`），本文件不另写一份。
     post_hook = fakes.FakePostHook()
-    monkeypatch.setattr(runtime, "transcriber_backend", transcriber)
     monkeypatch.setattr(runtime, "post_hook", post_hook)
-    monkeypatch.setattr(
-        runtime,
-        "transcriber_resolution",
-        BackendResolution(
-            key="transcriber.backend",
-            selector="fake",
-            target="meeting_drain_fakes:FakeTranscriberBackend",
-            implementation=transcriber,
-            has_implementation=True,
-            detail="本用例造的现场（进程内直接注入运行时成员）",
-        ),
-    )
     monkeypatch.setattr(
         runtime,
         "post_resolution",
@@ -1529,8 +1517,8 @@ def test_step_over_budget_still_leaves_later_steps_room(tmp_path, monkeypatch):
     一次都跑不到 —— 收尾期间 `/api/state` 与 SSE 也就一起停摆。
 
     断言因此分三处：事件循环一直在转（ticker 计数）、那一步落 `failed` 且文案点名
-    `invoke=True`、**后续步照常推进到终态**（`transcode` / `post` 按构建期缺席记 `skipped`、
-    `log` 记 `done`）。
+    `invoke=True`、**后续步照常推进到终态**（`transcode` 按采集替身没有 transcode 能力、
+    `post` 按钩子缺席记 `skipped`，`log` 记 `done`）。
 
     **观察窗口从第一步挪到整趟收尾**：修好之后第一步在开跑之前就落定（零点几毫秒），单看它
     那一段量不到「循环一直在转」。于是本用例给 `log` 那一步挂一个睡觉的假替身
@@ -2166,7 +2154,7 @@ def test_drain_whole_pass_upper_bound_grows_with_the_backlog(tmp_path, monkeypat
     # 采集假件：`finalize()` 拖长 `DRAIN_OVERRUN_STEP_SECONDS`，于是收尾有一小段「确实还在跑」
     # 的窗口可以把上限读出来。**三样一起给**（与 ⑤e 条同一处口径）：`_flush` 那一步的判定读的
     # 是**解析结论**（`capture_resolution` 缺席就记 `skipped`，拖长的假件根本不会被调到）。
-    # `transcode` 这一项如实开成 `False`（转写侧在本用例里缺席），收尾第 2 步因此照常记
+    # `transcode` 这一项如实开成 `False`（本用例不需要第 2 步跑起来），收尾第 2 步因此照常记
     # `skipped`，这一条量的仍然是「同一趟收尾的上限」
     backend = fakes.FakeCaptureBackend(finalize_delay_seconds=DRAIN_OVERRUN_STEP_SECONDS)
     runtime.capture_backend = backend

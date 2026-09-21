@@ -1759,14 +1759,18 @@ class ServiceRuntime:
         self._done_step(step_id, "归档已落盘（finalize() 返回）", resolution, elapsed=elapsed)
 
     async def _drain_transcode(self, deadline: float) -> None:
-        """第 2 步 `transcode`：收尾转换；缺席记 `skipped`、抛错记 `failed`。"""
+        """第 2 步 `transcode`：收尾转换（后端 `transcode()`）；采集替身记 `skipped`、抛错记 `failed`。
+
+        闸门只看**采集侧**：transcode 是 CaptureBackend 的能力（`registry.capabilities_of()`
+        的第三项），转写后端在不在场与这一步无关 —— 解析结论、`run_ok` 也都记在采集侧。
+        """
         step_id = "transcode"
         self._begin_step(step_id, "收尾转换（后端 transcode()）")
-        resolution = self.transcriber_resolution
+        resolution = self.capture_resolution
         if resolution is None or resolution.skipped() or not self.capture_capabilities.get("transcode"):
             self._skip_step(
                 step_id,
-                "这一场没有可转码的产物（转写后端缺席 / 采集替身不写真实音频；转码归 dca4539b）",
+                "这一场没有可转码的产物（未接真采集后端 / 采集替身没有 transcode 能力；转码归 dca4539b）",
                 resolution,
             )
             return

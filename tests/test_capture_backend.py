@@ -430,19 +430,16 @@ def test_end_to_end_session_drains_with_two_mp3(tmp_path: Path, monkeypatch: pyt
     `flush` 这一档记 **`done`**（不再是 `skipped`）：真后端落地之后
     `registry.capabilities_of()` 对 `finalize` 报 `True`，收尾第 1 步因此真的调它。
 
-    `transcode` 那一步的判定**要两样一起给**（`meeting/service/runtime.py` 的
-    `_drain_transcode()`：`resolution.skipped()` **或** `capture_capabilities["transcode"]`
-    为假就记 `skipped`）：本节点只交采集侧，产品里还没有转写实现（`meeting.backends.transcribe`
-    尚不存在），所以这一场把转写侧的解析结论摆成「有实现在场」—— 于是第 2 步真的走到
-    `capture_backend.transcode()`，两个 `.mp3` 由**本节点的真代码**转出来（不是替身记的一笔）。
+    `transcode` 那一步的判定**只看采集侧**（`meeting/service/runtime.py` 的
+    `_drain_transcode()`：`capture_resolution.skipped()` **或** `capture_capabilities["transcode"]`
+    为假就记 `skipped`）：本场的采集后端是真的（`auto`），两项收尾能力如实为真，
+    于是第 2 步真的走到 `capture_backend.transcode()`，两个 `.mp3` 由**本节点的真代码**
+    转出来（不是替身记的一笔）。转写后端在不在场与这一步无关。
     """
     factory = SourceFactory(chunks=None, pace_seconds=SourceFactory.PACE_SECONDS)
     install_fake_probe(monkeypatch, factory)
 
-    with live(tmp_path, {"capture.backend": "auto"}) as (client, runtime, _home, out_root):
-        # 转写侧：本节点没有产品实现，这里只把「它在场」这件事摆出来（不进音频路径）
-        runtime.transcriber_resolution.has_implementation = True
-
+    with live(tmp_path, {"capture.backend": "auto"}) as (client, _runtime, _home, out_root):
         started = post(client, "start", {"mode": "both"})
         assert started.status_code == 200, started.text
 
@@ -500,8 +497,7 @@ def test_end_to_end_finalize_step_records_failure_when_a_route_dies(
     )
     install_fake_probe(monkeypatch, factory)
 
-    with live(tmp_path, {"capture.backend": "auto"}) as (client, runtime, _home, _out):
-        runtime.transcriber_resolution.has_implementation = True
+    with live(tmp_path, {"capture.backend": "auto"}) as (client, _runtime, _home, _out):
         assert post(client, "start", {"mode": "both"}).status_code == 200
         session_dir = Path(snapshot_of(client)["session"]["dir"])
 
