@@ -138,8 +138,9 @@ class CaptureBackend(Protocol):
     def start(self, mode: str, session_dir: str) -> None:
         """按开场前定下的 `mode` 起采集，开始往自己的归档里写。
 
-        两路各自独立，一路起不来别拖死另一路 —— 起不来的那路如实抛错，
-        runtime 把 `capture_unavailable` 与原因转给界面。
+        两路各自独立，一路起不来别拖死另一路 —— 起不来的那路**发一条 `SourceLost` 如实报出**，
+        另一路照跑；**本场该采的路全部起不来**才抛 `CaptureUnavailable`，runtime 把
+        `capture_unavailable` 与原因转给界面。
         """
 
     def finalize(self) -> None:

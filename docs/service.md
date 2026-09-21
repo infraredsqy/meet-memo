@@ -24,7 +24,9 @@
 
 ## 1. 怎么装、怎么起
 
-包名 `meeting`，Python ≥ 3.13，运行时依赖只有 `starlette` 与 `uvicorn`（模型与音频依赖留成 `.[capture]` / `.[asr]` 两个空 extra，由各自的后端节点去填）。本机实测环境：Python 3.13.7 / starlette 1.0.0 / uvicorn 0.42.0 / pytest 9.0.3 / httpx 0.28.1。
+包名 `meeting`，Python ≥ 3.13。运行时依赖两条主干 `starlette` / `uvicorn`，外加**音频四件套** `numpy` / `sounddevice` / `soundcard` / `pydub`（`dca4539b` §5 的裁定：录音是产品主体，放可选 extra 会让「没装 extra」退化成「一场会什么都没录」）。模型依赖仍留成 `.[asr]` 空 extra，由转写节点去填；`capture` extra 有意留空。本机实测环境：Python 3.13.7 / starlette 1.0.0 / uvicorn 0.42.0 / pytest 9.0.3 / httpx 0.28.1 / numpy 2.4.4 / sounddevice 0.5.5 / soundcard 0.4.6 / pydub 0.25.1。
+
+**外部前置条件：`ffmpeg` 要在 PATH 上**（`pydub` 靠它转 MP3；装机时一并装）。它缺席时服务照常起、照常录，只是收尾第 2 步 `transcode` 如实记 `failed`，**归档 PCM 原样留在场次目录里**（一个字节都不丢）。
 
 命令面只有两个词：
 
@@ -46,7 +48,7 @@ python -m meeting post
 
 起好之后终端会打印三样：`URL：…`、`输出根：…`、`log 路径：…`。要调端口用 `MEETING_PORT=8766 meeting web`；不想让它开浏览器就设 `MEETING_NO_BROWSER=1`（测试与无头场景用，浏览器打开失败只警告、不阻塞启动）。
 
-想真开一场会，得先把采集后端换成开发替身：
+想真开一场会，直接起服务按「开始录音」就行（默认 `capture.backend = auto` 解析到真采集后端）。采集替身仍然在，但它只在显式点名时上场（`dev` 是**非产品路径**：合成电平 + 三档可注入故障，给开发与测试用）：
 
 ```powershell
 $env:MEETING_CAPTURE="dev"; $env:MEETING_NO_BROWSER="1"; meeting web
@@ -220,7 +222,7 @@ python -m pytest -q
 python -m pytest tests/test_state_machine.py tests/test_api_actions.py -q   # 只跑某几个文件
 ```
 
-`tests/` 下现在有 **23 个测试文件、341 个用例**（`python -m pytest -q` 实测：`341 passed in 86.66s`）。不需要先 `pip install`，也不需要可编辑安装。
+`tests/` 下现在有 **27 个测试文件、416 个用例**（`python -m pytest -q` 实测：`416 passed in 91.89s`）。不需要先 `pip install`，也不需要可编辑安装。
 
 | 文件 | 用例数 | 验什么 |
 |---|---|---|
@@ -245,7 +247,11 @@ python -m pytest tests/test_state_machine.py tests/test_api_actions.py -q   # �
 | `tests/test_e2e_restart_consistency.py` | 3 | 进程级重启自洽：`recording` 中被杀 / `stop` 之后被杀两个现场 → 重启后 `idle` + `restart_unfinished` + 不自动续录；再重启一次仍是同一副面孔 |
 | `tests/test_e2e_silence_alert.py` | 1 | 一路静默 → 致命级告警、另一路照常采、录音继续（`session.frozen` 为假）、结束必须由测试 `stop` |
 | `tests/test_capture_devices.py` | 34 | 设备模型与挑选策略（纯逻辑、注入假端点表）：有波形 / 全零 / 开不了三档、`CABLE Output` 抓取型端点挡拦（含 WDM-KS 的 `VB-Audio Point` 写法）、host API 排序、MME 截断名的前缀兜底与**精确名优先**、收尾两档收敛（一条都没打开 → `probe_failed`）、没配名字时种子取**系统默认输入端点**（跟着 `is_default` 走）、loopback 三级（两个子串判据逐字照 V1 的 `in`） |
-| `tests/test_capture_probe.py` | 32 | 真探测这一段的后端与选择面：`probe()` 两路各一条结论与三档取值域、`device_name` 是真端点名、试开真的读回样本、重复探测幂等、`list_input_endpoints()` 给系统默认输入端点打标记（枚举面用替身）、`start()` 抛 `CaptureUnavailable`、没有 `inject_fault`、`auto` 解析到真类、`settings.devices` 与 `reprobe` 动作 |
+| `tests/test_capture_probe.py` | 32 | 设备层与选择面（枚举与试开用替身）：`probe()` 两路各一条结论与三档取值域、`device_name` 是真端点名、试开真的读回样本、重复探测幂等、`list_input_endpoints()` 给系统默认输入端点打标记（枚举面用替身）、一条端点都挑不出来时 `start()` 抛 `CaptureUnavailable`、没有 `inject_fault`、`auto` 解析到真类、`settings.devices` 与 `reprobe` 动作、起服务那一场用假源走通 `start()` |
+| `tests/test_capture_levels.py` | 13 | 电平换算（纯函数）：满量程锚点、10 倍幅度 = 20 dB、`-inf` 兜底成 `-120`、全零窗口落到静默阈值以下、正弦的均方根比峰值低约 3 dB、`bar = max(dbfs, peak)`、三个数都是有限值 |
+| `tests/test_capture_archive.py` | 21 | PCM 归档与转码：`open_pcm()` 是追加模式且**无缓冲**（`write()` 一返回就在盘上）、写线程「取一块写一块」、`close()` 幂等且把队列里剩下的块写完、两路不共用队列、非空 PCM 转出 `ffmpeg` 读得回来的 MP3、空文件不产 MP3、转码失败原样抛错且 **PCM 字节不变**、`from_raw` 拿到的形状参数逐字是 V1 那一份、**转码一路一次都不 `unlink`** |
+| `tests/test_capture_engine.py` | 27 | 会话引擎（注入假源）：字节数按 32000 字节/秒对账、两路各自长起来、单路读崩只报一条 `SourceLost` 而另一路继续写、死掉那一路的 PCM 可解、`mode` 过滤（未选中的那一路不读不发帧但文件在）、电平帧每 `frame_interval` 秒**无条件**发（静音时发 `-120`）、`SourceFacts` 跟着走、`finalize()` 停流 + join、`stop()` / `finalize()` 幂等 |
+| `tests/test_capture_backend.py` | 14 | 真采集后端的起停与收尾（假源注入，一个真声卡入口都不碰）：两路都起来并写出归档、单路起不来不抛错、全起不来才抛 `CaptureUnavailable`（逐路缘由进 `message`）、`mode=mic` 只有 mic 算数、`finalize()` / `transcode()` / `stop()` 与幂等、没有 `inject_fault`，外加两条**端到端**（进程内真运行时 + `capture.backend = auto`）：收尾第 1 步记 `done`、两路各出一份 `.mp3` 且 PCM 留着；一路在运行期死掉时另一路的归档更多、死掉那一路留半份 |
 | `tests/test_real_capture_guard.py` | 1 | 「一碰真声卡就炸」那道看门**与导入次序无关**：在一个全新解释器里（库还没被 import）直接调四个真采集入口，逐条必须被拦下，且**每次调用之前先断言目标确实是桩**（桩不在时红在断言上，真调用一次都不发出去） |
 
 除这些，`tests/` 下还有**测试支持**（不被 `pytest` 收集）：`tests/_helpers.py`（真服务子进程与假浏览器等工具）、`tests/_service.py`（真服务子进程驱动件 + SSE 读帧与等待助手）、`tests/_drain_fakes.py`（收尾与关停用例共用的假后端 / 假钩子，与工厂辅助一起挂进子进程）、`tests/_contract.py`（`contract/fixtures/` 的采集、掩码与落盘比对；它按需写出一个假转写后端，经 `PYTHONPATH` + `transcriber.backend` 的 `module:Class` 挂进子进程）、`tests/__init__.py`（`tests/` 的包标记，跨文件取用走包路径 import）、`tests/conftest.py`（**只放 fixture**，其中**两道** autouse 的兜底：一道把 `webbrowser.open` 换成只记录不开窗的假替身，另一道 `_no_real_audio_capture` 把真采集入口打成「一碰就炸」的桩 —— `sounddevice.InputStream` / `rec` / `check_input_settings` / `soundcard.get_microphone`，异常类 `RealCaptureForbidden` 不继承 `Exception` 因此不会被生产代码的 `except Exception` 吞掉，只读枚举不禁；另注册 `--regen-contract` 开关）、`tests/_fake_webbrowser/`（替掉标准库 `webbrowser` 的假模块）。
@@ -260,11 +266,12 @@ python -m pytest tests/test_state_machine.py tests/test_api_actions.py -q   # �
 
 ## 8. 现在能做什么 / 还接不上的部分
 
-**能**：起停、跑完启动序列、交 `/`（产物或说明页）、**接通了的 `/debug` 自检页**、`/api/state` 的完整快照、`/api/events` 的三通道 SSE、`/api/heartbeat` 的真值、`POST /api/actions` 的六个动作、四态与全部迁移、场次目录与原子写 `session.json`、`stop` 的四步收尾跑到终态（含自适应预算、超时如实上报、失败后两条出路）、`Ctrl+C` 的两阶段语义与五档退出码、重启自洽闭环、场次 log 的挂上与摘下、告警判定与静音、`settings_update` 的原子写、**设备枚举与试开（`devices.mic` / `devices.loopback` 两个键位与 `reprobe` 动作；这一段不做采集引擎，`start` 如实回 `capture_unavailable`）**、dev 采集替身与三档故障注入、仓库根的简版 `README.md`、**契约看守**（`python -m pytest tests/test_contract_fixtures.py -q` 比对 `contract/fixtures/` 的 25 个 golden 样本，`--regen-contract` 重新生成；同一批样本在 `web/tests/` 里由 `npx vitest run` 再验一遍类型层）。
+**能**：起停、跑完启动序列、交 `/`（产物或说明页）、**接通了的 `/debug` 自检页**、`/api/state` 的完整快照、`/api/events` 的三通道 SSE、`/api/heartbeat` 的真值、`POST /api/actions` 的六个动作、四态与全部迁移、场次目录与原子写 `session.json`、`stop` 的四步收尾跑到终态（含自适应预算、超时如实上报、失败后两条出路）、`Ctrl+C` 的两阶段语义与五档退出码、重启自洽闭环、场次 log 的挂上与摘下、告警判定与静音、`settings_update` 的原子写、**设备枚举与试开（`devices.mic` / `devices.loopback` 两个键位与 `reprobe` 动作）**、**真实双路采集与归档**（`capture.backend` 默认值 `auto`：两路各自独立读写、边采边落盘 16k / 单声道 / int16 裸 PCM、每 0.5 秒一帧 dBFS 电平事实、收尾 `finalize()` 停流落盘 + `transcode()` 出 64k MP3）、dev 采集替身与三档故障注入、仓库根的简版 `README.md`、**契约看守**（`python -m pytest tests/test_contract_fixtures.py -q` 比对 `contract/fixtures/` 的 25 个 golden 样本，`--regen-contract` 重新生成；同一批样本在 `web/tests/` 里由 `npx vitest run` 再验一遍类型层）。
 
 **还接不上**（都按「能力还没进来」理解，服务本身照常跑）：
 
-- **真实采集与转写**：设备枚举与试开已经接通（`capture.backend` 的默认值 `auto` 解析到 `meeting.backends.capture:CaptureBackend`），探测结果两路各一条：挑到端点的报 `ready`、一个能打开的端点都没有的报 `probe_failed`。`start` 会回 `503 capture_unavailable`（「采集引擎在下一执行单元接入：这一段只交设备层，不会真的录」），盘上不留任何场次目录。收尾四步里的第 1、2 步和第 4 步因此都记 `skipped` —— 没有真实音频可落盘、可转码，也没有会后钩子。第 1、2 步的实现归 `dca4539b`，第 4 步归 `65dd3e4c`。
+- **真实采集已经接通**（`dca4539b`）：`capture.backend` 的默认值 `auto` 解析到 `meeting.backends.capture:CaptureBackend`，它做三件事 —— 枚举端点并以 16k 试开、读回样本（两路各一条 `ready` / `probe_failed`）；按 `mode` 起两路**各自独立**的采集（一路出事另一路照跑，起不来的那一路发一条 `SourceLost`，本场该采的路全起不来才回 `503 capture_unavailable`）；把 16k / 单声道 / int16 的裸 PCM 边采边写进场次目录的 `meeting_audio_<source>.pcm`，每 0.5 秒往服务报一帧 dBFS 电平事实。收尾第 1 步 `finalize()` 停流 + join + 关文件 + `fsync`，第 2 步 `transcode()` 把两份 PCM 转成 `meeting_audio_<source>.mp3`（`pydub` + `ffmpeg`，64k）。**转码成功之后 PCM 照样留着**（`session.json` 的 `sources[*].archive` 声明的是它）。
+- **还没接上的三样**（都按「能力还没进来」理解，服务本身照常跑）：**转写**（`meeting.backends.transcribe` 还不存在，`transcriber.backend = auto` 如实回退 `NullTranscriberBackend`）与**会后钩子**（第 4 步 `post` 因此记 `skipped`，归 `65dd3e4c`）；以及**收尾第 2 步的闸门**：`meeting/service/runtime.py` 的 `_drain_transcode()` 眼下要**转写后端在场**并且采集侧有 `transcode` 能力才真的调 `capture_backend.transcode()`，所以骨架构建（没有转写实现）下这一格仍记 `skipped`，两份 MP3 要等转写后端落地之后才会在收尾里自动出现 —— 采集侧那一半（`transcode()` 本身）此刻已经能用，直接调它就能出 MP3。
 - **端口被占时那句文案里的「已录多久」**：占用者是本服务时，括号里眼下是**字面写死的「当前空闲」**（`meeting/service/app.py` 的端口探测那一处还没取用会话时长这个值）。`README.md` 与 `docs/api.md` 都照这个现状写。
 - **真机真开一场会**：设备枚举与真实电平只有真开一场才见分晓，这一条是**手工验收**，四条端到端脚本与它无关。自动化边界归下游 `46ae4a08`。
 - **`meeting post`**：只有桩（打印「会后流程还没接入（65dd3e4c）」、退出码 `1`）。它同时是收尾失败后的出路之一，实现归 `65dd3e4c`。
@@ -273,7 +280,7 @@ python -m pytest tests/test_state_machine.py tests/test_api_actions.py -q   # �
   - **开会**：`cd web; npm run build`（内部先跑 `npm run typecheck`）产出 `web/dist`，再 `meeting web` **由服务直接发这份静态产物** —— 从服务端口（如 `http://127.0.0.1:8765`）打开就是真界面，**运行时不需要 Node**。
   - 自检是 `npm test`（vitest run，4 个文件 121 个用例）与 `npm run typecheck`。
   - 产物缺失时 `/` 给说明页、`/api/*` 与 `/debug` 照常，产物建好刷新即可见（见第 3 章那张表）。
-- **`settings.devices`**：两个子键 `mic` / `loopback`（`dca4539b` 定名），取值是设备名或 `null`（没配）。设备挑选在 `meeting/capture/devices.py`（骨架搬自 V1 `mnotes_core/recorder.py` 的 `_resolve_mic_device` / `_resolve_loopback_speaker`，多加一步：试开时读回一小段样本判有没有波形）；真实枚举与试开在 `meeting/capture/sources.py`。
+- **`settings.devices`**：两个子键 `mic` / `loopback`（`dca4539b` 定名），取值是设备名或 `null`（没配）。设备挑选在 `meeting/capture/devices.py`（骨架搬自 V1 `mnotes_core/recorder.py` 的 `_resolve_mic_device` / `_resolve_loopback_speaker`，多加一步：试开时读回一小段样本判有没有波形）；真实枚举、试开与持续采集在 `meeting/capture/sources.py`，会话引擎（两路读侧 / 写侧 / 0.5 秒电平刻度）在 `meeting/capture/engine.py`。**配置键是「用户配的意图」，快照 `sources[*].device_name` 是「探测实际落到的那个设备」**：配了却没命中时按「精确名 → CABLE Input（不含 16ch）→ 系统默认输出」这条回退顺序走，主 log 一行 `WARNING`，不报错（契约陈述见 `docs/contract.md` 第 2 章 `settings.devices` 那一段）。
 
 ## 9. 相关文档
 

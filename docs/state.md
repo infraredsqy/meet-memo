@@ -41,8 +41,8 @@
 
 | 序 | 步 | 这一步干什么 | 现在谁来填实现 |
 |---|---|---|---|
-| 1 | `flush` | 停采集、把归档落盘（后端 `finalize()`） | `dca4539b` |
-| 2 | `transcode` | 收尾转换（后端 `transcode()`） | `dca4539b` |
+| 1 | `flush` | 停采集、把归档落盘（后端 `finalize()`：停流 + join + 关文件 + `fsync`） | `dca4539b`（真采集后端已落地） |
+| 2 | `transcode` | 收尾转换（后端 `transcode()`：两份 PCM → 64k MP3，**转完保留 PCM**） | `dca4539b`（真采集后端已落地） |
 | 3 | `log` | 写这一场的结束标记（`session.json` + 服务级主日志） | 本服务（永远在场，永远 `done`） |
 | 4 | `post` | 拉起会后流程（**启动即算完成，不等它跑完**） | `65dd3e4c` |
 
@@ -52,6 +52,8 @@
 - **`failed` = 有实现，但这次调用抛错**。它带 `error`。
 - 判「缺席」只看后端的解析结果（`meeting/backends/registry.py`），不看调用时抛了什么异常。
 
+**第 1、2 步的闸门**（`meeting/service/runtime.py` 的 `_drain_flush()` / `_drain_transcode()`）：第 1 步看解析结论**与** `capture_capabilities["finalize"]`；第 2 步看解析结论**与** `capture_capabilities["transcode"]` —— 后两项由 `registry.capabilities_of()` 按「实现在不在场」回答，真采集后端（`meeting.backends.capture:CaptureBackend`）两项都是 `True`，`null` / `dev` 两个替身都是 `False`。因此**真采集那一场**这两步记 `done`、产物是场次目录里的两份 `.mp3`；替身那一场照旧 `skipped`。另外第 2 步的闸门还带着转写侧的解析结论，转写后端缺席（眼下就是这一档，`meeting.backends.transcribe` 还没落地）时它同样记 `skipped` —— 采集侧的 `transcode()` 本身已经可用，只是收尾编排还没放它单独跑。
+
 **终态判定只在一处**（`finish_drain()`）：
 
 | 四步结果 | `ended.phase` | `top_state` | `session` | 新的 `start` |
@@ -60,6 +62,8 @@
 | 有任一步 `failed`，或四步没全落定就走到了出口 | 保持 `draining` | 停在 `ended` | 保留 | `draining`(409)，`detail` 带失败步与场次 log 路径 |
 
 骨架构建（默认 `null` 替身或 dev 替身 + 转写缺席 + 钩子缺席）跑一场会的预期终态是固定的：`flush: skipped` / `transcode: skipped` / `log: done` / `post: skipped`，于是 `ended.phase == "done"`。
+
+**真采集那一场**（`capture.backend` 取默认值 `auto`，解析到 `meeting.backends.capture:CaptureBackend`）的终态是 `flush: done` / `log: done` / `post: skipped`，第 2 步的 `transcode` 在**转写后端落地之前**仍是 `skipped`（闸门见上）；收尾跑完之后场次目录里躺着两路归档：`meeting_audio_mic.pcm` + `.mp3`、`meeting_audio_loopback.pcm` + `.mp3`（未选中的那一路是 0 字节的 `.pcm`，不产 `.mp3`）。第 1 步落盘失败（例如磁盘满）与第 2 步转码失败（例如 `ffmpeg` 不在 PATH 上）各记 `failed`，**PCM 一个字节都不删**。
 
 ### 收尾怎么跑：触发、共享预算、超时与中断
 
@@ -129,6 +133,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 
 - `asr` 的五子键与配置键 `asr.*` 逐字同名（去掉前缀），取当前生效值：`max_segment_seconds` / `timeout_seconds` / `max_new_tokens` / `repeat_max_unit` / `repeat_min_coverage`。
 - `devices` 的两个子键 `mic` / `loopback`（`dca4539b` 定名）与配置键 `devices.mic` / `devices.loopback` 逐字同名（去掉前缀），取当前生效值：值为**设备名字符串**，没配就是 `null`（按默认策略挑：mic 先挡掉 `CABLE Output` 这类抓取型虚拟端点，再拿**系统默认输入端点**的名字凑同名候选、按 host API 排序试开；loopback 优先 `CABLE Input` 且不含 `16ch`）。空值形状两端一致 —— 配置文件里也写 `null`。
+- **这两个子键说的是「用户配的意图」，`sources[*].device_name` 说的是「探测实际落到的那个设备」**（`dca4539b` 的契约陈述，同一段也写在 `docs/contract.md` 第 2 章与 `docs/service.md` 第 8 章）：配了却没命中任何端点时**不报错、也不改写快照里的名字**，按「精确名 → `CABLE Input`（不含 `16ch`）→ 系统默认输出」这条回退顺序走，主 log 一行 `WARNING`（V1 就是这个行为，见 `meeting/capture/devices.py` 的 `loopback_candidates()`）。想知道这一场到底在录哪个设备，看 `sources[*].device_name`。
 - 这里读到的是**运行期生效值**。非热读的键改了要重启才在快照里可见，详见 `docs/service.md` 第 4 章的键态两分。
 
 `transcript` 的语义：`health ∈ normal / behind / stopped`，`buffered_lines` 是积压段数、`failed_segments` 是累计识别失败段数。**这两个计数只进 log 与 `/debug`**，产品界面不摆它们。转写停了不影响录音、电平与告警，只影响总结入口。骨架阶段（没有转写后端）恒为 `normal` + 0。
@@ -143,7 +148,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 
 - 输出根 = `output.root`（默认 `%USERPROFILE%\Documents\meeting\out`）。**根不存在时在 `start` 那一刻建**，服务启动与扫描都不建。
 - 场次目录名 = `YYMMDD`，同名已存在就让位到 `YYMMDD-2`、`YYMMDD-3`……**让位不复用**。
-- 一场会一个目录，目录里只有一份 `session.json` 是服务现在写的（音频字节归 `dca4539b`）。
+- 一场会一个目录，目录里只有一份 `session.json` 是服务现在写的。**两路音频归档也落在这里**（`dca4539b` 已落地）：`meeting_audio_mic.pcm` 与 `meeting_audio_loopback.pcm`，16k / 单声道 / int16 小端裸 PCM、无头，**边采边写**（无缓冲追加写，服务被强杀最多丢最后一个块的尾巴）；收尾第 2 步在同目录同名换扩展名产出 `.mp3`（64k），**转码成功之后 PCM 照样留着**（`sources[*].archive` 声明的就是它）。未选中的那一路也建出文件，内容是 0 字节。
 - `session.json` **原子写**：同目录临时文件 + `os.replace` + `flush`。**每个阶段变更都写一次**（`start` 的第一版、进收尾中、每一步的 `status`/`detail`、终态那一版），被打断不留半截文件、输出根里不留 `.tmp` 残骸。
 
 字段全貌（**字段名与字段个数是冻结项**，示例里的取值只是某一版的示意）：
@@ -169,7 +174,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 ```
 
 - `state` 的四取值与顶层四态是**两套词汇**（`alert` 在盘上写 `recording`：告警不是盘上的一档，会话还在录）。映射只有一处实现，读回时只做集合成员判断。
-- `sources[*].archive` 的形状固定为 `meeting_audio_<source>.pcm`。音频字节的写入归 `dca4539b`。
+- `sources[*].archive` 的形状固定为 `meeting_audio_<source>.pcm`。**这两个文件无条件都列出来**（冻结项），所以采集侧开场就把两份都建出来 —— 未选中的那一路是 0 字节文件，收尾也不给它产 `.mp3`（`dca4539b` 已落地）。
 - **一场会的事实全在这一份文件里**，不另开服务级状态文件。重启靠它判断上一场走没走完，`meeting post` 也靠它认场次。
 - `start` 阶段写这份文件失败 → **不进 `recording`**，回 503 并把刚建的场次目录清掉、在主 log 留一条痕（「没有落痕就开始录」是不许的）。
 

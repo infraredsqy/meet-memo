@@ -5,8 +5,15 @@
 #   - 不引 FastAPI（技术栈是 Starlette + uvicorn）
 #   - 不引 pytest-asyncio（测试一律同步写）
 #   - 不引 websockets
-# 运行时依赖只有 starlette 与 uvicorn 两条；模型 / 音频依赖一律放 optional extra，
+# 运行时依赖只有 starlette 与 uvicorn 两条；模型依赖一律放 optional extra，
 # 保证 `meeting web` 的 import 链不碰重依赖、启动在秒级完成（B11 / E10）。
+#
+# **音频依赖是例外（`dca4539b` §5 的裁定）**：录音是这个产品的主体（R1），所以
+# numpy / sounddevice / soundcard / pydub 进**运行时依赖**，不进 `capture` extra ——
+# 放进可选 extra 会让「没装 extra」退化成「一场会什么都没录」，正是 R2 / R4 要消灭的
+# 那种静默失败。它们在函数体内惰性 import（`meeting/capture/sources.py`），所以
+# `meeting web` 的启动链依旧不 import 声卡库。`ffmpeg` 是外部二进制（README 的前置条件），
+# 缺席时转码步骤如实记 `failed` 并保留 PCM。
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -20,13 +27,19 @@ requires-python = ">=3.13"
 dependencies = [
     "starlette",
     "uvicorn",
+    # 音频四件套（版本号是本机实测跑通整套采集与归档的那几个，照 `dca4539b` 的验收环境写）
+    "numpy==2.4.4",
+    "sounddevice==0.5.5",
+    "soundcard==0.4.6",
+    "pydub==0.25.1",
 ]
 
 [project.scripts]
 meeting = "meeting.cli:main"
 
 [project.optional-dependencies]
-# 本 Phase 只留空壳 extra 声明，由下游节点各自加（§3.2）。
+# `capture` 这一格**有意留空**（`dca4539b` §5）：音频四件套已经进运行时依赖，
+# 这里再列一遍会让人以为它们是可选的。`asr` 等模型依赖由下游节点各自加（§3.2）。
 capture = []
 asr = []
 # 测试层：httpx 只服务测试层的真服务子进程；运行时的端口探针走标准库 socket。
@@ -36,8 +49,9 @@ test = [
 ]
 
 [tool.setuptools]
-# 显式列出包：与目录树一一对应（三个包标记都必须在位）。
-packages = ["meeting", "meeting.service", "meeting.backends"]
+# 显式列出包：与目录树一一对应（四个包标记都必须在位 —— `meeting.capture` 是
+# `dca4539b` 建的采集层，漏了它 `pip install` 之后那三个模块就不在包里）。
+packages = ["meeting", "meeting.service", "meeting.backends", "meeting.capture"]
 
 [tool.setuptools.package-data]
 # debug.html 住在包里：pip install 之后 /debug 那页也得在。

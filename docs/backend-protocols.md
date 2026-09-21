@@ -15,8 +15,17 @@
 | `frame_interval` | **类属性**（秒）：这个后端每帧事实的间隔。协议默认 `0.5`，dev 替身写 `0.1`。runtime 在 `bind()` 之后读实例上的这个属性算存活窗口；读不到或取值不是正数就按 `DEFAULT_FRAME_INTERVAL_SECONDS = 0.5` 算 |
 | `bind(emit, *, config)` | `probe()` 之前调一次。`emit` 是**事实出口**，`config` 是只读配置视图 |
 | `probe() -> list[SourceProbe]` | 枚举并试开设备，**两路各一条**（`mic` / `loopback`） |
-| `start(mode, session_dir)` | 按开场前定下的 `mode` 起采集，开始往自己的归档里写。两路各自独立，一路起不来别拖死另一路 —— 起不来的那路如实抛错 |
-| `finalize()` / `transcode()` / `stop()` | 收尾的落盘与转码两步（各自可抛错），以及停采集 |
+| `start(mode, session_dir)` | 按开场前定下的 `mode` 起采集，开始往 `session_dir` 里的归档写。**单路起不来不抛错**：只给那一路发一条 `SourceLost`（`reason` 写人话），另一路照跑；**本场该采的路全部起不来**才抛 `CaptureUnavailable`（`mode=mic` 时只有 mic 起不来才算全败）。抛错之前自己拉起来的线程要自己收干净（`meeting/service/runtime.py` 的 `_abort_session()` 那条路不调 `stop()`） |
+| `finalize()` | 收尾第 1 步：停流 + join + 关文件 + `fsync`。**幂等** |
+| `transcode()` | 收尾第 2 步：把归档转成 MP3。**可抛错**（该步据此记 `failed`，原始归档原样留下） |
+| `stop()` | 停采集（进程关停时调）。**幂等**，没落过盘就先 `finalize()` |
+
+真采集后端（`dca4539b` 的 `meeting.backends.capture:CaptureBackend`，`capture.backend` 的默认值 `auto` 解析到它）把上面四条都落到了实处：
+
+- `probe()` 用 `sounddevice` 枚举输入端点、用 `soundcard` 枚举 render 端点，按配置与策略挑选，**以 16k 试开并读回一小段样本**（「能打开 ≠ 有波形」那一档就是这一步加出来的），结果如实报成两路 `ready` / `probe_failed`；
+- `start()` 起两路**各自独立**的采集：mic 走 `sd.InputStream` 回调、loopback 走 `soundcard` 的 recorder（专用线程 + `CoInitializeEx`），把 16k / 单声道 / int16 的裸 PCM 写进 `meeting_audio_<source>.pcm`（`buffering=0` 的追加写，强杀最多丢最后一个块的尾巴），每 `frame_interval` 秒**无条件**发一帧 `LevelFrame`（静音时发 `-120 dBFS` 的那一帧）+ 一条 `SourceFacts`；
+- 两路各有一条写线程（一路卡在磁盘上不会把另一路拖住）；一路的源读崩时该路报一条 `SourceLost`，另一路照常写；
+- `finalize()` / `transcode()` / `stop()` 见上表；转码成功之后**保留 PCM**（`session.json` 的 `sources[*].archive` 声明的是它）。
 
 后端往里送的事实（**只报原始事实，不判告警、不带阈值语义**）：
 
@@ -96,7 +105,7 @@
 
 判定规则：`has_implementation == false` → 该步记 **`skipped`**；`has_implementation == true` 且 `run_ok == false` → 该步记 **`failed`**。**缺席记「跳过」，在场却抛错记「失败」** —— `has_implementation` 只由解析结果回答，调用阶段的异常只许写进 `run_ok`。
 
-`capabilities_of(implementation)` 另外回答采集实现有没有 `finalize` / `transcode` / `dev_inject` 三项能力：`null` / `dev` 这类不写真实音频的替身没有前两项，于是收尾第 1、2 步记 `skipped`；`dev_inject` 这一项只有 dev 替身在。
+`capabilities_of(implementation)` 另外回答采集实现有没有 `finalize` / `transcode` / `dev_inject` 三项能力：`null` / `dev` 这类不写真实音频的替身没有前两项，于是收尾第 1、2 步记 `skipped`；真采集后端（`meeting.backends.capture:CaptureBackend`）前两项都是 `True`，收尾第 1、2 步因此会真的调它（第 2 步的转写侧闸门见 `docs/state.md` 的「收尾四步与终态」）；`dev_inject` 这一项只有 dev 替身在 —— 真后端**有意不加** `inject_fault`，给真后端加上它会把开发替身的非产品动作在真后端上打开。
 
 ## 4. 注入与构造规则
 

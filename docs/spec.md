@@ -28,9 +28,9 @@
 | `meeting/` | 服务本体（Python 包）：起停、端口与三道防线、配置、日志、四态状态机、场次目录与 `session.json`、告警判定、SSE 推送、六个动作、三个后端协议与两个替身 |
 | `meeting/service/` | 应用装配、五条路由的唯一注册点、`ServiceRuntime`（唯一状态权威）、收尾编排与共享预算、信号处理与关停接线、SSE 广播中心、`/debug` 自检页 |
 | `meeting/backends/` | 协议与数据结构、`null` 替身、dev 采集替身、采集后端 `capture.py`（设备枚举与试开）、后端解析入口 `registry.py` |
-| `meeting/capture/` | 采集层：设备模型与挑选策略（`devices.py`，纯逻辑，骨架搬自 V1）、真实适配层（`sources.py`，惰性 import `sounddevice` / `soundcard`） |
-| `tests/` | 23 个测试文件、341 个用例 + 测试支持（`_helpers.py`、`_service.py`、`_drain_fakes.py`、`_contract.py`、`conftest.py`、`__init__.py`、`_fake_webbrowser/`）；`conftest.py` 里有一道「单条用例 ≤ 5 秒」的耗时看门、`--regen-contract` 开关与两道 autouse 安全兜底（不许开真浏览器、不许碰真声卡），`_contract.py` 是 `contract/fixtures/` 的采集与掩码，`test_contract_fixtures.py` 是漂移比对（8 个用例） |
-| `pyproject.toml` | 打包与依赖；运行时依赖只有 `starlette` 与 `uvicorn` |
+| `meeting/capture/` | 采集层：设备模型与挑选策略（`devices.py`，纯逻辑，骨架搬自 V1）、真实适配层（`sources.py`，惰性 import `sounddevice` / `soundcard`，含两路持续采集源）、电平换算（`levels.py`，纯函数）、归档与转码（`archive.py`：无缓冲 PCM 写入器 + PCM→MP3）、会话引擎（`engine.py`：两路读侧 / 写侧 / 0.5 秒电平刻度） |
+| `tests/` | 27 个测试文件、416 个用例 + 测试支持（`_helpers.py`、`_service.py`、`_drain_fakes.py`、`_contract.py`、`conftest.py`、`__init__.py`、`_fake_webbrowser/`）；`conftest.py` 里有一道「单条用例 ≤ 5 秒」的耗时看门、`--regen-contract` 开关与两道 autouse 安全兜底（不许开真浏览器、不许碰真声卡），`_contract.py` 是 `contract/fixtures/` 的采集与掩码，`test_contract_fixtures.py` 是漂移比对（8 个用例） |
+| `pyproject.toml` | 打包与依赖；运行时依赖 = `starlette` / `uvicorn` + 音频四件套（`numpy` / `sounddevice` / `soundcard` / `pydub`，`dca4539b` §5 的裁定：录音是产品主体，不放可选 extra） |
 | `README.md`（仓库根） | 简版使用说明：怎么起、log 在哪、热读键有哪些、dev 替身怎么开、退出码表、前端开发 |
 | `web/` | 界面工程（React 18 + TypeScript 严格模式 + Vite 6 + vitest 2 + zod）：`src/contract/`（契约层，zod schema 为源）、`src/api/`（SSE / 动作 / 心跳三个客户端）、`src/App.tsx`（壳页）；`tests/` 4 个文件 121 个用例。五个 npm 脚本（`dev` / `typecheck` / `build` / `preview` / `test`）：`npm run dev` 边改边看、`npm run build` 出 `web/dist` 由服务直发（运行时不需要 Node）。工程自己的说明在 `web/README.md` |
 | `contract/` | 双端契约的可机读基准：25 个 golden 样本（`fixtures/`）+ 采集 / 掩码 / 再生成规则（`README.md`）。契约正文在 `docs/contract.md` |

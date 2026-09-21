@@ -1,13 +1,15 @@
 """`tests/test_capture_probe.py` —— 真探测这一段的后端、动作面与配置面。
 
-覆盖三块，全部**不碰真实硬件**（`meeting/capture/sources.py` 的四个函数在这里被换成假件；
-`CaptureBackend` 的四个接缝是它自己的构造参数，所以注入的是**生产代码那一份真类**）：
+覆盖三块，全部**不碰真实硬件**（`meeting/capture/sources.py` 的枚举与试开、以及
+`meeting/backends/capture.py` 的两个造源函数在这里被换成假件；`CaptureBackend` 的设备层
+四个接缝是它自己的构造参数，所以注入的是**生产代码那一份真类**）：
 
   1. `meeting/backends/capture.py` 的 `probe()`：两路各一条结论、`status` 三档之内、
      `device_name` 是真端点名、试开真的读回样本、重复探测幂等（`reprobe` 走的就是它）；
-  2. 这一段**不做采集引擎**：`start()` 抛 `CaptureUnavailable`（`message` 写明引擎在下一
-     执行单元接入）、`finalize()` / `transcode()` / `stop()` 是安全空实现、
-     **没有** `inject_fault`（`dev_inject` 因此在真后端上照旧不可用）；
+  2. 采集引擎的接缝（这一段**只验接线**：真起两路、真写归档、收尾真落盘与真转码的用例在
+     `tests/test_capture_backend.py`）：本文件把 `sources.py` 的枚举/试开与
+     `capture.create_capture_source()` / `create_loopback_source()` 一起换成假件，于是
+     `start()` 这条生产路径能整条走通，而设备表与试开结论仍由假件摆布；
   3. 选择面：`capture.backend` 默认的 `auto` 解析到真类（`registry` 的约定路径）、
      快照 `settings.devices` 两个子键、`settings_update` 写 `devices.mic` 落盘、
      `reprobe` 动作在四态下的行为与 `ACTION_NAMES` 的形状。
@@ -118,10 +120,30 @@ class FakeSources:
         return self.loopback_attempts.get(endpoint_key(endpoint), self.loopback_default)
 
     def install(self, monkeypatch: pytest.MonkeyPatch) -> "FakeSources":
+        """把枚举、试开与**两个造源函数**一起换成假件（`start()` 因此也走假源）。
+
+        `capture.create_capture_source()` / `create_loopback_source()` 是采集引擎的注入接缝：
+        后端用的是「调用那一刻再取」的模块级查找，所以打在**模块对象**上照样生效
+        （`docs/legacy-assets.md` 的坑 C9）。
+        """
+        from tests.test_capture_engine import FakeCaptureSource
+
         monkeypatch.setattr(sources_module, "list_input_endpoints", self.list_input_endpoints)
         monkeypatch.setattr(sources_module, "list_render_endpoints", self.list_render_endpoints)
         monkeypatch.setattr(sources_module, "test_open_input", self.test_open_input)
         monkeypatch.setattr(sources_module, "test_open_loopback", self.test_open_loopback)
+        monkeypatch.setattr(
+            capture_module,
+            "create_capture_source",
+            lambda source, endpoint: FakeCaptureSource(source, chunks=None, pace_seconds=0.05),
+        )
+        monkeypatch.setattr(
+            capture_module,
+            "create_loopback_source",
+            lambda endpoint: FakeCaptureSource(
+                "loopback", chunks=None, pace_seconds=0.05
+            ),
+        )
         return self
 
 
@@ -324,12 +346,13 @@ def test_probe_reads_the_loopback_setting_too():
 
 
 # ---------------------------------------------------------------------------
-# ② 这一段不做采集引擎
+# ② 采集引擎的接线（真起两路 / 真写归档 / 收尾真落盘与真转码见
+#    `tests/test_capture_backend.py`；这里只验「挑不出端点就没得采」这一档）
 # ---------------------------------------------------------------------------
 
 
-def test_start_refuses_and_says_the_engine_comes_next():
-    """`start()` 如实拒绝：抛 `CaptureUnavailable`，`message` 写明引擎在下一执行单元接入。"""
+def test_start_refuses_when_no_endpoint_can_be_opened():
+    """一条端点都挑不出来：`start()` 抛 `CaptureUnavailable`，`message` 逐路写明缘由。"""
     from meeting.backends.null import CaptureUnavailable
 
     backend = capture_module.CaptureBackend(
@@ -340,13 +363,14 @@ def test_start_refuses_and_says_the_engine_comes_next():
     )
     with pytest.raises(CaptureUnavailable) as info:
         backend.start("both", "C:/tmp/session")
-    assert "下一执行单元" in str(info.value)
+    assert "采集起不来" in str(info.value)
+    assert "mic" in str(info.value) and "loopback" in str(info.value)
     assert info.value.code == "capture_unavailable"
     assert CaptureUnavailable is capture_module.CaptureUnavailable
 
 
-def test_finalize_transcode_and_stop_are_safe_no_ops():
-    """收尾三件套是安全空实现（它们连配置都没碰过，也不该抛）。"""
+def test_finalize_transcode_and_stop_are_safe_before_any_session():
+    """一场都没开就收尾（`start()` 抛错之后那条路）：三件套不抛错、不复用什么会话。"""
     backend = capture_module.CaptureBackend(
         list_inputs=lambda: [],
         list_renders=lambda: [],
@@ -594,14 +618,19 @@ def test_service_startup_lands_the_probe_results_in_the_snapshot(tmp_path, monke
         assert {probe.source for probe in runtime.probes} == set(SOURCE_IDS)
         assert all(isinstance(probe, SourceProbe) for probe in runtime.probes)
 
-        # 这一段不做采集引擎：起一场如实回 capture_unavailable(503)
-        from meeting.backends.null import CaptureUnavailable
+        # 采集引擎已经在场：起一场走的是真路径（假源喂料），归档落在场次目录里
+        from meeting.session import archive_name
 
-        refused = post(client, "start")
-        assert refused.status_code == 503
-        assert refused.json()["code"] == "capture_unavailable"
-        assert "下一执行单元" in refused.json()["message"]
-        assert CaptureUnavailable.code == "capture_unavailable"
+        started = post(client, "start")
+        assert started.status_code == 200, started.text
+        session_dir = Path(snapshot_of(client)["session"]["dir"])
+        helpers.wait_until(
+            lambda: (session_dir / archive_name("mic")).exists()
+            and (session_dir / archive_name("mic")).stat().st_size > 0,
+            timeout=10.0,
+            what="mic 那一份归档长起来",
+        )
+        assert post(client, "stop").status_code == 200
 
 
 def test_service_startup_reports_probe_failed_for_both_sources(tmp_path, monkeypatch):

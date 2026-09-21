@@ -91,6 +91,7 @@
 `sources[*]` **九键**：`id`（`mic` / `loopback`，**不掩码**：它是取值域字面量）/ `label`（`本地` / `远端`）/ `device_name`（string \| null）/ `health` / `lost_since`（ISO \| null，**掩码 `<iso>`**）/ `restored`（bool）/ `level_dbfs` 与 `peak_dbfs`（number \| null，**掩码 `<dbfs>`**）/ `envelope`（number 数组，**逐根掩码 `<dbfs>`**，长度不变）。
 
 - `health` **七取值**：`unprobed` / `ready` / `probe_failed` / `capturing` / `lost` / `restored` / `stopped`。前三档由启动时的设备探测直取（后端 `probe()` 只许报这三档），后四档由状态迁移写值。
+- `device_name` 是**探测实际落到的那个端点名**（试开通过的那一条），与用户在配置文件里配的名字是两件事 —— 配置表达的是**意图**，这一个字段表达的是**结果**，两者的关系见第 2 章 `settings.devices` 那一段。
 - `envelope` 是最近 30 秒的电平包络：**15 根柱、一根 2 秒**。一根柱的值 = 它那 2 秒窗口内所有 `LevelFrame.peak` 的最大值；窗口里一帧都没有就沿用左边那根。**录音中（乃至 `ended` 停留档）长度恰为 15**，会话开场（还没开始录）是**空数组 `[]`**。这根柱由服务算，**前端不许自己造**。
 - 两路的位置是固定的：`sources[0]` 恒为 `mic`、`sources[1]` 恒为 `loopback`。
 
@@ -114,6 +115,10 @@
 
 - `asr` 五子键：`max_segment_seconds` / `timeout_seconds` / `max_new_tokens` / `repeat_max_unit` / `repeat_min_coverage`。
 - `devices` 两个子键的取值是**设备名字符串**；没配就是 `null`（按默认策略挑设备）。空值形状两端一致：配置文件里也写 `null`，**空字符串与纯空白串按没配处理**（`meeting/config.py` 的 `validate_value()` 把两个设备键位上的空串与纯空白串归一成 `null`）——`settings_update` 写 `"devices.mic": ""` 或 `"   "` 会照常落盘、落成 `null`。
+- **`settings.devices` 是用户配的意图，`sources[*].device_name` 是探测实际落到的那个设备**（`dca4539b`；落地代码见 `meeting/capture/devices.py` 的 `mic_candidates()` / `loopback_candidates()`）。两件事各说各的，配了却没命中时**不会**因此报错、也不会把快照里的名字改写：
+  - `mic`：按配置的名字找端点（精确名先行，找不到再按前缀兜一次）；候选为空时**回落到系统默认输入端点**（`sd.default.device[0]`，读不出来再退 `sd.query_devices(kind="input")`），主 log 一行 `WARNING`；
+  - `loopback`：精确名命中即用；没命中就按「名字含 `CABLE Input` 且不含 `16ch`」挑；再没有就取**系统默认输出**（`sc.default_speaker()`），主 log 一行 `WARNING`（`meeting/capture/devices.py` 的 `loopback_candidates()`，搬自 V1 `recorder.py:451-465` 的原行为）；
+  - 于是快照里的 `settings.devices.mic` 仍是用户写下的那个名字，而 `sources[0].device_name` 是**真正在采的那条端点**。判断「这一场到底在录哪个设备」时看 `device_name`。
 - 这里读到的是**运行期生效值**。非热读的键改了要重启才在快照里可见（第 4 章）。
 
 `notice`：现在只有 `kind = "restart_unfinished"` 一种。`text` 是一句完整的话（「服务重启过。上一场的收尾没走完，音频在 <场次目录>，日志在 <服务级 log 路径>。」）；`session_dir` 指没收完的那一场（**掩码 `<path>`**）；`log_path` 指**本次启动的服务级日志**（与 `service.log_path` 同一处取值，**不是场次日志**；掩码 `<path>`）。
