@@ -147,7 +147,7 @@ describe('快照样本', () => {
     expect(snap.session?.elapsed_seconds).toBe(0);
     expect(snap.sources[0]?.level_dbfs).toBe('<dbfs>');
     expect(snap.settings.heartbeat_interval_seconds).toBe(10);
-    expect(snap.settings.devices).toEqual({});
+    expect(snap.settings.devices).toEqual({ mic: null, loopback: null });
     // 心跳周期的唯一来源就是这一个键。
     expect(Object.keys(snap.settings)).toEqual([
       'alarm_sound',
@@ -377,11 +377,11 @@ describe('动作样本', () => {
       'stop',
       'mute_session',
       'settings_update',
+      'reprobe',
       'dev_inject',
     ]);
-    // 保留登记里的 summarize / reprobe 不在 known 里。
+    // 保留登记里没有落地的那一个动作名不在 known 里。
     expect(unknown.body.detail.known).not.toContain('summarize');
-    expect(unknown.body.detail.known).not.toContain('reprobe');
   });
 
   it('persist_failed 档：detail 只有 error 一键', () => {

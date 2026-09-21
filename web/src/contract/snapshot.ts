@@ -225,11 +225,12 @@ export const asrSettingsSchema = strict({
 });
 
 /**
- * `settings` 四键。`devices` 眼下是空对象 `{}`，子键等 `dca4539b` 定名后补。
+ * `settings` 四键。`devices` 的两个子键是 `mic` / `loopback`（`dca4539b` 定名），
+ * 取值是设备名字符串，没配就是 `null`。
  *
- * `devices` 用 `z.record(...)` 而不是 `z.object({})`：空对象的形状会在服务补上子键
- * 那一刻开始拒收（那是加性变更，`docs/contract.md` 把子键留给 `dca4539b` 定名），
- * `record` 的写法把「现在空着、将来长键」这件事如实说清楚，取值照旧只收字符串。
+ * `devices` 用 `z.record(...)` 而不是 `z.object({...})`：子键是加性变更（服务以后多长一个
+ * 子键时前端不该开始拒收整份快照），`record` 的写法把「现在两个子键、将来可能多」这件事
+ * 如实说清楚。整格照旧只收字符串与 `null` 之外的任何形状（`docs/contract.md` 第 7 章）。
  */
 export const settingsSchema = strict({
   alarm_sound: z.boolean(),

@@ -78,7 +78,7 @@
 | 6 | `alerts` | object | `{critical: Alert｜null, hints: [Alert]}` |
 | 7 | `transcript` | object | `{health, last_line_at, buffered_lines, failed_segments}` |
 | 8 | `ended` | object \| null | `null`，或 `{phase, steps: [DrainStep], error}` |
-| 9 | `settings` | object | `{alarm_sound, heartbeat_interval_seconds, asr{…}, devices{}}` |
+| 9 | `settings` | object | `{alarm_sound, heartbeat_interval_seconds, asr{…}, devices{mic, loopback}}` |
 | 10 | `notice` | object \| null | `null`，或 `{kind, text, session_dir, log_path}` |
 
 `service` 六子键：`started_at`（ISO，**掩码 `<iso>`**）/ `version`（非空字符串）/ `port`（int，**掩码 `<port>`**）/ `url`（**掩码 `<url>`**）/ `log_path` 与 `out_root`（**掩码 `<path>`**）。`port` 与 `url` **只能由监听 socket 的 `getsockname()` 读回值产生**，绑定之前取快照一律抛错 —— 不留退化的空值、不拿配置值或字面量顶替。
@@ -110,9 +110,10 @@
 - 收尾失败后 `phase` **保持 `draining`**、`ended.error` 是那一刻的原因（与失败步的 `error` 同文），这份摘要与 `session` 一起留在快照里。
 - 成功档收尾的副作用会把两路 `health` 从 `stopped` 带回 `unprobed`；失败停留档**保留 `stopped` 现场**。
 
-`settings` 四键：`alarm_sound`（bool）、`heartbeat_interval_seconds`（int，界面发心跳的周期）、`asr`（五子键，与配置键 `asr.*` **逐字同名**、只去掉前缀）、`devices`（**现在是空对象 `{}`**，子键等 `dca4539b` 定名后补，见第 7 章）。
+`settings` 四键：`alarm_sound`（bool）、`heartbeat_interval_seconds`（int，界面发心跳的周期）、`asr`（五子键，与配置键 `asr.*` **逐字同名**、只去掉前缀）、`devices`（两子键 `mic` / `loopback`，与配置键 `devices.mic` / `devices.loopback` **逐字同名**、只去掉前缀，见第 7 章）。
 
 - `asr` 五子键：`max_segment_seconds` / `timeout_seconds` / `max_new_tokens` / `repeat_max_unit` / `repeat_min_coverage`。
+- `devices` 两个子键的取值是**设备名字符串**；没配就是 `null`（按默认策略挑设备）。空值形状两端一致：配置文件里也写 `null`，空字符串不是合法取值。
 - 这里读到的是**运行期生效值**。非热读的键改了要重启才在快照里可见（第 4 章）。
 
 `notice`：现在只有 `kind = "restart_unfinished"` 一种。`text` 是一句完整的话（「服务重启过。上一场的收尾没走完，音频在 <场次目录>，日志在 <服务级 log 路径>。」）；`session_dir` 指没收完的那一场（**掩码 `<path>`**）；`log_path` 指**本次启动的服务级日志**（与 `service.log_path` 同一处取值，**不是场次日志**；掩码 `<path>`）。
@@ -263,7 +264,7 @@ X-Meeting-Service: 1
 
 **请求体本身的毛病**（不是 JSON / 不是对象 / `args` 不是对象）也走这个信封：`code = invalid_setting`、`status = 400`、`detail = {}`。
 
-### 4.3 五个动作的语义
+### 4.3 六个动作的语义
 
 | 动作 | 语义 | `args` |
 |---|---|---|
@@ -271,9 +272,12 @@ X-Meeting-Service: 1
 | `stop` | 结束本场：冻结时长 → 进 `ended·draining` → 服务按四步收尾跑到终态 | 无 |
 | `mute_session` | 本场不再出声：`alerts.*.muted` 立刻变 `true`。**不改**持久化开关 `alarm.sound`，**下一场 `start` 自动复位** | 无 |
 | `settings_update` | 写配置文件（原子写），键态两分见 4.6 | 「配置点号键名 → 值」的扁平映射 |
+| `reprobe` | 重新枚举并试开设备，结果落进快照两路（`revision +1`）。**只在没有场次在跑的时候可用**：`recording` / `alert` 回 `already_recording`(409) | 无 |
 | `dev_inject` | 注入故障（**只在 dev 采集替身在场时可用**） | `source` / `fault` / `after_seconds` / `duration_seconds` |
 
 **`start` 的失败顺序是固定的**：先判态（`already_recording` / `draining`）→ 再校验 `args`（`mode` 非法 → `invalid_setting`）→ 再判后端可用性（`capture_unavailable`）→ 最后才建目录写文件。**态不对或后端不可用时盘上不留任何场次目录。**
+
+**`reprobe` 的 `detail` 形状**：成功体就是通用的 `{ok, revision}`（**没有额外字段**），挑不到设备不构成动作失败 —— 那一档如实落进快照两路的 `health = probe_failed` 与 `probe()` 的 `detail` 里。
 
 **`stop` 成功后 `revision` 会继续往上走**（收尾四步各自提交一次），`ended.phase` 最终落在 `done`（四步全部 `done` / `skipped`、无 `failed`）或**保持 `draining`**（有 `failed` 步，或收尾被取消）。**`ended` 不回到 `idle`**：下一场的 `start` 从 `ended` 直接进 `recording`。
 
@@ -285,7 +289,7 @@ X-Meeting-Service: 1
 
 | `code` | HTTP | 意思 | 谁会回它 |
 |---|---|---|---|
-| `already_recording` | 409 | 已经有一场在录 | `start` |
+| `already_recording` | 409 | 已经有一场在录 | `start` / `reprobe` |
 | `draining` | 409 | 上一场还在收尾（或收尾失败后停留、或启动扫描到的那一场没收完），这场不能开 | `start` |
 | `capture_unavailable` | 503 | 采集后端不可用：没接入、或设备起不来 | `start` |
 | `not_recording` | 409 | 现在没有在录的场次 | `stop` / `mute_session` / `dev_inject` |
@@ -301,7 +305,7 @@ X-Meeting-Service: 1
 | `draining` | `{session_id, dir, failed_steps: [{id, error}], log_path}` —— 没有失败步时 `failed_steps` 是**空数组** | `actions/fail-draining.json` |
 | `capture_unavailable` | **三档**：空对象；或 `{session_id, dir, error}`（第一版 `session.json` 写不进去）；或 `{session_id, dir, reason}`（采集起不来） | `actions/fail-capture-unavailable.json` |
 | `not_recording` | 空 | `actions/fail-not-recording.json` |
-| `invalid_setting` | **三档**：`{key, value, legal}`（值非法；`legal` 是合法取值数组）；或 `{source, fault, error}`（`dev_inject` 的取值非法）；或空。**未知动作名是第四档**：`{action, known}`（`known` 是五个动作名的数组） | `actions/fail-invalid-setting.json`、`actions/fail-invalid-setting-unknown-action.json` |
+| `invalid_setting` | **三档**：`{key, value, legal}`（值非法；`legal` 是合法取值数组）；或 `{source, fault, error}`（`dev_inject` 的取值非法）；或空。**未知动作名是第四档**：`{action, known}`（`known` 是六个动作名的数组） | `actions/fail-invalid-setting.json`、`actions/fail-invalid-setting-unknown-action.json` |
 | `persist_failed` | `{error}` | `actions/fail-persist-failed.json` |
 | `action_unavailable` | 空 | `actions/fail-action-unavailable.json` |
 
@@ -337,12 +341,12 @@ X-Meeting-Service: 1
 {"ok": true, "revision": 3, "applied": ["asr.timeout_seconds"], "pending_restart": []}
 ```
 
-**合法键名是逐条列出的 21 个**（不按前缀归组、没有前缀白名单）。表外的任何键名一律 `invalid_setting`(400) 且 `detail = {key, value, legal}`；**`devices.*` 里的名字也在表外**（见第 7 章）。
+**合法键名是逐条列出的 23 个**（不按前缀归组、没有前缀白名单）。表外的任何键名一律 `invalid_setting`(400) 且 `detail = {key, value, legal}`。
 
 | 归类 | 键（个数） | 为什么 |
 |---|---|---|
 | `applied` | `asr.max_segment_seconds` / `asr.timeout_seconds` / `asr.max_new_tokens` / `asr.repeat_max_unit` / `asr.repeat_min_coverage`（**5 个**） | 这五个是**热读键**，每段重新读，写盘成功就立刻生效 |
-| `pending_restart` | `web.port` / `web.dist_dir` / `output.root` / `log.level` / `log.dir` / `log.max_bytes` / `log.backup_count` / `alert.silence_dbfs` / `alert.silence_seconds` / `alert.recover_seconds` / `alert.alarm_suppress_seconds` / `alarm.sound` / `heartbeat.interval_seconds` / `capture.backend` / `transcriber.backend` / `post.hook`（**16 个**） | 这些值在**启动时读一次**，写盘成功但要重启才生效 |
+| `pending_restart` | `web.port` / `web.dist_dir` / `output.root` / `log.level` / `log.dir` / `log.max_bytes` / `log.backup_count` / `alert.silence_dbfs` / `alert.silence_seconds` / `alert.recover_seconds` / `alert.alarm_suppress_seconds` / `alarm.sound` / `heartbeat.interval_seconds` / `capture.backend` / `transcriber.backend` / `post.hook` / `devices.mic` / `devices.loopback`（**18 个**） | 这些值在**启动时读一次**，写盘成功但要重启才生效 |
 
 两个数组里也是同一套点号键名，次序**照本次请求里的键逐条走**。
 
@@ -435,8 +439,8 @@ X-Meeting-Service: 1
 | `GET /api/summaries` | 本场总结记录（按过的几次总结：时间 + 窗口 + 那几条） | 手动总结 / 会后节点 | **路由没有注册**：`all_routes()` 只有四条 `/api/*` + `/debug`，因此这个路径落到末端 404（回 `Not Found`） |
 | `GET /api/sessions` | 场次列表（会后视图的会议选择器） | 会后节点 | 同上：未注册，末端 404 |
 | `GET /api/sessions/{id}` | 单场状态（会后视图的进度区） | 会后节点 | 同上：未注册，末端 404 |
-| 动作 `reprobe` | 重新枚举并试开设备 | `dca4539b`（对齐后启用） | **不在 `ACTION_NAMES` 里**：同 `summarize`，回 `invalid_setting`(400) |
-| `settings_update` 键位 `devices.mic` / `devices.loopback` | 持久化哪一路用哪个设备 | `dca4539b`（对齐后启用） | **在键表之外**：21 个合法键名里没有它们，打过来回 `invalid_setting`(400) 且 `detail = {key, value, legal}`；快照 `settings.devices` 眼下是**空对象 `{}`**（位置留着，子键等定名） |
+| 动作 `reprobe` | 重新枚举并试开设备 | `dca4539b`（已落地） | **在 `ACTION_NAMES` 里**：空闲态与 `ended` 态可用（重新探测并更新快照两路，成功体就是 `{ok, revision}`）；`recording` / `alert` 态回 `already_recording`(409) —— 会中换设备是明文不做的那一档 |
+| `settings_update` 键位 `devices.mic` / `devices.loopback` | 持久化哪一路用哪个设备 | `dca4539b`（已落地） | **在键表里**：两个点号字面键名归 `pending_restart`，写盘成功、重启后生效；值是非空字符串或 `null`（`null` = 没配，按默认策略挑）；快照 `settings.devices` 的两个子键取的就是它们（没配时 `null`）。`devices.mic_device` 这种没定名的名字仍在表外 |
 | 转写历史回看 | 中途订阅能不能拿到已经出过的转写行 | **待下游决断（`9e5db89c` / `070b31e0`）** | **现状是拿不到**：`transcript` 通道只发「订上之后新出的行」，连接时的首帧 `snapshot` 也不带转写正文（`transcript.last_line_at` 只是个时间戳、`buffered_lines` 是计数）。界面在会话中途打开时，**只能显示从那一刻起的新行**，拿不到已有行 |
 | 说话人名字落盘 / 跳过编号 | 用户给某个编号起名、或标记「这个编号不认领」 | **会后管线（`41465462` / `7c6952e5`）** | **本契约不覆盖**：这是会后产物那一侧的事，服务侧的会中契约里没有对应字段 |
 

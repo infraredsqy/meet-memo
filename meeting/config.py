@@ -9,7 +9,7 @@
 
 热读范围：**只有 `asr.*` 那五个键**是每段重新读（改了立刻生效）；
 其余键（`web.*` / `output.root` / `log.*` / `alert.*` / `alarm.*` / `heartbeat.*` /
-`capture.*` / `transcriber.*` / `post.*`）都是**启动时读一次，改了要重启**。
+`capture.*` / `transcriber.*` / `post.*` / `devices.*`）都是**启动时读一次，改了要重启**。
 **环境变量一律在 import / 启动时求值**，改了不会热生效（B11 的坑）。
 
 两个前缀说的两件事：
@@ -115,6 +115,10 @@ DEFAULT_VALUES: dict[str, Any] = {
     "capture.backend": "auto",
     "transcriber.backend": "auto",
     "post.hook": "auto",
+    # 两路各自用哪个设备（`dca4539b` 定名）：`None` = 按默认策略挑
+    # （mic 挡掉抓取型虚拟端点后按 host API 排序试开；loopback 优先 `CABLE Input` 且不含 16ch）
+    "devices.mic": None,
+    "devices.loopback": None,
     "asr.max_segment_seconds": 10,
     "asr.timeout_seconds": 20,
     "asr.max_new_tokens": 400,
@@ -161,7 +165,15 @@ STRING_LIMITS: dict[str, tuple[str, ...] | None] = {
     "capture.backend": BACKEND_SELECTORS,
     "transcriber.backend": BACKEND_SELECTORS,
     "post.hook": BACKEND_SELECTORS,
+    # 两个设备键位（`dca4539b` 定名）：任意非空字符串（精确名，MME 端点名可前缀兜）
+    "devices.mic": None,
+    "devices.loopback": None,
 }
+
+#: 可空键：**设备名没配就是 `None`**（空值形状两端一致 —— 快照 `settings.devices` 的子键在
+#: 没配时是 `null`，配置文件里也写 `null`；空字符串一律不合法，省得「空串」与「没配」
+#: 在快照里长出两种形状）
+NULLABLE_KEYS: tuple[str, ...] = ("devices.mic", "devices.loopback")
 
 #: 环境变量映射（方案明确列出的五个，一个不多一个不少）
 ENV_KEYS: dict[str, str] = {
@@ -178,14 +190,20 @@ ENV_NO_BROWSER = "MEETING_NO_BROWSER"
 # `settings_update` 的键态三分表（phase2 §3.5.5）
 #
 # **只有下面逐条列出的字面键名合法，不按前缀归组、也没有任何前缀白名单**；
-# 表外的任何键名（含 `devices.*`）一律 `invalid_setting`(400)。
-# 21 个名字逐一取自上面的键全集（phase1 定死的顶层键 + `asr.*` 五个子键）。
+# 表外的任何键名一律 `invalid_setting`(400)。
+# 23 个名字逐一取自上面的键全集（phase1 定死的顶层键 + `asr.*` 五个子键 +
+# `dca4539b` 定名的 `devices.mic` / `devices.loopback` 两个设备键位）。
+# 设备键位是**点号字面键名**（`devices.mic`），快照里才收成 `settings.devices.mic` 这种子键；
+# 按前缀归组或写成 `devices.{...}` 的嵌套形状都不合法（与 `asr.*` 同一套口径）。
 # ---------------------------------------------------------------------------
 
 #: 可热读的键（每段重新读）→ 落 `applied`
 APPLIED_SETTING_KEYS: tuple[str, ...] = tuple(HOT_KEYS)
 
 #: 其余键（写盘成功但要重启才生效）→ 落 `pending_restart`
+#:
+#: `devices.mic` / `devices.loopback` 归这一档：写盘成功即落盘，运行期仍取启动时的生效值
+#: （设备在开场前定下来，改配置要重启才在 `probe()` 里生效）。
 PENDING_RESTART_SETTING_KEYS: tuple[str, ...] = tuple(
     key for key in DEFAULT_VALUES if key not in HOT_KEYS
 )
@@ -206,6 +224,13 @@ def setting_group(key: str) -> str | None:
 #: 嵌套写法只出现在状态 JSON 里，**不进请求体、不进应答体、不进 `config.json`**
 #: （phase2 §3.5.5：请求 / 应答 / 配置文件 / 读取层四处一律用同一套点号扁平键名）。
 ASR_SETTING_KEYS: tuple[str, ...] = tuple(key.split(".", 1)[1] for key in HOT_KEYS)
+
+#: 快照 `settings.devices` 的子键 ↔ 配置键（`dca4539b` 定名，口径与 `ASR_SETTING_KEYS` 同）：
+#: `devices.mic` / `devices.loopback` 两个点号键位，快照里收成 `settings.devices.mic` /
+#: `settings.devices.loopback` 两个子键。取值的空值形状两端一致：没配即 `null`。
+DEVICE_SETTING_KEYS: tuple[str, ...] = tuple(
+    key.split(".", 1)[1] for key in NULLABLE_KEYS
+)
 
 
 def is_setting_key(key: str) -> bool:
@@ -234,7 +259,7 @@ def validate_setting_changes(
                 key if isinstance(key, str) else repr(key),
                 value,
                 "本服务定义过的键名",
-                "这个键名不在三分表里（表外键名含 devices.*，一律非法）",
+                "这个键名不在三分表里（表里没有这个字面键名）",
             )
         if isinstance(value, dict):
             raise ConfigValueError(
@@ -384,9 +409,14 @@ def _legal_text(key: str) -> str:
         return f"数字，{low}–{high}"
     if key in STRING_LIMITS:
         allowed = STRING_LIMITS[key]
-        if allowed is None:
-            return "非空字符串"
-        return "字符串，取值 " + " / ".join(allowed) + "（或 module:Class 这种显式写法）"
+        text = (
+            "非空字符串"
+            if allowed is None
+            else "字符串，取值 " + " / ".join(allowed) + "（或 module:Class 这种显式写法）"
+        )
+        if key in NULLABLE_KEYS:
+            return f"{text}，或 null（null = 没配，按默认策略挑）"
+        return text
     if key == "alarm.sound":
         return "布尔值 true / false"
     raise KeyError(key)
@@ -396,6 +426,8 @@ def validate_value(key: str, value: Any) -> Any:
     """校验并规范化一个键的值；非法即抛 `ConfigValueError`。
 
     类型不对、超出范围、或违反键间规则都在这里拦下 —— 报错含键名 / 收到的值 / 合法范围。
+    可空键（`NULLABLE_KEYS`，设备名那两个）收 `None` 并把空字符串一并归一成 `None`：
+    快照 `settings.devices` 的子键因此只有「设备名」与 `null` 两种形状。
     """
     if key not in DEFAULT_VALUES:
         raise ConfigValueError(key, value, "本服务定义过的键名", "这个键名不在配置键表里")
@@ -404,6 +436,14 @@ def validate_value(key: str, value: Any) -> Any:
         if not isinstance(value, bool):
             raise ConfigValueError(key, value, _legal_text(key), "收到的不是布尔值")
         return value
+
+    if key in NULLABLE_KEYS:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ConfigValueError(key, value, _legal_text(key), "收到的不是字符串")
+        text = value.strip()
+        return text or None
 
     if key in INT_LIMITS:
         # bool 是 int 的子类，别让 True 混成 1
@@ -639,9 +679,11 @@ __all__ = [
     "ConfigError",
     "ConfigValueError",
     "DEFAULT_VALUES",
+    "DEVICE_SETTING_KEYS",
     "ENV_KEYS",
     "ENV_NO_BROWSER",
     "HOT_KEYS",
+    "NULLABLE_KEYS",
     "PENDING_RESTART_SETTING_KEYS",
     "SETTING_KEY_GROUPS",
     "as_dict",

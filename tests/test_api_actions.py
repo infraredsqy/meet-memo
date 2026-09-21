@@ -49,12 +49,13 @@ APPLIED_KEYS = {
     "asr.repeat_max_unit",
     "asr.repeat_min_coverage",
 }
-#: 三分表：其余 16 键（含 `alarm.sound`）
+#: 三分表：其余 18 键（含 `alarm.sound` 与两个设备键位）
 PENDING_KEYS = {
     "web.port", "web.dist_dir", "output.root", "log.level", "log.dir",
     "log.max_bytes", "log.backup_count", "alert.silence_dbfs", "alert.silence_seconds",
     "alert.recover_seconds", "alert.alarm_suppress_seconds", "alarm.sound",
     "heartbeat.interval_seconds", "capture.backend", "transcriber.backend", "post.hook",
+    "devices.mic", "devices.loopback",
 }
 
 
@@ -109,8 +110,10 @@ def wait_for_done(client):
 
 
 def test_action_names_and_codes_are_the_frozen_ones():
-    """动作名清单与 `code` 表逐字冻结（不自造新串）。"""
-    assert ACTION_NAMES == ("start", "stop", "mute_session", "settings_update", "dev_inject")
+    """动作名清单与 `code` 表逐字冻结（`reprobe` 是 `dca4539b` 加的那一名，其余不动）。"""
+    assert ACTION_NAMES == (
+        "start", "stop", "mute_session", "settings_update", "reprobe", "dev_inject",
+    )
     assert set(ACTION_CODES) == {
         "already_recording", "draining", "capture_unavailable", "not_recording",
         "invalid_setting", "persist_failed", "action_unavailable",
@@ -492,7 +495,7 @@ def test_settings_update_is_available_in_every_top_state(tmp_path):
 
 
 def test_settings_update_rejects_illegal_calls_before_writing(tmp_path):
-    """`invalid_setting`(400)：超时 ≤ 段长、表外键名、`devices.*`；**校验在写盘之前**。"""
+    """`invalid_setting`(400)：超时 ≤ 段长、表外键名、`devices.*` 里没定名的名字；**校验在写盘之前**。"""
     with live(tmp_path) as (client, _runtime, home, _out):
         config_path = helpers.config_path_of(home)
         baseline = json.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
@@ -500,7 +503,9 @@ def test_settings_update_rejects_illegal_calls_before_writing(tmp_path):
         cases = [
             ({"asr.timeout_seconds": 5, "asr.max_segment_seconds": 10}, "超时必须大于段长"),
             ({"not.a.key": 1}, "表外的键名"),
-            ({"devices.mic_device": "某设备"}, "devices.* 里的任何名字都落在表外"),
+            # 定名的只有 `devices.mic` / `devices.loopback` 两个字面键名：前缀不是白名单
+            ({"devices.mic_device": "某设备"}, "名字没定名的设备键位落在表外"),
+            ({"devices": {"mic": "某设备"}}, "嵌套形状不合法"),
             ({"asr": {"timeout_seconds": 30}}, "嵌套形状不合法"),
         ]
         for args, why in cases:
@@ -553,7 +558,7 @@ def test_settings_update_logs_the_alarm_sound_pending_restart_line(tmp_path):
 
 
 def test_settings_snapshot_shape_stays_frozen(tmp_path):
-    """快照 `settings`：四个子键齐、`asr` 五子键齐且取生效值、`devices` 是空对象。"""
+    """快照 `settings`：四个子键齐、`asr` 五子键齐且取生效值、`devices` 两个子键。"""
     with live(tmp_path) as (client, _runtime, _home, _out):
         settings = snapshot_of(client)["settings"]
         assert set(settings) == {
@@ -564,7 +569,12 @@ def test_settings_snapshot_shape_stays_frozen(tmp_path):
             "repeat_max_unit", "repeat_min_coverage",
         }
         assert settings["asr"]["timeout_seconds"] == config_module.default_for("asr.timeout_seconds")
-        assert settings["devices"] == {}
+        # 两个设备键位没配时都是 `null`（`dca4539b` 定名；空值形状两端一致）
+        assert settings["devices"] == {
+            "mic": config_module.default_for("devices.mic"),
+            "loopback": config_module.default_for("devices.loopback"),
+        }
+        assert settings["devices"] == {"mic": None, "loopback": None}
 
 
 # ---------------------------------------------------------------------------

@@ -191,8 +191,14 @@ def test_capture_idle_baseline(tmp_path, make_client, contract_regen):
 
 
 def test_capture_action_failures_on_idle(tmp_path, make_client, monkeypatch, contract_regen):
-    """七类失败动作里的五类（idle 即可触发）+ `settings_update` 成功体。"""
-    client = make_client({"capture.backend": "auto"})
+    """七类失败动作里的五类（idle 即可触发）+ `settings_update` 成功体。
+
+    **采集后端显式取 `null` 替身**（原先写的是 `auto`）：`auto` 在本节点落地之后就是**真采集
+    后端**，`start` 会去真枚举、真试开设备 —— golden 样本既会带上这台机器的设备名，又会在有
+    声卡的机器上真的打开一次麦克风。`null` 替身的 `start()` 照样抛 `CaptureUnavailable`，
+    `detail` 的三键形状与 `message` 文案逐字不变，golden 样本因此不漂移。
+    """
+    client = make_client({"capture.backend": "null"})
 
     unknown = _act(client, "definitely_not_an_action")
     assert unknown.status_code == 400

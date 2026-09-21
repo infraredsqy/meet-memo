@@ -122,7 +122,7 @@ async def _api_events(request: Request) -> Response:
 
 
 async def _api_actions(request: Request) -> Response:
-    """动作端点：信封 + 五个动作名 + `code` 表（中间件已校验两个必需请求头）。"""
+    """动作端点：信封 + 六个动作名 + `code` 表（中间件已校验两个必需请求头）。"""
     runtime = _runtime_of(request)
     if runtime is None:  # pragma: no cover - 应用未装配
         return JSONResponse({"error": "runtime 未装配"}, status_code=500)
@@ -162,6 +162,8 @@ async def _api_actions(request: Request) -> Response:
             runtime.stop_session("user")
         elif action == "mute_session":
             runtime.mute_session()
+        elif action == "reprobe":
+            runtime.reprobe()
         elif action == "settings_update":
             extra = runtime.settings_update(args)
             return JSONResponse(

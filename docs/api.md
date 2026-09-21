@@ -44,11 +44,11 @@
 
 ## 3. 动作表与 `code` 表
 
-五个动作：`start` / `stop` / `mute_session` / `settings_update` / `dev_inject`。七个 `code`：
+六个动作：`start` / `stop` / `mute_session` / `settings_update` / `reprobe` / `dev_inject`。七个 `code`：
 
 | `code` | HTTP | 意思 | 谁会回它 |
 |---|---|---|---|
-| `already_recording` | 409 | 已经有一场在录 | `start` |
+| `already_recording` | 409 | 已经有一场在录 | `start` / `reprobe` |
 | `draining` | 409 | 上一场还在收尾（或收尾失败后停留、或启动扫描到的那一场没收完），这场不能开 | `start` |
 | `capture_unavailable` | 503 | 采集后端不可用：没接入、或设备起不来 | `start` |
 | `not_recording` | 409 | 现在没有在录的场次 | `stop` / `mute_session` / `dev_inject` |
@@ -64,9 +64,10 @@
 | `stop` | 409 `not_recording` | 200：进 `ended·draining`，时长冻结 | 200：同上（进 `ended` 不必先回 `recording`） | 409 `not_recording` | 409 `not_recording` |
 | `mute_session` | 409 `not_recording` | 200：`alerts.*.muted` 立刻变 `true` | 200：同上 | 409 `not_recording` | 409 `not_recording` |
 | `settings_update` | 200 | 200 | 200 | 200 | 200 |
+| `reprobe` | 200：重新枚举并试开设备，两路快照随之更新（`revision +1`） | 409 `already_recording` | 409 `already_recording` | 200：同上 | 200：同上（采集已经停了，重新探测不干扰在飞的东西） |
 | `dev_inject` | 409 `not_recording` | 200（非 dev 后端 404） | 200（非 dev 后端 404） | 409 `not_recording` | 409 `not_recording` |
 
-`settings_update` 写的是配置文件，与「这一场录到哪儿」无关，因此**任何状态下都可用**。`mute_session` 只在本场收尾之前可用 —— 收尾完成后本场已无可静音，复位发生在下一场 `start`。
+`settings_update` 写的是配置文件，与「这一场录到哪儿」无关，因此**任何状态下都可用**。`mute_session` 只在本场收尾之前可用 —— 收尾完成后本场已无可静音，复位发生在下一场 `start`。`reprobe` 只在**没有场次在跑**的时候可用（`recording` / `alert` 两态回 `already_recording`）：设备在开场前定下来，会中换设备是明文不做的那一档。
 
 ### 逐个动作的语义
 
@@ -79,6 +80,17 @@
 **`stop`** —— 进 `ended·draining`，时长就地冻结，然后服务按四步收尾跑到终态（四步与终态规则见 `docs/state.md` 第 1 章）。收尾成功档下 `top_state` 停在 `ended`、`ended.phase == "done"`、`session` 保留。
 
 **`mute_session`** —— 本场不再出声：`alerts.*.muted` 与横幅上那句「本场已静音」一起变，`revision +1`。它**不改**持久化开关 `alarm.sound`，**下一场 `start` 自动复位**。静音期间新起的告警同样继承静音。
+
+**`reprobe`** —— 重新枚举并试开设备，把结果落进快照两路（无 `args`）：
+
+```json
+{"action": "reprobe"}
+```
+
+- 成功体就是通用的 `{"ok": true, "revision": N}`（`revision +1`），两路 `sources[*].device_name` / `health` 随之更新。
+- **只在没有场次在跑的时候可用**：`recording` / `alert` 两态回 `already_recording`(409)。录到一半插上设备之后要重新探测，得先结束这一场。
+- 探测结果**照实写**：一条设备都挑不出来时该路落 `probe_failed`、`device_name` 为 `null`，动作本身照样回 200（挑不到设备属于探测结论，动作仍然成功）。
+- 采集方式（哪个设备、怎么试开）见 `meeting/capture/devices.py` 与 `meeting/capture/sources.py`；快照里那两格读的是 `devices.mic` / `devices.loopback` 的生效值。
 
 **`dev_inject`** —— 只在 dev 采集替身在场时可用，注入 `silence` / `stall` / `lost` 三档故障：
 
@@ -102,12 +114,12 @@
 
 应答是 `{"ok": true, "revision": N, "applied": [...], "pending_restart": [...]}` —— 两个数组里也是同一套点号键名。**成功体里没有 `message` 字段**，需要给人看的话由界面按两个数组自己组织。
 
-**合法键名是逐条列出的 21 个**（不按前缀归组、没有前缀白名单）。表外的任何键名一律 `invalid_setting`(400)，`devices.*` 里的名字也在表外。
+**合法键名是逐条列出的 23 个**（不按前缀归组、没有前缀白名单）。表外的任何键名一律 `invalid_setting`(400)，`devices.mic_device` 这种没定名的名字也在表外。
 
 | 归类 | 键 | 为什么 |
 |---|---|---|
 | `applied`（5 个） | `asr.max_segment_seconds` / `asr.timeout_seconds` / `asr.max_new_tokens` / `asr.repeat_max_unit` / `asr.repeat_min_coverage` | 这五个是热读键，每段重新读，写盘成功就立刻生效 |
-| `pending_restart`（16 个） | `web.port` / `web.dist_dir` / `output.root` / `log.level` / `log.dir` / `log.max_bytes` / `log.backup_count` / `alert.silence_dbfs` / `alert.silence_seconds` / `alert.recover_seconds` / `alert.alarm_suppress_seconds` / `alarm.sound` / `heartbeat.interval_seconds` / `capture.backend` / `transcriber.backend` / `post.hook` | 这些值在启动时读一次，写盘成功但要重启才生效 |
+| `pending_restart`（18 个） | `web.port` / `web.dist_dir` / `output.root` / `log.level` / `log.dir` / `log.max_bytes` / `log.backup_count` / `alert.silence_dbfs` / `alert.silence_seconds` / `alert.recover_seconds` / `alert.alarm_suppress_seconds` / `alarm.sound` / `heartbeat.interval_seconds` / `capture.backend` / `transcriber.backend` / `post.hook` / `devices.mic` / `devices.loopback` | 这些值在启动时读一次，写盘成功但要重启才生效 |
 
 - **`alarm.sound` 归 `pending_restart`**：勾了出声开关要重启才改运行期行为，主 log 里会留一行「本场出声开关仍取启动值」。这是与设计稿「勾选即立即生效」的**已知偏离**（`docs/ui-design.md` 4.5），登记待复核。
 - **配置文件本身的键形与请求同位**：`~/.config/meeting/config.json` 里也只有一层点号扁平键名，例如 `{"alert.silence_seconds": 3}`。嵌套形状不合法。

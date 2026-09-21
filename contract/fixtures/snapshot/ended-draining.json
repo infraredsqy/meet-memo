@@ -123,7 +123,10 @@
       "repeat_max_unit": 40,
       "repeat_min_coverage": 0.5
     },
-    "devices": {}
+    "devices": {
+      "mic": null,
+      "loopback": null
+    }
   },
   "notice": null
 }

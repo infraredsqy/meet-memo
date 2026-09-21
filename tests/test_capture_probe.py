@@ -1,0 +1,659 @@
+"""`tests/test_capture_probe.py` —— 真探测这一段的后端、动作面与配置面。
+
+覆盖三块，全部**不碰真实硬件**（`meeting/capture/sources.py` 的四个函数在这里被换成假件；
+`CaptureBackend` 的四个接缝是它自己的构造参数，所以注入的是**生产代码那一份真类**）：
+
+  1. `meeting/backends/capture.py` 的 `probe()`：两路各一条结论、`status` 三档之内、
+     `device_name` 是真端点名、试开真的读回样本、重复探测幂等（`reprobe` 走的就是它）；
+  2. 这一段**不做采集引擎**：`start()` 抛 `CaptureUnavailable`（`message` 写明引擎在下一
+     执行单元接入）、`finalize()` / `transcode()` / `stop()` 是安全空实现、
+     **没有** `inject_fault`（`dev_inject` 因此在真后端上照旧不可用）；
+  3. 选择面：`capture.backend` 默认的 `auto` 解析到真类（`registry` 的约定路径）、
+     快照 `settings.devices` 两个子键、`settings_update` 写 `devices.mic` 落盘、
+     `reprobe` 动作在 four 态下的行为与 `ACTION_NAMES` 的形状。
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from meeting import config as config_module
+from meeting.backends import capture as capture_module
+from meeting.backends.base import SOURCE_IDS, SOURCE_STATUS
+from meeting.backends.registry import capabilities_of, resolve_capture_backend
+from meeting.capture import devices as devices_module
+from meeting.capture import sources as sources_module
+from meeting.capture.devices import DeviceEndpoint, OpenAttempt, measure_samples
+from meeting.service.runtime import ACTION_CODES, ACTION_NAMES
+from tests import _helpers as helpers
+from tests.test_api_actions import live, post, snapshot_of
+
+# ---------------------------------------------------------------------------
+# 假端点表与假试开（真机实测的形状：见 meeting/capture/devices.py 的模块注释）
+# ---------------------------------------------------------------------------
+
+WAVE = [0, 120, -300, 44, 900, -12, 7, -400, 220, 0]
+SILENCE = [0] * 120
+
+#: 假端点表摆成**本机实测的那副样子**：同一块 Focusrite 在 WASAPI / DirectSound / MME
+#: 三个 host API 下同名（`_resolve_mic_device` 的排序与试开那段就是为这个形状写的），
+#: 外加一条抓取型虚拟端点 `CABLE Output`。MME 那条序号最小 = 默认输入。
+FAKE_MIC_NAME = "假-Focusrite Analogue 1 + 2"
+FAKE_INPUTS: tuple[DeviceEndpoint, ...] = (
+    DeviceEndpoint(FAKE_MIC_NAME, "MME", "input", index=0, channels=4),
+    DeviceEndpoint(FAKE_MIC_NAME, "Windows WASAPI", "input", index=18, channels=2),
+    DeviceEndpoint(FAKE_MIC_NAME, "Windows DirectSound", "input", index=8, channels=4),
+    DeviceEndpoint("假-CABLE-Output (VB-Audio Virtual Cable)", "MME", "input", index=2,
+                   channels=16),
+)
+
+FAKE_RENDERS: tuple[DeviceEndpoint, ...] = (
+    DeviceEndpoint("假-扬声器 (Focusrite USB Audio)", "", "render", index=0),
+    DeviceEndpoint("假-CABLE-Input (VB-Audio Virtual Cable)", "", "render", index=1),
+)
+
+
+def endpoint_key(endpoint: DeviceEndpoint) -> str:
+    """假件的查表键：**名字 + host API**（同名端点在多个 host API 下要分开登记）。"""
+    return f"{endpoint.name}@{endpoint.host_api}"
+
+
+def wave_attempt() -> OpenAttempt:
+    return OpenAttempt(opened=True, sample=measure_samples(WAVE))
+
+
+def silence_attempt() -> OpenAttempt:
+    return OpenAttempt(opened=True, sample=measure_samples(SILENCE))
+
+
+def refuse_attempt(reason: str = "Invalid sample rate [PaErrorCode -9997]") -> OpenAttempt:
+    return OpenAttempt(opened=False, error=reason)
+
+
+class FakeSources:
+    """把 `sources.py` 的四个函数换成假件（`CaptureBackend` 的缺省接缝按当下那份查）。"""
+
+    def __init__(
+        self,
+        *,
+        inputs: tuple[DeviceEndpoint, ...] = FAKE_INPUTS,
+        renders: tuple[DeviceEndpoint, ...] = FAKE_RENDERS,
+        input_attempts: dict[str, OpenAttempt] | None = None,
+        loopback_attempts: dict[str, OpenAttempt] | None = None,
+        input_default: OpenAttempt | None = None,
+        loopback_default: OpenAttempt | None = None,
+        input_error: BaseException | None = None,
+    ) -> None:
+        self.inputs = inputs
+        self.renders = renders
+        self.input_attempts = dict(input_attempts or {})
+        self.loopback_attempts = dict(loopback_attempts or {})
+        self.input_default = input_default or wave_attempt()
+        self.loopback_default = loopback_default or silence_attempt()
+        self.input_error = input_error
+        #: 试开过的端点（`endpoint_key()` 形态，能分辨同名端点在不同 host API 下的两次试开）
+        self.input_calls: list[str] = []
+        self.loopback_calls: list[str] = []
+        self.list_calls = 0
+
+    def list_input_endpoints(self) -> list[DeviceEndpoint]:
+        self.list_calls += 1
+        return list(self.inputs)
+
+    def list_render_endpoints(self) -> list[DeviceEndpoint]:
+        return list(self.renders)
+
+    def test_open_input(self, endpoint: DeviceEndpoint) -> OpenAttempt:
+        self.input_calls.append(endpoint_key(endpoint))
+        if self.input_error is not None:
+            raise self.input_error
+        return self.input_attempts.get(endpoint_key(endpoint), self.input_default)
+
+    def test_open_loopback(self, endpoint: DeviceEndpoint) -> OpenAttempt:
+        self.loopback_calls.append(endpoint_key(endpoint))
+        return self.loopback_attempts.get(endpoint_key(endpoint), self.loopback_default)
+
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> "FakeSources":
+        monkeypatch.setattr(sources_module, "list_input_endpoints", self.list_input_endpoints)
+        monkeypatch.setattr(sources_module, "list_render_endpoints", self.list_render_endpoints)
+        monkeypatch.setattr(sources_module, "test_open_input", self.test_open_input)
+        monkeypatch.setattr(sources_module, "test_open_loopback", self.test_open_loopback)
+        return self
+
+
+def probe_with(config_values: dict | None = None, **fake_kwargs) -> tuple[list, FakeSources, Any]:
+    """造一个真 `CaptureBackend` + 一份只读配置视图，跑一次 `probe()`。
+
+    假件缺省摆成**本机实测的那副样子**：同一块 Focusrite 在 WASAPI 下开不了（`Invalid
+    sample rate`）、在 DirectSound 下能打开却交回全零、在 MME 下有真实波形 —— 于是
+    「选中 MME 那条」这件事只有在试开真的读回样本时才成立（光看 host API 名字会挑到
+    DirectSound）。loopback 那一侧同理：系统默认 render 端点交回全零（能打开），
+    `CABLE Input` 那条打开成功。
+    """
+    from meeting.backends.base import ReadOnlyConfig
+
+    #: 本机实测那副样子：WASAPI 开不了、DirectSound 能开但交回全零
+    silent_inputs = {
+        f"{FAKE_MIC_NAME}@Windows WASAPI": refuse_attempt(),
+        f"{FAKE_MIC_NAME}@Windows DirectSound": silence_attempt(),
+        "假-CABLE-Output (VB-Audio Virtual Cable)@MME": silence_attempt(),
+    }
+    silent_renders = {"假-扬声器 (Focusrite USB Audio)@": silence_attempt()}
+
+    # 调用方只给了兜底结果（例如「一条都开不了」）时，兜底管住全部端点：清掉登记表
+    if "input_default" in fake_kwargs and "input_attempts" not in fake_kwargs:
+        silent_inputs = {}
+    if "loopback_default" in fake_kwargs and "loopback_attempts" not in fake_kwargs:
+        silent_renders = {}
+
+    fake_kwargs.setdefault("input_attempts", silent_inputs)
+    fake_kwargs.setdefault("input_default", wave_attempt())
+    fake_kwargs.setdefault("loopback_attempts", silent_renders)
+    fake_kwargs.setdefault("loopback_default", silence_attempt())
+
+    fake = FakeSources(**fake_kwargs)
+    backend = capture_module.CaptureBackend(
+        list_inputs=fake.list_input_endpoints,
+        list_renders=fake.list_render_endpoints,
+        test_open_input=fake.test_open_input,
+        test_open_loopback=fake.test_open_loopback,
+    )
+    values = {"devices.mic": None, "devices.loopback": None}
+    values.update(config_values or {})
+    backend.bind(lambda fact: None, config=ReadOnlyConfig(values))
+    return backend.probe(), fake, backend
+
+
+# ---------------------------------------------------------------------------
+# ① probe() 的形状与真探测
+# ---------------------------------------------------------------------------
+
+
+def test_probe_returns_one_conclusion_per_source():
+    """两路各一条，次序固定，`source` 落在取值域里。"""
+    probes, _fake, _backend = probe_with()
+    assert [probe.source for probe in probes] == list(SOURCE_IDS)
+
+
+def test_probe_status_stays_inside_the_frozen_domain():
+    """`status` 只许 `ready` / `probe_failed` / `unprobed` 三档（真后端只报前两档）。"""
+    probes, _fake, _backend = probe_with()
+    assert all(probe.status in SOURCE_STATUS for probe in probes)
+    assert {probe.status for probe in probes} == {"ready"}
+
+
+def test_probe_reads_samples_back_to_pick_the_microphone():
+    """试开**读回样本**：DirectSound 那条能打开但交回全零，选中的因此是 MME 那条。
+
+    三条同名候选按 host rank 试开：WASAPI 开不了 → DirectSound 开了但没波形 → MME 有波形。
+    """
+    probes, fake, _backend = probe_with()
+    mic = probes[0]
+    assert mic.device_name == FAKE_MIC_NAME
+    assert fake.input_calls == [
+        f"{FAKE_MIC_NAME}@Windows WASAPI",
+        f"{FAKE_MIC_NAME}@Windows DirectSound",
+        f"{FAKE_MIC_NAME}@MME",
+    ]
+    # 抓到取型虚拟端点（`CABLE Output`）一条都没被试过
+    assert all("CABLE-Output" not in key for key in fake.input_calls)
+    assert "有真实波形" in mic.detail
+    assert "没有波形" in mic.detail  # DirectSound 那条的留痕
+    assert "Invalid sample rate" in mic.detail  # WASAPI 那条的留痕
+
+
+def test_probe_reports_the_real_endpoint_name_for_loopback():
+    """loopback 那条报的是 render 端点的真名（`CABLE Input` 2ch）。"""
+    probes, fake, _backend = probe_with()
+    loopback = probes[1]
+    assert loopback.status == "ready"
+    assert loopback.device_name == "假-CABLE-Input (VB-Audio Virtual Cable)"
+    assert fake.loopback_calls == ["假-CABLE-Input (VB-Audio Virtual Cable)@"]
+
+
+def test_probe_honours_an_explicitly_configured_device():
+    """显式配置的名字落成 `device_name`，同名候选仍按 host rank 逐个试开（V1 的骨架）。"""
+    probes, fake, _backend = probe_with({"devices.mic": FAKE_MIC_NAME})
+    assert probes[0].device_name == FAKE_MIC_NAME
+    assert fake.input_calls == [
+        f"{FAKE_MIC_NAME}@Windows WASAPI",
+        f"{FAKE_MIC_NAME}@Windows DirectSound",
+        f"{FAKE_MIC_NAME}@MME",
+    ]
+
+
+def test_probe_mic_falls_back_while_loopback_reports_probe_failed():
+    """全都开不了时两路各走各的：mic 按 V1 回落首个候选，loopback 如实落 `probe_failed`。"""
+    probes, _fake, _backend = probe_with(
+        input_default=refuse_attempt(),
+        loopback_default=refuse_attempt("soundcard 里没有这条端点的 loopback"),
+    )
+    assert [probe.status for probe in probes] == ["ready", "probe_failed"]
+    assert probes[1].device_name is None
+    # mic：同名三条候选全都开不了 → 回落排序后的首个候选（WASAPI 那条）
+    assert probes[0].device_name == FAKE_MIC_NAME
+    assert "使用首个候选" in probes[0].detail
+    assert "Invalid sample rate" in probes[0].detail
+    # loopback：挑中的 render 端点打不开，如实报出
+    assert "挑中的 render 端点打不开" in probes[1].detail
+    assert "soundcard 里没有这条端点的 loopback" in probes[1].detail
+
+
+def test_probe_survives_an_enumerating_backend_that_raises():
+    """枚举端点时抛错：如实降级成 `probe_failed`，服务照常起。"""
+    probes, _fake, _backend = probe_with(
+        input_error=OSError("假件：PortAudio 起不来"),
+    )
+    # 枚举本身没抛，试开抛了 → 这一路如实报 `probe_failed`
+    assert probes[0].status == "probe_failed"
+
+
+def test_probe_is_idempotent_and_uses_the_current_config():
+    """重复探测幂等，且每次都取**当下**的配置（`reprobe` 走的正是这条路）。"""
+    from meeting.backends.base import ReadOnlyConfig
+
+    fake = FakeSources()
+    backend = capture_module.CaptureBackend(
+        list_inputs=fake.list_input_endpoints,
+        list_renders=fake.list_render_endpoints,
+        test_open_input=fake.test_open_input,
+        test_open_loopback=fake.test_open_loopback,
+    )
+    config = {"devices.mic": None, "devices.loopback": None}
+    backend.bind(lambda fact: None, config=ReadOnlyConfig(config))
+    first = backend.probe()
+    second = backend.probe()
+    assert [probe.device_name for probe in first] == [probe.device_name for probe in second]
+
+    # 换了配置再探一次：这一路跟着换（同一个实例、同一份 bind 之后的新视图）
+    config["devices.mic"] = "假-扬声器 (Focusrite USB Audio)"
+    backend.bind(lambda fact: None, config=ReadOnlyConfig(config))
+    third = backend.probe()
+    # 配了一个输入端点表里没有的名字 → 候选为空 → `probe_failed`（与上面那一版不同）
+    assert third[0].status == "probe_failed"
+    assert third[0].device_name is None
+    assert third[0].detail != second[0].detail
+    # loopback 那一侧没被配置改动顶到，结论不变
+    assert third[1].device_name == second[1].device_name
+    assert backend.last_probes == third
+
+
+def test_probe_reads_the_loopback_setting_too():
+    """`devices.loopback` 也读：配了名字就精确命中那个 render 端点。"""
+    probes, fake, _backend = probe_with(
+        {"devices.loopback": "假-扬声器 (Focusrite USB Audio)"}
+    )
+    assert probes[1].device_name == "假-扬声器 (Focusrite USB Audio)"
+    assert fake.loopback_calls == ["假-扬声器 (Focusrite USB Audio)@"]
+
+
+# ---------------------------------------------------------------------------
+# ② 这一段不做采集引擎
+# ---------------------------------------------------------------------------
+
+
+def test_start_refuses_and_says_the_engine_comes_next():
+    """`start()` 如实拒绝：抛 `CaptureUnavailable`，`message` 写明引擎在下一执行单元接入。"""
+    from meeting.backends.null import CaptureUnavailable
+
+    backend = capture_module.CaptureBackend(
+        list_inputs=lambda: [],
+        list_renders=lambda: [],
+        test_open_input=lambda endpoint: refuse_attempt(),
+        test_open_loopback=lambda endpoint: refuse_attempt(),
+    )
+    with pytest.raises(CaptureUnavailable) as info:
+        backend.start("both", "C:/tmp/session")
+    assert "下一执行单元" in str(info.value)
+    assert info.value.code == "capture_unavailable"
+    assert CaptureUnavailable is capture_module.CaptureUnavailable
+
+
+def test_finalize_transcode_and_stop_are_safe_no_ops():
+    """收尾三件套是安全空实现（它们连配置都没碰过，也不该抛）。"""
+    backend = capture_module.CaptureBackend(
+        list_inputs=lambda: [],
+        list_renders=lambda: [],
+        test_open_input=lambda endpoint: refuse_attempt(),
+        test_open_loopback=lambda endpoint: refuse_attempt(),
+    )
+    assert backend.finalize() is None
+    assert backend.transcode() is None
+    assert backend.stop() is None
+
+
+def test_the_real_backend_has_no_inject_fault():
+    """**不许加 `inject_fault`**：`dev_inject` 的可用性就是靠这个属性判的。"""
+    probes, _fake, backend = probe_with()
+    assert not hasattr(backend, "inject_fault")
+    assert capabilities_of(backend)["dev_inject"] is False
+    # 另外两项按 registry 的口径回答（实现者在场即有这两项能力的能力位）
+    assert capabilities_of(backend)["finalize"] is True
+    assert capabilities_of(backend)["transcode"] is True
+
+
+def test_frame_interval_is_declared():
+    """帧间隔有位可读（协议默认 0.5s），采集引擎那一段照这个节奏发帧。"""
+    _probes, _fake, backend = probe_with()
+    assert backend.frame_interval == 0.5
+
+
+# ---------------------------------------------------------------------------
+# ③ 选择面：解析、配置键、动作
+# ---------------------------------------------------------------------------
+
+
+def test_auto_resolves_to_the_real_capture_backend():
+    """默认 `auto` 走 `registry` 的约定路径，解析到真类（不再回退 null 替身）。"""
+    resolution = resolve_capture_backend()
+    assert resolution.target == "meeting.backends.capture:CaptureBackend"
+    assert type(resolution.implementation) is capture_module.CaptureBackend
+    assert resolution.has_implementation is True
+
+
+def test_reprobe_is_a_registered_action_name():
+    """动作名清单多一名 `reprobe`，`code` 表一个字都没动。"""
+    assert "reprobe" in ACTION_NAMES
+    assert len(ACTION_NAMES) == len(set(ACTION_NAMES))
+    assert ACTION_CODES == (
+        "already_recording",
+        "draining",
+        "capture_unavailable",
+        "not_recording",
+        "invalid_setting",
+        "persist_failed",
+        "action_unavailable",
+    )
+
+
+def test_settings_devices_shape_and_update_round_trip(tmp_path: Path):
+    """快照 `settings.devices` 两个子键；`settings_update` 写 `devices.mic` 落盘。"""
+    with live(tmp_path, {"capture.backend": "null"}) as (client, _runtime, home, _out):
+        settings = snapshot_of(client)["settings"]
+        assert set(settings) == {"alarm_sound", "heartbeat_interval_seconds", "asr", "devices"}
+        # 没配时两个子键都是 null（空值形状与配置层的 NULLABLE_KEYS 一致）
+        assert settings["devices"] == {"mic": None, "loopback": None}
+
+        response = post(client, "settings_update", {"devices.mic": "Analogue 1 + 2 (2- Focusrite US"})
+        assert response.status_code == 200, response.text
+        body = response.json()
+        # 设备键位归 pending_restart：写盘成功，快照里仍是启动值
+        assert body["applied"] == []
+        assert body["pending_restart"] == ["devices.mic"]
+        assert snapshot_of(client)["settings"]["devices"]["mic"] is None
+
+        written = json.loads(helpers.config_path_of(home).read_text(encoding="utf-8"))
+        assert written["devices.mic"] == "Analogue 1 + 2 (2- Focusrite US"
+
+        # 值非法照样在写盘之前拦下
+        bad = post(client, "settings_update", {"devices.mic": 3})
+        assert bad.status_code == 400
+        assert bad.json()["code"] == "invalid_setting"
+
+        # 清空成 null 也合法（`null` = 没配，按默认策略挑）
+        cleared = post(client, "settings_update", {"devices.mic": None})
+        assert cleared.status_code == 200, cleared.text
+        written = json.loads(helpers.config_path_of(home).read_text(encoding="utf-8"))
+        assert written["devices.mic"] is None
+
+
+def test_devices_keys_land_in_the_restart_group():
+    """两个设备键位在三分表里归 `pending_restart`（不是热读五键那一档）。"""
+    assert config_module.setting_group("devices.mic") == "pending_restart"
+    assert config_module.setting_group("devices.loopback") == "pending_restart"
+    assert config_module.DEVICE_SETTING_KEYS == ("mic", "loopback")
+    assert "devices.mic_device" not in config_module.SETTING_KEY_GROUPS
+    assert config_module.setting_group("devices.mic_device") is None
+
+
+def test_reprobe_action_re_enumerates_and_shares_the_writing_route(tmp_path: Path):
+    """`reprobe` 在空闲态可用：重新探测、更新两路、涨一次 revision。"""
+    with live(tmp_path, {"capture.backend": "null"}) as (client, runtime, home, _out):
+        before = snapshot_of(client)
+        assert before["top_state"] == "idle"
+        assert [item["device_name"] for item in before["sources"]] == [None, None]
+
+        calls: list[str] = []
+
+        def fake_probe():
+            calls.append("probe")
+            from meeting.backends.base import SourceProbe
+
+            return [
+                SourceProbe(source="mic", status="ready", device_name="真麦克风",
+                            detail="重新探测挑到的"),
+                SourceProbe(source="loopback", status="ready",
+                            device_name="CABLE Input (VB-Audio Virtual Cable)",
+                            detail="重新探测挑到的"),
+            ]
+
+        runtime.capture_backend.probe = fake_probe
+        response = post(client, "reprobe")
+        assert response.status_code == 200, response.text
+        assert response.json()["ok"] is True
+        assert response.json()["revision"] == before["revision"] + 1
+        assert calls == ["probe"]
+
+        after = snapshot_of(client)
+        assert [item["device_name"] for item in after["sources"]] == [
+            "真麦克风", "CABLE Input (VB-Audio Virtual Cable)",
+        ]
+        assert all(item["health"] == "ready" for item in after["sources"])
+        # 两条健康迁移都落进主 log（`unprobed -> ready`）
+        log_text = helpers.read_text(helpers.service_log_path_of(home))
+        assert "每一路健康迁移：mic unprobed -> ready" in log_text
+        assert "每一路健康迁移：loopback unprobed -> ready" in log_text
+
+
+def test_reprobe_is_refused_while_a_session_is_running(tmp_path: Path):
+    """`recording` / `alert` 态下 `reprobe` 拒绝（会中换设备是明文不做的那一档）。"""
+    with live(tmp_path) as (client, _runtime, _home, _out):
+        assert post(client, "start").status_code == 200
+        recording = snapshot_of(client)
+        assert recording["top_state"] == "recording"
+
+        refused = post(client, "reprobe")
+        assert refused.status_code == 409
+        assert refused.json()["code"] == "already_recording"
+        # 被拒绝的请求不涨 revision、也不动两路
+        assert snapshot_of(client)["revision"] == recording["revision"]
+
+        # 收尾走完之后（`ended`）重新探测又能用了
+        assert post(client, "stop").status_code == 200
+        from tests.test_api_actions import wait_for_done
+
+        wait_for_done(client)
+        allowed = post(client, "reprobe")
+        assert allowed.status_code == 200, allowed.text
+
+
+def test_reprobe_action_is_reachable_through_the_http_endpoint(tmp_path: Path):
+    """动作端点认这个新名字（不是只加进 `ACTION_NAMES` 就完事）。"""
+    with live(tmp_path, {"capture.backend": "null"}) as (client, _runtime, _home, _out):
+        accepted = post(client, "reprobe")
+        assert accepted.status_code == 200, accepted.text
+        assert accepted.json()["ok"] is True
+        # 动作名清单本身也经端点报出来（不认识的名字照旧 400）
+        unknown = post(client, "definitely_not_an_action")
+        assert unknown.status_code == 400
+        assert "reprobe" in unknown.json()["detail"]["known"]
+
+
+# ---------------------------------------------------------------------------
+# ④ 服务侧也走注入：起真服务时把两路探测换成假端点表
+# ---------------------------------------------------------------------------
+#
+# **这一段不碰真声卡**（用户明确要求：没有知情同意就不许打开他机器上的输入设备）。
+# `startup()` 里的 `probe()` 由**注入的假端点表 + 假试开函数**交回结论，于是「服务真把
+# 探测结果落进快照两路」这件事照样验得到，而一个音频流都不会被打开。
+# `.work` 下那两个侦察脚本（`_diag_devices.py` / `_diag_waveform.py`）是这条约束之前写的，
+# 已经删掉；任务书 §6 的命令 ② 因此作废（见 `phase1/report.md` 第 3 条）。
+
+
+def _install_fake_probe(monkeypatch: pytest.MonkeyPatch, fake: FakeSources) -> None:
+    """把 `sources.py` 的四个函数换成假件（服务启动时那一次 `probe()` 走的就是它们）。"""
+    fake.install(monkeypatch)
+
+
+def test_service_startup_leaves_unprobed_for_a_source_without_a_probe(tmp_path, monkeypatch):
+    """后端只报了 mic 一条：loopback 那一格按 `unprobed` 落（三档里的第三档）。"""
+    from meeting.backends.base import SourceProbe
+
+    class MicOnlyBackend:
+        """只报 mic 的假后端：用来验 runtime 那一侧「没有探测结果 → `unprobed`」的落法。"""
+
+        frame_interval = 0.5
+
+        def bind(self, emit, *, config=None):
+            return None
+
+        def probe(self):
+            return [SourceProbe(source="mic", status="ready", device_name="假-单路麦克风")]
+
+        def start(self, mode, session_dir):
+            return None
+
+        def finalize(self):
+            return None
+
+        def transcode(self):
+            return None
+
+        def stop(self):
+            return None
+
+    with live(tmp_path, {"capture.backend": "null"}) as (client, runtime, _home, _out):
+        runtime.capture_backend = MicOnlyBackend()
+        runtime.capture_resolution.implementation = runtime.capture_backend
+        assert post(client, "reprobe").status_code == 200
+        sources = {item["id"]: item for item in snapshot_of(client)["sources"]}
+        assert sources["mic"]["health"] == "ready"
+        assert sources["mic"]["device_name"] == "假-单路麦克风"
+        assert sources["loopback"]["health"] == "unprobed"
+        assert sources["loopback"]["device_name"] is None
+        assert {sources["mic"]["health"], sources["loopback"]["health"]} <= set(SOURCE_STATUS)
+
+
+def test_service_startup_lands_the_probe_results_in_the_snapshot(tmp_path, monkeypatch):
+    """起真服务（`capture.backend = auto`）：两路快照落的是假端点表交回的真设备名。"""
+    _install_fake_probe(monkeypatch, FakeSources())
+
+    with live(tmp_path, {"capture.backend": "auto"}) as (client, runtime, _home, _out):
+        snapshot = snapshot_of(client)
+        assert snapshot["top_state"] == "idle"
+        sources = {item["id"]: item for item in snapshot["sources"]}
+        # 假端点表里 MME 那条有波形（DirectSound 那条开了却全是零）—— 选中它就是
+        # 「试开真的读了样本」的证据
+        assert sources["mic"]["health"] == "ready"
+        assert sources["mic"]["device_name"] == FAKE_MIC_NAME
+        assert sources["loopback"]["health"] == "ready"
+        assert sources["loopback"]["device_name"] == "假-CABLE-Input (VB-Audio Virtual Cable)"
+        assert sources["mic"]["device_name"] not in ("dev-mic", "null")
+
+        # 两路真设备名同时写进 `session.json`（开场前定下来的那一份）
+        from meeting.backends.base import SourceProbe
+
+        assert isinstance(runtime.capture_backend, capture_module.CaptureBackend)
+        assert [probe.status for probe in runtime.probes] == ["ready", "ready"]
+        assert {probe.source for probe in runtime.probes} == set(SOURCE_IDS)
+        assert all(isinstance(probe, SourceProbe) for probe in runtime.probes)
+
+        # 这一段不做采集引擎：起一场如实回 capture_unavailable(503)
+        from meeting.backends.null import CaptureUnavailable
+
+        refused = post(client, "start")
+        assert refused.status_code == 503
+        assert refused.json()["code"] == "capture_unavailable"
+        assert "下一执行单元" in refused.json()["message"]
+        assert CaptureUnavailable.code == "capture_unavailable"
+
+
+def test_service_startup_reports_probe_failed_for_both_sources(tmp_path, monkeypatch):
+    """端点表里一条候选都没有（枚举失败那一档）：两路 `probe_failed`、`device_name` 为 `null`。
+
+    V1 在「候选为空」这一档是 `log.warning(...); return None`（交给系统默认输入）；
+    V2 要如实报出三态，所以这一档落成 `probe_failed` 并把原因写进 `detail`。
+    服务照常起，一个音频流都没被打开。
+    """
+    fake = FakeSources(inputs=(), renders=())
+    _install_fake_probe(monkeypatch, fake)
+
+    with live(tmp_path, {"capture.backend": "auto"}) as (client, runtime, _home, _out):
+        sources = {item["id"]: item for item in snapshot_of(client)["sources"]}
+        assert sources["mic"]["health"] == "probe_failed"
+        assert sources["mic"]["device_name"] is None
+        assert sources["loopback"]["health"] == "probe_failed"
+        assert sources["loopback"]["device_name"] is None
+        # 一条端点都没有：一次试开都没发生
+        assert fake.input_calls == []
+        assert fake.loopback_calls == []
+        details = {probe.source: probe.detail for probe in runtime.probes}
+        assert "候选为空" in details["mic"]
+        assert "一个 render（播放）端点都没有" in details["loopback"]
+
+
+def test_service_startup_survives_an_enumeration_that_raises(tmp_path, monkeypatch):
+    """枚举端点时抛错：两路如实落 `probe_failed`，服务照常起（后端不把服务带崩）。"""
+    fake = FakeSources(input_error=OSError("假件：PortAudio 起不来"))
+    _install_fake_probe(monkeypatch, fake)
+
+    with live(tmp_path, {"capture.backend": "auto"}) as (client, _runtime, _home, _out):
+        sources = {item["id"]: item for item in snapshot_of(client)["sources"]}
+        assert sources["mic"]["health"] == "probe_failed"
+        assert sources["mic"]["device_name"] is None
+        # 试开那一步抛的错被如实收成「这一条没成」，loopback 那一侧照常探到
+        assert sources["loopback"]["health"] == "ready"
+
+
+def test_reprobe_action_re_runs_the_injected_probe(tmp_path, monkeypatch):
+    """`reprobe` 真的再探一遍：换一份假端点表，快照两路跟着换。"""
+    first = FakeSources(
+        inputs=(DeviceEndpoint("假-一号麦克风", "MME", "input", index=1),),
+        renders=(DeviceEndpoint("假-一号回环", "", "render", index=0),),
+        input_default=wave_attempt(),
+        loopback_default=silence_attempt(),
+    )
+    first.install(monkeypatch)
+
+    with live(tmp_path, {"capture.backend": "auto"}) as (client, _runtime, _home, _out):
+        assert [item["device_name"] for item in snapshot_of(client)["sources"]] == [
+            "假-一号麦克风", "假-一号回环",
+        ]
+
+        second = FakeSources(
+            inputs=(DeviceEndpoint("假-二号麦克风", "MME", "input", index=1),),
+            renders=(DeviceEndpoint("假-二号回环", "", "render", index=0),),
+            input_default=wave_attempt(),
+            loopback_default=silence_attempt(),
+        )
+        second.install(monkeypatch)
+
+        response = post(client, "reprobe")
+        assert response.status_code == 200, response.text
+        assert [item["device_name"] for item in snapshot_of(client)["sources"]] == [
+            "假-二号麦克风", "假-二号回环",
+        ]
+
+
+# ---------------------------------------------------------------------------
+# ⑤ 纯逻辑那一侧的 import 边界（`devices.py` 不许 import 声卡库）
+# ---------------------------------------------------------------------------
+
+
+def test_devices_module_has_no_module_level_audio_imports():
+    """`meeting/capture/devices.py` 的 import 表里没有声卡库与 numpy（纯逻辑那一侧）。"""
+    import ast
+    import pathlib
+
+    source = pathlib.Path(devices_module.__file__).read_text(encoding="utf-8")
+    imported: list[str] = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            imported.extend(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.append(node.module)
+    roots = {name.split(".")[0] for name in imported}
+    assert roots.isdisjoint({"sounddevice", "soundcard", "numpy", "pydub"})

@@ -1,6 +1,7 @@
 """`tests/conftest.py` —— **夹具与 pytest hook**（phase2 §4 / §5.4 的五个夹具名在本 Phase 冻结）。
 
-本文件装两样东西：下面的**七个夹具**，以及两条 pytest hook（`pytest_addoption` 注册
+本文件装两样东西：下面的**七个夹具**与**两个 autouse 安全兜底**（`_no_real_browser` /
+`_no_real_audio_capture`），以及两条 pytest hook（`pytest_addoption` 注册
 `--regen-contract`；耗时看门那两个 hook 在文末）。**hook 不属于夹具语义**，它们在这里的
 唯一理由是 pytest 只认 conftest / 插件里的 `pytest_addoption`（写进测试模块会被静默忽略），
 详见下文各自那一段。**本文件里没有一条用例**。
@@ -41,6 +42,25 @@ pytest **父进程**里 `meeting.service.app.webbrowser` 就是**标准库那个
 会走到的那个属性）换成一个**只记录、绝不开窗**的假替身，测试结束自动还原。
 需要真行为的用例在**自己的用例里**显式覆盖它（`monkeypatch.setattr` 再用自己的假替身，
 或用本夹具提供的 `browser_calls` 记录）。
+
+## 声卡兜底（安全要求，autouse）
+
+同一类保护的第二层，针对**音频输入设备**：谁在测试里真的打开麦克风或 loopback，就是在
+**不打招呼地录机主的声音**。因此这里装另一个 **autouse** 夹具 `_no_real_audio_capture`，
+把「一碰就采集声音」的那几个入口换成抛 `AssertionError` 的桩：
+
+  - `sounddevice.InputStream` / `sounddevice.rec` / `sounddevice.check_input_settings`
+    （`sounddevice` 里能**开流 / 读样本**的入口）；
+  - `soundcard.get_microphone`（loopback 的唯一入口）。
+
+**只读的枚举不打掉**：`sd.query_devices()` / `sd.query_hostapis()` / `sc.all_speakers()` /
+`sc.default_speaker()` 不采集任何声音，用例拿真实端点名做参照时要用它们；`probe()` 的验
+一律靠**注入的假端点表 + 假试开函数**（见 `tests/test_capture_probe.py`），真机那条路不在
+自动化测试里验。
+
+两个库**没有装 / 没有 import 时不替它们 import**（无硬件的 CI 上因此一行都不用做）；
+库已经在 `sys.modules` 里时按模块对象打桩，`meeting/capture/sources.py` 事后
+`import sounddevice` 拿到的仍是这个被打过桩的模块对象。
 """
 
 from __future__ import annotations
@@ -108,6 +128,63 @@ def _no_real_browser(monkeypatch: pytest.MonkeyPatch) -> Iterator[_RecordingBrow
     fake = _RecordingBrowser()
     monkeypatch.setattr(service_app.webbrowser, "open", fake.open, raising=False)
     yield fake
+
+
+# ---------------------------------------------------------------------------
+# 安全兜底：绝不许碰真声卡（打开输入设备 = 不打招呼地录机主的声音）
+# ---------------------------------------------------------------------------
+
+#: 打桩时报错的那句话（用例看到它就是「这条用例在碰真硬件」）
+REAL_CAPTURE_FORBIDDEN_MESSAGE = (
+    "自动化测试不许碰真声卡（打开输入设备就是在录机主的声音）："
+    "请注入假设备表 / 假采集源。`probe()` 的真实硬件这条路不在自动化测试里验。"
+)
+
+#: 要打掉的入口：`(模块名, 入口名)`。**只列能开流 / 读样本的**，枚举设备的一律留着。
+_FORBIDDEN_CAPTURE_ENTRIES: tuple[tuple[str, str], ...] = (
+    ("sounddevice", "InputStream"),
+    ("sounddevice", "rec"),
+    ("sounddevice", "check_input_settings"),
+    ("soundcard", "get_microphone"),
+)
+
+
+def _forbid_real_capture(stub_call):
+    """把某个入口换成「一碰就炸」的桩（`stub_call` 收下这次调用的全部参数只用于报错）。"""
+
+    def blocked(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError(
+            f"{REAL_CAPTURE_FORBIDDEN_MESSAGE}（被拦下的调用：{stub_call}，"
+            f"args={args!r}，kwargs={kwargs!r}）"
+        )
+
+    return blocked
+
+
+@pytest.fixture(autouse=True)
+def _no_real_audio_capture(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
+    """**autouse 兜底**：把真采集入口打成「一碰就炸」，只读的枚举一律留着。
+
+    打桩落在**已经在 `sys.modules` 里的库模块对象**上（没装的库不替它 import，无硬件的 CI
+    因此一行都不用做）。`meeting/capture/sources.py` 的函数内 `import sounddevice` 拿到的
+    就是同一个模块对象，于是「惰性 import」绕不过这道桩。
+
+    需要验「真开设备」的用例已经不存在了：真机那条路的正确性靠假表单测 + 段末真机脚本。
+    """
+    import sys
+
+    blocked: list[str] = []
+    for module_name, entry in _FORBIDDEN_CAPTURE_ENTRIES:
+        module = sys.modules.get(module_name)
+        if module is None:
+            continue  # 没装 / 还没 import：不替它 import，也就没什么可打桩的
+        if not hasattr(module, entry):
+            continue
+        monkeypatch.setattr(
+            module, entry, _forbid_real_capture(f"{module_name}.{entry}"), raising=False
+        )
+        blocked.append(f"{module_name}.{entry}")
+    yield blocked
 
 
 # ---------------------------------------------------------------------------

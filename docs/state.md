@@ -104,7 +104,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 | `alerts` | `{critical: Alert\|null, hints: [Alert]}` |
 | `transcript` | `{health, last_line_at, buffered_lines, failed_segments}` |
 | `ended` | `null`，或 `{phase, steps: [DrainStep], error}` |
-| `settings` | `{alarm_sound, heartbeat_interval_seconds, asr{…}, devices{}}` |
+| `settings` | `{alarm_sound, heartbeat_interval_seconds, asr{…}, devices{mic, loopback}}` |
 | `notice` | `null`，或 `{kind, text, session_dir, log_path}` |
 
 `sources[*]` 九键：`id`（`mic` / `loopback`）/ `label`（`本地` / `远端`）/ `device_name` / `health` / `lost_since` / `restored` / `level_dbfs` / `peak_dbfs` / `envelope`。
@@ -128,7 +128,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 `settings` 的语义：
 
 - `asr` 的五子键与配置键 `asr.*` 逐字同名（去掉前缀），取当前生效值：`max_segment_seconds` / `timeout_seconds` / `max_new_tokens` / `repeat_max_unit` / `repeat_min_coverage`。
-- `devices` 现在是**空对象 `{}`**：位置留着，子键由设备节点（`dca4539b`）定名后补。
+- `devices` 的两个子键 `mic` / `loopback`（`dca4539b` 定名）与配置键 `devices.mic` / `devices.loopback` 逐字同名（去掉前缀），取当前生效值：值为**设备名字符串**，没配就是 `null`（按默认策略挑：mic 先挡掉 `CABLE Output` 这类抓取型虚拟端点再按 host API 排序试开，loopback 优先 `CABLE Input` 且不含 `16ch`）。空值形状两端一致 —— 配置文件里也写 `null`。
 - 这里读到的是**运行期生效值**。非热读的键改了要重启才在快照里可见，详见 `docs/service.md` 第 4 章的键态两分。
 
 `transcript` 的语义：`health ∈ normal / behind / stopped`，`buffered_lines` 是积压段数、`failed_segments` 是累计识别失败段数。**这两个计数只进 log 与 `/debug`**，产品界面不摆它们。转写停了不影响录音、电平与告警，只影响总结入口。骨架阶段（没有转写后端）恒为 `normal` + 0。

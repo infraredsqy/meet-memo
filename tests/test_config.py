@@ -76,6 +76,9 @@ def test_default_values_match_the_frozen_table(tmp_path, monkeypatch):
         "capture.backend": "auto",
         "transcriber.backend": "auto",
         "post.hook": "auto",
+        # 两个设备键位（`dca4539b` 定名）：没配就是 `None`
+        "devices.mic": None,
+        "devices.loopback": None,
         "asr.max_segment_seconds": 10,
         "asr.timeout_seconds": 20,
         "asr.max_new_tokens": 400,
@@ -275,7 +278,9 @@ def test_cross_key_rule_timeout_must_exceed_segment(tmp_path, monkeypatch):
         {"web.dist_dir": ""},
         {"capture.backend": "nonsense-value"},
         {"web": {"port": 8765}},
-        {"devices.mic": "麦克风阵列"},
+        # 两个设备键位是合法的，但值必须是字符串：数字当场拦下
+        {"devices.mic": 3},
+        {"devices.loopback": ["CABLE Input"]},
     ],
 )
 def test_illegal_values_raise_value_error_in_process(tmp_path, monkeypatch, values):

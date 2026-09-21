@@ -272,12 +272,13 @@ ACTION_CODES: tuple[str, ...] = (
     "action_unavailable",
 )
 
-#: 动作名清单（phase2 §3.13）
+#: 动作名清单（phase2 §3.13 + `dca4539b` 的 `reprobe`）
 ACTION_NAMES: tuple[str, ...] = (
     "start",
     "stop",
     "mute_session",
     "settings_update",
+    "reprobe",
     "dev_inject",
 )
 
@@ -416,9 +417,12 @@ class ServiceRuntime:
 
         口径（§3.5.5 + §7.1 高危点 7）：这里读的是**运行期生效值**，也就是启动时定下来的那一份。
         `settings_update` 把非热读键写盘成功之后，快照里的 `settings` **不会**立刻反映写进去的
-        新值 —— 那 16 个键（含 `alarm.sound`）改名归 `pending_restart`，要重启才在快照里可见；
-        热读五键（`asr.*`）才在写盘后立刻换成新值（那一处在 `settings_update()` 里按 `applied`
-        重取一次本函数）。
+        新值 —— 那些键（含 `alarm.sound` 与两个设备键位）归 `pending_restart`，要重启才在快照里
+        可见；热读五键（`asr.*`）才在写盘后立刻换成新值（那一处在 `settings_update()` 里按
+        `applied` 重取一次本函数）。
+
+        `settings.devices` 的两个子键逐一取 `devices.mic` / `devices.loopback` 的生效值
+        （`dca4539b` 定名；没配时为 `null`，与配置层 `NULLABLE_KEYS` 的空值形状一致）。
         """
         return SettingsView(
             alarm_sound=bool(self._value("alarm.sound")),
@@ -426,8 +430,15 @@ class ServiceRuntime:
             # `settings.asr` 的五个子键与配置键 `asr.*` **逐字同名**（只去掉前缀），取生效值；
             # 嵌套写法只出现在状态 JSON 里，不进请求 / 应答 / config.json
             asr={name: self._value(f"asr.{name}") for name in config_module.ASR_SETTING_KEYS},
-            devices={},
+            # `settings.devices` 的两个子键同理（子键名与配置键的点号后半段逐字同名）
+            devices=self._devices_view(),
         )
+
+    def _devices_view(self) -> dict[str, Any]:
+        """`settings.devices` 的两个子键：取两个设备键位的**生效值**（没配即 `None`）。"""
+        return {
+            name: self._value(f"devices.{name}") for name in config_module.DEVICE_SETTING_KEYS
+        }
 
     # -- 绑定地址 ---------------------------------------------------------
 
@@ -624,13 +635,60 @@ class ServiceRuntime:
         except Exception:
             _log.exception("转写后端 bind() 失败（如实记账、不阻塞录音）")
 
+        self._probe_and_apply(
+            reason="设备探测结果写入初始快照",
+            threshold="探针三态（unprobed / ready / probe_failed），本档无阈值",
+        )
+
+    def rebind_and_probe(self) -> list[Any]:
+        """重新 `bind()` 一次再 `probe()`（`reprobe` 动作走的就是这条路，幂等）。
+
+        `probe()` 每次都用**当下**的配置与**当下**的系统端点表，于是「录到一半插上设备之后
+        打一个动作重新探测」这条要求落在这里 —— 两路快照随即更新。
+        """
+        backend = self.capture_backend
+        try:
+            sink = self.bind_capture(backend)
+            backend.bind(sink, config=self._config_view())
+        except Exception:
+            _log.exception("采集后端 bind() 失败（如实记账，不静默）")
+        return self._probe_and_apply(
+            reason="重新探测设备（reprobe）",
+            threshold="探针三态（unprobed / ready / probe_failed），本档无阈值",
+        )
+
+    def reprobe(self) -> None:
+        """`reprobe`：重新枚举并试开设备，更新快照两路（`dca4539b` phase1 §2）。
+
+        **只在没有场次在跑的时候可用**：`recording` / `alert` 态下这两路设备是开场前定下来的，
+        会中换设备属于明文不做的那一档（`docs/contract.md` 第 7 章），因此这两态一律拒绝，
+        `code` 取既有的 `already_recording`（取值域冻结在 `ACTION_CODES` 里，不自造新码）。
+        `ended`（含收尾停留档）态下采集已经停了，重新探测不干扰任何在飞的东西。
+        """
+        if self.snapshot.top_state in ("recording", "alert"):
+            raise self._already_recording_error()
+        _log.info("重新探测设备：按当下配置与当下系统端点表再探一遍")
+        self.rebind_and_probe()
+        self.commit()
+
+    def _probe_and_apply(self, *, reason: str, threshold: str) -> list[Any]:
+        """`probe()` 走一遍，把结果落进快照两路（启动与 `reprobe` 共用这一段）。"""
+        backend = self.capture_backend
         try:
             probes = backend.probe()
         except Exception:
             _log.exception("采集后端 probe() 失败（如实记账，不静默）")
             probes = []
         self.probes = list(probes or [])
+        self._apply_probe_results(reason=reason, threshold=threshold)
+        return self.probes
 
+    def _apply_probe_results(self, *, reason: str, threshold: str) -> None:
+        """把 `self.probes` 按 `source` 落进快照两路（`dca4539b` phase1 §3 的落点）。
+
+        越界取值（后端返回第四个探针状态这类）记 warning 并把该路落 `probe_failed`：
+        服务照常起、`top_state` 不动。
+        """
         by_source: dict[str, Any] = {}
         for probe in self.probes:
             source = getattr(probe, "source", None)
@@ -654,9 +712,10 @@ class ServiceRuntime:
                     "设备探测：%s 返回了取值域外的状态 %r，按 probe_failed 处理", item.id, status
                 )
             item.health = validate_health(status)
-            if item.health == "probe_failed" and status in PROBE_STATUS:
+            if item.health == "probe_failed":
                 _log.warning(
-                    "设备探测：%s 能打开但没信号（status=%s）", item.id, status
+                    "设备探测：%s 这一路没有可用的设备（status=%s，试过哪几条见上面的 detail）",
+                    item.id, status,
                 )
             item.device_name = getattr(probe, "device_name", None)
             _log.info(
@@ -665,10 +724,7 @@ class ServiceRuntime:
             )
         # 探测结果落定即落一次「每一路健康迁移」（`unprobed` / `ready` / `probe_failed` 三档：
         # `unprobed` / `ready` 无阈值，`probe_failed` 的阈值口径见 `PROBE_STATUS` 的三档）
-        self._log_health_migrations(
-            reason="设备探测结果写入初始快照",
-            threshold="探针三态（unprobed / ready / probe_failed），本档无阈值",
-        )
+        self._log_health_migrations(reason=reason, threshold=threshold)
 
     def _warn_frame_interval(self, raw: Any) -> None:
         from meeting.state import DEFAULT_FRAME_INTERVAL_SECONDS

@@ -411,7 +411,13 @@ def test_api_state_shape_is_the_full_one(tmp_path, client_factory):
     """顶层键全集齐、嵌套字段按冻结形状、取值取到**真值**（phase2 §2.2 / §2.3 第 1 / 2 / 3 / 4 条）。"""
     home = tmp_path / "home_for_state"
     home.mkdir()
-    client = client_factory({"web.dist_dir": str(helpers.missing_dist_dir(home))})
+    # 采集后端显式取 `null` 替身：**测试不许碰真声卡**，这一条验的是空闲态快照的形状
+    client = client_factory(
+        {
+            "web.dist_dir": str(helpers.missing_dist_dir(home)),
+            "capture.backend": "null",
+        }
+    )
 
     response = client.get("/api/state")
     assert response.status_code == 200
@@ -462,10 +468,10 @@ def test_api_state_shape_is_the_full_one(tmp_path, client_factory):
     assert set(settings) == SETTINGS_TOP_KEYS
     assert isinstance(settings["alarm_sound"], bool)
     assert isinstance(settings["heartbeat_interval_seconds"], int)
-    # `asr` 五子键齐且取当前生效值；`devices` 是空对象 `{}`
+    # `asr` 五子键齐且取当前生效值；`devices` 两个子键在没配时都是 `null`
     assert set(settings["asr"]) == ASR_KEYS
     assert settings["asr"]["timeout_seconds"] == 20
-    assert settings["devices"] == {}
+    assert settings["devices"] == {"mic": None, "loopback": None}
 
 
 def test_api_state_revision_grows_by_one_per_state_change(tmp_path, client_factory):
