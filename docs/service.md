@@ -61,12 +61,27 @@ $env:MEETING_CAPTURE="dev"; $env:MEETING_NO_BROWSER="1"; meeting web
 3. **按生效配置重建服务级日志**：换掉 bootstrap 阶段的 handler；生效 `log.dir` 写不进去就是「主 log 不可写」→ 退出码 `3`，不再像 V1 那样静默降级。
 4. **绑 `127.0.0.1:<port>`**（端口策略见 `docs/api.md` 第 5 章）：绑失败就先探一次占用者形状，两种情形都以退出码 `2` 结束。绑成功后从**这个监听 socket 的 `getsockname()`** 读回真实 host / port，往主 log 落一行 `绑定成功：<host>:<port>（getsockname 实测）`，并在终端打印 URL / 输出根 / log 路径。
 5. **装信号处理函数**：`SIGINT` 与 `SIGBREAK` 挂**同一个**处理函数；服务器自己的信号捕获被屏蔽掉，所以运行期里生效的一直是本服务的处理函数。
-6. **跑服务器**（已绑好并 `listen()` 的 socket 直接交给它，服务器不再自己绑端口）。框架生命周期的 startup 钩子在这之后依次做七步：取事件循环 → 写关停目标（语义：立即请求关停）→ 信号接管自检 → 解析三个后端 → 探测设备 → 组装初始快照 → 扫未收尾场次 → 打开浏览器。每一步都往主 log 留话，例如 `信号接管自检通过：SIGINT 与 SIGBREAK 指向本服务的处理函数`。
+6. **跑服务器**（已绑好并 `listen()` 的 socket 直接交给它，服务器不再自己绑端口）。框架生命周期的 startup 钩子在这之后依次做七步：取事件循环 → 写关停目标（语义：**先跑收尾、再请求关停**）→ 信号接管自检 → 解析三个后端 → 探测设备 → 组装初始快照 → 扫未收尾场次 → 打开浏览器。每一步都往主 log 留话，例如 `信号接管自检通过：SIGINT 与 SIGBREAK 指向本服务的处理函数`。
    - 解析后端失败一律**回退替身 + 一条 warning**，服务照常起；探测设备在 `bind()` 之后调，结果取三态直取进快照。
    - **扫未收尾场次**：只取输出根下最新的一场，`state` 是 `recording` / `draining` 或 `interrupted: true` 时挂 `notice.restart_unfinished`，并把那份记录改写成「收尾中 + 已打断」（原步骤表原样保留），同时**拦住新场次**。绝不自动续录。
    - **绝不自动开始录音**。
 
-**`Ctrl+C`**：处理函数往主 log 落一行 `收到 SIGBREAK，进入关停`（或 `收到 SIGINT，进入关停`），然后请求关停，进程以退出码 `0` 结束。本阶段只有「空闲态触发 → 关停」这一半语义；收尾编排与「第二次 `Ctrl+C` 强制中断」还没有。
+**`Ctrl+C` 的两阶段语义**：`SIGINT` 与 `SIGBREAK` 挂在 `handle_shutdown_signal` 这**一个**处理函数上。函数体只做三件事：往主 log 落一行 `收到 SIGINT，进入关停`（或 `收到 SIGBREAK，进入关停`）、把按下次数加一、把关停目标排进事件循环。收尾状态、`interrupted` 与 `session.json` 的写值都不在它里面发生，写者始终是 `ServiceRuntime`。
+
+按下之后落在哪一档，看的是**这一刻有没有收尾要管**：
+
+| 按下的时刻 | 做什么 | 退出码 |
+|---|---|---|
+| 正在录（`recording` / `alert`） | 走与 `stop` 同一条的 `stop_session(reason="ctrl_c")` 起收尾，等它落定再关停；页面上的收尾进度照常推 | 收尾干净 `0`；有步骤 `failed` `1` |
+| 刚起、还没开过任何一场（`idle`） | 直接退出 | `0` |
+| 空闲态挂着「服务重启过。上一场的收尾没走完……」这条提示 | 直接退出，**盘上那份 `session.json` 一个字都不改写**（不写 `interrupted`、不写 `ended_at`）；重启留下的现场只拦新场次的 `start` | `0` |
+| `stop` 已经收尾干净走完之后 | 直接退出，盘上那一版（`state=done` + `ended_at`）逐字节不动 | `0` |
+| 收尾还在跑，或收尾失败后停在 `ended·draining` | **等同第二次按下**：先落盘（`draining` + `interrupted: true`、原 `steps` 保留、不写 `ended_at`）→ 再 `cancel()` 收尾协程 → 关停 | `130` |
+| 第二次按下 | 同上 | `130` |
+
+被强制打断的场次，盘上留的是「收尾中 + 已打断」，没有 `ended_at` —— 重启与 `meeting post` 都还接得上。第二次按下时终端会打出行踪：档位、盘上那一格与 log 路径。
+
+**收尾有步骤 `failed` 时服务不自杀**：进程继续活着、页面还能看、新的「开始录音」一律回 `409 draining`（带上失败那一步与 log 路径），出路是 `meeting post <场次目录>` 或看清现场后重启服务。收尾这一段本身的进度（四步、预算、耗时）见 `docs/state.md` 第 1 章。
 
 ## 3. 起了之后有什么
 
@@ -143,7 +158,15 @@ $env:MEETING_CAPTURE="dev"; $env:MEETING_NO_BROWSER="1"; meeting web
 
 - **服务级主 log**：`~/.config/meeting/logs/meeting.log`（受 `log.dir` / `MEETING_LOG_DIR` 控制）。这是「服务挂了去哪儿查」的那一份。
 - **轮转**：`RotatingFileHandler(max_bytes=log.max_bytes, backup_count=log.backup_count)` —— 默认 5 MiB 一份、留 3 份。**保留整份旧文件**（V1 那套「超限删前半、留后半」已换掉）。两个数都从配置取，改键即改行为。
-- **场次级 log**：`<场次目录>/meeting.log`。`start` 成功之后挂上（`attach_session_log()`）；**摘掉与结束标记归后续节点**（`detach_session_log()` 目前没有调用者）。`detach_session_log()` 写失败时抛 `OSError`，不静默吞。
+- **场次级 log**：`<场次目录>/meeting.log`。`start` 成功、场次目录建好之后挂上（`attach_session_log()`）；收尾第 3 步 `log` 做三件事：**flush 场次 log → 写这一场的结束标记 → 摘掉 handler**（`write_session_end_marker()`）。摘掉之后这一场的消息只走服务级 log。
+  - **结束标记是这一场的最后一行**，格式串是 `logging_setup.py` 里的具名常量 `SESSION_END_MARKER`：
+
+    ```
+    场次结束：state=<draining|done|failed>；收尾四步：<每步 status 概要>；服务级 log：<路径>
+    ```
+
+    场次 id 由格式串里的 `session=%(session)s` 带上（场次级 handler 的 `SessionFilter` 写的就是场次目录名）。
+  - **写失败（例如磁盘满）不中断录音**，但如实上报：`drain.steps.log` 记 `failed`、状态里看得见、主 log 里留一条 —— 不许静默。`log` 这一格在任何构建里都有实现，所以它**永远不该出现 `skipped`**。
 - **记录器**：名字 `meeting`，`propagate = False`（不污染 torch / transformers 的日志），初始化幂等（重复调用不重复加 handler）。
 - **格式**（逐字）：
 
@@ -153,10 +176,19 @@ $env:MEETING_CAPTURE="dev"; $env:MEETING_NO_BROWSER="1"; meeting web
 
   无场次时 `session=-`；`session` 字段由挂在 handler 上的 `SessionFilter` 注入（服务级 handler 恒 `-`，场次级 handler 是场次目录名）。
 
-**现在会记下来的事**：
+**现在会记下来的事**（两个 log 各有各的读者：服务级那一份回答「服务自己干了什么」，场次那一份回答「这一场里发生了什么」）：
 
-- 启动这一路（phase1 已落）：启动与选中的端口 / URL / 输出根；配置来源、生效值清单与热读键清单；静态挂载与产物缺失回退；端口探测的判定结论；bootstrap 日志被换到哪个新路径；设备探测逐步结果（状态、设备名、detail）；信号接管自检与 `收到 <信号名>，进入关停`；未捕获异常带堆栈；退出原因与退出码（写常量名，不写裸数字）。
-- 场次这一路：**每一路的健康迁移**（含原因与阈值）、**告警起止与出声 / 抑制**（含 `muted` 与 `alarm.sound` 的生效值）、**场次开始与结束**（场次目录、`mode`、本场秒数）、**收尾每一步的开始与结束**（该步的 `status` 与说明）、后端解析结果与回退 warning、帧间隔读不到时的回退 warning、`settings_update` 写盘结果与被环境变量压住的 warning、SSE 慢消费者重同步。
+- **服务级**：启动与选中的端口 / URL / 输出根；配置来源、生效值清单与热读键清单；静态挂载与产物缺失回退；端口探测的判定结论；bootstrap 日志被换到哪个新路径；设备探测逐步结果（状态、设备名、detail）；信号接管自检与 `收到 <信号名>，进入关停`；收尾失败档 / 强制打断档退出时打给终端的那两套文案；未捕获异常带堆栈；退出原因与退出码（写常量名，不写裸数字）。
+- **场次级**（`start` 到摘掉 handler 之间）：**场次开始与结束**（场次目录、`mode`、本场秒数）、**每一路的健康迁移**、**告警起止与出声 / 抑制**、**收尾每一步的开始 / 结束 / 耗时**、收尾这一趟的 `backlog` / `segment_timeout` / `budget`。
+  - **每一路健康迁移**是单独一类事件，行里的四项固定：**是哪一路、从什么值到什么值、原因、阈值**。`health` 的取值域见 `docs/state.md` 第 2 章。行样子：
+
+    ```
+    每一路健康迁移：loopback capturing -> lost（原因：这一路起致命级告警；阈值：静默阈值 alert.silence_seconds=1s / silence_dbfs=-60 dBFS）
+    ```
+
+  - 健康迁移那行的「阈值：」后面有三种形态，读 log 时照各自的方式取：门限真的参与判定时写实测值（`恢复阈值 alert.recover_seconds=<生效值>s`、`静默阈值 alert.silence_seconds=<生效值>s / silence_dbfs=<生效值> dBFS`）；判据里本来就没有门限数时写一句「无阈值」并说明是哪个判据（设备探测三态、开场 `mode` 这一类）；收尾驱动的几条写「不看阈值」（进收尾、撤回空闲、收尾终态）。**没有可取的数时它不编一个数出来**。
+  - 一处按时间顺序的实情：`场次开始：…` 那一行落在场次 log 挂上**之前**，所以它只出现在服务级 log 里；场次 log 里找得到的是同一场的 id、目录与 `场次结束：…`。查一场的完整经过，两个文件一起看。
+- **两个 log 之外还有的**：后端解析结果与回退 warning、帧间隔读不到时的回退 warning、`settings_update` 写盘结果与被环境变量压住的 warning、SSE 慢消费者重同步（这几条走服务级那一份）。
 - **启动扫描**：主 log 落**一行** `WARNING`，含场次目录路径与扫到的 `state` / `interrupted` 取值（每次启动最多一行）；命中时再落一行说明「已改写、这一场拦住新场次」。它不自动录音、只改那一份 `session.json`、不新建任何目录。
 
 ## 6. 退出码
@@ -165,11 +197,15 @@ $env:MEETING_CAPTURE="dev"; $env:MEETING_NO_BROWSER="1"; meeting web
 
 | 常量 | 取值 | 触发条件 | 现在能走到吗 |
 |---|---|---|---|
-| `EXIT_OK` | `0` | 正常跑完：空闲态 `Ctrl+C` | 能（空闲态 `Ctrl+C` 这一支；收尾四步全落定之后关停那一支还没有） |
-| `EXIT_FAILURE` | `1` | 收尾有步骤 `failed`；`meeting post` 眼下是桩 | 能（`post` 桩这一支；收尾失败那一支还没有） |
+| `EXIT_OK` | `0` | 正常跑完：空闲态按 `Ctrl+C`；收尾四步走到 `done` / `skipped` 之后关停 | 能 |
+| `EXIT_FAILURE` | `1` | 收尾有步骤 `failed`；`meeting post` 眼下是桩；`meeting web` 起步这一路（组装应用 / 构造服务器对象）出的意外 | 能 |
 | `EXIT_REJECTED` | `2` | 三个触发面：**用法错误**（不带参数 / 动作词不在 `web` `post` 里）、**配置值非法**、**端口被占**（两种情形都算） | 能 |
 | `EXIT_STARTUP_UNMET` | `3` | 启动前提不成立：主 log 不可写、`config.json` 读不出来或不是合法 JSON | 能 |
-| `EXIT_INTERRUPTED` | `130` | 收尾中途第二次 `Ctrl+C` | **还不能**（收尾编排未落） |
+| `EXIT_INTERRUPTED` | `130` | 收尾中途第二次 `Ctrl+C`；已经停在 `ended·draining` 时按下的那一次 | 能 |
+
+**五档全部可达。** 五种关停情形各自落在哪一档，见第 2 章那张表。
+
+退出码的出口一律是 `sys.exit(<常量>)`，异常不许冒到 uvicorn 或解释器那里变成解释器默认码。收尾失败档退出时，终端上会打 log 路径与**服务 log 的最后 20 行**；强制打断档退出时打的是档位、盘上留在哪一格与 log 路径。两套文案都按**现场**说话：现场真有 `failed` 步才说「收尾有步骤失败，服务不自杀」。
 
 `SIGTERM` 不在本服务的接管范围内，本阶段不定义它的退出码。
 
@@ -182,11 +218,11 @@ python -m pytest -q
 python -m pytest tests/test_state_machine.py tests/test_api_actions.py -q   # 只跑某几个文件
 ```
 
-`tests/` 下现在有 **13 个测试文件、211 个用例**（`python -m pytest -q` 实测：`211 passed in 177.48s`）。不需要先 `pip install`，也不需要可编辑安装。
+`tests/` 下现在有 **19 个测试文件、264 个用例**（`python -m pytest -q` 实测：`264 passed in 81.20s`）。不需要先 `pip install`，也不需要可编辑安装。
 
 | 文件 | 用例数 | 验什么 |
 |---|---|---|
-| `tests/test_config.py` | 29 | 默认值表、三层优先级、环境变量映射、五个热读键、键间校验、配置损坏抛错、值非法 → 退出码 `2` |
+| `tests/test_config.py` | 30 | 默认值表、三层优先级、环境变量映射、五个热读键、键间校验、配置损坏抛错、值非法 → 退出码 `2` |
 | `tests/test_port_policy.py` | 22 | 端口与只监听回环、两种占用文案与退出码 `2`、探针 1 秒总超时、用法错误、`post` 桩、空闲态 `CTRL_BREAK_EVENT` → 退出码 `0` 与两行信号 log、console script 入口面 |
 | `tests/test_static.py` | 18 | `/` 的产物与说明页两条分支、`/debug`、`/api/*` 的 `no-store`、Host 校验 `403`、动作头校验 `403`、完整版快照的键集与非空 `service.version`、`revision` 每次状态变更 +1、心跳六字段、空闲态盘上不留任何场次产物 |
 | `tests/test_logging_setup.py` | 17 | 服务级 log 位置与格式、bootstrap 重建、按两个配置键轮转、幂等、主 log 不可写与配置损坏 → 退出码 `3`、扫未收尾场次只报最新一场（那行 `WARNING` 照旧；改写现场的断言归下面的重启用例） |
@@ -199,25 +235,32 @@ python -m pytest tests/test_state_machine.py tests/test_api_actions.py -q   # �
 | `tests/test_session_dir.py` | 11 | 输出根只在 `start` 建、`preview_next_dir()` 只算不建、`YYMMDD` 与 `-2` / `-3` 让位、`session.json` 字段全貌与原子写（无 `.tmp` 残骸）、每个阶段变更都落盘、`start` 写盘失败清理目录并留痕 |
 | `tests/test_restart_consistency.py` | 7 | 未收尾场次 → `notice` + 改写现场 + 拦住新场次、再重启读到同一副面孔、`interrupted: true` 单独算未收尾、已收尾的不动、输出根不存在时不建目录 |
 | `tests/test_multi_client.py` | 5 | 两个订阅者拿到同一个 `revision`、revision 序列逐项相同、断开一个不影响另一个与会话、重连首帧是 `snapshot` 且不重放、`/debug` 与产物无关地可达 |
+| `tests/test_drain.py` | 31 | 收尾编排这一整块：四步顺序与终态、`done` 判据、`skipped` / `failed` 的边界、预算公式与五个边界档、一趟收尾的总时长随积压量变化且不越过预算、某一步超预算 → 该步 `failed`、四步共享一条 deadline、转写缺席时的缺省输入、`_drain_wait()` 包住每一个调用、`log` 步的最小预算、取消路径的记账、`log` 步与场次 log 的挂摘与结束标记、逐类日志事件可查、失败后服务不自杀且 `start` 回 409 |
+| `tests/test_shutdown_signal.py` | 14 | `Ctrl+C` 的两阶段语义（真服务子进程 + `CTRL_BREAK_EVENT`）：空闲态 / 重启提示态 / 收尾干净走完之后各按一次 → `0` 且盘上不被改写；录音中按一次 → 收尾干净 → `0`；收尾中途第二次 / 已停在 `draining` 再按 → `130`；收尾有步骤 `failed` → `1` 且终端打出 log 路径与 `meeting post`；`SIGINT` 与 `SIGBREAK` 共用同一个处理函数；退出码逐档与两套终端文案 |
+| `tests/test_e2e_no_clients.py` | 1 | 关掉全部页面之后录音照跑（本条用 dev 真服务起一场），重连首帧是 `snapshot` 且与紧接着一次 `GET /api/state` 逐字段相等 |
+| `tests/test_e2e_multi_client.py` | 2 | 两个订阅者同一 `revision`、同一 `muted`；下一场 `start` 之后会话级静音复位、`alarm.sound` 未变 |
+| `tests/test_e2e_restart_consistency.py` | 3 | 进程级重启自洽：`recording` 中被杀 / `stop` 之后被杀两个现场 → 重启后 `idle` + `restart_unfinished` + 不自动续录；再重启一次仍是同一副面孔 |
+| `tests/test_e2e_silence_alert.py` | 1 | 一路静默 → 致命级告警、另一路照常采、录音继续（`session.frozen` 为假）、结束必须由测试 `stop` |
 
-除这些，`tests/` 下还有**测试支持**：`tests/_helpers.py`（真服务子进程与假浏览器等工具）、`tests/_service.py`（真服务子进程驱动件 + SSE 读帧与等待助手）、`tests/conftest.py`（**只放 fixture**，五个夹具，其中一个 autouse 的兜底把 `webbrowser.open` 换成只记录不开窗的假替身）、`tests/_fake_webbrowser/`（替掉标准库 `webbrowser` 的假模块）。这些不被 `pytest` 收集。
+除这些，`tests/` 下还有**测试支持**（不被 `pytest` 收集）：`tests/_helpers.py`（真服务子进程与假浏览器等工具）、`tests/_service.py`（真服务子进程驱动件 + SSE 读帧与等待助手）、`tests/_drain_fakes.py`（收尾与关停用例共用的假后端 / 假钩子，与工厂辅助一起挂进子进程）、`tests/__init__.py`（`tests/` 的包标记，跨文件取用走包路径 import）、`tests/conftest.py`（**只放 fixture**，其中一个 autouse 的兜底把 `webbrowser.open` 换成只记录不开窗的假替身）、`tests/_fake_webbrowser/`（替掉标准库 `webbrowser` 的假模块）。
 
-测试的隔离手段：**重定向家目录**（`HOME` / `USERPROFILE` 都指向临时目录），配置与日志因此整套换落点；**不新增 `MEETING_*` 变量**。真服务一律用 `[sys.executable, "-m", "meeting", "web"]` 起子进程，地址从 `MEETING_PORT=0` 加子进程打印的 URL 行解析出来（**不猜端口**）。ASGI 层用 `with TestClient(app, base_url="http://127.0.0.1") as c:`（`base_url` 把回环 `Host` 带上，只有 `with` 会触发应用的生命周期钩子）。
+**每一条用例都有一道自动看门**：`tests/conftest.py` 汇总 pytest 自己报的 setup / call / teardown 三段耗时，**合计超过 5 秒就把这条用例判红**（红在它自己的名字下，报出三段各自的耗时）。看门只读 pytest 的 report，不额外计时、不加 fixture。
+
+这条红线牵着测试侧的等待窗口：静默阈值、收尾那一步的阻塞时长、端到端的观察窗口都按它收口过（例：一条用例的静默阈值取 1 秒、把某一步钉在 `running` 的阻塞取 0.6 秒、端到端的观察窗口取 1 秒）。**被测的语义没有跟着改** —— 收尾预算仍是 30 秒起步、告警默认阈值仍是 180 秒，改的只是测试自己等多久。
+
+测试的隔离手段：**重定向家目录**（`HOME` / `USERPROFILE` 都指向临时目录），配置与日志因此整套换落点；**不新增 `MEETING_*` 变量**。真服务一律用 `[sys.executable, "-m", "meeting", "web"]` 起子进程，地址从 `MEETING_PORT=0` 加子进程打印的 URL 行解析出来（**不猜端口**）。采集后端由用例自己的 `config.json` 的 `capture.backend` 表达，子进程 env 里不塞 `MEETING_CAPTURE`（它的优先级更高，会静默压住那条配置键）。ASGI 层用 `with TestClient(app, base_url="http://127.0.0.1") as c:`（`base_url` 把回环 `Host` 带上，只有 `with` 会触发应用的生命周期钩子）。
 
 ## 8. 现在能做什么 / 还接不上的部分
 
-**能**：起停、跑完启动序列、交 `/`（产物或说明页）、**接通了的 `/debug` 自检页**、`/api/state` 的完整快照、`/api/events` 的三通道 SSE、`/api/heartbeat` 的真值、`POST /api/actions` 的五个动作、四态与全部迁移、场次目录与原子写 `session.json`、`stop` 的四步收尾到终态、重启自洽闭环、告警判定与静音、`settings_update` 的原子写、dev 采集替身与三档故障注入。
+**能**：起停、跑完启动序列、交 `/`（产物或说明页）、**接通了的 `/debug` 自检页**、`/api/state` 的完整快照、`/api/events` 的三通道 SSE、`/api/heartbeat` 的真值、`POST /api/actions` 的五个动作、四态与全部迁移、场次目录与原子写 `session.json`、`stop` 的四步收尾跑到终态（含自适应预算、超时如实上报、失败后两条出路）、`Ctrl+C` 的两阶段语义与五档退出码、重启自洽闭环、场次 log 的挂上与摘下、告警判定与静音、`settings_update` 的原子写、dev 采集替身与三档故障注入、仓库根的简版 `README.md`。
 
 **还接不上**（都按「能力还没进来」理解，服务本身照常跑）：
 
-- **真实采集与转写**：默认后端是 `null` 替身，如实报「两路都未探测」；`start` 会回 `503 capture_unavailable`（「采集后端未接入：当前是 null 替身，不会真的录音」），盘上不留任何场次目录。**四步收尾里的第 1、2 步和第 4 步眼下都记 `skipped`** —— 没有真实音频可落盘、可转码，也没有会后钩子。
-- **收尾的自适应预算**：收尾会按顺序真的跑完四步，但**每一步都不带超时等待**，也没有「预算内等不完就说话」这类提示。`compute_drain_budget()` 的名字与算法已经落在代码里（`30 + 积压段数 ×（单段超时 + 5）`，下限 30、封顶 300），**收尾路径眼下还没调它**。
-- **收尾失败之后的完整出路**：失败档会把现场留在 `ended·draining`、服务不自杀、新的 `start` 回 `draining`(409)，但「出路说明」的文案（`meeting post <场次目录>` 或重启）还没有。
-- **`Ctrl+C` 的收尾语义**：现在只有「空闲态触发 → 关停」这一半；第一次 `Ctrl+C` 跑收尾、第二次强制中断、`EXIT_INTERRUPTED` 都还没有。
-- **场次级 log 的收尾**：`start` 已经把它挂上，**摘掉与结束标记还没有调用者**；收尾第 3 步 `log` 现在只写 `session.json` 的结束标记与服务级主日志的结束标记（不写 log 内容明细、不记耗时、不写预算与积压）。
-- **四条端到端脚本与 README**：都还没有。
-- **`meeting post`**：只有桩。
-- **前端**：`web/` 与构建产物还没有；产物一建好，刷新 `/` 就是真界面。
+- **真实采集与转写**：默认后端是 `null` 替身，如实报「两路都未探测」；`start` 会回 `503 capture_unavailable`（「采集后端未接入：当前是 null 替身，不会真的录音」），盘上不留任何场次目录。收尾四步里的第 1、2 步和第 4 步因此都记 `skipped` —— 没有真实音频可落盘、可转码，也没有会后钩子。第 1、2 步的实现归 `dca4539b`，第 4 步归 `65dd3e4c`。
+- **端口被占时那句文案里的「已录多久」**：占用者是本服务时，括号里眼下是**字面写死的「当前空闲」**（`meeting/service/app.py` 的端口探测那一处还没取用会话时长这个值）。`README.md` 与 `docs/api.md` 都照这个现状写。
+- **真机真开一场会**：设备枚举与真实电平只有真开一场才见分晓，这一条是**手工验收**，四条端到端脚本与它无关。自动化边界归下游 `46ae4a08`。
+- **`meeting post`**：只有桩（打印「会后流程还没接入（65dd3e4c）」、退出码 `1`）。它同时是收尾失败后的出路之一，实现归 `65dd3e4c`。
+- **前端**：`web/` 与构建产物 `web/dist` 还没有；产物一建好，刷新 `/` 就是真界面。
 - **`settings.devices`**：现在是空对象，子键等设备节点与双端契约定名。
 
 ## 9. 相关文档

@@ -14,8 +14,8 @@
 | `requirements.md` | **需求锚**：R1–R17 用户要什么、为什么 | 拿不准取舍方向时回到这里 |
 | `ui-design.md` | 界面设计的唯一权威说明（四态、迁移、告警分级、设计 token、视觉硬门槛） | 做界面、定事件契约时 |
 | `ui/` | 设计稿本体（`*.html` + `tokens.css` / `ui.css` + `shots/*.png`）。它是 `ui-design.md` 的渲染载体，不进构建、不被服务引用 | 看视觉效果时 |
-| `service.md` | **服务现状**：怎么起、起了之后有什么、配置键、log 在哪、退出码、测试怎么跑、还差什么 | 装起来用、或接手改服务时 |
-| `state.md` | **状态、场次与推送**：四态与迁移、收尾四步、快照十键与取值域、`session.json` schema、心跳判据、告警判定、SSE 三通道与帧形状、dev 替身怎么用 | 接这份数据、写前端或验收脚本时 |
+| `service.md` | **服务现状**：怎么起、起了之后有什么、配置键、log 在哪（含场次 log 的挂摘）、退出码五档、`Ctrl+C` 两阶段、收尾怎么跑与失败后的两条出路、测试怎么跑、还差什么 | 装起来用、或接手改服务时 |
+| `state.md` | **状态、场次与推送**：四态与迁移、收尾四步与共享预算、快照十键与取值域、`session.json` schema、心跳判据、告警判定、SSE 三通道与帧形状、dev 替身怎么用 | 接这份数据、写前端或验收脚本时 |
 | `api.md` | **HTTP 面**：五个端点、动作信封、动作表与 `code` 表、`settings_update` 的键态两分、端口与本地防线 | 打这套接口时 |
 | `backend-protocols.md` | 三个后端协议的成员与数据结构、解析入口、`skipped` / `failed` 的判据、dev 采集替身 | 往服务里插真后端时 |
 | `legacy-assets.md` | V1（`C:\Users\<user>\tools\meeting-notes`）可复用资产清单与迁移边界 | 想知道哪块照抄 V1、哪块必须重写时 |
@@ -25,10 +25,11 @@
 | 路径 | 是什么 |
 |---|---|
 | `meeting/` | 服务本体（Python 包）：起停、端口与三道防线、配置、日志、四态状态机、场次目录与 `session.json`、告警判定、SSE 推送、五个动作、三个后端协议与两个替身 |
-| `meeting/service/` | 应用装配、五条路由的唯一注册点、`ServiceRuntime`（唯一状态权威）、SSE 广播中心、`/debug` 自检页 |
+| `meeting/service/` | 应用装配、五条路由的唯一注册点、`ServiceRuntime`（唯一状态权威）、收尾编排与共享预算、信号处理与关停接线、SSE 广播中心、`/debug` 自检页 |
 | `meeting/backends/` | 协议与数据结构、`null` 替身、dev 采集替身、后端解析入口 `registry.py` |
-| `tests/` | 13 个测试文件、211 个用例 + 测试支持（`_helpers.py`、`_service.py`、`conftest.py`、`_fake_webbrowser/`） |
+| `tests/` | 19 个测试文件、264 个用例 + 测试支持（`_helpers.py`、`_service.py`、`_drain_fakes.py`、`conftest.py`、`__init__.py`、`_fake_webbrowser/`）；`conftest.py` 里有一道「单条用例 ≤ 5 秒」的耗时看门 |
 | `pyproject.toml` | 打包与依赖；运行时依赖只有 `starlette` 与 `uvicorn` |
+| `README.md`（仓库根） | 简版使用说明：怎么起、log 在哪、热读键有哪些、dev 替身怎么开、退出码表 |
 | `web/` | **还没有**。前端工程（React + TypeScript + Vite）与它的构建产物 `web/dist` 由后续节点落地 |
 
 ## 分层读法

@@ -32,7 +32,8 @@ from pathlib import Path
 import httpx
 import pytest
 
-import _helpers as helpers
+from tests import _helpers as helpers
+from tests._service import ServiceProcess
 from meeting import cli as cli_module
 from meeting.cli import EXIT_FAILURE, EXIT_OK, EXIT_REJECTED
 from meeting.service import app as service_app
@@ -56,7 +57,7 @@ def _wait_heartbeat(port: int, timeout: float = 20.0) -> httpx.Response:
             return None
         return response if response.status_code == 200 else None
 
-    return helpers.wait_for(ok, timeout=timeout, what="GET /api/heartbeat 200")
+    return helpers.wait_until(ok, timeout=timeout, what="GET /api/heartbeat 200")
 
 
 def _bind_line(log_text: str) -> str:
@@ -317,7 +318,7 @@ def test_browser_step_skipped_in_subprocess_when_disabled(tmp_path):
     try:
         port = proc.wait_ready_by_heartbeat()
         assert port > 0
-        trace = helpers.wait_for(
+        trace = helpers.wait_until(
             lambda: helpers.open_browser_step_trace(home) or None,
             timeout=20,
             what="主 log 里出现打开浏览器那一步的行",
@@ -351,7 +352,7 @@ def test_browser_failure_only_warns_in_subprocess(tmp_path):
             assert port > 0, "这一步失败也不许把服务拖住：它必须照常起来"
             response = helpers.local_get(f"http://127.0.0.1:{port}/api/state")
             assert response.status_code == 200
-            trace = helpers.wait_for(
+            trace = helpers.wait_until(
                 lambda: helpers.open_browser_step_trace(home) or None,
                 timeout=20,
                 what="主 log 里出现打开浏览器失败那一行",
@@ -467,17 +468,30 @@ def test_sigint_and_sigbreak_share_handle_shutdown_signal():
 
 
 def test_idle_ctrl_break_event_exits_ok(tmp_path):
-    """空闲态发 `CTRL_BREAK_EVENT` → `EXIT_OK` + 两行 log（信号处理函数真的生效的证据）。"""
+    """空闲态发 `CTRL_BREAK_EVENT` → `EXIT_OK` + 两行 log（信号处理函数真的生效的证据）。
+
+    **与 phase3 的信号语义同源**（§4 落点表 `tests/test_port_policy.py` 行点名的同源替换，
+    审查问题 M6）：子进程与信号辅助改用 `tests/_service.py` 的 `ServiceProcess`
+    （`send_interrupt()` 发的同样是 `CTRL_BREAK_EVENT`，退出码走 `wait()` /
+    `poll()`）—— 此前这里走的是 `tests/_helpers.py` 的 `spawn_service()` / `send_break()`，
+    两者机制本来相同，却让「空闲态 `Ctrl+C`」这一档在仓库里有两套写法。**只换辅助来源**：
+    下面的断言与语义一个字没动（同一条退出码常量、同一行 log、同一条「输出根不凭空多目录」
+    的自检）。
+
+    **授权来源（第七轮审查 m4）**：phase3 §4 落点表把这一处动作明写成「同源替换：只同步
+    断言、不改 phase1 的契约取值」；端口策略的两种占用文案、探针 1 秒超时、其余退出码档位
+    取值与 `getsignal(SIGINT) is getsignal(SIGBREAK)` 那一条都不动。
+    """
     home = tmp_path / "home"
     home.mkdir()
     helpers.write_config_json(home, {"web.port": 0})
 
-    proc = helpers.spawn_service(home)
+    proc = ServiceProcess(home)
     try:
         port = proc.wait_ready_by_heartbeat()
         assert port > 0
         proc.wait_ready()
-        proc.send_break()
+        proc.send_interrupt()
         proc.wait(timeout=20)
     finally:
         proc.terminate()

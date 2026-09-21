@@ -29,7 +29,7 @@ from pathlib import Path
 
 import pytest
 
-import _helpers as helpers
+from tests import _helpers as helpers
 from meeting import config as config_module
 from meeting import logging_setup
 from meeting.cli import EXIT_STARTUP_UNMET
@@ -96,7 +96,7 @@ def test_format_string_is_the_frozen_one(temp_logging):
     assert filters and filters[0].session == logging_setup.SESSION_PLACEHOLDER
 
     logging.getLogger("meeting.probe").info("格式串核对")
-    line = helpers.wait_for(
+    line = helpers.wait_until(
         lambda: next(
             (item for item in helpers.read_text(helpers.service_log_path_of(temp_logging)).splitlines()
              if "格式串核对" in item),
@@ -182,7 +182,7 @@ def test_rotation_uses_config_values(temp_logging):
 
     first_backup = log_path.parent / (log_path.name + ".1")
     oldest_backup = log_path.parent / (log_path.name + ".2")
-    helpers.wait_for(
+    helpers.wait_until(
         lambda: first_backup.exists() and oldest_backup.exists(),
         timeout=10,
         what="轮转产生 .1 / .2",

@@ -26,10 +26,9 @@ import textwrap
 import time
 from pathlib import Path
 
-import httpx
 import pytest
 
-import _helpers as helpers
+from tests import _helpers as helpers
 from meeting.backends.base import SourceFacts, SourceLost
 from meeting.state import (
     DEFAULT_FRAME_INTERVAL_SECONDS,
@@ -429,7 +428,7 @@ def test_heartbeat_over_http_carries_the_service_literal(tmp_path, service_proce
     helpers.write_config_json(home, {})
     proc = service_process(home=home, capture="dev", out_root=tmp_path / "out")
     proc.wait_ready()
-    payload = httpx.get(f"{proc.base_url}/api/heartbeat", timeout=5.0, trust_env=False).json()
+    payload = helpers.local_get(f"{proc.base_url}/api/heartbeat", timeout=5.0).json()
     assert set(payload) == HEARTBEAT_FIELDS
     assert payload["service"] == "meeting"
     assert payload["top_state"] == "idle"

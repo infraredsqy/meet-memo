@@ -325,6 +325,26 @@ class SessionStore:
         self.write_session_json(session_dir, data)
         return data
 
+    def mark_interrupted(self, session_dir: str, record: dict[str, Any]) -> str:
+        """强制打断的**先落盘**入口：把 `state: "draining"` + `interrupted: true` 那一版写到盘上。
+
+        **薄封装**（phase3 §2.4 / §4 的落地形态）：内部只做「组装 `state: "draining"` +
+        `interrupted: true` 的参数」再调用 `write_session_json()` —— 与 `mark_unfinished()`
+        同一入口、同一原子写、**不新开文件句柄**。`record` 是**现场记录**（runtime 取出现场
+        交过来的那一份），这里只覆盖上面那三个参数：
+
+          - `state = "draining"`、`interrupted = True`、`ended_at = None`；
+          - **原 `steps` 原样保留**（`record["drain"]["steps"]` 不动）、**不伪造终态**、
+            **不写 `done`**、**不写 `ended_at`**。
+
+        返回写下去的路径（`write_session_json()` 的返回值）。
+        """
+        data = dict(record)
+        data["state"] = "draining"
+        data["interrupted"] = True
+        data["ended_at"] = None
+        return self.write_session_json(session_dir, data)
+
     def remove_session_dir(self, session_dir: str) -> None:
         """`start` 写盘失败后把刚建的场次目录清掉（主 log 的留痕由调用方写）。"""
         shutil.rmtree(session_dir, ignore_errors=True)

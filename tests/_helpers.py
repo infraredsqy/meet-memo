@@ -38,6 +38,7 @@ import os
 import shutil
 import signal
 import socket
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -75,20 +76,160 @@ SERVICE_ENV_NAMES = tuple(config_module.ENV_KEYS) + (config_module.ENV_NO_BROWSE
 ACTION_WEB = "web"
 ACTION_POST = "post"
 
+#: **收场纪律里的那个宽限秒数**（契约 §3.8 文末「测试侧常量」表：`PROCESS_TERMINATE_GRACE_SECONDS` = 5）。
+#:
+#: 收场动作写死为「先 `terminate()` → 等 grace 秒 → 仍在则 `kill()`」（§5.2 的收场纪律）；
+#: 这里把它落成具名常量，`tests/_service.py` 的 `ServiceProcess` 从本模块取同一个名字 ——
+#: 两处收场逻辑因此共用一份取值，谁都不会再写一个来路不明的裸秒数。
+PROCESS_TERMINATE_GRACE_SECONDS = 5
+
 #: test extra 里的同步 httpx（只服务测试层）
 import httpx  # noqa: E402
 
+_httpx = httpx
 
-def local_get(url: str, **kwargs) -> "httpx.Response":
+#: `local_get()` / `local_post()` 的连接对象缓存（见那两个函数的说明：本机构造一次
+#: `httpx.Client` 要 0.83 秒）。键是请求 URL，值形如 `{"client": ..., "max_timeout": ...}`。
+_LOCAL_GET_CLIENTS: dict[str, Any] = {}
+_LOCAL_GET_LOCK = threading.Lock()
+
+#: 所有本机探针**共用**的 SSL 上下文（本机实测的那 0.83 秒就花在它身上）。
+#:
+#: `httpx.Client()` 每次都会自己 `ssl.create_default_context()`，本机上一次 0.83 秒；
+#: 建好一个传进 `verify=` 之后，`httpx.Client()` 只要 0.027 秒（第二次起 0.000 秒）。
+#: 本项目的探针一律走 `http://127.0.0.1:<port>`（**明文回环**），TLS 装配对请求结果毫无影响，
+#: 但用例为此省下的时间很实在：每一条起服务的用例都要问一次 `/api/state` 与一次动作请求。
+_LOCAL_SSL_CONTEXT = ssl.create_default_context()
+
+
+#: 建 client 时认的参数（其余关键字参数一律当作**这一次请求**的参数交给 httpx，
+#: 例如 `headers` / `params`）—— `httpx.get()` 与 `httpx.Client.get()` 的分工就是这个形状
+_CLIENT_KWARGS = ("timeout", "follow_redirects", "verify")
+
+
+def _local_client(url: str, kwargs: dict) -> "httpx.Client":
+    """按 `url` 取一个**复用**的本机 client（见 `local_get()` 的说明）。
+
+    **键只有 url**（不带超时）：GET 探针与 POST 动作指向同一个服务、同一个回环地址，
+    它们可以共用同一条连接。键里带超时的话，`local_get(timeout=5)` 与
+    `local_post(timeout=10)` 会各建一个 client —— 每一次 0.83 秒的构造代价就付两遍，
+    而下面这两类调用在每个用例里都是第一次就撞上它。
+
+    超时按这个规则来：同一 url 上取**已见的最大值**（`max_timeout`），每次请求再按自己的
+    调用点覆盖一次（`client.get(url, timeout=...)` / `client.post(..., timeout=...)`）。
+    于是「谁的超时更大」既有上界、又不会让某个调用点悄悄用上比它自己要的更短的超时。
+    `timeout=None` 表示「不设上限」（SSE 这一类长读用它）。
+    """
+    want = kwargs.get("timeout", 5.0)
+    with _LOCAL_GET_LOCK:
+        entry = _LOCAL_GET_CLIENTS.get(url)
+        if entry is None:
+            entry = {
+                "client": _httpx.Client(
+                    trust_env=False,
+                    timeout=_httpx.Timeout(want),
+                    verify=_LOCAL_SSL_CONTEXT,
+                ),
+                # `None`（不设上限）在「取最大值」这件事上就是无穷大，用 0.0 记账
+                "max_timeout": 0.0 if want is None else float(want),
+            }
+            _LOCAL_GET_CLIENTS[url] = entry
+        if want is None:
+            entry["client"].timeout = _httpx.Timeout(None)
+            entry["max_timeout"] = 0.0
+        else:
+            entry["max_timeout"] = max(float(want), float(entry["max_timeout"]))
+            entry["client"].timeout = _httpx.Timeout(entry["max_timeout"])
+        return entry["client"]
+
+
+def _request_kwargs(kwargs: dict) -> dict:
+    """把调用点给的关键字参数分成「建 client 的那几个」与「这一次请求的那几个」。"""
+    return {k: v for k, v in kwargs.items() if k not in _CLIENT_KWARGS}
+
+
+def _drop_local_client(url: str, kwargs: dict) -> None:
+    """把某个 url 下缓存的 client 关掉并移出缓存（下一次取会新建一条干净连接）。
+
+    用在 `local_get()` / `local_post()` 的重连那一支：连接池里那条连到「上一个子进程」的
+    旧连接会一直被认为是活的（对端进程已收场、端口已关），重试时又拿到它，于是同样失败。
+    这里把它扔掉，重试因此真的换一条新连接。
+    """
+    del kwargs
+    with _LOCAL_GET_LOCK:
+        entry = _LOCAL_GET_CLIENTS.pop(url, None)
+    if entry is not None:
+        with contextlib.suppress(Exception):
+            entry["client"].close()
+
+
+def local_get(url: str, *, client_kwargs: dict | None = None, **kwargs) -> "httpx.Response":
     """问本机服务的一次同步 GET。
 
     **一律 `trust_env=False`**：本机（Windows）可能配着系统级代理，httpx 会去读它，
     于是发往 `127.0.0.1` 的请求被塞进代理（显式给了 `Host` 头时尤其明显），
     拿回来的是一个与本服务无关的 `502`。测试要问的是本服务，就不走代理。
+
+    **连接对象按 url 复用**：本机实测 `httpx.Client` 的构造要 0.83 秒（Windows 上 SSL
+    上下文的初始化），而同一个连接上的一次请求只要 0.001 秒 —— 每次探针都新建 client，
+    会让「轮询 `/api/state`」这类断言每一次读都白花 0.8 秒，收尾窗口、SSE 就绪、告警等待
+    全都跟着被拖长。同一个 url 上的 GET 与 POST 共用一条连接（见 `_local_client()` 的说明），
+    于是每一条用例只付一次构造代价。缓存是**进程级**的，进程退出自然收场。
+
+    **参数分工与 `httpx.get()` 一致**：`timeout` / `follow_redirects` / `verify` 这几个
+    （或整份 `client_kwargs=`）归 client，其余关键字参数（`headers` / `params` …）
+    **原样交给这一次请求** —— 漏掉后半句会让「带 `Host: evil.example` 的请求得 403」
+    这类用例静默失效（请求照发、头没带上、拿到的是 200）。
+
+    **池里那条连到「上一个子进程」的旧连接**：用例顺序重启（旧进程已收场、同一输出根再起
+    一个）之后，池里那条连接指向的是一个已经不在的端口，第一次读会拿到 `ConnectError`
+    （[WinError 10061]）。这不是被测行为：这里把那个 client 扔掉、换一条干净连接重试一次。
+    只重试这一种错误 —— 服务真的没起来时，第二次同样是它，照旧抛出去。
     """
-    kwargs.setdefault("timeout", 5.0)
-    kwargs["trust_env"] = False
-    return httpx.get(url, **kwargs)
+    merged = dict(client_kwargs or {})
+    merged.update({k: v for k, v in kwargs.items() if k in _CLIENT_KWARGS})
+    merged.setdefault("timeout", 5.0)
+    request_kwargs = _request_kwargs(kwargs)
+    client = _local_client(url, merged)
+    try:
+        return client.get(url, **request_kwargs)
+    except _httpx.ConnectError:
+        _drop_local_client(url, merged)
+        return _local_client(url, merged).get(url, **request_kwargs)
+
+
+def local_post(url: str, *, client_kwargs: dict | None = None, **kwargs) -> "httpx.Response":
+    """问本机服务的一次同步 POST（与 `local_get()` 同一套复用、去代理与重连口径）。"""
+    merged = dict(client_kwargs or {})
+    merged.update({k: v for k, v in kwargs.items() if k in _CLIENT_KWARGS})
+    merged.setdefault("timeout", 10.0)
+    request_kwargs = _request_kwargs(kwargs)
+    client = _local_client(url, merged)
+    try:
+        return client.post(url, **request_kwargs)
+    except _httpx.ConnectError:
+        _drop_local_client(url, merged)
+        return _local_client(url, merged).post(url, **request_kwargs)
+
+
+def local_client_for(url: str) -> "httpx.Client":
+    """取本机探针共用的那个 client（用例要自己 `.stream(...)` 时用它，别再新建一个）。
+
+    新建一个 `httpx.Client` 在本机要 0.83 秒（见 `local_get()` 的说明），SSE 这一类
+    「同一条连接上开一次流」的读法同样不该为它买单。client 级不设超时：这一次流的时限由
+    调用点在 `.stream(..., timeout=...)` 上自己给。
+    """
+    return _local_client(url, {"timeout": None})
+
+
+def local_ssl_context() -> "ssl.SSLContext":
+    """本机探针**共用**的那个 SSL 上下文（`local_get()` 那一份，见它的说明）。
+
+    用例自己新建 `httpx.Client`（例如 SSE 的流式读法要按条持有自己的连接）时把它传进
+    `verify=`，构造代价就从 0.83 秒落到 0.03 秒 —— TLS 装配那笔钱在明文回环上对请求结果
+    毫无影响，谁都不必为它反复买单。上下文是进程级共享的只读对象，传出去不会被改动。
+    """
+    return _LOCAL_SSL_CONTEXT
 
 
 # ---------------------------------------------------------------------------
@@ -138,8 +279,14 @@ def read_text(path: Path) -> str:
         return ""
 
 
-def wait_for(predicate, timeout: float = 20.0, interval: float = 0.05, what: str = "条件"):
-    """同步等待一个条件成立（测试一律同步写，所以不用事件循环）。"""
+def wait_until(predicate, timeout: float = 20.0, interval: float = 0.05, what: str = "条件"):
+    """同步等待一个条件成立（测试一律同步写，所以不用事件循环）。
+
+    名字与 `tests/_service.py` 的等待助手同名（§2.2 / §3.8：**等待助手只有 `wait_until()` 一个
+    名字**，`wait_for` 这个旧名全仓作废）；两者的分工按位置分：需要夹具能力（真服务子进程 /
+    SSE）的用例走 `tests/_service.py` 那一份（`timeout` 必传），phase1 的组件级用例走这一份。
+    语义与签名与改名前逐字相同。
+    """
     deadline = time.monotonic() + timeout
     last = None
     while time.monotonic() < deadline:
@@ -168,7 +315,7 @@ def wait_for_session_record(session_dir: Path, predicate, timeout: float = 20.0)
             return None
         return data if isinstance(data, dict) and predicate(data) else None
 
-    return wait_for(loaded, timeout=timeout, what=f"{path} 落到期望的那一版")
+    return wait_until(loaded, timeout=timeout, what=f"{path} 落到期望的那一版")
 
 
 # ---------------------------------------------------------------------------
@@ -220,11 +367,11 @@ class ServiceProcess:
                     return int(line.rsplit(":", 1)[1].strip())
             return None
 
-        return int(wait_for(parsed, timeout=timeout, what="终端打印 URL"))
+        return int(wait_until(parsed, timeout=timeout, what="终端打印 URL"))
 
     def wait_ready(self, timeout: float = 20.0) -> None:
         """就绪判定 = 服务级主 log 里出现信号接管自检通过那一行（§3.5 第 6 步）。"""
-        wait_for(
+        wait_until(
             lambda: "信号接管自检通过：SIGINT 与 SIGBREAK 指向本服务的处理函数" in self.log_text(),
             timeout=timeout,
             what="信号接管自检通过行",
@@ -241,7 +388,7 @@ class ServiceProcess:
                 return None
             return response if response.status_code == 200 else None
 
-        wait_for(ok, timeout=timeout, what="GET /api/heartbeat 200")
+        wait_until(ok, timeout=timeout, what="GET /api/heartbeat 200")
         return port
 
     # -- 结束 -------------------------------------------------------------
@@ -260,12 +407,15 @@ class ServiceProcess:
         return self.stdout(), self.stderr()
 
     def terminate(self) -> None:
-        """兜底清理：先 terminate，再 kill。只在测试的 finally 里用。"""
+        """兜底清理：先 `terminate`、等 `PROCESS_TERMINATE_GRACE_SECONDS` 秒、仍在则 `kill`。
+
+        只在测试的 `finally` 里用（收场纪律照 §5.2：终止 → 等 grace → 仍活着才硬杀）。
+        """
         if self.proc.poll() is None:
             with contextlib.suppress(OSError):
                 self.proc.terminate()
             try:
-                self.proc.wait(timeout=5)
+                self.proc.wait(timeout=PROCESS_TERMINATE_GRACE_SECONDS)
             except subprocess.TimeoutExpired:  # pragma: no cover - terminate 无效时
                 self.proc.kill()
                 self.proc.wait()
@@ -785,6 +935,7 @@ __all__ = [
     "FakeMeetingServer",
     "OccupiedPort",
     "REPO_ROOT",
+    "PROCESS_TERMINATE_GRACE_SECONDS",
     "SERVICE_ENV_NAMES",
     "ServiceProcess",
     "ServiceBrowser",
@@ -796,7 +947,10 @@ __all__ = [
     "fake_browser_env",
     "fake_browser_module",
     "lines_with",
+    "local_client_for",
     "local_get",
+    "local_post",
+    "local_ssl_context",
     "log_dir_of",
     "missing_dist_dir",
     "non_loopback_ipv4_addresses",
@@ -809,8 +963,8 @@ __all__ = [
     "service_log_path_of",
     "spawn_service",
     "tcp_connect",
-    "wait_for",
     "wait_for_session_record",
+    "wait_until",
     "write_config_json",
     "write_dist_dir",
 ]

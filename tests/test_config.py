@@ -17,9 +17,14 @@
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+from typing import Any
+
 import pytest
 
-import _helpers as helpers
+from tests import _helpers as helpers
+from tests.conftest import CASE_HOME_DIR_NAME
 from meeting import config as config_module
 from meeting.cli import EXIT_REJECTED
 
@@ -91,6 +96,40 @@ def test_missing_config_json_falls_back_to_defaults(tmp_path, monkeypatch):
     loaded = _load_with_env(monkeypatch, home, {})
     assert loaded.config_path() == str(helpers.config_path_of(home))
     assert loaded.get("web.port") == 8765
+
+
+# ---------------------------------------------------------------------------
+# 夹具之间的家目录契约（**从 `tests/conftest.py` 搬来**，审查问题 m4：
+# 那个文件只放 fixture，用例一律落在 `test_*.py` 里；断言强度一字未改）
+# ---------------------------------------------------------------------------
+
+
+def test_isolated_config_dir_and_app_client_share_one_home(
+    tmp_path: Path, isolated_config_dir: Path, app_client: Any
+):
+    """两个夹具同时使用时指向**同一个**本用例临时家目录（phase2 §5.4 的家目录硬约束）。
+
+    同时请求两个夹具：`isolated_config_dir` 归属的那个家目录（它的上一级目录），
+    与 `HOME` / `USERPROFILE` 两个环境变量、以及 `app_client` 实际落配置的那条路径，
+    必须逐字对上 —— 否则「隔离」这件事在两个夹具的视角里各落一处。
+
+    **这条用例为什么落在本文件**：它断的是配置层的落点（`<家目录>/.config/meeting/
+    config.json` 与 `log.dir` 的挂载点），与 `tests/conftest.py` 那两个夹具的契约直接对应；
+    放在本文件里也让它与 `tests/conftest.py` 里那几行「家目录取 `case_home()`、
+    `app_client` 用的是同一个」的说明互为判据。
+    """
+    home = Path(os.environ["HOME"])
+    assert home == tmp_path / CASE_HOME_DIR_NAME
+    assert isolated_config_dir == home / ".config" / "meeting"
+    assert os.environ["USERPROFILE"] == str(home)
+    assert app_client is not None
+    assert helpers.config_path_of(home).exists(), (
+        "app_client 的配置文件该落在同一个家目录下"
+    )
+    assert isolated_config_dir.parent.parent == home, (
+        "isolated_config_dir 归属的家目录与 app_client 落配置的那个家目录该是同一个："
+        f"{isolated_config_dir.parent.parent} != {home}"
+    )
 
 
 def test_hot_keys_are_exactly_the_five_asr_keys(tmp_path, monkeypatch):

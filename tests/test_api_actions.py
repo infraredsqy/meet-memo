@@ -32,7 +32,7 @@ from pathlib import Path
 
 import pytest
 
-import _helpers as helpers
+from tests import _helpers as helpers
 from meeting import config as config_module
 from meeting.service.runtime import ACTION_CODES, ACTION_NAMES
 

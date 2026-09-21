@@ -19,10 +19,9 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-import httpx
 import pytest
 
-import _helpers as helpers
+from tests import _helpers as helpers
 from meeting.backends.base import LevelFrame
 from meeting.backends.dev import (
     DEV_FAULT_DEFAULT_SECONDS,
@@ -41,9 +40,28 @@ DEV_FAULT_WINDOW_SECONDS = 3.0
 #: 唤醒用例里静默要持续到起告警，窗口得比「静默阈值 + 恢复阈值」长
 DEV_ALERT_WINDOW_SECONDS = 30.0
 #: 停帧窗口：比帧时钟的 2.0 秒窗口长，才观测得到「HTTP 通着但录音停了」
-DEV_STALL_WINDOW_SECONDS = 4.0
-#: `lost` 的窗口：取得比恢复阈值 + 帧时钟窗口都长，才观测得到「窗口内这一路整段是断的」
-DEV_LOST_WINDOW_SECONDS = 5.0
+DEV_STALL_WINDOW_SECONDS = 3.0
+#: `lost` 的窗口：取得比恢复阈值 + 帧时钟窗口都长，才观测得到「窗口内这一路整段是断的」。
+#:
+#: **取值由指挥者授权收口（第七轮审查 m4）**：用户把「单条用例 ≤5s」定为硬要求，这里从时序
+#: 允许的上界 5.0 收到 3.0 —— 仍然盖得住那两条（恢复阈值 1.0 秒 + 帧时钟窗口 2.0 秒），
+#: 窗口里的采样点也仍然有 3 次以上。授权来源：5 秒红线（契约 §3.8 末表里这一项写的是
+#: 「比恢复阈值 + 帧时钟窗口都长」，没有钉死 5.0）。
+DEV_LOST_WINDOW_SECONDS = 3.0
+#: `lost` 窗口里两次采样之间的间隔（比帧间隔宽一点，够看出这一路在不在发帧）
+DEV_LOST_SAMPLE_INTERVAL_SECONDS = 0.15
+
+#: 唤醒用例（`test_silence_fault_reaches_alert_then_recovers_with_a_short_threshold`）**自己那一个**
+#: 静默窗口（秒）：这一条要连着等两段，窗口每多 1 秒，用例墙钟就跟着多 1 秒（起告警那一段与
+#: 窗口重叠，窗口到点之后还要再累计一次恢复阈值）。取值仍按契约那条口径（「窗口要覆盖
+#: 累计到阈值 → 起告警 → 窗口到点 → 再累计到恢复阈值」）：静默阈值 1.0 秒、恢复阈值 1.0 秒，
+#: 2.0 秒给「起告警」留了整 1 秒余量（本机 dev 替身 0.1 秒一帧，余量是帧间隔的十倍）。
+#: 进程内那三条（`dev_service` 那几条）仍用 `DEV_FAULT_WINDOW_SECONDS`，采样点一个没少。
+#:
+#: **取值由指挥者授权收口（第七轮审查 m4）**：授权来源同样是 5 秒红线 —— 这一条要连着等两段
+#: 阈值累计，窗口长度直接进用例墙钟；判据的形状一字未改（仍然等 `alert` 起、等它恢复回
+#: `recording`）。契约 §3.8 末表里这一项写的是「窗口要覆盖那整段」，没有钉死具体秒数。
+DEV_ALERT_FAULT_WINDOW_SECONDS = 2.0
 
 
 # ---------------------------------------------------------------------------
@@ -184,14 +202,12 @@ def post(proc, action: str, args: dict | None = None):
     body = {"action": action}
     if args is not None:
         body["args"] = args
-    response = httpx.post(
+    return helpers.local_post(
         f"{proc.base_url}/api/actions",
         json=body,
         headers={"Content-Type": "application/json", "X-Meeting-Service": "1"},
         timeout=10.0,
-        trust_env=False,
     )
-    return response
 
 
 def snapshot(proc) -> dict:
@@ -344,6 +360,23 @@ def test_lost_fault_keeps_the_source_dark_for_the_whole_window(dev_service_short
          "duration_seconds": DEV_LOST_WINDOW_SECONDS},
     ).status_code == 200
 
+    # 先等这一路真的落到 `lost`：注入请求返回与那一拍事实帧之间隔着一次发送周期，
+    # 「返回即已断」这条假设会把用例压在一拍之内（探针越快越容易踩空）。等到的这一刻
+    # 才是窗口内的第一个采样点 —— 断言的内容没变，只是把起点挪到了它该在的地方。
+    #
+    # **这一处改动的授权来源（第七轮审查 m4）**：5 秒红线。原先的写法把「注入返回」当成
+    # 窗口起点（那样窗口里要为「等这一路真的断掉」留出一整个发送周期），窗口收到 3.0 秒之后
+    # 那笔固定开销就成了主要成本；起点挪到「真的落到 lost」这一刻之后，同一批断言在更短的
+    # 窗口里照样成立，余量还更大。**断言的内容与数量一字未改**（窗口内多个采样点、每一路
+    # 各自的 health、会话停在 alert、采样次数 ≥ 3）。
+    lost = wait_until(
+        lambda: (lambda s: s if (
+            [item for item in s["sources"] if item["id"] == "loopback"][0]["health"] == "lost"
+        ) else None)(snapshot(proc)),
+        what="注入 lost 之后这一路的 health 落到 lost",
+    )
+    assert [item for item in lost["sources"] if item["id"] == "mic"][0]["health"] == "capturing"
+
     # 窗口内的多个采样点：这一路一直是断的，另一路一直是采着的，会话停在 alert
     samples = 0
     while time.monotonic() - injected_at < DEV_LOST_WINDOW_SECONDS - 0.3:
@@ -357,7 +390,7 @@ def test_lost_fault_keeps_the_source_dark_for_the_whole_window(dev_service_short
         assert by_id["mic"]["level_dbfs"] is not None
         assert sampled["top_state"] == "alert"
         samples += 1
-        time.sleep(DEV_FRAME_INTERVAL_SECONDS * 2)
+        time.sleep(DEV_LOST_SAMPLE_INTERVAL_SECONDS)
     assert samples >= 3, f"窗口里该采到 3 次以上（实际 {samples} 次）"
 
     # 窗口到点：这一路重新发帧，经恢复阈值走既有的恢复路径（该路 health 从 lost 换成
@@ -380,7 +413,9 @@ def test_lost_fault_keeps_the_source_dark_for_the_whole_window(dev_service_short
 def test_silence_fault_reaches_alert_then_recovers_with_a_short_threshold(tmp_path, service_process):
     """`silence` 到点后该路回到正常合成电平、连续有信号达恢复阈值 → 回 `recording`。
 
-    注入的窗口要覆盖「累计到阈值 → 起告警 → 窗口到点 → 再累计到恢复阈值」这一整段。
+    注入的窗口要覆盖「累计到阈值 → 起告警 → 窗口到点 → 再累计到恢复阈值」这一整段，
+    长度取本用例自己的 `DEV_ALERT_FAULT_WINDOW_SECONDS`（比阈值长 1 秒，见那个常量的说明：
+    这一条要连着等两段阈值累计，窗口长度直接进用例墙钟）。
     """
     home = tmp_path / "home"
     home.mkdir()
@@ -392,7 +427,7 @@ def test_silence_fault_reaches_alert_then_recovers_with_a_short_threshold(tmp_pa
     assert post(
         proc, "dev_inject",
         {"source": "loopback", "fault": "silence", "after_seconds": 0.0,
-         "duration_seconds": DEV_FAULT_WINDOW_SECONDS},
+         "duration_seconds": DEV_ALERT_FAULT_WINDOW_SECONDS},
     ).status_code == 200
     alerted = wait_until(lambda: (lambda s: s if s["top_state"] == "alert" else None)(snapshot(proc)),
                          what="top_state == alert")

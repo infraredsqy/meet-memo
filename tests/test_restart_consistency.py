@@ -20,10 +20,9 @@ import json
 import time
 from pathlib import Path
 
-import httpx
 import pytest
 
-import _helpers as helpers
+from tests import _helpers as helpers
 
 #: 显式等待上限（秒）
 RESTART_POLL_TIMEOUT_SECONDS = 20.0
@@ -103,12 +102,11 @@ def post(proc, action: str, args: dict | None = None):
     body = {"action": action}
     if args is not None:
         body["args"] = args
-    return httpx.post(
+    return helpers.local_post(
         f"{proc.base_url}/api/actions",
         json=body,
         headers={"Content-Type": "application/json", "X-Meeting-Service": "1"},
         timeout=10.0,
-        trust_env=False,
     )
 
 

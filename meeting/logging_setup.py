@@ -259,6 +259,27 @@ def get_logger(name: str | None = None) -> logging.Logger:
     return logging.getLogger(f"{LOGGER_NAME}.{name}")
 
 
+def read_log_tail(path: str, *, lines: int = 20) -> list[str]:
+    """读一个日志文件的最后 `lines` 行（读不出来就回空列表）。
+
+    调用点：收尾失败档退出时 `cli.py` 要把「服务 log 的最后几行」打到终端（§5.4 行 256）。
+    先 flush 本模块自己的 handler，免得刚写下去的那几行还压在缓冲区里没落盘。
+    """
+    for key in ("handler", "session_handler"):
+        handler = _state.get(key)
+        if handler is not None:
+            try:
+                handler.flush()
+            except OSError:  # pragma: no cover - flush 失败不该拖住退出流程
+                pass
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            content = handle.read()
+    except OSError:
+        return []
+    return content.splitlines()[-int(lines):]
+
+
 # ---------------------------------------------------------------------------
 # 场次级 log 的挂 / 摘
 # ---------------------------------------------------------------------------
@@ -334,6 +355,108 @@ def session_log_dir() -> str | None:
     return _state["session_dir"]
 
 
+# ---------------------------------------------------------------------------
+# 收尾 `log` 步：flush -> 写这一场的结束标记 -> 摘掉（phase3 §3.7）
+# ---------------------------------------------------------------------------
+
+#: 这一场的**结束标记**格式（phase3 §3.7 起的名字）。
+#:
+#: 里面有三个占位符：`{state}`（`session.json` 的 `state`：`draining` / `done` / `failed`）、
+#: `{steps}`（四步 `status` 的概要，如 `flush=skipped, transcode=skipped, log=done, post=skipped`）、
+#: `{log_path}`（服务级主 log 的路径）。场次 id 由格式串里的 `session=%(session)s` 带上
+#: （场次级 handler 的 `SessionFilter` 写的就是场次目录名）。
+#: 它是**场次 log 的最后一行**（测试照这条断言）。
+SESSION_END_MARKER = "场次结束：state={state}；收尾四步：{steps}；服务级 log：{log_path}"
+
+
+def flush_session_log() -> None:
+    """flush 当前挂着的场次级 handler（没挂时什么也不做）。
+
+    `log` 步的「flush 场次 log」这一步：结束标记必须落在**已经写下去的全部内容之后**，
+    因此写标记之前先把缓冲区推出去。写失败以 `OSError` 表达，不静默。
+    """
+    handler = _state["session_handler"]
+    if handler is None:
+        return
+    handler.flush()
+
+
+def write_session_end_marker(*, state: str, steps: list[str] | tuple[str, ...]) -> str | None:
+    """收尾 `log` 步的三件事一处做完：**flush 场次 log → 写结束标记 → 摘掉 handler**。
+
+    结束标记是这一场的**最后一行**（直接写 handler 的流、写后立刻 flush，不再经 logger，
+    否则「摘掉之后只走服务级 log」那条口径会与「标记必须是最后一行」相抵）。
+
+    先例（本 Phase 之前就有的形态）：
+      - `session.json` 的结束标记由 runtime 的 `log` 步写；
+      - 这里补的是**场次级日志那一半**（phase2 只落了服务级那一半）。
+
+    返回值：**成功时 `None`**；写失败时返回**那条失败说明**（调用方据此落该步 `failed`，
+    **不静默**）。无论成败，场次级 handler 都已摘掉（`detach_session_log()` 的语义）。
+    摘除本身抛 `OSError` 时向上冒（同一处如实上报）。
+    """
+    from meeting import config as _config
+
+    handler = _state["session_handler"]
+    if handler is None:
+        return None
+
+    session_dir = _state["session_dir"]
+    session_id = os.path.basename(os.path.normpath(session_dir)) if session_dir else SESSION_PLACEHOLDER
+    message = SESSION_END_MARKER.format(
+        state=state,
+        steps=", ".join(str(item) for item in steps),
+        log_path=service_log_path(),
+    )
+    record = logging.LogRecord(
+        name=LOGGER_NAME,
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=0,
+        msg=message,
+        args=(),
+        exc_info=None,
+    )
+    record.session = session_id
+    line = handler.format(record) + "\n"
+
+    problem: str | None = None
+    stream = getattr(handler, "stream", None)
+    try:
+        flush_session_log()
+    except Exception as exc:
+        problem = f"flush 场次 log 失败：{type(exc).__name__}: {exc}"
+    if stream is None:  # pragma: no cover - RotatingFileHandler 一定带流
+        if problem is None:
+            problem = "场次 log 的 handler 没有可写的流"
+    else:
+        try:
+            stream.write(line)
+            stream.flush()
+        except Exception as exc:
+            if problem is None:
+                problem = f"写结束标记失败：{type(exc).__name__}: {exc}"
+
+    try:
+        detach_session_log()
+    except OSError as exc:
+        if problem is None:
+            problem = f"摘掉场次 log 失败：{type(exc).__name__}: {exc}"
+
+    if problem is not None:
+        try:
+            _log.error(
+                "场次 log 收尾出问题（%s）；录音不受影响，但这一场的场次 log 可能不完整", problem
+            )
+        except Exception:  # pragma: no cover - 日志本身坏了也不能再抛
+            pass
+    _log.info(
+        "场次 log 已关闭（%s）：flush、结束标记与摘除都已处理；此后这一场的消息只走服务级 log",
+        _config.SERVICE_LOG_FILE_NAME,
+    )
+    return problem
+
+
 def reset_for_tests() -> None:
     """测试用：摘掉本模块加的全部 handler（不动 pytest 自己挂的）。"""
     if _state["session_handler"] is not None:
@@ -350,16 +473,20 @@ def reset_for_tests() -> None:
 __all__ = [
     "LOGGER_NAME",
     "LOG_FORMAT",
+    "SESSION_END_MARKER",
     "SESSION_PLACEHOLDER",
     "SessionFilter",
     "attach_session_log",
     "build_rotating_handler",
     "detach_session_log",
+    "flush_session_log",
     "get_logger",
     "handler_snapshot",
+    "read_log_tail",
     "reset_for_tests",
     "restore_handlers",
     "service_log_path",
     "session_log_dir",
     "setup_service_logging",
+    "write_session_end_marker",
 ]

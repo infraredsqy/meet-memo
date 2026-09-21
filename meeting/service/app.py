@@ -27,6 +27,7 @@ import logging
 import os
 import signal
 import socket
+import threading
 import time
 import webbrowser
 from datetime import datetime, timezone
@@ -89,31 +90,56 @@ class PortUnavailableError(RuntimeError):
 # / `_shutdown_target` / `ServiceServer`）
 # ---------------------------------------------------------------------------
 
-#: 关停目标：`(loop, trigger)`；本 Phase 写进去的对象语义 = 「立即请求关停」。
-#: phase3 把它替换成 `trigger_shutdown`（先跑收尾、再请求关停），安装点与调用形态不变。
+#: 关停目标：`(loop, trigger)`，形态由 phase1 冻结、本 Phase 不改成对形态。
+#: phase3 把 `trigger` 换成了 `make_trigger_shutdown()` 造出来的那个**同步 callable**
+#: （内部把 `ServiceRuntime.trigger_shutdown()` 排进事件循环：先跑收尾、再请求关停），
+#: **安装点（`ServiceRuntime.startup()` 里写 `_shutdown_target`）与处理函数体一律不变**。
 #:
-#: **`trigger` 是可被 `call_soon_threadsafe` 直接调用的同步 callable（本 Phase 定死的一条）**：
-#: 处理函数体里那一句 `loop.call_soon_threadsafe(trigger)` 把 `trigger` 当**同步可调用对象**
-#: 排进循环，循环排到它就调一次、不 await 它的返回值（契约 §3.5 第 6 条的文字把它写成
-#: 「普通协程」，但本 Phase 的落地形态与 `call_soon_threadsafe` 的调用形态一致地取同步
-#: callable —— 唯一动作是同步地把 `should_exit` 置 `True`，没有需要 await 的步骤）。
-#:
-#: **phase3 的接缝（写死，免得踩坑）**：phase3 换成 `trigger_shutdown`（普通协程）时，
-#: **必须自行包一层调度**，例如 `lambda: loop.create_task(trigger_shutdown())`；
-#: 直接把协程对象交给 `call_soon_threadsafe` 的话，它只会被创建、**永远不被 await**，
-#: 收尾步骤于是静默失效（不报错、不落 log）。安装点（`ServiceRuntime.startup()` 里写
-#: `_shutdown_target`）与处理函数体一律不变。
-_shutdown_target: tuple[asyncio.AbstractEventLoop, Callable[[], Any]] | None = None
+#: **`trigger` 仍然是可被 `call_soon_threadsafe` 直接调用的同步 callable**（本 Phase 定死的
+#: 一条）：处理函数体里那一句 `loop.call_soon_threadsafe(trigger, force)` 把 `trigger` 当
+#: **同步可调用对象**排进循环（并把它自己数出来的 `force` 当参数传过去），循环排到它就调一次、
+#: **不 await 它的返回值**。`trigger_shutdown` 本身是普通协程，**换进去时必须自行包一层调度**
+#: （`loop.create_task(trigger_shutdown(force=force))`）；直接把协程对象交给
+#: `call_soon_threadsafe` 的话，它只会被创建、**永远不被 await**，收尾步骤于是静默失效
+#: （不报错、不落 log）。
+_shutdown_target: tuple[asyncio.AbstractEventLoop, Callable[[bool], Any]] | None = None
 
-#: 服务器引用（由 `cli.py` 在运行入口之前写入；`trigger` 用它置 `should_exit`）
+#: 服务器引用（由 `cli.py` 在运行入口之前写入；`trigger` / `request_server_shutdown()` 用它置
+#: `should_exit`）
 _runtime_server: Any = None
 
+#: 按下次数计数器（`SIGINT` 与 `SIGBREAK` **共用的那一个**处理函数内部维护；phase3 §3.5）。
+#:
+#: **自增落在 `handle_shutdown_signal` 内部**（契约 §3.5 / §4 点名「在它内部补第一次 / 第二次的
+#: 分支与按下次数计数器」）：处理函数进来就数一次，`force = 这不是第一次` 由它算出、随回调一起
+#: 排进事件循环。**这样不会制造并发缺陷**，理由写在这里：
+#:
+#:   - 计数是**信号送达这一侧**的事实（「用户按了几次」），它的唯一来源就是处理函数被调用几次；
+#:     把它放到事件循环那一侧（原来的形态）会让处理函数体与契约措辞对不上，且多出一个
+#:     只活在闭包里的第二份计数（模块级那份就成了摆设）。
+#:   - 自增在 `_shutdown_press_lock` 里做：`signal.signal` 的处理函数在**主线程**的字节码边界
+#:     被调用，Python 不可能让两个处理函数同时执行；但 `handle_shutdown_signal` 是公开名字，
+#:     测试与别的调用点可能从别的线程直接调它，加一把锁因此是**确定的**而不是碰运气
+#:     （计数只有 `+= 1` 与读取，锁里没有任何 IO、没有 join —— 处理函数仍然不阻塞、可重入）。
+#:   - 处理函数**依然只做「把 `trigger` 排进事件循环」这一件事**：不写状态、不碰盘上文件，
+#:     收尾状态 / `interrupted` / `session.json` 的写值仍全部发生在 `ServiceRuntime` 那一侧
+#:     （唯一写者不变，§8「状态别再散开」）。
+_shutdown_press_count = 0
 
-def set_shutdown_target(loop: asyncio.AbstractEventLoop, trigger: Callable[[], Any]) -> None:
+#: `_shutdown_press_count` 的锁（见上面那段：计数要线程安全，但锁里不做事）
+_shutdown_press_lock = threading.Lock()
+
+#: 第二次按下时写进场次 log 的那行文案（phase3 §3.5 的表；名字由本 Phase 新起）。
+#: 由 `ServiceRuntime.trigger_shutdown()` 在事件循环那一侧落 `meeting` logger。
+DRAIN_INTERRUPTED_MESSAGE = "收尾被强制打断（用户第二次 Ctrl+C）"
+
+
+def set_shutdown_target(loop: asyncio.AbstractEventLoop, trigger: Callable[[bool], Any]) -> None:
     """由 `ServiceRuntime.startup()` 在框架生命周期钩子里写入 `(loop, trigger)`。
 
-    `trigger` 必须是**同步 callable**（见 `_shutdown_target` 上的说明：phase3 的
-    `trigger_shutdown` 是协程，写进来之前要先包一层 `loop.create_task(...)`）。
+    `trigger` 必须是**同步 callable**、且**收一个位置参数 `force`**（见 `_shutdown_target`
+    上的说明：`trigger_shutdown` 是协程，写进来之前由 `make_trigger_shutdown()` 包好一层
+    `loop.create_task(...)`；`force` 由 `handle_shutdown_signal` 按自己数出来的次数给出）。
     """
     global _shutdown_target
     _shutdown_target = (loop, trigger)
@@ -124,39 +150,76 @@ def clear_shutdown_target() -> None:
     _shutdown_target = None
 
 
-def make_shutdown_trigger(loop: asyncio.AbstractEventLoop) -> Callable[[], None]:
-    """构造本 Phase 的关停目标：唯一动作是把服务器的 `should_exit` 置 `True`。
+def reset_shutdown_press_count() -> int:
+    """把按下次数计数器清零（**测试用**：同一个 pytest 进程里连跑多条关停用例时复位它）。"""
+    global _shutdown_press_count
+    with _shutdown_press_lock:
+        _shutdown_press_count = 0
+        return _shutdown_press_count
+
+
+def shutdown_press_count() -> int:
+    """当前按下次数（`0` = 这一次关停还没被按过）。
+
+    **测试用的读法**：用例据此断言「处理函数内部真的在数」（`tests/test_shutdown_signal.py`
+    的「两路信号同形」那一条：进程内直接调同一个处理函数两次，第二次必须被判成强制打断档）。
+    """
+    with _shutdown_press_lock:
+        return _shutdown_press_count
+
+
+def make_trigger_shutdown(loop: asyncio.AbstractEventLoop, runtime: Any) -> Callable[[bool], None]:
+    """构造本 Phase 的关停目标：**先跑收尾、再请求关停**（phase3 §3.5）。
 
     返回的是**同步 callable**（可被 `loop.call_soon_threadsafe` 直接调用，见
-    `_shutdown_target` 上的说明）；它不返回协程、也不 await 任何东西。
-
-    phase3 会把写进 `_shutdown_target` 的这个对象换成 `trigger_shutdown`
-    （先跑收尾、再请求关停）—— 安装点与处理函数体都不变，但**换成协程时必须自行包一层
-    调度**（`lambda: loop.create_task(trigger_shutdown())`），否则协程永不被 await。
+    `_shutdown_target` 上的说明），它收**一个位置参数 `force`**：`handle_shutdown_signal`
+    按自己内部数出来的次数把它传进来。第一次与第二次的分支判定在
+    `ServiceRuntime.trigger_shutdown(force=...)` 里按当时的状态做；
+    本工厂只负责把协程用 `loop.create_task(...)` **包一层调度**排进事件循环 ——
+    直接交出协程对象的话它永不被 await（收尾会静默失效）。
     """
 
-    def trigger() -> None:
-        server = _runtime_server
-        if server is not None:
-            server.should_exit = True
-        else:  # pragma: no cover - 服务器尚未建立
-            _log.warning("收到关停请求，但服务器对象还没建立")
+    def trigger(force: bool = False) -> None:
+        try:
+            loop.create_task(runtime.trigger_shutdown(force=bool(force)))
+        except RuntimeError:  # pragma: no cover - 事件循环已关（正在关停）
+            _log.warning("事件循环已在关闭，这一次 Ctrl+C 的收尾请求丢弃（force=%s）", force)
 
     return trigger
 
 
+def request_server_shutdown() -> None:
+    """把服务器的 `should_exit` 置 `True`（收尾落定之后的**最后一步**）。
+
+    调用点只有 `ServiceRuntime.trigger_shutdown()`（事件循环那一侧）：第一次 `Ctrl+C` 等收尾
+    落定、第二次 `Ctrl+C` 落盘并 `cancel()` 之后，才走到这一步。
+    """
+    server = _runtime_server
+    if server is not None:
+        server.should_exit = True
+    else:  # pragma: no cover - 服务器尚未建立
+        _log.warning("请求关停，但服务器对象还没建立")
+
+
 def set_server(server: Any) -> None:
-    """由 `cli.py` 写入服务器对象（`trigger` 的目标）。"""
+    """由 `cli.py` 写入服务器对象（关停目标的目标）。"""
     global _runtime_server
     _runtime_server = server
 
 
 def handle_shutdown_signal(signum: int, frame: Any = None) -> None:
-    """SIGINT / SIGBREAK 共用的处理函数：只做两件事。
+    """SIGINT / SIGBREAK 共用的**那一个**处理函数：只做三件事。
 
     ① 用 `meeting` logger 往服务级主 log 落一行（模板 `收到 %s，进入关停`，信号名取
        `signal.Signals(signum).name`，级别 `INFO`）；
-    ② `loop.call_soon_threadsafe(trigger)`。
+    ② 在**本函数内部**把按下次数计数器 `_shutdown_press_count` 加一，并据此算出
+       「这是不是第二次」（`force = 次数 > 1`）—— 第一次 / 第二次的分支判定入口在这里，
+       对应的收尾语义由事件循环那一侧的 `ServiceRuntime.trigger_shutdown(force=...)` 执行；
+    ③ `loop.call_soon_threadsafe(trigger)`，把 `force` 一并交给那个回调。
+
+    处理函数**可重入**（信号可能在收尾中再次到达）、**不阻塞**（不在里面做 IO 或 join），
+    并且**不写任何状态、不碰盘上文件**（强制打断的落盘与 `cancel()` 由 `trigger_shutdown()`
+    在事件循环里执行）。计数那一步在 `_shutdown_press_lock` 里做（只加一，没有 IO）。
 
     `_shutdown_target` 为 `None`（服务尚未就绪）时只落上面那行 log 然后返回。
     这一行 log 就是端到端断言所绑的可观察副作用 —— 服务器的处理函数不往 `meeting`
@@ -168,12 +231,18 @@ def handle_shutdown_signal(signum: int, frame: Any = None) -> None:
         signame = str(signum)
     _log.info("收到 %s，进入关停", signame)
 
+    global _shutdown_press_count
+    with _shutdown_press_lock:
+        _shutdown_press_count += 1
+        press = _shutdown_press_count
+    force = press > 1
+
     target = _shutdown_target
     if target is None:
         return
     loop, trigger = target
     try:
-        loop.call_soon_threadsafe(trigger)
+        loop.call_soon_threadsafe(trigger, force)
     except RuntimeError:  # pragma: no cover - 事件循环已关（正在关停）
         pass
 
@@ -348,6 +417,11 @@ def bind_http_socket(
     is_meeting = bool(probe_fn("127.0.0.1", port))
 
     if is_meeting:
+        # 这句文案的**形状**（`…（<状态>）`）是 phase1 冻结的，括号里的内容在本节点里是
+        # **字面写死的「当前空闲」**：端口探针这一处还没有取用「那一场已录多久」
+        # （`session.elapsed_seconds` 那一侧由 phase2 提供），也没有把探到的实例在录还是空着
+        # 区分开。README 第 1 块按这个事实写；**本节点不在这里承诺将来会填什么值**。
+        # 注：phase1 冻结的是这句话的形状与它在哪种占用情形下出现，取值由本节点照实现写实。
         raise PortUnavailableError(
             f"已经有一个 meeting 服务在跑：http://127.0.0.1:{port}（当前空闲）",
             occupied_by_meeting=True,
@@ -566,6 +640,7 @@ def launch_browser(url: str) -> bool:
 __all__ = [
     "ALLOWED_HOSTS",
     "DIST_MISSING_MESSAGE",
+    "DRAIN_INTERRUPTED_MESSAGE",
     "PROBE_TIMEOUT_SECONDS",
     "SERVICE_ID",
     "PortUnavailableError",
@@ -581,7 +656,10 @@ __all__ = [
     "handle_shutdown_signal",
     "install_shutdown_signal_handlers",
     "launch_browser",
-    "make_shutdown_trigger",
+    "make_trigger_shutdown",
+    "request_server_shutdown",
+    "reset_shutdown_press_count",
     "set_server",
     "set_shutdown_target",
+    "shutdown_press_count",
 ]

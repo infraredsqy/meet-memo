@@ -61,6 +61,35 @@
 
 骨架构建（默认 `null` 替身或 dev 替身 + 转写缺席 + 钩子缺席）跑一场会的预期终态是固定的：`flush: skipped` / `transcode: skipped` / `log: done` / `post: skipped`，于是 `ended.phase == "done"`。
 
+### 收尾怎么跑：触发、共享预算、超时与中断
+
+**谁起这一趟**：`POST /api/actions {"action":"stop"}` 成功之后，以及录音 / 告警态下**第一次 `Ctrl+C`** —— 后一条走的是**同一条** `stop_session(reason="ctrl_c")` 路径。非 `recording` / `alert` 态收到 `stop` 回 `not_recording`(409)，不起收尾。
+
+**每一步的通用节奏**（四步都照这个走）：
+
+1. 该步置 `running` → 写一次 `session.json` → 广播一次全量状态；
+2. 主 log 记一条该步的**开始**（带步 id）；
+3. 执行该步的调用；
+4. 落 `done` / `skipped` / `failed`（`detail` 写人话）→ 再写一次 `session.json` → 主 log 记一条**结束 + 耗时** → 再广播一次。
+
+某一步 `failed` 之后，**后续步骤照常按顺序记账**（不许整段抛出而不写盘）。四步全部落定之后，终态由 `finish_drain()` 一处判定。
+
+**四步共享一条 deadline**。收尾一开跑就先算这一趟的总上限：
+
+```
+budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 秒
+```
+
+`backlog` ← `TranscriberBackend.backlog_depth()`，`segment_timeout` ← `TranscriberBackend.segment_timeout()`；转写后端缺席时取 `0` / `20.0` 秒。每一步的调用都包在**剩余预算**里（`asyncio.wait_for(<该步调用>, <剩余预算>)`），所以一趟收尾的等待总量以那条 deadline 为界，**不随步数翻倍**。这三个数硬编码在 `meeting/service/runtime.py`，**不开配置键**。
+
+- **唯一的例外是 `log` 步**：它的 flush 与摘除至少拿到 5 秒（`max(<剩余预算>, 5)`，不受剩余预算约束）。`log` 是四步里唯一在任何构建里都有实现、要做 IO 的一步；让前面的缺席步把 deadline 用光，本该「正常收尾」的一档就会被拖成收尾失败档。
+- **超预算的那一步落 `failed`**，`error` 写明「超出收尾预算（budget=Ns，实测耗时 Ms）」—— 到点就扔下积压段走的写法在代码里不存在。
+- 预算的输入（`backlog` / `segment_timeout`）、算出来的 `budget`、以及每一步的实测耗时**逐条进 log**。
+
+**收尾期间按第二次 `Ctrl+C`：立即中止，顺序写死。** 先把盘上写成 `state: "draining"` + `interrupted: true`（**原 `steps` 原样保留**、不写 `done`、**不写 `ended_at`**），再对收尾 task 调 `cancel()`（句柄已经是「已结束」时跳过 `cancel()`、只做落盘）。取消时的记账只补步骤状态，**不覆盖刚才那一版的 `interrupted` / `state`**；唯一的例外是「信号到达时四步恰好已全部落定」——这一档盘上最终值按终态规则由 `finish_drain()` 那一趟落。进程随后以强制打断档退出（取值见 `docs/service.md` 的退出码表）。
+
+**收尾走完不回 `idle`**：成功档与失败档都停在 `ended`，`idle` 只留给「进程刚起、还没开过任何一场」。下一场的 `start` 从 `ended` 直接进 `recording`。
+
 ## 2. 状态快照的形状
 
 快照是**顶层十键**的对象，`GET /api/state` 的 body 与 SSE 首帧 `snapshot` 是同一个 `to_dict()` 出的同一份东西。
@@ -148,7 +177,7 @@
 
 服务启动时扫输出根，取**最新的一场**，判据只有一条：`state ∈ {recording, draining}` **或** `interrupted: true`。
 
-命中就做两件事：在空闲态挂 `notice.restart_unfinished`；把那份记录**改写**成 `state: "draining"` + `interrupted: true`，**原 `steps` 原样保留、不伪造终态**。
+命中就做两件事：在空闲态挂 `notice.restart_unfinished`；把那份记录**改写**成 `state: "draining"` + `interrupted: true`，**原 `steps` 原样保留、不伪造终态**。被强制打断的场次盘上本来就是这一副面孔，重启扫描照同一条路把它认领下来。
 
 - **绝不自动续录、绝不把状态恢复成「录音中」**。
 - 扫描只写这一处：只动那一份 `session.json`，场次目录里其余文件逐字不变，不新建任何目录。
@@ -233,6 +262,8 @@
 - 三档故障都**不动状态机的迁移路径**：能不能回 `recording` 由 `alerts.py` 的判定说了算。
 - 它**不写真实音频**，`finalize()` / `transcode()` 只记账。所以收尾第 1、2 步在它身上记 `skipped`。
 - `dev_inject` 要有正在进行的场次：`recording` / `alert` 态可注入，其余态回 `not_recording`(409)。
+
+**拿它写用例时的一个实情**：静默阈值与恢复窗口这些等待是真实时长，而测试侧有一条「单条用例 ≤ 5 秒」的红线（看门在 `tests/conftest.py`）。用例的做法是**把阈值写进临时 `config.json` 调小**（代码默认值一个字不动），同时把轮询间隔与观察窗口收在红线以内 —— 被测的语义没有跟着改，改的只是测试等的时长。
 
 ## 8. 相关文档
 

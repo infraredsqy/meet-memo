@@ -27,7 +27,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-import _helpers as helpers
+from tests import _helpers as helpers
 from meeting.service.hub import (
     PING_INTERVAL_SECONDS,
     SSE_RETRY_MILLISECONDS,
@@ -35,7 +35,7 @@ from meeting.service.hub import (
     EventHub,
     encode_ping,
 )
-from _service import SseClient, parse_sse_frame
+from tests._service import SseClient, parse_sse_frame
 
 #: 用例的显式等待与读帧上限（秒）
 SSE_TIMEOUT_SECONDS = 15.0
@@ -63,12 +63,11 @@ def post(proc, action: str, args: dict | None = None):
     body = {"action": action}
     if args is not None:
         body["args"] = args
-    return httpx.post(
+    return helpers.local_post(
         f"{proc.base_url}/api/actions",
         json=body,
         headers={"Content-Type": "application/json", "X-Meeting-Service": "1"},
         timeout=10.0,
-        trust_env=False,
     )
 
 
@@ -314,9 +313,12 @@ def test_event_names_are_the_frozen_four():
 def test_unknown_event_paths_are_not_invented(dev_service):
     """`/api/events` 的应答头是 SSE 类型（不是 HTML、不是 JSON）。"""
     proc = dev_service
-    with httpx.stream(
-        "GET", f"{proc.base_url}/api/events",
-        timeout=httpx.Timeout(10.0, read=10.0), trust_env=False,
+    # 复用探针的 client（本机新建一个 `httpx.Client` 要 0.83 秒，见 `helpers.local_get()`）；
+    # 不设 client 级超时，这一次流式读只受下面 `get()` 自带的超时约束
+    with helpers.local_client_for(f"{proc.base_url}/api/events").stream(
+        "GET",
+        f"{proc.base_url}/api/events",
+        timeout=httpx.Timeout(10.0, read=10.0),
     ) as response:
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/event-stream")

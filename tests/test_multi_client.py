@@ -16,12 +16,11 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
 
 import pytest
 
-import _helpers as helpers
-from _service import SseClient, parse_sse_frame
+from tests import _helpers as helpers
+from tests._service import SseClient, parse_sse_frame
 
 #: 用例的显式等待上限（秒）
 MULTI_TIMEOUT_SECONDS = 15.0
@@ -40,17 +39,14 @@ def dev_service(tmp_path, service_process):
 
 
 def post(proc, action: str, args: dict | None = None):
-    import httpx
-
     body = {"action": action}
     if args is not None:
         body["args"] = args
-    return httpx.post(
+    return helpers.local_post(
         f"{proc.base_url}/api/actions",
         json=body,
         headers={"Content-Type": "application/json", "X-Meeting-Service": "1"},
         timeout=10.0,
-        trust_env=False,
     )
 
 
@@ -120,8 +116,6 @@ def test_mute_session_reaches_both_clients_with_one_revision(dev_service_alert):
 @pytest.fixture()
 def dev_service_alert(tmp_path, service_process):
     """一个正在告警的会话（阈值写小、把 loopback 弄成静默）。"""
-    import httpx
-
     home = tmp_path / "home-alert"
     home.mkdir()
     helpers.write_config_json(
@@ -131,19 +125,12 @@ def dev_service_alert(tmp_path, service_process):
     )
     proc = service_process(home=home, capture="dev", out_root=tmp_path / "out-alert")
     proc.wait_ready()
-    body = {"action": "start"}
-    assert httpx.post(
-        f"{proc.base_url}/api/actions", json=body,
-        headers={"Content-Type": "application/json", "X-Meeting-Service": "1"},
-        timeout=10.0, trust_env=False,
-    ).status_code == 200
-    assert httpx.post(
-        f"{proc.base_url}/api/actions",
-        json={"action": "dev_inject",
-              "args": {"source": "loopback", "fault": "silence",
-                       "after_seconds": 0.0, "duration_seconds": 120.0}},
-        headers={"Content-Type": "application/json", "X-Meeting-Service": "1"},
-        timeout=10.0, trust_env=False,
+    assert post(proc, "start").status_code == 200
+    assert post(
+        proc,
+        "dev_inject",
+        {"source": "loopback", "fault": "silence",
+         "after_seconds": 0.0, "duration_seconds": 120.0},
     ).status_code == 200
     wait_until(lambda: snapshot_of(proc)["top_state"] == "alert", what="进 alert")
     return proc
@@ -244,10 +231,8 @@ def test_reconnect_takes_a_fresh_snapshot_without_replaying(dev_service):
 
 def test_debug_page_is_static_and_reachable_without_a_build(dev_service):
     """⑤ `/debug` 200 + HTML + body 含 `EventSource` 与 `/api/events`（产物缺失时也照旧）。"""
-    import httpx
-
     proc = dev_service
-    response = httpx.get(f"{proc.base_url}/debug", timeout=5.0, trust_env=False)
+    response = helpers.local_get(f"{proc.base_url}/debug", timeout=5.0)
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
     body = response.text
@@ -259,7 +244,7 @@ def test_debug_page_is_static_and_reachable_without_a_build(dev_service):
     assert "骨架自检页" in body
 
     # 产物目录指向不存在的地方：`/` 是说明页，`/debug` 与 `/api/*` 照常
-    root = httpx.get(f"{proc.base_url}/", timeout=5.0, trust_env=False)
+    root = helpers.local_get(f"{proc.base_url}/", timeout=5.0)
     assert root.status_code == 200
     assert "npm run build" in root.text
-    assert httpx.get(f"{proc.base_url}/api/state", timeout=5.0, trust_env=False).status_code == 200
+    assert helpers.local_get(f"{proc.base_url}/api/state", timeout=5.0).status_code == 200

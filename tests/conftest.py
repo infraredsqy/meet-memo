@@ -9,9 +9,23 @@
   - `tmp_out_root`：**临时输出根**；
   - `isolated_config_dir`：**隔离的临时配置目录**（连同隔离的临时日志目录）。
 
+phase3 追加两个夹具（名字固定，与上面五个不重名）：
+
+  - `meeting_env`：**本用例的一套隔离环境**（临时输出根 + 临时 log 目录 + **家目录重定向**
+    + 本服务那四个环境变量：`MEETING_NO_BROWSER` / `MEETING_PORT` / `MEETING_OUT_ROOT` /
+    `MEETING_LOG_DIR`），把子进程的环境变量一次给全。**采集后端不在这份 env 里**（第七轮审查
+    m9、第八轮审查 m5 / m6）：它由各用例自己 `config.json` 的 `capture.backend` 表达，env 里
+    留着 `MEETING_CAPTURE` 会把那条配置键静默压住 —— 本夹具因此**看门**（建 env 之前那条
+    断言）要求宿主进程 env 里也没有这一项，四条 `tests/test_e2e_*.py` 全部同源；
+  - `sse_client`：**在 `service_process` 上开一条 SSE 订阅并保证关闭**。
+
 **本文件只放 fixture**：`parse_sse_frame()` / `read_sse_frames()` / `wait_until()` 这类解析与
 等待助手、`ServiceProcess` / `SseClient` / `post_action()` 这几个驱动件的实现**都在
-`tests/_service.py`**，这里只 import 并包装成 fixture。
+`tests/_service.py`**，这里只 import 并包装成 fixture；假件一律放 `tests/_drain_fakes.py`。
+**本文件里没有一条用例**（审查问题 m4）：原先那条「`isolated_config_dir` 与 `app_client`
+指向同一个家目录」的用例搬到了 `tests/test_config.py`
+（`test_isolated_config_dir_and_app_client_share_one_home`），断言强度一字未改 ——
+`python -m pytest tests/conftest.py --collect-only -q` 收集到 0 条。
 
 ## 浏览器兜底（安全要求，autouse）
 
@@ -27,13 +41,14 @@ pytest **父进程**里 `meeting.service.app.webbrowser` 就是**标准库那个
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 import pytest
 
-import _helpers as helpers
-from _service import ServiceProcess
+from tests import _helpers as helpers
+from tests._service import ServiceProcess, SseClient
 
 
 # ---------------------------------------------------------------------------
@@ -124,13 +139,21 @@ def isolated_config_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path
 def service_process(tmp_path: Path) -> Iterator[Any]:
     """**真服务子进程夹具**：给出一个「起一个 `meeting web` 子进程」的工厂。
 
-    用法：``with service_process(capture="dev", out_root=...) as proc: proc.wait_ready()``
-    或 ``proc = service_process(...)``（工厂自己注册收场，用例不必写 `finally`）。
+    用法：``proc = service_process(home=meeting_env.home, extra_env=meeting_env.env)``
+    （工厂自己注册收场，用例不必写 `finally`）。
 
     能力（phase2 冻结）：`base_url`（`MEETING_PORT=0` + 子进程启动输出解析）、
     向子进程发中断信号（`send_interrupt()` / `send_ctrl_c()`）、读退出码（`returncode` /
     `wait()`）、**传完整的环境变量覆盖**（`env=` 给全一份映射；`PYTHONPATH` 默认 = 仓库根，
     需要假件时由调用方把「仓库根 + 临时假件目录」拼好传进来）。
+
+    **本夹具不往子进程 env 里塞 `MEETING_CAPTURE`**（审查问题 m5 / m6 的直接修复）：
+    这条环境变量的优先级高于配置文件，静默塞一个缺省值就会把各用例自己写在 `config.json`
+    里的 `capture.backend` **压住**（假件挂不上、采集替身选错档，用例「以为在验 A、其实在验
+    B」）。采集后端一律由**用例自己的 `config.json`** 表达：`meeting_env.write_config({
+    "capture.backend": "dev"})` —— 四条 `tests/test_e2e_*.py` 与本文件因此同源。需要走环境
+    变量那一档的用例（`capture.backend` 在 env 里的取值域）显式传 `capture="dev"` /
+    `capture="null"`，那是有意为之的一条覆盖，本夹具的缺省**不**做这件事。
     """
     started: list[ServiceProcess] = []
     counter = {"n": 0}
@@ -138,7 +161,6 @@ def service_process(tmp_path: Path) -> Iterator[Any]:
     def factory(**kwargs: Any) -> ServiceProcess:
         counter["n"] += 1
         home = kwargs.pop("home", None) or (tmp_path / f"home{counter['n']}")
-        kwargs.setdefault("capture", "dev")
         kwargs.setdefault("out_root", tmp_path / f"out{counter['n']}")
         proc = ServiceProcess(Path(home), **kwargs)
         started.append(proc)
@@ -164,23 +186,6 @@ def app_client(tmp_path: Path, _no_real_browser) -> Iterator[Any]:
     """
     with helpers.app_client(case_home(tmp_path), values={}) as client:
         yield client
-
-
-def test_isolated_config_dir_and_app_client_share_one_home(
-    tmp_path: Path, isolated_config_dir: Path, app_client: Any
-):
-    """两个夹具同时使用时指向**同一个**本用例临时家目录（phase2 §5.4 的家目录硬约束）。
-
-    同时请求两个夹具：`isolated_config_dir` 归属的那个家目录（它的上一级目录），
-    与 `HOME` / `USERPROFILE` 两个环境变量、以及 `app_client` 实际落配置的那条路径，
-    必须逐字对上 —— 否则「隔离」这件事在两个夹具的视角里各落一处。
-    """
-    home = isolated_config_dir.parent.parent
-    assert home == case_home(tmp_path)
-    assert os.environ["HOME"] == str(home)
-    assert os.environ["USERPROFILE"] == str(home)
-    assert app_client is not None
-    assert helpers.config_path_of(home).exists(), "app_client 的配置文件落在同一个家目录下"
 
 
 @pytest.fixture()
@@ -210,3 +215,156 @@ def dev_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
         yield runtime
     finally:
         config_module.set_current(previous)
+
+
+# ---------------------------------------------------------------------------
+# phase3 追加的两个夹具（名字固定：`meeting_env` / `sse_client`）
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class MeetingEnv:
+    """一个用例的一套隔离环境（`meeting_env` 夹具给出的那一个）。"""
+
+    home: Path
+    out_root: Path
+    log_dir: Path
+    config_dir: Path
+    env: dict[str, str]
+
+    @property
+    def config_path(self) -> Path:
+        return self.config_dir / "config.json"
+
+    def write_config(self, values: dict[str, Any]) -> Path:
+        """把「点号扁平键名 → 值」写进本用例的 `config.json`（**写合法 JSON**）。"""
+        return helpers.write_config_json(self.home, values)
+
+
+@pytest.fixture()
+def meeting_env(tmp_path: Path) -> MeetingEnv:
+    """**本用例的一套隔离环境**：临时输出根 + 临时 log 目录 + **家目录重定向** + 服务变量。
+
+    逐项照 §3.8 的「子进程环境（每条测试的必备项）」：
+
+      - `MEETING_NO_BROWSER=1`（**每一条子进程测试都必须设上**，否则真机会弹浏览器）；
+      - `MEETING_PORT=0`、`MEETING_OUT_ROOT=<本用例临时目录>`、
+        `MEETING_LOG_DIR=<本用例临时目录>`；
+      - **家目录重定向**：`HOME` 与 `USERPROFILE` 都指向本用例的临时家目录 —— 这是硬条件：
+        配置文件 `~/.config/meeting/config.json` 与服务级 `logs/` 都挂在它下面，只设输出根 /
+        端口而漏掉它，子进程会读真实用户的配置与日志（测试全绿却验的不是临时配置）。
+
+    **采集后端改由 `config.json` 的 `capture.backend` 表达，env 里不带 `MEETING_CAPTURE`**
+    （第七轮审查 m9）：环境变量的优先级高于配置文件，env 里留着这一项就会把配置键**静默压住**
+    —— 挂假件的那几条用例（`tests/test_drain.py` 那一支）因此一开就摘它，而原先本夹具又把
+    `dev` 写在 env 里，两条子进程路径的采集后端于是各说一套。现在四条 `tests/test_e2e_*.py`
+    与本夹具同源：都在自己的 `config.json` 里写 `capture.backend`，env 里那一项一个都不多设。
+
+    **靠重定向既有环境变量达成隔离，不新增任何 `MEETING_*` 变量**；`PYTHONPATH` 与
+    「额外环境变量」由用例经 `service_process(*, pythonpath=..., extra_env=...)` 给全。
+    """
+    # 看门：本用例的宿主进程 env 里不许留着 `MEETING_CAPTURE`。本夹具自己不设它（见上），
+    # 但同一进程里别的夹具（`dev_runtime`）会临时设上；万一那一层没被还原，这一份 env
+    # 就会带着它进子进程、把用例写在 `config.json` 里的采集后端静默压住。这里当场说话。
+    assert "MEETING_CAPTURE" not in os.environ, (
+        "宿主进程 env 里留着 MEETING_CAPTURE：它会压住子进程配置里的 capture.backend，"
+        "本用例的隔离环境因此不该带着它建立（实测取值 %r）" % (os.environ.get("MEETING_CAPTURE"),)
+    )
+    home = case_home(tmp_path)
+    out_root = tmp_path / "out"
+    log_dir = tmp_path / "logs"
+    out_root.mkdir(parents=True, exist_ok=True)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    config_dir = home / ".config" / "meeting"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    env = {
+        "HOME": str(home),
+        "USERPROFILE": str(home),
+        "MEETING_NO_BROWSER": "1",
+        "MEETING_PORT": "0",
+        "MEETING_OUT_ROOT": str(out_root),
+        "MEETING_LOG_DIR": str(log_dir),
+    }
+    return MeetingEnv(
+        home=home, out_root=out_root, log_dir=log_dir, config_dir=config_dir, env=env
+    )
+
+
+@pytest.fixture()
+def sse_client(service_process: Callable[..., Any]) -> Iterator[Callable[..., SseClient]]:
+    """**在 `service_process` 上开一条 SSE 订阅并保证关闭**。
+
+    用法：``client = sse_client(proc)``（夹具自己记下来，用例结束时统一 `close()`；
+    用例也可以自己 `client.close()` 提前断开 —— 重复关闭是幂等的）。
+
+    订阅者本身的读写助手在 `tests/_service.py` 的 `SseClient` 上：
+    `read_frame()` / `read_frames()` / `read_event_frame()` / `read_until()`。
+    """
+
+    opened: list[SseClient] = []
+
+    def factory(target: Any, *, path: str = "/api/events", timeout: float = 30.0) -> SseClient:
+        client = SseClient(target, path=path, timeout=timeout)
+        opened.append(client)
+        return client
+
+    try:
+        yield factory
+    finally:
+        for client in opened:
+            try:
+                client.close()
+            except Exception:  # pragma: no cover - 收场失败不掩盖用例结果
+                pass
+
+
+# ---------------------------------------------------------------------------
+# 耗时看门（**用户硬要求**：每一条用例 setup + call + teardown 合计 ≤ 5.0 秒）
+#
+# 契约里写的是「`conftest.py` 只放 fixture」；这一条 hook 是指挥者授权的显式偏差
+# （用户把「单条用例 ≤ 5 秒」定为与修审查问题同级的硬要求，并要求加一道**自动看门**
+# 而不是只在报告里声明）。它不改任何夹具语义，只汇总 pytest 自己的三段耗时。
+# ---------------------------------------------------------------------------
+
+#: 单条用例（setup + call + teardown 三段合计）的墙钟上限（秒）
+CASE_WALL_CLOCK_LIMIT_SECONDS = 5.0
+
+#: 本用例三段耗时（`nodeid` -> `{段名: 秒}`）；`pytest_runtest_logreport` 逐段填，
+#: `pytest_runtest_makereport` 在最后一段（`teardown`）之后汇总判红。
+_CASE_DURATIONS: dict[str, dict[str, float]] = {}
+
+
+def pytest_runtest_logreport(report: pytest.TestReport) -> None:
+    """把每一条用例的 `setup` / `call` / `teardown` 三段耗时记下来。"""
+    if report.when not in ("setup", "call", "teardown"):
+        return
+    _CASE_DURATIONS.setdefault(report.nodeid, {})[report.when] = float(report.duration)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo):
+    """最后一段（`teardown`）之后汇总三段耗时：**合计超过 5.0 秒就把这条用例判红**。
+
+    判红方式是在 `teardown` 的 report 上打一条 `longrepr`（报出用例名与三段各自的耗时），
+    于是这条超时用例会以「失败」出现在 `pytest -q` 的统计里、挂在自己的名字下，谁都能一眼
+    看到是哪一条慢了。耗时数据只从 pytest 自己的 report 里取（不额外计时、不加 fixture），
+    因此看门本身对被测用例零影响。
+    """
+    outcome = yield
+    report = outcome.get_result()
+    if report.when != "teardown":
+        return
+    durations = _CASE_DURATIONS.pop(item.nodeid, None)
+    if not durations:
+        return
+    total = sum(durations.values())
+    if total <= CASE_WALL_CLOCK_LIMIT_SECONDS:
+        return
+    report.outcome = "failed"
+    report.longrepr = (
+        f"{item.nodeid} 单条用例合计耗时 {total:.2f}s，超过上限 "
+        f"{CASE_WALL_CLOCK_LIMIT_SECONDS:.1f}s"
+        f"（setup {durations.get('setup', 0.0):.2f}s / "
+        f"call {durations.get('call', 0.0):.2f}s / "
+        f"teardown {durations.get('teardown', 0.0):.2f}s）"
+    )

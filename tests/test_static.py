@@ -35,7 +35,7 @@ from pathlib import Path
 
 import pytest
 
-import _helpers as helpers
+from tests import _helpers as helpers
 from meeting.service import app as service_app
 from meeting.service.app import DIST_MISSING_MESSAGE
 

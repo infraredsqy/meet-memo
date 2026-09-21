@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-import _helpers as helpers
+from tests import _helpers as helpers
 from meeting.session import (
     SESSION_FILE_NAME,
     SessionStore,
@@ -253,13 +253,28 @@ def test_every_phase_change_writes_the_session_file(tmp_path, monkeypatch):
         runtime.post_resolution.implementation = hook
         runtime.post_resolution.has_implementation = True
 
-        def slow_call(step_id, call):
-            async def run():
-                await asyncio.to_thread(call)
+        # 收尾三步的调用都经 `_drain_wait()` 这一层包装（phase3 的自适应预算就把这里包住）。
+        # 本用例把这一层换成「照原样调用、如实回报耗时」的替身：**同步实现放进工作线程**
+        # （与真实现里的 `asyncio.to_thread` 同形），慢钩子因此不会把事件循环钉住，
+        # `/api/state` 在整个等待里照常应答。
+        # 接缝要收得下 `_drain_wait()` 的签名（`deadline` / `min_budget` / `invoke` 都是关键字）。
+        #
+        # **这一处改动的授权来源（第七轮审查 m4）**：phase3 的 `_drain_wait` 取代
+        # `_call_step` —— phase2 时本用例 monkeypatch 的是 `runtime._call_step`，那个接缝在
+        # phase3 的等待上限里被删掉了，替换成这一个。本用例要验的仍是同一件事
+        # （「每换一个阶段都写一次 session.json」+ 慢钩子期间盘上那一版的样子），
+        # 断言一字未改。
+        async def transparent_drain_wait(step_id, call, **kwargs):
+            del step_id, kwargs
+            began = time.monotonic()
+            result = call()
+            if asyncio.iscoroutine(result):
+                await result
+            else:
+                await asyncio.to_thread(lambda: result)
+            return None, time.monotonic() - began
 
-            return run()
-
-        monkeypatch.setattr(runtime, "_call_step", slow_call)
+        monkeypatch.setattr(runtime, "_drain_wait", transparent_drain_wait)
 
         assert post(client, "stop").status_code == 200
         assert hook.started.wait(timeout=SLOW_HOOK_SECONDS), "收尾该走到 post 那一步"

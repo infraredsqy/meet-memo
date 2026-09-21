@@ -28,7 +28,7 @@ from pathlib import Path
 
 import pytest
 
-import _helpers as helpers
+from tests import _helpers as helpers
 from meeting import config as config_module
 from meeting.backends.base import LevelFrame
 from meeting.config import ConfigValueError
@@ -660,8 +660,16 @@ def test_cancelled_drain_keeps_the_same_face_without_done(tmp_path):
         class PinHook:
             """把这一步钉在 `running` 上，直到用例放行（phase3 §3.8 的同一手法）。
 
-            阻塞由用例放进工作线程（`asyncio.to_thread`）：阻塞留在事件循环里，
-            `/api/state` 就不应答，「轮询到某步处于 running」这个同步点根本等不到。
+            **同步调用不落在事件循环上**：收尾的这一步由 `_drain_wait()` 经运行时的
+            **收尾专用执行器**（`loop.run_in_executor(...)`）提交到**工作线程**，
+            `launch()` 于是在那条线程里堵着、事件循环空着 —— `/api/state` 照常应答，
+            「轮询到某步处于 running」这个同步点因此等得到。同步阻塞若真落在事件循环里，
+            这个窗口根本不会出现（收尾期间状态接口停摆）。
+
+            **这一格在 phase3 的接线来源（第七轮审查 m4）**：phase2 时收尾的这一步经
+            `ServiceRuntime._call_step()` 这个内部接缝调用；phase3 把等待上限收进
+            `_drain_wait()`，`_call_step` 随之删除。授权来源：phase3 的 `_drain_wait` 取代
+            `_call_step`。
             """
 
             def __init__(self) -> None:
@@ -677,30 +685,35 @@ def test_cancelled_drain_keeps_the_same_face_without_done(tmp_path):
         runtime.post_resolution.implementation = runtime.post_hook
         runtime.post_resolution.has_implementation = True
 
-        # 收尾暂缓：这一步的调用从工作线程里跑（与 phase3 的收尾包装同形），
-        # 于是事件循环照常转、`/api/state` 照常应答，取消也随时能到。
-        async def _slow_call(step_id, call):
-            await asyncio.to_thread(call)
-
-        runtime._call_step = _slow_call  # type: ignore[method-assign]
-
         async def stop_then_cancel():
             # `stop_session` 必须在事件循环里调（收尾协程要挂在这一条循环上才跑得起来）
             runtime.stop_session("user")
             task = runtime._drain_task
             assert task is not None
-            # 确定同步点：等 `post` 那一步真的进入 running（收尾确实还在跑），再取消
+            # 确定同步点（三步走，缺一步都会撞上「收尾几乎瞬间跑完」这条偶发）：
+            #   ① 这一步先被置成 `running`（收尾确实还在跑）；
+            #   ② 它的调用随后经运行时的**收尾专用执行器**交到工作线程（`_drain_wait()` 里
+            #      那一句 `loop.run_in_executor(...)`），工作线程一进去就置 `hook.started`
+            #      —— 等这个事件，就是把「调用真的开始了」等实；
+            #   ③ 此时 `launch()` 还堵在 `hook.release` 上（上限 CANCEL_PIN_SECONDS），
+            #      于是取消一定落在「post 停在 running」这一格上。
+            # 收尾的这一步一定经 `_drain_wait()` 的等待层（`invoke=True`）交到工作线程，
+            # 因此②一定会发生；这里等它，而不是抢在它之前断言。
             deadline = time.monotonic() + STATE_POLL_TIMEOUT_SECONDS
             while time.monotonic() < deadline:
                 ended = runtime.snapshot.ended
-                if ended is not None and any(
+                running = ended is not None and any(
                     step.id == "post" and step.status == "running" for step in ended.steps
-                ):
+                )
+                if running and hook.started.is_set():
                     break
                 await asyncio.sleep(0.005)
             else:
-                raise AssertionError("等不到收尾的 post 步进入 running")
-            assert hook.started.is_set()
+                raise AssertionError(
+                    "等不到「收尾的 post 步进入 running 且这次调用真的开始」"
+                    f"（post 的状态={runtime.snapshot.drain_step('post').status!r}，"
+                    f"hook.started={hook.started.is_set()}）"
+                )
             # 收尾仍在 running 这一格上被取消
             assert runtime.snapshot.drain_step("post").status == "running"
 
