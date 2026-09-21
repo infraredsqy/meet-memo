@@ -21,14 +21,14 @@
 
 | 端点 | 给什么 |
 |---|---|
-| `GET /` | 构建产物（`web.dist_dir`，默认 `web/dist`）存在就是那份 React 应用；不存在就给一页说明，服务照常起 |
+| `GET /` | 构建产物（`web.dist_dir`，默认 `web/dist`）有内容就是那份 React 应用；目录不存在就给一页说明（**存在性按每请求判定**，产物一建好刷新即可见，不必重启服务）；**目录在但是空的回 404**。三档与说明页文案的全文见 `docs/contract.md` 第 1 章 |
 | `GET /debug` | 骨架自检页：读原始快照、按开始 / 结束 / 静音、看事件流、看心跳原始应答。零依赖、无构建，页面内显式标注**非产品界面、不承担任何告警职责** |
 | `GET /api/state` | 完整状态快照，`200`。body 与 SSE 首帧那份 `snapshot` 同源（同一个 `to_dict()`） |
 | `GET /api/events` | SSE。**第一帧一定是 `snapshot`**，之后是 `state` / `levels` / `transcript` 三条通道 |
 | `GET /api/heartbeat` | `{"service": "meeting", "server_time", "revision", "top_state", "recording_alive", "seconds_since_last_tick"}`，`200`，任何状态下都给。`service` 这个字面量是端口探测认亲用的，必须有 |
 | `POST /api/actions` | 动作端点，见第 2–4 章 |
 
-`/api/*` 的应答一律带 `Cache-Control: no-store`。
+`/api/*` 的应答一律带 `Cache-Control: no-store`，并且**不发 `Access-Control-Allow-Origin`**（不开 CORS，前端与本服务同源）。
 
 ## 2. 请求信封与应答形状
 

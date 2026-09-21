@@ -6,7 +6,7 @@
 >
 > 代码落点：路由只在 `meeting/service/routes.py` 注册一次；快照的唯一产出形态是 `meeting/state.py` 的 `Snapshot.to_dict()`；SSE 帧由 `meeting/service/hub.py` 编码；动作与 `code`/`detail` 在 `meeting/service/runtime.py`；三道本地防线在 `meeting/service/app.py` 的 `_LocalGuardsMiddleware`；golden 样本与掩码在 `contract/fixtures/` 与 `tests/_contract.py`。
 >
-> **这本册子的编号**：`docs/contract.md` 的七章要求落在第 1–7 章（总则、快照 schema、SSE、动作、心跳、客户端义务、保留登记）；后面接了三章附录 —— 第 8 章讲 fixtures 与掩码、第 9 章讲复核手法、第 10 章回指索引。**保留登记里的端点与动作一律没有实现**，界面按「能力还没进来」处理。
+> **这本册子的编号**：要求落在第 1–7 章（总则、快照 schema、SSE、动作、心跳、客户端义务、保留登记）；后面接了三章 —— 第 8 章讲 fixtures 与掩码、第 9 章讲复核手法、第 10 章回指索引。**第 8、9 两章是附录**（读契约正文用不上），第 10 章与其余分册的「相关文档」同形。**保留登记里的端点与动作一律没有实现**，界面按「能力还没进来」处理。
 
 ## 章节目录
 
@@ -492,7 +492,7 @@ python -m pytest tests/test_contract_fixtures.py --regen-contract -q
 
 ## 9. 复核手法
 
-想手工确认「这份契约与代码一致」时，四条够用：
+想手工确认「这份契约与代码一致」时，下面四条够用：
 
 1. **抽一个快照 fixtures 与 `Snapshot.to_dict()` 逐字段对照**：`meeting/state.py` 的 `to_dict()` 是唯一产出形态，顶层十键、`session` 六子键、`sources` 九键、`DrainStep` 四键都能逐行对上。`ended` / `session` / `notice` 三个 `null` 档在 `idle` 与 `idle-notice` 两个样本里各能看一次。
 2. **故意改坏一个键名跑比对测试，确认会红**（验完还原）：例如把 `contract/fixtures/snapshot/recording.json` 里的 `"top_state"` 改成 `"topState"`，`python -m pytest tests/test_contract_fixtures.py -q` 应当报出「与实时采集不一致」。

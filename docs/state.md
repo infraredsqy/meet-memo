@@ -4,7 +4,7 @@
 >
 > 读者是想接这份数据的下游开发者（前端、验收脚本、会后流程）。
 >
-> 代码落点：状态机与全部取值域在 `meeting/state.py`，场次目录与 `session.json` 在 `meeting/session.py`，告警判定在 `meeting/alerts.py`，推送在 `meeting/service/hub.py`，这一切的持有者是 `meeting/service/runtime.py` 的 `ServiceRuntime`。HTTP 面见 `docs/api.md`。
+> 代码落点：状态机与全部取值域在 `meeting/state.py`，场次目录与 `session.json` 在 `meeting/session.py`，告警判定在 `meeting/alerts.py`，推送在 `meeting/service/hub.py`，这一切的持有者是 `meeting/service/runtime.py` 的 `ServiceRuntime`。HTTP 面见 `docs/api.md`；**可机读的那份对外形状**（逐键 schema、帧形状、`code`/`detail` 表）见 `docs/contract.md` —— 这份文档与它冲突时以代码实际行为为准，权威落在契约那一本。
 
 ## 章节目录
 
@@ -128,7 +128,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 `settings` 的语义：
 
 - `asr` 的五子键与配置键 `asr.*` 逐字同名（去掉前缀），取当前生效值：`max_segment_seconds` / `timeout_seconds` / `max_new_tokens` / `repeat_max_unit` / `repeat_min_coverage`。
-- `devices` 现在是**空对象 `{}`**：位置留着，子键由设备节点（`dca4539b`）与双端契约（`c62dec56`）定名后补。
+- `devices` 现在是**空对象 `{}`**：位置留着，子键由设备节点（`dca4539b`）定名后补。
 - 这里读到的是**运行期生效值**。非热读的键改了要重启才在快照里可见，详见 `docs/service.md` 第 4 章的键态两分。
 
 `transcript` 的语义：`health ∈ normal / behind / stopped`，`buffered_lines` 是积压段数、`failed_segments` 是累计识别失败段数。**这两个计数只进 log 与 `/debug`**，产品界面不摆它们。转写停了不影响录音、电平与告警，只影响总结入口。骨架阶段（没有转写后端）恒为 `normal` + 0。

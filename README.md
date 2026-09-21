@@ -132,7 +132,7 @@
 | 配置 | `~/.config/meeting/config.json`（点号扁平键名的单层映射，例如 `{"web.port": 8765}`；**不迁移** V1 的 `~/.config/meeting_notes/`） |
 | 输出根 | `%USERPROFILE%\Documents\meeting\out`（`output.root` / `MEETING_OUT_ROOT` 可改） |
 | 场次目录 | `<输出根>\YYMMDD`（同名已存在就让位到 `-2` / `-3`…） |
-| 前端产物 | `web.dist_dir`（默认 `web/dist`；目录缺失时 `GET /` 给一张说明页、服务照常起，`/debug` 与 `/api/*` 照常可用；目录**在但是空的**回 404 —— 跑 `npm run build` 重新产出即可） |
+| 前端产物 | `web.dist_dir`（默认 `web/dist`）。目录缺失时 `GET /` 给一张说明页、服务照常起，`/debug` 与 `/api/*` 照常可用；目录**在但是空的**回 404 —— 跑 `npm run build` 重新产出即可。目录存在性**按每请求判定**，产物一建好刷新即可见，不必重启服务 |
 
 回归入口：
 
@@ -171,8 +171,7 @@
     npm test           # vitest run，4 个文件 118 个用例
     npm run typecheck  # 两条 tsc --noEmit -p，各查各的 project
 
-契约正文在 `docs/contract.md`，可机读基准（25 个 golden 样本与掩码规则）在 `contract/`，
-前端工程自己的说明在 `web/README.md`。
+`npm run build` 里已经含 `npm run typecheck`，所以构建过一次就不必再单独跑；只改类型不看产物时跑 `typecheck` 更快。契约正文在 `docs/contract.md`，可机读基准（25 个 golden 样本与掩码规则）在 `contract/`，前端工程的五个脚本（`dev` / `typecheck` / `build` / `preview` / `test`）与其余说明在 `web/README.md`。
 
 ---
 
