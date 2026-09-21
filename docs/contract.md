@@ -113,7 +113,7 @@
 `settings` 四键：`alarm_sound`（bool）、`heartbeat_interval_seconds`（int，界面发心跳的周期）、`asr`（五子键，与配置键 `asr.*` **逐字同名**、只去掉前缀）、`devices`（两子键 `mic` / `loopback`，与配置键 `devices.mic` / `devices.loopback` **逐字同名**、只去掉前缀，见第 7 章）。
 
 - `asr` 五子键：`max_segment_seconds` / `timeout_seconds` / `max_new_tokens` / `repeat_max_unit` / `repeat_min_coverage`。
-- `devices` 两个子键的取值是**设备名字符串**；没配就是 `null`（按默认策略挑设备）。空值形状两端一致：配置文件里也写 `null`，空字符串不是合法取值。
+- `devices` 两个子键的取值是**设备名字符串**；没配就是 `null`（按默认策略挑设备）。空值形状两端一致：配置文件里也写 `null`，**空字符串与纯空白串按没配处理**（`meeting/config.py` 的 `validate_value()` 把两个设备键位上的空串与纯空白串归一成 `null`）——`settings_update` 写 `"devices.mic": ""` 或 `"   "` 会照常落盘、落成 `null`。
 - 这里读到的是**运行期生效值**。非热读的键改了要重启才在快照里可见（第 4 章）。
 
 `notice`：现在只有 `kind = "restart_unfinished"` 一种。`text` 是一句完整的话（「服务重启过。上一场的收尾没走完，音频在 <场次目录>，日志在 <服务级 log 路径>。」）；`session_dir` 指没收完的那一场（**掩码 `<path>`**）；`log_path` 指**本次启动的服务级日志**（与 `service.log_path` 同一处取值，**不是场次日志**；掩码 `<path>`）。
@@ -501,7 +501,7 @@ python -m pytest tests/test_contract_fixtures.py --regen-contract -q
 1. **抽一个快照 fixtures 与 `Snapshot.to_dict()` 逐字段对照**：`meeting/state.py` 的 `to_dict()` 是唯一产出形态，顶层十键、`session` 六子键、`sources` 九键、`DrainStep` 四键都能逐行对上。`ended` / `session` / `notice` 三个 `null` 档在 `idle` 与 `idle-notice` 两个样本里各能看一次。
 2. **故意改坏一个键名跑比对测试，确认会红**（验完还原）：例如把 `contract/fixtures/snapshot/recording.json` 里的 `"top_state"` 改成 `"topState"`，`python -m pytest tests/test_contract_fixtures.py -q` 应当报出「与实时采集不一致」。
 3. **任选两条 `detail` 与 `meeting/service/runtime.py` 的实际路径对照**：`already_recording` 三键在 `_already_recording_error()`、`draining` 四键在 `_draining_error()` / `_draining_error_for_dir()`（后者从盘上那一版读 `failed_steps`）。
-4. **确认保留登记章里没有任何端点被顺手实现**：`python -c "from meeting.service.routes import all_routes; print([r.path for r in all_routes()])"` 应当只打出五条路径（四条 `/api/*` + `/debug`）；`ACTION_NAMES` 应当只有五个名字（`summarize` / `reprobe` 不在其中）。
+4. **确认保留登记章里没有任何端点被顺手实现**：`python -c "from meeting.service.routes import all_routes; print([r.path for r in all_routes()])"` 应当只打出五条路径（四条 `/api/*` + `/debug`）；`ACTION_NAMES` 应当有六个名字（`start` / `stop` / `mute_session` / `settings_update` / `reprobe` / `dev_inject`，`summarize` 不在其中）。
 
 ## 10. 相关文档
 

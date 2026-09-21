@@ -2,14 +2,17 @@
 
 被验的是 `meeting/capture/devices.py` 里那两段**从 V1 拷过来的内核**
 （`mnotes_core/recorder.py:371-413` 与 `:444-465`）在换成「端点表 + 假试开函数」之后
-行为是否还认得出原样：
+行为是否还认得出原样（两处收尾按 `phase1/task.md` §3 的裁定改过，见下面最后两条）：
 
   - V1 的候选筛选：同名 + `max_input_channels > 0`；
   - V1 的 `host_rank`：`WASAPI → DirectSound → MME → 其它(9)`；
-  - V1 的两条短路口：「**同名候选只有一条 → 直接返回**」与「**全试完都不成 → 回落首个候选**」；
+  - V1 的排序逐个试开骨架（`cands.sort(key=host_rank)` 后逐条试、取第一条成的）；
   - V1 的 loopback 三级：精确名 → `CABLE Input` 且不含 `16ch` → `default_speaker()`；
-  - V2 补的三件事：没配名字时也挑（好让快照报得出真设备名）、抓取型虚拟端点不进候选、
-    试开时读回样本判「有没有真实波形」。
+  - V2 补的四件事：没配名字时也挑（好让快照报得出真设备名）、抓取型虚拟端点不进候选、
+    试开时读回样本判「有没有真实波形」、名字的**精确优先落到候选集合上**；
+  - V2 按任务书 §3 第 5、6 条改的收尾**两档收敛**：在打开了的那几条里挑（先要有波形的，
+    一条都没有就取第一条打开了）；**一条都没打开**时落 `probe_failed`、`endpoint=None`
+    （V1 那两条短路口 —— 单候选直接返回、全失败回落首个候选 —— 都不再照搬）。
 
 端点表与试开函数都是本文件造的假件；真机那一侧不在自动化测试里验（真开设备需要机主点头）。
 """
@@ -209,16 +212,20 @@ def test_marker_tokens_survive_hyphenated_spellings():
 def test_pseudo_capture_endpoints_stay_out_of_the_mic_candidates():
     """抓取型虚拟端点不进候选（本机系统默认输入就是它）。"""
     # 显式点名那条虚拟线：候选收窄到它，并标记成「显式配的抓取型端点」
-    candidates, explicit_pseudo = devices_module.mic_candidates(
+    candidates, explicit_pseudo, matched_prefix = devices_module.mic_candidates(
         MACHINE_INPUTS, "CABLE Output (VB-Audio Virtual Cable)"
     )
     assert explicit_pseudo is True
+    assert matched_prefix is False
     assert [item.name for item in candidates] == ["CABLE Output (VB-Audio Virtual Cable)"] * 2
 
     # 没配名字时：种子取序号最小的**非抓取型**输入端点（`Microsoft 声音映射器 - Input` #0），
     # 于是那条虚拟线一条都不进候选
-    candidates, explicit_pseudo = devices_module.mic_candidates(MACHINE_INPUTS, None)
+    candidates, explicit_pseudo, matched_prefix = devices_module.mic_candidates(
+        MACHINE_INPUTS, None
+    )
     assert explicit_pseudo is False
+    assert matched_prefix is False
     assert [item.name for item in candidates] == ["Microsoft 声音映射器 - Input"]
 
 
@@ -227,16 +234,29 @@ def test_pseudo_capture_endpoints_stay_out_of_the_mic_candidates():
 # ---------------------------------------------------------------------------
 
 
-def test_a_lone_candidate_is_returned_without_trying_it():
-    """V1 的短路：**同名候选只有一条**就直接返回它（一次试开都不做）。"""
-    test_open = opener({}, default=refuse("假件：不该被调到"))
+def test_a_lone_candidate_is_still_tried_once():
+    """V1 的单候选短路口**不再照搬**：候选只有一条也试开一次（读回样本才判得出「有没有波形」）。"""
+    test_open = opener({"Microsoft 声音映射器 - Input": open_with(WAVE)})
     outcome = select_microphone(
         MACHINE_INPUTS, "Microsoft 声音映射器 - Input", test_open
     )
     assert outcome.status == PROBE_READY
     assert outcome.device_name() == "Microsoft 声音映射器 - Input"
-    assert test_open.calls == []  # type: ignore[attr-defined]
-    assert "候选只有一条" in outcome.detail
+    assert test_open.calls == ["Microsoft 声音映射器 - Input"]  # type: ignore[attr-defined]
+    assert "有真实波形" in outcome.detail
+
+
+def test_a_lone_candidate_that_cannot_be_opened_reports_probe_failed():
+    """单候选也开不了 → `probe_failed`、`endpoint=None`（不再直接把它当 `ready` 报上去）。"""
+    test_open = opener({"Microsoft 声音映射器 - Input": refuse("被别的程序占着")})
+    outcome = select_microphone(
+        MACHINE_INPUTS, "Microsoft 声音映射器 - Input", test_open
+    )
+    assert outcome.status == PROBE_FAILED
+    assert outcome.device_name() is None
+    assert test_open.calls == ["Microsoft 声音映射器 - Input"]  # type: ignore[attr-defined]
+    assert "一条都没打开" in outcome.detail
+    assert "被别的程序占着" in outcome.detail
 
 
 def test_same_named_candidates_are_tried_in_host_rank_order():
@@ -271,8 +291,13 @@ def test_same_named_candidates_are_tried_in_host_rank_order():
     assert "Invalid sample rate" in outcome.detail  # WASAPI 那条的留痕
 
 
-def test_all_candidates_silent_falls_back_to_the_first_one():
-    """V1 的回落：全都开不成（或开了没波形）→ **使用首个候选**。"""
+def test_all_candidates_silent_takes_the_first_one_that_opened():
+    """一条有波形的都没有时：取**第一条打开了**的（`ready`），不是排序后的第一条。
+
+    本机实测的摆法：WASAPI 那条在 16k 直接开不了、DirectSound 那条能开但全是零、MME 那条
+    也能开但全是零 —— 中选的是排序后**第一条打开了**的 DirectSound（WASAPI 那条从头到尾
+    都没打开过，因此进不了这一档）。
+    """
     name = "Analogue 1 + 2 (2- Focusrite USB Audio"
     endpoints = (
         DeviceEndpoint(name, "Windows WASAPI", "input", index=18, channels=2),
@@ -281,18 +306,54 @@ def test_all_candidates_silent_falls_back_to_the_first_one():
     )
     seen: list[str] = []
 
-    def always_silent(endpoint: DeviceEndpoint) -> OpenAttempt:
+    def wasapi_refuses_the_rest_silent(endpoint: DeviceEndpoint) -> OpenAttempt:
         seen.append(endpoint.host_api)
+        if endpoint.host_api == "Windows WASAPI":
+            return refuse()
         return open_with(SILENCE)
 
-    outcome = select_microphone(endpoints, name, always_silent)
+    outcome = select_microphone(endpoints, name, wasapi_refuses_the_rest_silent)
     assert outcome.status == PROBE_READY
     assert outcome.device_name() == name
     assert outcome.endpoint is not None
-    # 回落的是**排序后**的首个候选 = WASAPI 那条（V1 的 `cands.sort` 之后 `cands[0]`）
-    assert outcome.endpoint.host_api == "Windows WASAPI"
+    assert outcome.endpoint.host_api == "Windows DirectSound"
     assert seen == ["Windows WASAPI", "Windows DirectSound", "MME"]
-    assert "使用首个候选" in outcome.detail
+    assert "取第一条**打开了**的候选" in outcome.detail
+    # WASAPI 那条的失败留痕照样在（试过但没选上）
+    assert "Invalid sample rate" in outcome.detail
+
+
+def test_no_candidate_opens_reports_probe_failed():
+    """**一条都没打开** → `probe_failed` + `endpoint=None`，`detail` 逐条写清各自为什么没成。
+
+    这就是任务书 §3 第 6 条与两态裁定的那一条：V1 在这里返回 `cands[0]`，V2 有 `probe_failed`
+    这一档可报，**不许**把一个从没打开过的端点当 `ready` 报上去（那会先显示就绪、真开录立刻
+    掉线）。
+    """
+    name = "Analogue 1 + 2 (2- Focusrite USB Audio"
+    endpoints = (
+        DeviceEndpoint(name, "Windows WASAPI", "input", index=18, channels=2),
+        DeviceEndpoint(name, "Windows DirectSound", "input", index=8, channels=4),
+        DeviceEndpoint(name, "MME", "input", index=1, channels=4),
+    )
+    seen: list[str] = []
+
+    def always_refuses(endpoint: DeviceEndpoint) -> OpenAttempt:
+        seen.append(endpoint.host_api)
+        return refuse(f"{endpoint.host_api} 这条打不开")
+
+    outcome = select_microphone(endpoints, name, always_refuses)
+    assert outcome.status == PROBE_FAILED
+    assert outcome.status in SOURCE_STATUS
+    assert outcome.endpoint is None
+    assert outcome.device_name() is None
+    # 三条候选逐条试过，各条的失败原因都写在 detail 里
+    assert seen == ["Windows WASAPI", "Windows DirectSound", "MME"]
+    assert "3 条候选端点一条都没打开" in outcome.detail
+    for host in ("Windows WASAPI", "Windows DirectSound", "MME"):
+        assert f"{host} 这条打不开" in outcome.detail
+    assert "不回落从没打开过的候选" in outcome.detail
+    assert len(outcome.attempts) == 3
 
 
 def test_no_candidate_reports_probe_failed():
@@ -320,7 +381,7 @@ def test_default_input_is_used_when_nothing_is_configured():
 
 
 def test_explicit_name_is_matched_exactly_first():
-    """精确名命中（V1 的 `d.get("name") == name`）：候选就是那一条，别的一条都不碰。"""
+    """精确名命中（V1 的 `d.get("name") == name`）：候选就是那几条同名的，别的一条都不碰。"""
     name = "Analogue 1 + 2 (2- Focusrite USB Audio"
     endpoints = (
         DeviceEndpoint(name, "Windows WASAPI", "input", index=18, channels=2),
@@ -339,16 +400,53 @@ def test_explicit_name_is_matched_exactly_first():
     assert seen == ["Windows WASAPI"]  # 第一条就有波形，后面的不再试
 
 
+def test_exact_name_wins_over_a_prefix_match_in_the_candidate_set():
+    """显式配的**截断名**精确命中 MME 那条：前缀命中的 WASAPI 那条不进候选。
+
+    这条与下一条一起收掉 C1 复审的 minor 2：名字的两档匹配落在**候选集合**上（先取精确名
+    命中的候选，精确命中为空才用前缀兜一次），于是「精确名命中 MME、前缀命中 WASAPI」时
+    选中 MME 那条，`matched_prefix` 如实为 `False`。
+    """
+    truncated = "Analogue 1 + 2 (2- Focusrite US"
+    endpoints = (
+        DeviceEndpoint(
+            "Analogue 1 + 2 (2- Focusrite USB Audio)", "Windows WASAPI", "input",
+            index=18, channels=2,
+        ),
+        DeviceEndpoint(truncated, "MME", "input", index=1, channels=4),
+    )
+    test_open = opener(
+        {
+            "Analogue 1 + 2 (2- Focusrite USB Audio)": open_with(WAVE),
+            truncated: open_with(SILENCE),
+        }
+    )
+
+    outcome = select_microphone(endpoints, truncated, test_open)
+    # 前缀兜那条（有波形）从头到尾没被试开：候选集合里只有精确命中的 MME 那条
+    assert test_open.calls == [truncated]  # type: ignore[attr-defined]
+    assert outcome.endpoint is not None
+    assert outcome.endpoint.host_api == "MME"
+    assert outcome.device_name() == truncated
+    assert outcome.matched_prefix is False
+    assert "按前缀兜到" not in outcome.detail
+
+
 def test_explicit_name_falls_back_to_a_prefix_match():
     """MME 端点名会被 Windows 截断：精确名不中时用**双向前缀**兜，报实际命中的那个名字。"""
     full = "Analogue 1 + 2 (2- Focusrite USB Audio)"
     endpoints = (DeviceEndpoint("Analogue 1 + 2 (2- Focusrite US", "MME", "input", index=1),)
-    outcome = select_microphone(
-        endpoints, full, lambda endpoint: open_with(SILENCE)
-    )
+    calls: list[str] = []
+
+    def record(endpoint: DeviceEndpoint) -> OpenAttempt:
+        calls.append(endpoint.name)
+        return open_with(SILENCE)
+
+    outcome = select_microphone(endpoints, full, record)
     assert outcome.device_name() == "Analogue 1 + 2 (2- Focusrite US"
     assert outcome.matched_prefix is True
     assert "按前缀兜到" in outcome.detail
+    assert calls == ["Analogue 1 + 2 (2- Focusrite US"]  # 兜到的这条也走一遍试开
 
     # 精确名命中时不带前缀标记
     exact = (DeviceEndpoint(full, "Windows DirectSound", "input", index=8),)

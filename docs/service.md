@@ -218,11 +218,11 @@ python -m pytest -q
 python -m pytest tests/test_state_machine.py tests/test_api_actions.py -q   # 只跑某几个文件
 ```
 
-`tests/` 下现在有 **20 个测试文件、273 个用例**（`python -m pytest -q` 实测：`273 passed in 80.71s`）。不需要先 `pip install`，也不需要可编辑安装。
+`tests/` 下现在有 **23 个测试文件、334 个用例**（`python -m pytest -q` 实测：`334 passed in 84.30s`）。不需要先 `pip install`，也不需要可编辑安装。
 
 | 文件 | 用例数 | 验什么 |
 |---|---|---|
-| `tests/test_config.py` | 30 | 默认值表、三层优先级、环境变量映射、五个热读键、键间校验、配置损坏抛错、值非法 → 退出码 `2` |
+| `tests/test_config.py` | 31 | 默认值表、三层优先级、环境变量映射、五个热读键、键间校验、配置损坏抛错、值非法 → 退出码 `2` |
 | `tests/test_port_policy.py` | 22 | 端口与只监听回环、两种占用文案与退出码 `2`、探针 1 秒总超时、用法错误、`post` 桩、空闲态 `CTRL_BREAK_EVENT` → 退出码 `0` 与两行信号 log、console script 入口面 |
 | `tests/test_static.py` | 19 | `/` 的产物与说明页两条分支、**目录存在性按每请求判定**（同一个应用实例里「缺失 → 建出 → 又删掉」三步走完、中间不重启）、`/debug`、`/api/*` 的 `no-store`、Host 校验 `403`、动作头校验 `403`、完整版快照的键集与非空 `service.version`、`revision` 每次状态变更 +1、心跳六字段、空闲态盘上不留任何场次产物 |
 | `tests/test_contract_fixtures.py` | 8 | 与 `contract/fixtures/` 的漂移比对：重走真实服务路径采集 25 个样本逐文件比对（默认模式）、掩码结构断言（顶层十键 / 十二键、两路次序、包络长度 15、`levels` 的 `ts is None` 与 `bar == envelope[-1]`、心跳六键、四帧 `revision` 自洽）、`--regen-contract` 的再生成与幂等 |
@@ -242,6 +242,9 @@ python -m pytest tests/test_state_machine.py tests/test_api_actions.py -q   # �
 | `tests/test_e2e_multi_client.py` | 2 | 两个订阅者同一 `revision`、同一 `muted`；下一场 `start` 之后会话级静音复位、`alarm.sound` 未变 |
 | `tests/test_e2e_restart_consistency.py` | 3 | 进程级重启自洽：`recording` 中被杀 / `stop` 之后被杀两个现场 → 重启后 `idle` + `restart_unfinished` + 不自动续录；再重启一次仍是同一副面孔 |
 | `tests/test_e2e_silence_alert.py` | 1 | 一路静默 → 致命级告警、另一路照常采、录音继续（`session.frozen` 为假）、结束必须由测试 `stop` |
+| `tests/test_capture_devices.py` | 30 | 设备模型与挑选策略（纯逻辑、注入假端点表）：有波形 / 全零 / 开不了三档、`CABLE Output` 抓取型端点挡拦、host API 排序、MME 截断名的前缀兜底与**精确名优先**、收尾两档收敛（一条都没打开 → `probe_failed`）、loopback 三级 |
+| `tests/test_capture_probe.py` | 29 | 真探测这一段的后端与选择面：`probe()` 两路各一条结论与三档取值域、`device_name` 是真端点名、试开真的读回样本、重复探测幂等、`start()` 抛 `CaptureUnavailable`、没有 `inject_fault`、`auto` 解析到真类、`settings.devices` 与 `reprobe` 动作 |
+| `tests/test_real_capture_guard.py` | 1 | 「一碰真声卡就炸」那道看门**与导入次序无关**：在一个全新解释器里（库还没被 import）直接调四个真采集入口，逐条必须被拦下，且**每次调用之前先断言目标确实是桩**（桩不在时红在断言上，真调用一次都不发出去） |
 
 除这些，`tests/` 下还有**测试支持**（不被 `pytest` 收集）：`tests/_helpers.py`（真服务子进程与假浏览器等工具）、`tests/_service.py`（真服务子进程驱动件 + SSE 读帧与等待助手）、`tests/_drain_fakes.py`（收尾与关停用例共用的假后端 / 假钩子，与工厂辅助一起挂进子进程）、`tests/_contract.py`（`contract/fixtures/` 的采集、掩码与落盘比对；它按需写出一个假转写后端，经 `PYTHONPATH` + `transcriber.backend` 的 `module:Class` 挂进子进程）、`tests/__init__.py`（`tests/` 的包标记，跨文件取用走包路径 import）、`tests/conftest.py`（**只放 fixture**，其中一个 autouse 的兜底把 `webbrowser.open` 换成只记录不开窗的假替身；另注册 `--regen-contract` 开关）、`tests/_fake_webbrowser/`（替掉标准库 `webbrowser` 的假模块）。
 
@@ -259,7 +262,7 @@ python -m pytest tests/test_state_machine.py tests/test_api_actions.py -q   # �
 
 **还接不上**（都按「能力还没进来」理解，服务本身照常跑）：
 
-- **真实采集与转写**：默认后端是 `null` 替身，如实报「两路都未探测」；`start` 会回 `503 capture_unavailable`（「采集后端未接入：当前是 null 替身，不会真的录音」），盘上不留任何场次目录。收尾四步里的第 1、2 步和第 4 步因此都记 `skipped` —— 没有真实音频可落盘、可转码，也没有会后钩子。第 1、2 步的实现归 `dca4539b`，第 4 步归 `65dd3e4c`。
+- **真实采集与转写**：设备枚举与试开已经接通（`capture.backend` 的默认值 `auto` 解析到 `meeting.backends.capture:CaptureBackend`），探测结果两路各一条：挑到端点的报 `ready`、一个能打开的端点都没有的报 `probe_failed`。`start` 会回 `503 capture_unavailable`（「采集引擎在下一执行单元接入：这一段只交设备层，不会真的录」），盘上不留任何场次目录。收尾四步里的第 1、2 步和第 4 步因此都记 `skipped` —— 没有真实音频可落盘、可转码，也没有会后钩子。第 1、2 步的实现归 `dca4539b`，第 4 步归 `65dd3e4c`。
 - **端口被占时那句文案里的「已录多久」**：占用者是本服务时，括号里眼下是**字面写死的「当前空闲」**（`meeting/service/app.py` 的端口探测那一处还没取用会话时长这个值）。`README.md` 与 `docs/api.md` 都照这个现状写。
 - **真机真开一场会**：设备枚举与真实电平只有真开一场才见分晓，这一条是**手工验收**，四条端到端脚本与它无关。自动化边界归下游 `46ae4a08`。
 - **`meeting post`**：只有桩（打印「会后流程还没接入（65dd3e4c）」、退出码 `1`）。它同时是收尾失败后的出路之一，实现归 `65dd3e4c`。

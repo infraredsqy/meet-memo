@@ -63,6 +63,11 @@ GUARDED_CALLS: dict[tuple[str, str], tuple[list[str], dict[str, str]]] = {
 #: 子进程里那份最小用例的落点（临时目录下）
 _SUBPROCESS_TEST_FILE = "test_zz_fresh_interpreter_guard.py"
 
+#: 看门装的桩的记号（`tests/conftest.py` 的 `_forbid_real_capture()` 里那个内层函数名）
+GUARD_STUB_QUALNAME_TOKEN = "blocked"
+#: 看门的桩定义在哪个模块（身份断言的第二半）
+GUARD_STUB_MODULE = "tests.conftest"
+
 
 def _entries_for_installed_modules() -> list[tuple[str, str]]:
     """只把**这台机器上装着的**库的入口列进来（没装的库不验：它连调用都无从谈起）。
@@ -95,7 +100,13 @@ def _python_literal(value: object) -> str:
 
 
 def _subprocess_case_source(entries: list[tuple[str, str]]) -> str:
-    """生成子进程里那份用例的源码：**不 import 任何声卡库**，直接调四个入口。"""
+    """生成子进程里那份用例的源码：**不 import 任何声卡库**，直接调四个入口。
+
+    生成的用例在**每一次调用之前**先断言目标确实是 `tests/conftest.py` 装的那个桩
+    （`"blocked" in __qualname__` 且 `__module__ == "tests.conftest"`）：这条验的安全性整个
+    押在它正在验的那道看门上 —— 看门一回归，`sd.InputStream(0)` 在 `__init__` 里就调
+    `Pa_OpenStream`，`sd.rec(1)` 会真的录 1 秒。桩没装上就红在断言上，调用一次都不发出去。
+    """
     cases = []
     for module_name, entry in entries:
         args, kwargs = GUARDED_CALLS[(module_name, entry)]
@@ -109,7 +120,8 @@ def _subprocess_case_source(entries: list[tuple[str, str]]) -> str:
         '"""\n\n'
         "from __future__ import annotations\n\n"
         "import pytest\n\n"
-        "from tests.conftest import REAL_CAPTURE_FORBIDDEN_MESSAGE, RealCaptureForbidden\n\n"
+        "from tests.conftest import REAL_CAPTURE_FORBIDDEN_MESSAGE, RealCaptureForbidden\n"
+        "from tests.test_real_capture_guard import GUARD_STUB_MODULE, GUARD_STUB_QUALNAME_TOKEN\n\n"
         "CASES = [\n"
         + "".join(cases)
         + "]\n\n\n"
@@ -119,12 +131,28 @@ def _subprocess_case_source(entries: list[tuple[str, str]]) -> str:
         "    那道看门夹具里第一次被请进来、同一刻被打上桩的 —— 所以子进程用不着先替谁 import\n"
         "    一次，调用点撞上的就是桩。修 C1 之前那种写法（只查 `sys.modules`、查不到就跳过）\n"
         "    下，这里每一次调用都会落到真设备上：`rec(1)` 交回 `PortAudioError`，而不是下面\n"
-        "    点名要的 `RealCaptureForbidden`。\n"
+        "    点名要的 `RealCaptureForbidden`。\n\n"
+        "    **每一次调用之前**先断言那个入口确实是桩：看门一旦回归，这一句断言会先把用例\n"
+        "    拦下，真调用（`InputStream(0)` 在 `__init__` 里就 `Pa_OpenStream`、`rec(1)` 录\n"
+        "    1 秒）一次都不会发出去。\n"
         '    """\n'
         "    import importlib\n\n"
         "    called = []\n"
         "    for module_name, entry, args, kwargs in CASES:\n"
         "        module = importlib.import_module(module_name)\n"
+        "        target = getattr(module, entry)\n"
+        "        where = f\"{module_name}.{entry}\"\n"
+        "        qualname = str(getattr(target, '__qualname__', ''))\n"
+        "        origin = str(getattr(target, '__module__', ''))\n"
+        "        # 调用之前的身份断言：桩没装上就红在这里，真调用一次都不发出去\n"
+        "        assert GUARD_STUB_QUALNAME_TOKEN in qualname, (\n"
+        "            f'{where} 上没有看门装的桩（__qualname__ = {qualname!r}）：'\n"
+        "            '再往下就会真的打开设备，因此停在这里'\n"
+        "        )\n"
+        "        assert origin == GUARD_STUB_MODULE, (\n"
+        "            f'{where} 上的桩不来自 {GUARD_STUB_MODULE}（__module__ = {origin!r}）：'\n"
+        "            '停在这里'\n"
+        "        )\n"
         "        with pytest.raises(RealCaptureForbidden) as info:\n"
         "            getattr(module, entry)(*args, **kwargs)\n"
         "        text = str(info.value)\n"
@@ -139,10 +167,11 @@ def test_a_fresh_interpreter_blocks_the_real_capture_entries(tmp_path: Path) -> 
     """**在一个全新解释器里验证 C1 的修复**：库未 import 时看门照样把四个入口拦下。
 
     子进程里跑的是 `python -m pytest <tmp_path>`（`-p no:cacheprovider`、`-c <临时配置>`、
-    `--rootdir=<仓库根>`）：临时目录里那份最小用例在调每个入口之前逐条断言「这个库还没进
-    `sys.modules`」，「不依赖导入顺序」这句话因此落在子进程自己给出的读数上。任何一条入口
-    没被拦下（或拦下来抛的不是 `RealCaptureForbidden`、文案不对），子进程的 pytest 就非零
-    退出，这条用例跟着红。
+    `--rootdir=<仓库根>`）：临时目录里那份最小用例在调每个入口之前先断言**那个入口确实是桩**
+    （`"blocked" in __qualname__` 且 `__module__ == "tests.conftest"`），「不依赖导入顺序」
+    这句话因此落在子进程自己给出的读数上。任何一条入口没被拦下（或拦下来抛的不是
+    `RealCaptureForbidden`、文案不对），子进程的 pytest 就非零退出，这条用例跟着红；而看门
+    一旦回归，子进程红在**调用之前**那道身份断言上 —— 真设备一次都不会被碰到。
     """
     entries = _entries_for_installed_modules()
     if not entries:  # pragma: no cover - 这台机器上一个声卡库都没装

@@ -14,9 +14,16 @@
   4. 返回值：V1 交回设备索引 / speaker 对象，这里交回端点对象与一句人话（`SelectionOutcome`），
      好让 `probe()` 能如实报 `SourceProbe` 的三档。
 
-候选筛选、`host_rank` 的 `WASAPI → DirectSound → MME → 其它` 次序、同名候选 ≥2 才排序试开、
-单候选直接返回、全失败回落首个候选、「精确名 → `CABLE Input` 且不含 `16ch` → `default_speaker()`」
+候选筛选、`host_rank` 的 `WASAPI → DirectSound → MME → 其它` 次序、名字精确优先（精确名不中
+再用前缀兜一次）、loopback 的「精确名 → `CABLE Input` 且不含 `16ch` → `default_speaker()`」
 三级 —— 一律照 V1 原文。每段都留了 `# 搬自 V1 ...` 的出处注释。
+
+**两处收尾有意不照搬 V1**（理由见 `select_microphone()` 的文档串与 `phase1/task.md` §3 第 5、6 条）：
+
+  - 「候选只有一条就直接返回」（试开都不做）不再照搬：单候选也试开一次；
+  - 「全试完都不成 → 回落首个候选」换成**分两档收敛**：在打开了的那几条里挑（先要有波形的，
+    一条都没有就取第一条打开了）；**一条都没打开**时落 `probe_failed`、`endpoint=None`，
+    绝不回落一个从没打开过的候选 —— V1 没有 `probe_failed` 这一态可报，V2 有。
 
 **唯一预批准的补强**：试开那一步读回一小段样本（`_has_sound()`），把「能打开」与「真的出声音」
 分开。V1 自己的注释里就写了「DirectSound 可能开得起来却全是零」（`recorder.py:376-377`），
@@ -361,8 +368,8 @@ def sort_candidates(endpoints: Iterable[DeviceEndpoint]) -> list[DeviceEndpoint]
 
 def mic_candidates(
     endpoints: Iterable[DeviceEndpoint], configured: str | None
-) -> tuple[list[DeviceEndpoint], bool]:
-    """麦克风候选 → `(候选表, 是否显式配了抓取型端点)`。
+) -> tuple[list[DeviceEndpoint], bool, bool]:
+    """麦克风候选 → `(候选表, 是否显式配了抓取型端点, 是否靠前缀兜的)`。
 
     搬自 `mnotes_core/recorder.py:379-390`：
 
@@ -380,15 +387,25 @@ def mic_candidates(
 
     两处 V2 的差异（都写在下面，各自的理由都在）：
 
+    三处 V2 的差异（都写在下面，各自的理由都在）：
+
       - `if not name: return None` 这一档（交给 `sd.InputStream` 用系统默认输入）换成
         「拿系统默认输入那条端点的名字当候选名的种子」：本段的交付要求是快照里报得出两路的
         **真实设备名**，`device=None` 那条路报不出名字来。种子取端点表里序号最小的输入端点
         （`sounddevice` 的默认输入就是它），随后的筛选 / 排序 / 试开照 V1 走；
       - 候选里再滤掉抓取型虚拟端点（见 `is_pseudo_capture()`）。本机的系统默认输入正是
-        `CABLE Output`，不滤会把远端当成麦克风录一遍。
+        `CABLE Output`，不滤会把远端当成麦克风录一遍；
+      - 名字的两档匹配**落到候选集合上**（`name_matches()` 同时给出「中没中」与「是不是靠
+        前缀兜的」）：先取**精确名**命中的那些候选（V1 的 `d.get("name") == name`），精确
+        命中为空时才用前缀兜一次。V1 只有精确名这一档，截断名那条兜底是 V2 为 MME 加的；
+        两档混在一个候选集合里会让「精确命中的 MME 那条」被「前缀命中的 WASAPI 那条」按
+        host rank 挤掉，第三档返回值就是这件事的如实留痕（`matched_prefix`）。
+
+    第三个返回值只对**显式配置**有意义（没配名字时种子取的是端点表里的原名，一律精确命中）。
     """
     inputs = [endpoint for endpoint in endpoints if endpoint.role == "input"]
     name = (configured or "").strip()
+    matched_prefix = False
 
     if not name:
         # V1 这一档是「交给系统默认输入」：这里换成默认输入那条端点的名字，
@@ -396,27 +413,40 @@ def mic_candidates(
         seed_pool = [item for item in inputs if not is_pseudo_capture(item.name)]
         with_index = [item for item in seed_pool if item.index is not None]
         if not with_index:
-            return ([], False)
+            return ([], False, False)
         default_index = min(item.index for item in with_index)
         name = next(item.name for item in with_index if item.index == default_index)
 
+    # 第一档：**精确名**（V1 的 `d.get("name") == name`）命中几条就是几条
     cands = [
         endpoint
         for endpoint in inputs
-        if name_matches(name, endpoint.name)[0]
+        if name_matches(name, endpoint.name) == (True, False)
     ]
     if not cands:
+        # 第二档：精确名一条都不中，才用前缀兜一次（MME 端点名会被 Windows 截断）
+        cands = [
+            endpoint
+            for endpoint in inputs
+            if name_matches(name, endpoint.name) == (True, True)
+        ]
+        matched_prefix = bool(cands)
+    if not cands:
         log.warning("mic device '%s' not found, using default input", name)
-        return ([], False)
+        return ([], False, False)
     if not any(is_pseudo_capture(endpoint.name) for endpoint in cands):
-        return (cands, False)
+        return (cands, False, matched_prefix)
     # 落到抓取型端点上（显式配的，或种子正好是它）：V2 照办并留一句提醒
     log.warning(
         "mic device '%s' 是抓取型虚拟端点（CABLE Output 这类），"
         "它抓的是往 CABLE Input 播出去的声音",
         name,
     )
-    return ([endpoint for endpoint in cands if is_pseudo_capture(endpoint.name)], True)
+    return (
+        [endpoint for endpoint in cands if is_pseudo_capture(endpoint.name)],
+        True,
+        matched_prefix,
+    )
 
 
 def select_microphone(
@@ -426,7 +456,7 @@ def select_microphone(
 ) -> SelectionOutcome:
     """挑麦克风端点：`_resolve_mic_device` 的骨架 + 读回样本那一步。
 
-    搬自 `mnotes_core/recorder.py:391-413`，逐段对应：
+    搬自 `mnotes_core/recorder.py:391-413`，逐段对应（两处**有意不照搬**的写在下面）：
 
         if len(cands) == 1:
             return cands[0]
@@ -443,26 +473,33 @@ def select_microphone(
         return cands[0]
 
     **加的那一步**：循环里的「能开」判定换成 `_has_sound()` —— 开起来之后读回一小段样本，
-    有波形才算数。于是「能打开但全是零」的端点不会中选，V1 的排序骨架与回落写法原样不动。
+    有波形才算数。于是「能打开但全是零」的端点不会中选，V1 的排序骨架原样不动。
+
+    **收尾那一步按任务书 §3 的裁定改过（V1 的 `return cands[0]` 不再照搬）**，收敛分两档：
+
+      - 在**打开了**的候选里挑：第一条有波形的落 `ready`；一条有波形的都没有时，取**第一条
+        打开了**的（`opened`）落 `ready`。
+        波形只用来在候选之间挑，不用来判这一路生死 —— 试开只看得见零点几秒，房间当时安静、
+        远端当时没出声时读到的就是全零，拿它报故障等于每次安静都亮一次故障灯；
+      - **一条都没打开**时落 `probe_failed` 且 `endpoint=None`，`detail` 逐条写清试过哪几条、
+        各自为什么没成。**不回落任何一个从没打开过的候选**：报一个打不开的端点上去，界面先
+        显示就绪、真开录时立刻掉线（`base.py:46` 与 `phase1/task.md:87` 定的是这个口径）。
+
+    V1 的另一条短路口（`if len(cands) == 1: return cands[0]`，一次试开都不做）也不再照搬：
+    单候选照样走一遍上面的试开与收敛，于是「候选只有一条、那条开不了」同样落 `probe_failed`。
     """
     configured_text = (configured or "").strip()
-    candidates, explicit_pseudo = mic_candidates(endpoints, configured_text)
+    candidates, explicit_pseudo, matched_prefix = mic_candidates(endpoints, configured_text)
     notes: list[str] = []
-    matched_prefix = False
 
     if configured_text:
-        found = find_by_name(
-            configured_text, [item for item in endpoints if item.role == "input"]
-        )
-        if found is not None:
-            matched_prefix = found[1]
-            if matched_prefix:
-                notes.append(
-                    f"显式配置的 devices.mic = {configured_text!r} 精确名没命中，"
-                    f"按前缀兜到 {found[0].name!r}"
-                    "（Windows 会把 MME 端点名截断，显式配置因此允许前缀兜）"
-                )
-        else:
+        if matched_prefix:
+            notes.append(
+                f"显式配置的 devices.mic = {configured_text!r} 精确名没命中，"
+                f"按前缀兜到 {candidates[0].name!r}"
+                "（Windows 会把 MME 端点名截断，显式配置因此允许前缀兜）"
+            )
+        elif not candidates:
             notes.append(
                 f"显式配置的 devices.mic = {configured_text!r} 在端点表里没命中"
                 "（精确名与前缀都没兜上）"
@@ -486,24 +523,13 @@ def select_microphone(
             explicit_pseudo=explicit_pseudo,
         )
 
-    # V1：`if len(cands) == 1: return cands[0]`
-    if len(candidates) == 1:
-        endpoint = candidates[0]
-        notes.append(f"候选只有一条，直接选中 {endpoint.label()}")
-        return SelectionOutcome(
-            status=PROBE_READY,
-            endpoint=endpoint,
-            detail=_join(notes, (), endpoint),
-            notes=tuple(notes),
-            matched_prefix=matched_prefix,
-            explicit_pseudo=explicit_pseudo,
-        )
-
-    # V1：`cands.sort(key=host_rank)` 后逐个试开、取第一个能开的
+    # V1：`cands.sort(key=host_rank)` 后逐个试开、取第一个能开且有波形的
     candidates = sort_candidates(candidates)
     attempts: list[AttemptRecord] = []
+    outcomes: list[tuple[DeviceEndpoint, OpenAttempt]] = []
     for endpoint in candidates:
         attempt = test_open(endpoint)
+        outcomes.append((endpoint, attempt))
         if attempt.opened and _has_sound(attempt):
             notes.append(
                 f"选中 {endpoint.label()}：试开 {PROBE_SAMPLE_RATE} Hz / "
@@ -521,15 +547,34 @@ def select_microphone(
             )
         attempts.append(AttemptRecord(endpoint, attempt_reason(attempt)))
 
-    # V1：`log.warning("mic device '%s' 无 host API 支持 %d Hz，使用首个候选", ...); return cands[0]`
-    endpoint = candidates[0]
+    # 一条有波形的都没有：取**第一条打开了**的（V1 的 `cands[0]` 只在「打开了」这一档里成立）
+    for endpoint, attempt in outcomes:
+        if attempt.opened:
+            notes.append(
+                f"没有一条候选端点交回真实波形，取第一条**打开了**的候选 {endpoint.label()}"
+                f"（样本峰值 {attempt.peak()} / 相邻最大变化 {attempt.max_step()}，"
+                "这一路仍算 ready：远端没在出声时读到的就是全零，不拿波形判生死）"
+            )
+            return SelectionOutcome(
+                status=PROBE_READY,
+                endpoint=endpoint,
+                detail=_join(notes, attempts, endpoint),
+                attempts=tuple(attempts),
+                notes=tuple(notes),
+                matched_prefix=matched_prefix,
+                explicit_pseudo=explicit_pseudo,
+            )
+
+    # 一条都没打开：**不回落**任何一个从没打开过的候选（V1 在这里返回 `cands[0]`，
+    # 那是因为 V1 没有 `probe_failed` 这一档可报；见任务书 §3 第 6 条与两态裁定）
     notes.append(
-        f"没有一条候选端点交回真实波形，按 V1 的做法使用首个候选 {endpoint.label()}"
+        f"{len(candidates)} 条候选端点一条都没打开，"
+        "没有选中端点（不回落从没打开过的候选：那会先显示就绪、真开录时立刻掉线）"
     )
     return SelectionOutcome(
-        status=PROBE_READY,
-        endpoint=endpoint,
-        detail=_join(notes, attempts, endpoint),
+        status=PROBE_FAILED,
+        endpoint=None,
+        detail=_join(notes, attempts, None),
         attempts=tuple(attempts),
         notes=tuple(notes),
         matched_prefix=matched_prefix,

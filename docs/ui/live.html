@@ -313,7 +313,7 @@
       <input class="field__input" id="dev-remote" type="text" value="扬声器 (VB-CABLE 2ch)" readonly>
       <button class="btn btn--small" type="button" data-pick="remote">换一个</button>
     </div>
-    <p class="field__error" id="dev-remote-err" hidden>能打开，但没有信号。换一个端点再试。</p>
+    <p class="field__error" id="dev-remote-err" hidden>没有能打开的端点。换一个端点再试。</p>
   </div>
 
   <p class="drawer__group label">告警</p>
@@ -469,7 +469,7 @@
       remote: { readout: "—", health: "untouched", healthText: "未探测", bars: ZERO, chipGlyph: "idle", chipText: "远端 · 未探测" } },
     "idle-device-fail": { name: "空闲", note: "尚未开始", clock: "00:00:00", start: true, summaryDisabled: true, summaryWhyText: "开始录音后才能总结",
       local: { readout: "—", health: "ready", healthText: "已就绪", bars: ZERO, chipText: "本地 · 已就绪 · 麦克风 (USB Audio)" },
-      remote: { readout: "—", health: "fail", healthText: "探测失败 · 能打开，但没有信号", bars: ZERO, hideBars: true, chipGlyph: "cross", chipText: "远端 · 探测失败 · 能打开，但没有信号" } },
+      remote: { readout: "—", health: "fail", healthText: "探测失败 · 没有能打开的端点", bars: ZERO, hideBars: true, chipGlyph: "cross", chipText: "远端 · 探测失败 · 没有能打开的端点" } },
     /* 服务重启过：界面重新打开时向服务取状态，服务侧没有正在进行的会话，
        所以还是空闲；日志里那条未收尾记录由顶部那一行说出来（章 4.5） */
     "idle-restarted": { name: "空闲", note: "尚未开始 · 上次的收尾没走完", clock: "00:00:00", start: true, restart: true, summaryDisabled: true, summaryWhyText: "开始录音后才能总结",

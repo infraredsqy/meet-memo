@@ -171,8 +171,8 @@ STRING_LIMITS: dict[str, tuple[str, ...] | None] = {
 }
 
 #: 可空键：**设备名没配就是 `None`**（空值形状两端一致 —— 快照 `settings.devices` 的子键在
-#: 没配时是 `null`，配置文件里也写 `null`；空字符串一律不合法，省得「空串」与「没配」
-#: 在快照里长出两种形状）
+#: 没配时是 `null`，配置文件里也写 `null`；`validate_value()` 把空字符串与纯空白串一并归一成
+#: `None`，省得「空串」与「没配」在快照里长出两种形状）
 NULLABLE_KEYS: tuple[str, ...] = ("devices.mic", "devices.loopback")
 
 #: 环境变量映射（方案明确列出的五个，一个不多一个不少）

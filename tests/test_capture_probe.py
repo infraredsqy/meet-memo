@@ -205,6 +205,32 @@ def test_probe_reads_samples_back_to_pick_the_microphone():
     assert "Invalid sample rate" in mic.detail  # WASAPI 那条的留痕
 
 
+def test_probe_picks_the_first_opened_endpoint_when_no_waveform_shows_up():
+    """一条有波形的都没有（房间安静 / 远端没出声）：取**第一条打开了**的端点，仍报 `ready`。
+
+    三条同名候选中 WASAPI 那条在 16k 开不了、DirectSound 与 MME 都能打开但交回全零 ——
+    中选的是排序后第一条**打开了**的 DirectSound（任务书 §3 第 5 条）。
+    """
+    probes, fake, _backend = probe_with(
+        input_attempts={
+            f"{FAKE_MIC_NAME}@Windows WASAPI": refuse_attempt(),
+            f"{FAKE_MIC_NAME}@Windows DirectSound": silence_attempt(),
+            f"{FAKE_MIC_NAME}@MME": silence_attempt(),
+        }
+    )
+    mic = probes[0]
+    assert mic.status == "ready"
+    assert mic.device_name == FAKE_MIC_NAME
+    assert "取第一条**打开了**的候选" in mic.detail
+    # 三条都试过（试开次序照 host rank），选中那条是同名三条里的 DirectSound
+    assert fake.input_calls == [
+        f"{FAKE_MIC_NAME}@Windows WASAPI",
+        f"{FAKE_MIC_NAME}@Windows DirectSound",
+        f"{FAKE_MIC_NAME}@MME",
+    ]
+    assert f"取第一条**打开了**的候选 {FAKE_MIC_NAME}（Windows DirectSound #8）" in mic.detail
+
+
 def test_probe_reports_the_real_endpoint_name_for_loopback():
     """loopback 那条报的是 render 端点的真名（`CABLE Input` 2ch）。"""
     probes, fake, _backend = probe_with()
@@ -226,18 +252,24 @@ def test_probe_honours_an_explicitly_configured_device():
 
 
 def test_probe_mic_falls_back_while_loopback_reports_probe_failed():
-    """全都开不了时两路各走各的：mic 按 V1 回落首个候选，loopback 如实落 `probe_failed`。"""
+    """全都开不了时两路各走各的：mic 按任务书 §3 第 6 条落 `probe_failed`，loopback 同样如实落。
+
+    mic 这一侧就是复审核定的那一条：同名三条候选一条都没打开 → **一个能打开的端点都没有**，
+    `device_name` 为 `None`、`detail` 逐条写明试过哪几条、各自为什么没成（**不回落**一个从没
+    打开过的候选）。
+    """
     probes, _fake, _backend = probe_with(
         input_default=refuse_attempt(),
         loopback_default=refuse_attempt("soundcard 里没有这条端点的 loopback"),
     )
-    assert [probe.status for probe in probes] == ["ready", "probe_failed"]
-    assert probes[1].device_name is None
-    # mic：同名三条候选全都开不了 → 回落排序后的首个候选（WASAPI 那条）
-    assert probes[0].device_name == FAKE_MIC_NAME
-    assert "使用首个候选" in probes[0].detail
+    assert [probe.status for probe in probes] == ["probe_failed", "probe_failed"]
+    # mic：同名三条候选全都开不了 → 一个端点都不落，detail 逐条留痕
+    assert probes[0].device_name is None
+    assert "一条都没打开" in probes[0].detail
     assert "Invalid sample rate" in probes[0].detail
+    assert "不回落从没打开过的候选" in probes[0].detail
     # loopback：挑中的 render 端点打不开，如实报出
+    assert probes[1].device_name is None
     assert "挑中的 render 端点打不开" in probes[1].detail
     assert "soundcard 里没有这条端点的 loopback" in probes[1].detail
 
@@ -663,6 +695,35 @@ def test_devices_module_has_no_module_level_audio_imports():
 # ⑥ 看门抛的异常穿得过试开那两步（`sources.py` 的两处 `except` 口径）
 # ---------------------------------------------------------------------------
 
+#: 看门装的桩的记号（`tests/conftest.py` 的 `_forbid_real_capture()` 里那个内层函数名）
+GUARD_STUB_QUALNAME_TOKEN = "blocked"
+#: 看门的桩定义在哪个模块（身份断言的第二半）
+GUARD_STUB_MODULE = "tests.conftest"
+
+
+def _assert_entry_is_stubbed(target: object, entry: str) -> None:
+    """**发真调用之前**断言 `target` 确实是 `tests/conftest.py` 那道看门装的桩。
+
+    这里是 C2 复查的落点：这几条用例的安全性完全押在它们正在验的那道看门上。看门一旦回归
+    （夹具没装上桩、或桩被还原成真入口），调用一次 `sounddevice.InputStream(0)` 就会经
+    `sources.py` 落到 PortAudio 上真开设备、真读样本。所以判定必须在**调用之前**做完，
+    不满足就 fail 在这一句上 —— 调用一次都不发出去。
+    """
+    assert callable(target), (
+        f"{entry} 不是可调用的桩（拿到的是 {target!r}）：拒绝往下发真调用"
+    )
+    qualname = str(getattr(target, "__qualname__", ""))
+    module = str(getattr(target, "__module__", ""))
+    assert GUARD_STUB_QUALNAME_TOKEN in qualname, (
+        f"{entry} 上没有看门装的桩（__qualname__ = {qualname!r}，"
+        f"预期含 {GUARD_STUB_QUALNAME_TOKEN!r}）："
+        "往下走这一句就会真的打开设备、真的录 0.5 秒，因此停在这里"
+    )
+    assert module == GUARD_STUB_MODULE, (
+        f"{entry} 上的桩不来自 {GUARD_STUB_MODULE}（__module__ = {module!r}）："
+        "看门没装上，停在这里"
+    )
+
 
 @pytest.mark.parametrize(
     ("what", "entry"),
@@ -686,9 +747,12 @@ def test_guard_exception_reaches_the_case_through_the_open_steps(
 
     本用例把 `sources.py` 里那两个 `_import_*` 换成**真的** import（`import sounddevice` /
     `import soundcard`）：库此刻已经在 `sys.modules` 里、且入口挂着看门的桩，于是「惰性
-    import 拿到的就是那个被打过桩的模块对象」这条也在同一条用例里落地。调用点落在
-    `_resolve_*` 之前，因此**不会**真的去开设备 —— 桩在进入 `sounddevice` / `soundcard`
-    之前就抛了。
+    import 拿到的就是那个被打过桩的模块对象」这条也在同一条用例里落地。
+
+    **发调用之前先断言那个入口确实是桩**（`_assert_entry_is_stubbed()`）：这条用例的安全性
+    整个押在那道看门上 —— 看门一回归，下面这一句就会经 `sources.py` 真的开
+    `InputStream(device=0, samplerate=16000, …)` 并 `read(8000)`（0.5 秒），loopback 那条会
+    真的抓 0.5 秒扬声器。断言落在调用之前：桩没装上就红在断言上，**绝不把调用发出去**。
     """
     import importlib
 
@@ -698,6 +762,9 @@ def test_guard_exception_reaches_the_case_through_the_open_steps(
     except Exception:  # pragma: no cover - 这台机器上没装这个库
         pytest.skip(f"本机没装 {module_name}：没有可拦的入口")
     assert hasattr(module, entry_name)
+
+    # **调用之前的身份断言**：目标必须是 conftest 那道看门装的桩，否则当场 fail
+    _assert_entry_is_stubbed(getattr(module, entry_name), entry)
 
     # `sources.py` 里两个「惰性 import」的接缝换成真的 import：拿到的就是上面那个模块对象
     # —— 看门的桩此刻正挂在它的 `entry_name` 上。
