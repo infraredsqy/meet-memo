@@ -222,7 +222,7 @@ def test_start_returns_already_recording_with_the_three_fields(tmp_path):
         assert len([item for item in Path(detail["dir"]).parent.iterdir() if item.is_dir()]) == 1
 
 
-def test_start_unavailable_on_the_default_null_backend_leaves_nothing_on_disk(tmp_path):
+def test_start_unavailable_on_the_explicit_null_backend_leaves_nothing_on_disk(tmp_path):
     """显式配 `null` 替身：`capture_unavailable`(503) 带人话，**盘上不留任何场次目录**。"""
     with live(tmp_path, {"capture.backend": "null"}) as (client, _runtime, _home, out_root):
         response = post(client, "start")
