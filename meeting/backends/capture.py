@@ -193,19 +193,9 @@ class CaptureBackend:
             )
 
 
-def probe_detail_for_missing_loopback_support() -> str:
-    """`soundcard` 缺席时 loopback 那一句人话（供 `/debug` 与文档引用）。"""
-    readiness = sources_module.capture_readiness()
-    missing = [name for name, present in readiness.items() if not present]
-    if not missing:
-        return ""
-    return "缺声卡库：" + " / ".join(missing) + "（装着才谈得上抓系统内部声音）"
-
-
 __all__ = [
     "CAPTURE_ENGINE_PENDING_REASON",
     "SOURCE_ORDER",
     "CaptureBackend",
     "CaptureUnavailable",
-    "probe_detail_for_missing_loopback_support",
 ]

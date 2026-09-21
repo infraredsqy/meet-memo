@@ -26,7 +26,7 @@
 | `SourceFacts` | `source` / `stream_alive` |
 | `SourceLost` | `source` / `reason` |
 
-设备就绪三态是 `SourceProbe.status`，取值 `ready`（能打开）/ `probe_failed`（能打开但没信号）/ `unprobed`（未探测）；`detail` 是写一句给界面看的人话。**`probe()` 只许报这三档** —— 快照里另外四档（`capturing` / `lost` / `restored` / `stopped`）由状态迁移写值。后端报了取值域之外的第四档，runtime 记一条 warning 并把该路落 `probe_failed`，服务照常起。
+设备就绪三态是 `SourceProbe.status`，取值 `ready`（这一路**挑到了端点**，也就是能打开）/ `probe_failed`（这一路**一个能打开的端点都没有**：没候选、或候选全开不了）/ `unprobed`（未探测）；`detail` 是写一句给界面看的人话。**「能打开但试开读回的是全零」落在 `ready`**，那一档只把峰值写进 `detail` —— 试开只看得见零点几秒，房间当时安静、或远端当时没在出声，读到的就是全零，拿它报故障等于每次安静都亮一次故障灯。**`probe()` 只许报这三档** —— 快照里另外四档（`capturing` / `lost` / `restored` / `stopped`）由状态迁移写值。后端报了取值域之外的第四档，runtime 记一条 warning 并把该路落 `probe_failed`，服务照常起。
 
 **静默秒数不在这里**：服务侧按 `alert.silence_dbfs` 逐帧累计 `LevelFrame` 的帧时间戳来判，协议里没有「静默了多少秒」这个字段。
 

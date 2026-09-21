@@ -657,3 +657,63 @@ def test_devices_module_has_no_module_level_audio_imports():
             imported.append(node.module)
     roots = {name.split(".")[0] for name in imported}
     assert roots.isdisjoint({"sounddevice", "soundcard", "numpy", "pydub"})
+
+
+# ---------------------------------------------------------------------------
+# ⑥ 看门抛的异常穿得过试开那两步（`sources.py` 的两处 `except` 口径）
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("what", "entry"),
+    [
+        ("test_open_input", "sounddevice.InputStream"),
+        ("test_open_loopback", "soundcard.get_microphone"),
+    ],
+)
+def test_guard_exception_reaches_the_case_through_the_open_steps(
+    monkeypatch: pytest.MonkeyPatch, what: str, entry: str
+) -> None:
+    """看门抛的异常**穿得过** `sources.py` 试开那两步的 `except`，原样炸到用例上。
+
+    这两步收的是「开流失败」（`except Exception`），而看门（`tests/conftest.py` 的
+    `RealCaptureForbidden`）**不继承 `Exception`**。于是：
+
+      - 修之前（`except BaseException`）：`AssertionError` 被收成一条
+        `OpenAttempt(opened=False, error="AssertionError: 自动化测试不许碰真声卡…")` 交回来，
+        用例看到的是「设备开不了」，**看不出这是看门在说话**；
+      - 修之后：异常原样往上抛，用例当场看到看门的文案与它点名的那个入口。
+
+    本用例把 `sources.py` 里那两个 `_import_*` 换成**真的** import（`import sounddevice` /
+    `import soundcard`）：库此刻已经在 `sys.modules` 里、且入口挂着看门的桩，于是「惰性
+    import 拿到的就是那个被打过桩的模块对象」这条也在同一条用例里落地。调用点落在
+    `_resolve_*` 之前，因此**不会**真的去开设备 —— 桩在进入 `sounddevice` / `soundcard`
+    之前就抛了。
+    """
+    import importlib
+
+    module_name, entry_name = entry.split(".")
+    try:
+        module = importlib.import_module(module_name)
+    except Exception:  # pragma: no cover - 这台机器上没装这个库
+        pytest.skip(f"本机没装 {module_name}：没有可拦的入口")
+    assert hasattr(module, entry_name)
+
+    # `sources.py` 里两个「惰性 import」的接缝换成真的 import：拿到的就是上面那个模块对象
+    # —— 看门的桩此刻正挂在它的 `entry_name` 上。
+    monkeypatch.setattr(
+        sources_module, "_import_sounddevice", lambda: importlib.import_module("sounddevice")
+    )
+    monkeypatch.setattr(
+        sources_module, "_import_soundcard", lambda: importlib.import_module("soundcard")
+    )
+
+    from tests.conftest import REAL_CAPTURE_FORBIDDEN_MESSAGE, RealCaptureForbidden
+
+    call = getattr(sources_module, what)
+    with pytest.raises(RealCaptureForbidden) as info:
+        call(DeviceEndpoint("假端点", "MME", "input", index=0, channels=1))
+
+    text = str(info.value)
+    assert REAL_CAPTURE_FORBIDDEN_MESSAGE in text
+    assert entry in text

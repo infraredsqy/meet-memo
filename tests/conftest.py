@@ -47,7 +47,8 @@ pytest **父进程**里 `meeting.service.app.webbrowser` 就是**标准库那个
 
 同一类保护的第二层，针对**音频输入设备**：谁在测试里真的打开麦克风或 loopback，就是在
 **不打招呼地录机主的声音**。因此这里装另一个 **autouse** 夹具 `_no_real_audio_capture`，
-把「一碰就采集声音」的那几个入口换成抛 `AssertionError` 的桩：
+把「一碰就采集声音」的那几个入口换成抛 `RealCaptureForbidden`（**继承 `BaseException`、
+不继承 `Exception`**）的桩：
 
   - `sounddevice.InputStream` / `sounddevice.rec` / `sounddevice.check_input_settings`
     （`sounddevice` 里能**开流 / 读样本**的入口）；
@@ -58,9 +59,16 @@ pytest **父进程**里 `meeting.service.app.webbrowser` 就是**标准库那个
 一律靠**注入的假端点表 + 假试开函数**（见 `tests/test_capture_probe.py`），真机那条路不在
 自动化测试里验。
 
-两个库**没有装 / 没有 import 时不替它们 import**（无硬件的 CI 上因此一行都不用做）；
-库已经在 `sys.modules` 里时按模块对象打桩，`meeting/capture/sources.py` 事后
-`import sounddevice` 拿到的仍是这个被打过桩的模块对象。
+**夹具自己 import 这两个库，再按模块对象打桩**（`_import_audio_modules()`）：生产代码只在
+函数体内惰性 import（`meeting/capture/sources.py` 的 `_import_sounddevice()` /
+`_import_soundcard()`），所以「夹具跑的这一刻库还没进 `sys.modules`」是**常态**而不是例外
+—— 一个干净 pytest 进程里 `sys.modules.get("sounddevice")` 就是 `None`。夹具因此不再靠
+调用方先 import：它自己把库 import 进来（装不上就跳过这一条，无硬件的 CI 因此一行都不用
+做），打桩落在**模块对象**上，之后 `sources.py` 在函数体里 `import sounddevice` 拿到的仍是
+这个被打过桩的模块对象。**效果与 import 次序无关**：无论用例先 import 库、还是库到那一刻
+才第一次被 import，撞上的都是桩。这条不依赖导入顺序的性质由
+`tests/test_real_capture_guard.py` 在**一个全新解释器**里逐条验（子进程里先不 import 库、
+直接调 `sd.InputStream`，必须被拦下）。
 """
 
 from __future__ import annotations
@@ -140,6 +148,20 @@ REAL_CAPTURE_FORBIDDEN_MESSAGE = (
     "请注入假设备表 / 假采集源。`probe()` 的真实硬件这条路不在自动化测试里验。"
 )
 
+
+class RealCaptureForbidden(BaseException):
+    """**看门抛的异常**：它**不继承 `Exception`**（`BaseException` 直系子类）。
+
+    这条继承关系就是这道看门的意义所在：`meeting/capture/sources.py` 在试开那一步收
+    「开流失败」（`except Exception`，真正的打开失败照旧如实留痕），而任何一处
+    `except Exception` / `except BaseException` 都不该把「这条用例在碰真硬件」收成一条
+    业务失败。不继承 `Exception` 之后：**收窄成 `except Exception` 的地方自然吞不掉它**
+    （`sources.py` 两处试开），而别处那些宽的 `except BaseException`（例如
+    `meeting/service/runtime.py` 里「这一步的任何意外都不许带崩启动」那一类兜底）也**必须
+    额外点名它**才会吞掉它 —— 宽 `except` 顺手吞掉看门这件事因此不再可能。
+    """
+
+
 #: 要打掉的入口：`(模块名, 入口名)`。**只列能开流 / 读样本的**，枚举设备的一律留着。
 _FORBIDDEN_CAPTURE_ENTRIES: tuple[tuple[str, str], ...] = (
     ("sounddevice", "InputStream"),
@@ -153,7 +175,7 @@ def _forbid_real_capture(stub_call):
     """把某个入口换成「一碰就炸」的桩（`stub_call` 收下这次调用的全部参数只用于报错）。"""
 
     def blocked(*args: Any, **kwargs: Any) -> Any:
-        raise AssertionError(
+        raise RealCaptureForbidden(
             f"{REAL_CAPTURE_FORBIDDEN_MESSAGE}（被拦下的调用：{stub_call}，"
             f"args={args!r}，kwargs={kwargs!r}）"
         )
@@ -161,23 +183,53 @@ def _forbid_real_capture(stub_call):
     return blocked
 
 
+def _import_audio_modules() -> dict[str, Any]:
+    """**夹具自己把两个声卡库 import 进来**（装不上就跳过那一条），再按模块对象打桩。
+
+    为什么不能只查 `sys.modules`：生产代码只在函数体内惰性 import
+    （`meeting/capture/sources.py` 的 `_import_sounddevice()` / `_import_soundcard()`），
+    一个干净 pytest 进程里这两个库**根本还没进 `sys.modules`**；只查表就一个入口都打不上，
+    看门成了空操作 —— 用例随后 `import sounddevice; sd.rec(1)` 会真的落到真设备上。
+    这里主动 import 一次（`importlib.import_module`）把库请进来，桩因此**与导入次序无关**。
+
+    库没装（`ModuleNotFoundError`）时**跳过**它：没有硬件的 CI 上一行都不用做；装了但
+    import 过程中抛别的错（缺 DLL 之类的坏安装）同样跳过，理由一样 —— 夹具不许因为
+    「这台机器上没有这个库」把用例判红。两个库各自独立判定，一个装了一个没装也照常工作。
+    返回值是 `{模块名: 模块对象}`。
+    """
+    import importlib
+
+    modules: dict[str, Any] = {}
+    for module_name in ("sounddevice", "soundcard"):
+        try:
+            modules[module_name] = importlib.import_module(module_name)
+        except Exception:  # noqa: BLE001 - 装不上 / 装坏了都按「这台机器上没有它」处理
+            continue
+    return modules
+
+
 @pytest.fixture(autouse=True)
 def _no_real_audio_capture(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
     """**autouse 兜底**：把真采集入口打成「一碰就炸」，只读的枚举一律留着。
 
-    打桩落在**已经在 `sys.modules` 里的库模块对象**上（没装的库不替它 import，无硬件的 CI
-    因此一行都不用做）。`meeting/capture/sources.py` 的函数内 `import sounddevice` 拿到的
-    就是同一个模块对象，于是「惰性 import」绕不过这道桩。
+    打桩分两步，**顺序不能换**：先 `_import_audio_modules()` 把两个库 import 进来（此前
+    它们通常还没进 `sys.modules`），再在**模块对象**上打桩。`meeting/capture/sources.py`
+    的函数内 `import sounddevice` 拿到的就是同一个模块对象，于是「惰性 import」绕不过这
+    道桩、**导入次序也影响不了它**：库是在本夹具里第一次进 `sys.modules` 的，桩装着；
+    用例自己先 import 过，桩照样落在同一个模块对象上。
+
+    抛的异常是 `RealCaptureForbidden`（**不继承 `Exception`**）：`sources.py` 试开那两步
+    只收「开流失败」（`except Exception`），吞不掉它；别处的宽 `except BaseException` 也要
+    额外点名它才吞得掉。
 
     需要验「真开设备」的用例已经不存在了：真机那条路的正确性靠假表单测 + 段末真机脚本。
     """
-    import sys
-
     blocked: list[str] = []
+    modules = _import_audio_modules()
     for module_name, entry in _FORBIDDEN_CAPTURE_ENTRIES:
-        module = sys.modules.get(module_name)
+        module = modules.get(module_name)
         if module is None:
-            continue  # 没装 / 还没 import：不替它 import，也就没什么可打桩的
+            continue  # 这台机器上没有它：没有可打桩的，也没有可误碰的
         if not hasattr(module, entry):
             continue
         monkeypatch.setattr(

@@ -195,7 +195,10 @@ def test_open_input(endpoint: DeviceEndpoint) -> OpenAttempt:
             blocksize=PROBE_FRAME_COUNT,
         ) as stream:
             chunk, _overflowed = stream.read(PROBE_FRAME_COUNT)
-    except BaseException as exc:  # noqa: BLE001 - 任何开流失败都如实留痕（含 PortAudioError）
+    except Exception as exc:  # noqa: BLE001 - 任何开流失败都如实留痕（含 PortAudioError）
+        # **只收开流失败**（不从 `Exception` 继承的东西照原样往上抛）：测试里那道「一碰真声卡
+        # 就炸」的看门抛的是 `tests/conftest.py` 的 `RealCaptureForbidden`（`BaseException`
+        # 直系子类），它必须炸到用例上，不许在这里被收成一条「设备开不了」的业务失败。
         return OpenAttempt(opened=False, error=_error_text(exc))
 
     try:
@@ -239,7 +242,7 @@ def test_open_loopback(endpoint: DeviceEndpoint) -> OpenAttempt:
             samplerate=PROBE_SAMPLE_RATE, channels=PROBE_CHANNELS, blocksize=PROBE_FRAME_COUNT
         ) as handle:
             data = handle.record(numframes=PROBE_FRAME_COUNT)
-    except BaseException as exc:  # noqa: BLE001 - 同上：开流失败如实留痕
+    except Exception as exc:  # noqa: BLE001 - 同上：开流失败如实留痕
         return OpenAttempt(opened=False, error=_error_text(exc))
 
     try:

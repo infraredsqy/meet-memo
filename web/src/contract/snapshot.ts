@@ -230,7 +230,9 @@ export const asrSettingsSchema = strict({
  *
  * `devices` 用 `z.record(...)` 而不是 `z.object({...})`：子键是加性变更（服务以后多长一个
  * 子键时前端不该开始拒收整份快照），`record` 的写法把「现在两个子键、将来可能多」这件事
- * 如实说清楚。整格照旧只收字符串与 `null` 之外的任何形状（`docs/contract.md` 第 7 章）。
+ * 如实说清楚。`z.record(z.string(), z.unknown())` 对**值**不收窄：整格照收任意值
+ * （数字 / 对象 / 数组都过），本层只保证键是字符串。`strict` 管的是**键集合**，不约束
+ * `record` 的值类型。
  */
 export const settingsSchema = strict({
   alarm_sound: z.boolean(),

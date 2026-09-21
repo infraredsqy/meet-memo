@@ -152,6 +152,11 @@ class ServiceProcess(helpers.ServiceProcess):
     表达**（`capture.backend`）。四条 `tests/test_e2e_*.py`、`tests/test_shutdown_signal.py`
     与 `tests/test_drain.py` 都走这条路，两条子进程路径因此同源。
 
+    **配置文件里没写 `capture.backend` 时，构造时补上测试层的共用缺省 `dev`**
+    （`helpers.apply_capture_backend_default()`，见 `helpers.DEFAULT_CAPTURE_BACKEND`）：
+    产品缺省 `auto` 会解析到真实现，子进程 startup 里的 `probe()` 就去真枚举、真试开声卡
+    设备了。用例显式写过的值（含 `null` / `auto` / 挂假件的 `module:Class`）一个字节都不动。
+
     `args=` 给的是**送给解释器的参数表**（`[sys.executable, *args]`），默认那条是
     `["-m", "meeting", action]`。用例需要「仍然跑真实服务、但外面包一层极小的启动脚本」时
     用它传 `["-c", "<脚本>"]` —— 例如 `tests/test_shutdown_signal.py` 的「两路信号同形」
@@ -178,6 +183,12 @@ class ServiceProcess(helpers.ServiceProcess):
         home = Path(home)
         home.mkdir(parents=True, exist_ok=True)
         self.home = home
+
+        # **采集后端的共用缺省**（与 `_helpers.spawn_service()` / `run_cli()` 同源）：本用例的
+        # `config.json` 里没写 `capture.backend` 时补 `DEFAULT_CAPTURE_BACKEND`（`dev` 替身）。
+        # 不补的话产品缺省 `auto` 会让子进程 startup 里的 `probe()` 走到真实采集入口上；
+        # 用例自己写过的值一个字节都不动（只补缺，见 `apply_capture_backend_default()`）。
+        helpers.apply_capture_backend_default(home)
 
         # 环境变量覆盖：调用方给全的 `env` 优先；否则按七项布置（家目录两项都设）
         overrides: dict[str, str] = {}

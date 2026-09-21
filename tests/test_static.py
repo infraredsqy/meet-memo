@@ -88,6 +88,11 @@ def client_factory(tmp_path):
     `home` 不给时按自维护的计数换一个家目录；给了就用**用例自己那个**家目录 —— 需要按
     `<家目录>/.config/meeting/logs/meeting.log` 读主 log 的用例必须把家目录传进来
     （服务级 log 落在它下面，夹具与用例读的得是同一个目录）。
+
+    **采集后端由 `helpers.app_client()` 补共用缺省**（没写 `capture.backend` 时收成 `dev`
+    替身，见 `tests/_helpers.py` 的 `DEFAULT_CAPTURE_BACKEND`）：不补的话产品缺省 `auto`
+    会在 startup 的 `probe()` 里真的去枚举并试开这台机器的声卡设备。要 `null` / 别的档的
+    用例自己显式传，那时以 `values` 为准。本夹具因此**与这台机器上有没有声卡无关**。
     """
     import contextlib
 
@@ -366,8 +371,9 @@ def test_action_request_without_json_content_type_is_forbidden(tmp_path, client_
 def test_action_request_with_both_headers_gets_a_real_answer(tmp_path, client_factory):
     """头齐的完整动作请求 → **真实应答**（phase2 §2.3 第 8 条：旧的「路由还没有」404 一条不留）。
 
-    默认（null 采集后端）下 `start` 的真实结果是 `503 capture_unavailable` 且盘上不留任何
-    场次目录；同时这条应答证明请求确实被 `POST /api/actions` 的端点接走了（不是末端 404）。
+    默认（`helpers.app_client()` 补的 `dev` 采集替身）下 `start` 的真实结果是一条成功应答、
+    并且盘上当场建出那一场的场次目录；同时这条应答证明请求确实被 `POST /api/actions` 的
+    端点接走了（不是末端 404）。
     """
     home = tmp_path / "home_for_actions_ok"
     home.mkdir()
@@ -382,15 +388,16 @@ def test_action_request_with_both_headers_gets_a_real_answer(tmp_path, client_fa
         json={"action": "start"},
         headers={"X-Meeting-Service": "1"},
     )
-    # 真实应答：默认 null 后端如实回 503 capture_unavailable（信封里的 code 是机器可读的那一个）
-    assert response.status_code == 503
+    # 真实应答：dev 替身在场，`start` 起得来 —— 成功体就是 `{ok, revision}`
+    assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
     payload = response.json()
-    assert payload["ok"] is False
-    assert payload["code"] == "capture_unavailable"
-    assert payload["message"]
-    # 默认后端下 start 的真实结果是「盘上不留任何场次目录」
-    assert sorted(item.name for item in out_root.iterdir()) == []
+    assert payload["ok"] is True
+    assert isinstance(payload["revision"], int)
+    # 场次目录当场建在输出根下，快照里的 `session.id` 就是那个目录名
+    session = client.get("/api/state").json()["session"]
+    assert session is not None
+    assert sorted(item.name for item in out_root.iterdir()) == [session["id"]]
 
     # 未知动作名同样由端点给出真实应答（不是末端 404）
     unknown = client.post(

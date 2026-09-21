@@ -40,8 +40,10 @@ from typing import Any, Callable, Literal, Protocol, runtime_checkable
 SOURCE_STATUS = ("ready", "probe_failed", "unprobed")
 
 #: `SourceProbe.status ∈ SOURCE_STATUS` 的口径：
-#:   ready        —— 能打开
-#:   probe_failed —— 能打开但没信号
+#:   ready        —— 这一路**挑到了端点**（能打开）。挑中的那条有没有波形写在 `detail` 里，
+#:                   不改变这一档：试开只看得见零点几秒，房间当时安静 / 远端当时没出声读到的
+#:                   就是全零，拿它判「故障」等于每次安静都亮一次故障灯
+#:   probe_failed —— 这一路**一个能打开的端点都没有**（没候选、或候选全开不了）
 #:   unprobed     —— 未探测（`null` 替身如实报出的正是这一态）
 SourceStatus = Literal["ready", "probe_failed", "unprobed"]
 
