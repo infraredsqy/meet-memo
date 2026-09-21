@@ -13,7 +13,7 @@ ASGI 层断言一律用 `with TestClient(app, base_url="http://127.0.0.1")` 的*
     **头齐的 `POST /api/actions` 由真实应答替换旧的 `404` 断言**（phase2 §2.3 第 8 条）；
   - `GET /api/state` 完整版的结构（顶层键全集、`sources` 两项且 `envelope` 逐字为空数组 `[]`、
     `service` 六字段且 `version` 非空、四态真值、`settings` 四键与 `asr` 五子键齐、
-    `devices` 是空对象）；
+    `devices` 两个子键（`mic` / `loopback`，没配时都是 `null`））；
   - 空闲态的可观察物：没有新建场次目录、没有 `session.json`、主 log 里没有场次开始行；
   - 启动序列第 5 步「打开浏览器」：`MEETING_NO_BROWSER=1` 时不开、不设时真的开（并落一行含
     被打开 URL 的 INFO）、失败只警告且服务照常起来。**这几条全在进程内**，`webbrowser.open`
@@ -65,7 +65,7 @@ SOURCE_KEYS = {
 }
 TRANSCRIPT_KEYS = {"health", "last_line_at", "buffered_lines", "failed_segments"}
 SETTINGS_TOP_KEYS = {"alarm_sound", "heartbeat_interval_seconds", "asr", "devices"}
-#: phase2 §2.3 第 3 条：`asr` 的五个子键（取当前生效值）、`devices` 是空对象
+#: phase2 §2.3 第 3 条：`asr` 的五个子键（取当前生效值）、`devices` 的两个子键（`mic` / `loopback`，没配时 `null`）
 ASR_KEYS = {
     "max_segment_seconds",
     "timeout_seconds",

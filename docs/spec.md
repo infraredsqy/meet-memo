@@ -32,7 +32,7 @@
 | `tests/` | 23 个测试文件、341 个用例 + 测试支持（`_helpers.py`、`_service.py`、`_drain_fakes.py`、`_contract.py`、`conftest.py`、`__init__.py`、`_fake_webbrowser/`）；`conftest.py` 里有一道「单条用例 ≤ 5 秒」的耗时看门、`--regen-contract` 开关与两道 autouse 安全兜底（不许开真浏览器、不许碰真声卡），`_contract.py` 是 `contract/fixtures/` 的采集与掩码，`test_contract_fixtures.py` 是漂移比对（8 个用例） |
 | `pyproject.toml` | 打包与依赖；运行时依赖只有 `starlette` 与 `uvicorn` |
 | `README.md`（仓库根） | 简版使用说明：怎么起、log 在哪、热读键有哪些、dev 替身怎么开、退出码表、前端开发 |
-| `web/` | 界面工程（React 18 + TypeScript 严格模式 + Vite 6 + vitest 2 + zod）：`src/contract/`（契约层，zod schema 为源）、`src/api/`（SSE / 动作 / 心跳三个客户端）、`src/App.tsx`（壳页）；`tests/` 4 个文件 118 个用例。五个 npm 脚本（`dev` / `typecheck` / `build` / `preview` / `test`）：`npm run dev` 边改边看、`npm run build` 出 `web/dist` 由服务直发（运行时不需要 Node）。工程自己的说明在 `web/README.md` |
+| `web/` | 界面工程（React 18 + TypeScript 严格模式 + Vite 6 + vitest 2 + zod）：`src/contract/`（契约层，zod schema 为源）、`src/api/`（SSE / 动作 / 心跳三个客户端）、`src/App.tsx`（壳页）；`tests/` 4 个文件 121 个用例。五个 npm 脚本（`dev` / `typecheck` / `build` / `preview` / `test`）：`npm run dev` 边改边看、`npm run build` 出 `web/dist` 由服务直发（运行时不需要 Node）。工程自己的说明在 `web/README.md` |
 | `contract/` | 双端契约的可机读基准：25 个 golden 样本（`fixtures/`）+ 采集 / 掩码 / 再生成规则（`README.md`）。契约正文在 `docs/contract.md` |
 
 ## 分层读法

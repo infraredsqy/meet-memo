@@ -37,12 +37,18 @@ export const DBFS_PLACEHOLDER = '<dbfs>';
 /** 快照四态。**不新增第五个**（`docs/contract.md` 第 2 章）。 */
 export const TOP_STATES = ['idle', 'recording', 'alert', 'ended'] as const;
 
-/** 五个动作名（`docs/contract.md` 4.3；第 7 章那些定名未实现的动作**不在其中**）。 */
+/**
+ * 六个动作名，一个不多一个不少（`docs/contract.md` 4.3）。
+ *
+ * 第 7 章那些**定名但还没实现**的动作不在其中（眼下只剩 `summarize` 一个例子）——
+ * 它们在服务侧回 `invalid_setting`(400)，不在这份清单里。
+ */
 export const ACTION_NAMES = [
   'start',
   'stop',
   'mute_session',
   'settings_update',
+  'reprobe',
   'dev_inject',
 ] as const;
 

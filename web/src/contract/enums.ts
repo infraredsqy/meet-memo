@@ -48,7 +48,7 @@ export const alertLevelSchema = z.enum(['critical', 'hint']);
 /** `notice.kind`。 */
 export const noticeKindSchema = z.enum(NOTICE_KINDS);
 
-/** 五个动作名。 */
+/** 六个动作名。 */
 export const actionNameSchema = z.enum(ACTION_NAMES);
 
 /** 失败信封的七个 `code`。 */

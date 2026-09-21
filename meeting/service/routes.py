@@ -5,7 +5,7 @@
   - `GET /api/state`（完整版，body 就是 `to_dict()` 的产出）；
   - `GET /api/events`（SSE：`snapshot` 先行 + `state` / `levels` / `transcript` 三通道）；
   - `GET /api/heartbeat`（完整版，`service` 字面量必须有）；
-  - `POST /api/actions`（信封 + 五个动作名 + `code` 表）；
+  - `POST /api/actions`（信封 + 六个动作名 + `code` 表）；
   - `GET /debug`（骨架自检页，从包内读）。
 
 **装配模块 `app.py` 里那两条最小版注册与 `static.py` 的 `/debug` 注册都已在本 Phase 摘除**：

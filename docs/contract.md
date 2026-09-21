@@ -327,7 +327,7 @@ X-Meeting-Service: 1
 
 `settings_update` 写的是配置文件，与「这一场录到哪儿」无关，因此**任何状态下都可用**。`mute_session` 只在本场收尾之前可用 —— 收尾完成后本场已无可静音，复位发生在下一场 `start`。
 
-### 4.6 `settings_update`：21 键清单与两档
+### 4.6 `settings_update`：23 键清单与两档
 
 请求的 `args` 就是**「配置点号键名 → 值」的扁平映射**，只有这一层、不按键前缀分组：
 
@@ -439,8 +439,6 @@ X-Meeting-Service: 1
 | `GET /api/summaries` | 本场总结记录（按过的几次总结：时间 + 窗口 + 那几条） | 手动总结 / 会后节点 | **路由没有注册**：`all_routes()` 只有四条 `/api/*` + `/debug`，因此这个路径落到末端 404（回 `Not Found`） |
 | `GET /api/sessions` | 场次列表（会后视图的会议选择器） | 会后节点 | 同上：未注册，末端 404 |
 | `GET /api/sessions/{id}` | 单场状态（会后视图的进度区） | 会后节点 | 同上：未注册，末端 404 |
-| 动作 `reprobe` | 重新枚举并试开设备 | `dca4539b`（已落地） | **在 `ACTION_NAMES` 里**：空闲态与 `ended` 态可用（重新探测并更新快照两路，成功体就是 `{ok, revision}`）；`recording` / `alert` 态回 `already_recording`(409) —— 会中换设备是明文不做的那一档 |
-| `settings_update` 键位 `devices.mic` / `devices.loopback` | 持久化哪一路用哪个设备 | `dca4539b`（已落地） | **在键表里**：两个点号字面键名归 `pending_restart`，写盘成功、重启后生效；值是非空字符串或 `null`（`null` = 没配，按默认策略挑）；快照 `settings.devices` 的两个子键取的就是它们（没配时 `null`）。`devices.mic_device` 这种没定名的名字仍在表外 |
 | 转写历史回看 | 中途订阅能不能拿到已经出过的转写行 | **待下游决断（`9e5db89c` / `070b31e0`）** | **现状是拿不到**：`transcript` 通道只发「订上之后新出的行」，连接时的首帧 `snapshot` 也不带转写正文（`transcript.last_line_at` 只是个时间戳、`buffered_lines` 是计数）。界面在会话中途打开时，**只能显示从那一刻起的新行**，拿不到已有行 |
 | 说话人名字落盘 / 跳过编号 | 用户给某个编号起名、或标记「这个编号不认领」 | **会后管线（`41465462` / `7c6952e5`）** | **本契约不覆盖**：这是会后产物那一侧的事，服务侧的会中契约里没有对应字段 |
 

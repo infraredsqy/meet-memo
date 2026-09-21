@@ -3,10 +3,12 @@ import { z } from 'zod';
 import {
   ACTION_DETAIL_KEYS,
   ACTION_DETAIL_VARIANTS,
+  ACTION_NAMES,
   ENVELOPE_BAR_COUNT,
   ERROR_CODES,
   actionErrorSchema,
   actionFixtureSchema,
+  actionNameSchema,
   describeFailure,
   dbfsSchema,
   envelopeSchema,
@@ -498,6 +500,48 @@ describe('detail 键集合与 4.4 表逐条相等（M1，样本层精确）', ()
     for (const step of steps as Record<string, unknown>[]) {
       expect(Object.keys(step).sort()).toEqual(['error', 'id']);
     }
+  });
+});
+
+/**
+ * 动作名清单本身也有一道看守。
+ *
+ * 这一层原先没有任何用例钉住 `ACTION_NAMES` / `actionNameSchema`：`web/src/api/actions.ts`
+ * 的请求 schema 用的是 `z.string()`，于是契约层少一名也照样 `vitest` / `typecheck` 全绿
+ * （`reprobe` 落地时就漏在这里）。下面两条一条钉枚举、一条钉它**覆盖得住服务报的 `known`**。
+ */
+describe('动作名清单与样本里的 known 对齐（看守）', () => {
+  it('`ACTION_NAMES` 逐字六个，`actionNameSchema` 就是这一份', () => {
+    expect([...ACTION_NAMES]).toEqual([
+      'start',
+      'stop',
+      'mute_session',
+      'settings_update',
+      'reprobe',
+      'dev_inject',
+    ]);
+    expect(actionNameSchema.options).toEqual([...ACTION_NAMES]);
+  });
+
+  it('六个名字全过 schema，清单外的名字（含保留登记里的 `summarize`）被拒', () => {
+    expectVerdicts(
+      actionNameSchema,
+      ['summarize', 'pause', 'resume', 'START', ''],
+      [...ACTION_NAMES],
+    );
+  });
+
+  it('样本 `known` 的每一个名字都在本层枚举里：清单少一名就红', () => {
+    const unknown = actionFixtureSchema.parse(
+      readFixture('actions', 'fail-invalid-setting-unknown-action'),
+    );
+    if (unknown.body.ok) throw new Error('样本该是失败档');
+    const known = unknown.body.detail.known ?? [];
+    // 服务报的六个名字逐个必须是本层认得的动作名（少一名当场红）。
+    for (const name of known) {
+      expect(actionNameSchema.safeParse(name).success, `known 里的 ${name}`).toBe(true);
+    }
+    expect(new Set(known)).toEqual(new Set(ACTION_NAMES));
   });
 });
 

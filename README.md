@@ -168,7 +168,7 @@
 自检：
 
     cd web
-    npm test           # vitest run，4 个文件 118 个用例
+    npm test           # vitest run，4 个文件 121 个用例
     npm run typecheck  # 两条 tsc --noEmit -p，各查各的 project
 
 `npm run build` 里已经含 `npm run typecheck`，所以构建过一次就不必再单独跑；只改类型不看产物时跑 `typecheck` 更快。契约正文在 `docs/contract.md`，可机读基准（25 个 golden 样本与掩码规则）在 `contract/`，前端工程的五个脚本（`dev` / `typecheck` / `build` / `preview` / `test`）与其余说明在 `web/README.md`。

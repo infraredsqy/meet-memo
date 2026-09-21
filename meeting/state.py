@@ -340,7 +340,7 @@ class EndedState:
 
 @dataclass
 class SettingsView:
-    """快照 `settings`（顶层四键；`asr` 五子键；`devices` 是空对象）。"""
+    """快照 `settings`（顶层四键；`asr` 五子键；`devices` 两子键 `mic` / `loopback`）。"""
 
     alarm_sound: bool = True
     heartbeat_interval_seconds: int = 10

@@ -382,6 +382,7 @@ def mic_candidates(
         if not name:
             return None
         devices = sd.query_devices()
+        hostapis = sd.query_hostapis()
         cands = [
             i for i, d in enumerate(devices)
             if d.get("name") == name and d.get("max_input_channels", 0) > 0
@@ -389,6 +390,10 @@ def mic_candidates(
         if not cands:
             log.warning("mic device '%s' not found, using default input", name)
             return None
+
+    引文里那两行查询（`sd.query_devices()` / `sd.query_hostapis()`）属**接口层**：V2 把端点表由
+    调用方注入，两张表的取数口是 `sources.list_input_endpoints()`（`host_api` 字段），
+    本模块因此一行都不 import 声卡库（纯逻辑，见模块抬头）。
 
     三处 V2 的差异（都写在下面，各自的理由都在）：
 
