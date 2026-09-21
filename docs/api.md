@@ -148,7 +148,10 @@ curl.exe -s -X POST http://127.0.0.1:8765/api/actions `
 
 ## 7. 相关文档
 
+- **双端契约（端点口径、快照 schema、SSE 帧形状、动作信封与 `code`/`detail` 表）：`docs/contract.md`**
 - 四态、快照字段、`session.json`、心跳、告警、SSE 帧形状：`docs/state.md`
 - 怎么起服务、配置、日志、退出码、跑测试：`docs/service.md`
 - 后端协议与 dev 替身：`docs/backend-protocols.md`
+- 前端工程怎么跑、怎么构建：`web/README.md`
+- 契约的可机读基准（25 个 golden 样本与掩码规则）：`contract/README.md`
 - 索引：`docs/spec.md`

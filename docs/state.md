@@ -15,7 +15,7 @@
 | 3 | 场次目录与 `session.json` |
 | 4 | 心跳与 `recording_alive` |
 | 5 | 告警 |
-| 6 | SSE：三通道与帧形状 |
+| 6 | SSE：四个事件与帧形状 |
 | 7 | dev 采集替身与故障注入 |
 
 ## 1. 四态与迁移
@@ -220,7 +220,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 
 两条相关动作见 `docs/api.md`：`mute_session`（会话级，下一场 `start` 自动复位，不改持久化开关 `alarm.sound`）与 `dev_inject`。抑制窗口到点、会话级静音复位、下一场开场之后，同一条告警的 `muted` 会自己回到 `false`。
 
-## 6. SSE：三通道与帧形状
+## 6. SSE：四个事件与帧形状
 
 `GET /api/events`，`Content-Type: text/event-stream`。
 
@@ -238,6 +238,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 | `transcript` | 每出一行转写 | `{revision, line: {ts, source, text, kind}}` |
 
 - `levels` **不占 `revision`**，只带当前值作参照。
+- **`levels` 帧里每一路的 `ts` 恒为 `null`**：这一格的语义是「这条读数的时刻」，而电平帧自带固定节奏（4 次/秒），服务不按帧填它 —— 客户端拿 `data.revision` 与帧到达时刻定位即可。`transcript` 帧的 `line.ts` 是另一回事：那一格由转写后端给，真值可以是非 null。
 - 慢消费者：每个订阅者一个**有界队列 512**。满了就清空这个订阅者的队列、塞一份带 `resync: true` 与 `dropped: N` 的 `snapshot`；`levels` 满了只留最新一帧。**一个卡住的页面拖不住别人**，广播路径是同步的、不 `await` 慢消费者。
 - 多个连接看的是同一份状态：一次变更同一个 `revision` 同时到所有订阅者。
 
@@ -267,8 +268,11 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 
 ## 8. 相关文档
 
+- **双端契约（端点口径、快照 schema、SSE 帧形状、动作信封与 `code`/`detail` 表）：`docs/contract.md`**
 - HTTP 面（端点、动作信封、`code` 表）：`docs/api.md`
 - 怎么起服务、配置、日志、退出码、跑测试：`docs/service.md`
 - 后端怎么被找到、怎么插进来：`docs/backend-protocols.md`
 - 界面怎么画这四态：`docs/ui-design.md`
+- 前端工程怎么跑、怎么构建：`web/README.md`
+- 契约的可机读基准（25 个 golden 样本与掩码规则）：`contract/README.md`
 - 索引：`docs/spec.md`

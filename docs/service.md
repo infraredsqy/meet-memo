@@ -87,10 +87,10 @@ $env:MEETING_CAPTURE="dev"; $env:MEETING_NO_BROWSER="1"; meeting web
 
 | 路径 | 现在给什么 |
 |---|---|
-| `GET /` | 构建产物（`web.dist_dir`，默认 `web/dist`）存在就是那份 React 应用；**不存在就给一页说明**：`前端产物还没构建。跑 npm run build，或先用 /debug 自检页看服务状态`，同时在终端与 log 各留一行。服务照常起，不因为缺产物就起不来 |
+| `GET /` | 构建产物（`web.dist_dir`，默认 `web/dist`）里的那份 React 界面。**三档**：目录有内容 → 产物；目录不存在 → 一页说明（`前端产物还没构建。跑 npm run build，或先用 /debug 自检页看服务状态`），同时在终端与 log 各留一行；**目录在但是空的 → 404**。服务照常起，不因为缺产物就起不来；目录存在性**按每请求判定**，产物一建好刷新即可见（不必重启服务） |
 | `GET /debug` | 骨架自检页，四块都接通了：读原始快照、按开始 / 结束 / 静音、事件流面板（`EventSource`）、心跳原始应答面板（每 2 秒问一次）。零依赖、无构建，页面内显式标注**非产品界面、不承担任何告警职责**；产物目录不存在时照样能读 |
 | `GET /api/state` | 完整状态快照，`200`。字段与取值域见 `docs/state.md` 第 2 章 |
-| `GET /api/events` | SSE，三通道。首帧一定是 `snapshot`。帧形状见 `docs/state.md` 第 6 章 |
+| `GET /api/events` | SSE，四个事件（`snapshot` / `state` / `levels` / `transcript`）。首帧一定是 `snapshot`。帧形状见 `docs/state.md` 第 6 章 |
 | `GET /api/heartbeat` | 六字段，任何状态下都 `200`。`service` 这个字面量是端口探测认亲用的，必须有 |
 | `POST /api/actions` | 五个动作（`start` / `stop` / `mute_session` / `settings_update` / `dev_inject`）。信封、动作表与 `code` 表见 `docs/api.md` |
 
@@ -260,7 +260,10 @@ python -m pytest tests/test_state_machine.py tests/test_api_actions.py -q   # �
 - **端口被占时那句文案里的「已录多久」**：占用者是本服务时，括号里眼下是**字面写死的「当前空闲」**（`meeting/service/app.py` 的端口探测那一处还没取用会话时长这个值）。`README.md` 与 `docs/api.md` 都照这个现状写。
 - **真机真开一场会**：设备枚举与真实电平只有真开一场才见分晓，这一条是**手工验收**，四条端到端脚本与它无关。自动化边界归下游 `46ae4a08`。
 - **`meeting post`**：只有桩（打印「会后流程还没接入（65dd3e4c）」、退出码 `1`）。它同时是收尾失败后的出路之一，实现归 `65dd3e4c`。
-- **前端**：`web/` 与构建产物 `web/dist` 还没有；产物一建好，刷新 `/` 就是真界面。
+- **前端**：`web/` 已经落地（React + TypeScript 严格模式 + Vite 6 + vitest 2 + zod），产物落 `web/dist`。它眼下是一页**壳页**：把连接、快照、动作、心跳这条链路走通给人看；电平表盘、告警横幅、设置抽屉归 `070b31e0` 的监控界面。两条管线都验过（命令与结果见 `web/README.md`）：
+  - **改界面**：`cd web; npm run dev`，vite 起在 5173、`/api` 转发到 `http://127.0.0.1:${MEETING_PORT ?? 8765}`（服务照常跑着，改文案走 HMR，不必刷新）。
+  - **开会**：`cd web; npm run build` 产出 `web/dist`，再 `meeting web` **由服务直接发这份静态产物** —— 从服务端口（如 `http://127.0.0.1:8765`）打开就是真界面，**运行时不需要 Node**。
+  - 产物缺失时 `/` 给说明页、`/api/*` 与 `/debug` 照常，产物建好刷新即可见（见第 3 章那张表）。
 - **`settings.devices`**：现在是空对象，子键等设备节点与双端契约定名。
 
 ## 9. 相关文档

@@ -3,8 +3,9 @@
 敲 `meeting web` 起的是**服务本身**：探测设备、准备录音、开本地端口、把界面发出去、
 前台跑到 `Ctrl+C`。服务与界面之间只有两条线：SSE 把状态推出去，POST 把操作收回来。
 
-本节点是骨架：**不含真实采集与模型代码，也不含产品界面**。默认什么都不配时服务照常起来、
-界面照常发、「开始录音」给出「采集后端未接入」的明确说明 —— 不假装能录。
+本节点是骨架：**不含真实采集与模型代码**。默认什么都不配时服务照常起来、界面照常发、
+「开始录音」给出「采集后端未接入」的明确说明 —— 不假装能录。界面在 `web/`（一页壳页，
+把契约链路走通给人看），构建产物由服务自己发出去。
 
 ---
 
@@ -131,7 +132,7 @@
 | 配置 | `~/.config/meeting/config.json`（点号扁平键名的单层映射，例如 `{"web.port": 8765}`；**不迁移** V1 的 `~/.config/meeting_notes/`） |
 | 输出根 | `%USERPROFILE%\Documents\meeting\out`（`output.root` / `MEETING_OUT_ROOT` 可改） |
 | 场次目录 | `<输出根>\YYMMDD`（同名已存在就让位到 `-2` / `-3`…） |
-| 前端产物 | `web.dist_dir`（默认 `web/dist`；目录缺失时 `GET /` 给一张说明页、服务照常起，`/debug` 与 `/api/*` 照常可用） |
+| 前端产物 | `web.dist_dir`（默认 `web/dist`；目录缺失时 `GET /` 给一张说明页、服务照常起，`/debug` 与 `/api/*` 照常可用；目录**在但是空的**回 404 —— 跑 `npm run build` 重新产出即可） |
 
 回归入口：
 
@@ -139,7 +140,43 @@
 
 ---
 
-## 7. 两个「心跳」别串线
+## 7. 前端开发
+
+界面工程在 `web/`（React 18 + TypeScript 严格模式 + Vite 6 + vitest 2 + zod）。
+**前提：Node ≥ 20**（本机实测 node v26.9.0 / npm 11.18.0）。
+
+    cd web
+    npm install        # 装依赖（只需一次）
+
+**改界面**（要边改边看）：服务照常跑着，另开一个终端起 vite：
+
+    cd web
+    npm run dev        # vite 起在 5173，/api 转发到 http://127.0.0.1:${MEETING_PORT ?? 8765}
+
+然后开 `http://127.0.0.1:5173` —— 这条路上改一行文案走 HMR，不必刷新页面。
+服务端口不是默认的 8765 时，起 vite 前把 `MEETING_PORT` 设成实际端口，转发才对得上。
+
+**开会**（用真界面）：先构建，再由服务直发产物 —— **运行时不需要 Node**：
+
+    cd web
+    npm run build      # npm run typecheck && vite build，产物落 web/dist
+    cd ..
+    meeting web        # 从服务端口（如 http://127.0.0.1:8765）打开就是这份产物
+
+产物目录的存在性**按每请求判定**：构建完不必重启服务，刷新即可见；产物被删掉、刷新回说明页。
+
+自检：
+
+    cd web
+    npm test           # vitest run，4 个文件 118 个用例
+    npm run typecheck  # 两条 tsc --noEmit -p，各查各的 project
+
+契约正文在 `docs/contract.md`，可机读基准（25 个 golden 样本与掩码规则）在 `contract/`，
+前端工程自己的说明在 `web/README.md`。
+
+---
+
+## 8. 两个「心跳」别串线
 
 - **界面心跳**（`heartbeat.interval_seconds`，可配 1–60 秒，默认 10 秒）管**失联横幅**：
   界面按这个周期问一次服务，问不着就挂横幅。
