@@ -12,14 +12,10 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from typing import Sequence
 
 from meeting.offline.engine import OfflineSegment
-
-#: 引擎原始标签的形态（`S` + 数字）。认不出的标签照样收下，只是规范化后不再保留片段序。
-_LABEL_RE = re.compile(r"^S\d+$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,8 +80,3 @@ def speaker_summary(spans: Sequence[SpeakerSpan]) -> list[dict]:
         row["segments"] += 1
         row["seconds"] = round(row["seconds"] + max(0.0, span.end - span.start), 3)
     return [totals[name] for name in order]
-
-
-def is_engine_label(label: str) -> bool:
-    """引擎原生标签是否形如 `Sxx`（形如 `S01` 的才算；其余标签照样可用，只是形态不同）。"""
-    return bool(_LABEL_RE.match(str(label)))

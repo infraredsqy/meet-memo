@@ -115,6 +115,12 @@ DEFAULT_VALUES: dict[str, Any] = {
     "capture.backend": "auto",
     "transcriber.backend": "auto",
     "post.hook": "auto",
+    # 会后离线转写这一层的三个开关（`7c6952e5` 定名，与 `capture.backend` 同形：
+    # 「接口留在这里，值归选型节点」）。缺省值取**本机实测跑通**的那一档：
+    # 模型走 MOSSTD 的 HF 仓库 id（本机已有本地快照），档位走 bf16。
+    "post.engine": "auto",
+    "post.model": "OpenMOSS-Team/MOSS-Transcribe-Diarize",
+    "post.dtype": "bfloat16",
     # 两路各自用哪个设备（`dca4539b` 定名）：`None` = 按默认策略挑
     # （mic 挡掉抓取型虚拟端点后按 host API 排序试开；loopback 优先 `CABLE Input` 且不含 16ch）
     "devices.mic": None,
@@ -156,6 +162,11 @@ FLOAT_LIMITS: dict[str, tuple[float, float]] = {
     "asr.repeat_min_coverage": (0.0, 1.0),
 }
 
+#: 会后离线引擎的精度档位（`post.dtype`）：取值逐个对应
+#: `meeting/offline/engine.py` 的 `DTYPE_NAMES`（那边把档位名翻成 `torch.dtype`，
+#: 认不出的名字当场报错）。两处口径一致：这里放行的名字那边都认得。
+POST_DTYPE_VALUES = ("bfloat16", "bf16", "float16", "fp16", "float32", "fp32")
+
 #: 字符串键的合法取值说明（`None` = 任意非空字符串）
 STRING_LIMITS: dict[str, tuple[str, ...] | None] = {
     "web.dist_dir": None,
@@ -165,6 +176,13 @@ STRING_LIMITS: dict[str, tuple[str, ...] | None] = {
     "capture.backend": BACKEND_SELECTORS,
     "transcriber.backend": BACKEND_SELECTORS,
     "post.hook": BACKEND_SELECTORS,
+    # 会后离线这一层（`7c6952e5`）：
+    #   - `post.engine` 与三个后端选择键同形（`auto` / `null` / `module:Class`）；
+    #   - `post.model` 收 HF 仓库 id 或本地快照绝对路径（`None` = 任意非空字符串）；
+    #   - `post.dtype` 只认引擎那边认得出来的档位名（写错档位在启动时就拦下）。
+    "post.engine": BACKEND_SELECTORS,
+    "post.model": None,
+    "post.dtype": POST_DTYPE_VALUES,
     # 两个设备键位（`dca4539b` 定名）：任意非空字符串（精确名，MME 端点名可前缀兜）
     "devices.mic": None,
     "devices.loopback": None,
@@ -191,8 +209,9 @@ ENV_NO_BROWSER = "MEETING_NO_BROWSER"
 #
 # **只有下面逐条列出的字面键名合法，不按前缀归组、也没有任何前缀白名单**；
 # 表外的任何键名一律 `invalid_setting`(400)。
-# 23 个名字逐一取自上面的键全集（phase1 定死的顶层键 + `asr.*` 五个子键 +
-# `dca4539b` 定名的 `devices.mic` / `devices.loopback` 两个设备键位）。
+# 26 个名字逐一取自上面的键全集（phase1 定死的顶层键 + `asr.*` 五个子键 +
+# `dca4539b` 定名的 `devices.mic` / `devices.loopback` 两个设备键位 +
+# `7c6952e5` 定名的 `post.engine` / `post.model` / `post.dtype` 三个会后离线开关）。
 # 设备键位是**点号字面键名**（`devices.mic`），快照里才收成 `settings.devices.mic` 这种子键；
 # 按前缀归组或写成 `devices.{...}` 的嵌套形状都不合法（与 `asr.*` 同一套口径）。
 # ---------------------------------------------------------------------------

@@ -152,7 +152,7 @@ def test_no_code_path_can_merge_the_two_sources() -> None:
          说明表不跨调用共享；
       2. 分段的 `speaker` 是唯一的输入，`source` **只进限定名**、不进编号，
          换 `source` 不改变本路的 `local`；
-      3. `speakers.py` 的模块级名字只有一张正则、两个函数与一个数据类：
+      3. `speakers.py` 的模块级名字只有两个函数与一个数据类：
          没有跨调用的可变状态（累积表、缓存），也没有跨 `source` 的比较写法。
     """
     mic_first = number_speakers("mic", SHARED_INPUT)
@@ -170,8 +170,6 @@ def test_no_code_path_can_merge_the_two_sources() -> None:
     # 3. 模块级名字逐个点名（多一个名字就要在这里说清它是干什么的）
     assert sorted(_module_level_names(speakers_module)) == [
         "SpeakerSpan",
-        "_LABEL_RE",
-        "is_engine_label",
         "number_speakers",
         "speaker_summary",
     ]

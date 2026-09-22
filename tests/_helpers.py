@@ -288,18 +288,36 @@ def write_config_json(home: Path, values: dict[str, Any]) -> Path:
 #: 地方**，不再是一条用例「什么都没写」时的意外落点。
 DEFAULT_CAPTURE_BACKEND = "dev"
 
+#: **会后钩子在测试层的共用缺省**：`null`（缺席档）。
+#:
+#: 产品缺省是 `auto`，`7c6952e5` phase2 落地 `meeting/backends/post.py` 之后那一条会解析到真
+#: 实现，收尾第 4 步于是真的起一条**后台线程**跑整条会后链、往这一场的场次目录里落四五份产物。
+#: 对绝大多数用例那是纯粹的噪音：它们数的是收尾编排、采集归档或服务状态的账，
+#: 而后台线程往场次目录里写文件会让「目录里恰好这几份文件」这类断言变成与线程赛跑的断言。
+#: 测试层因此与 `DEFAULT_CAPTURE_BACKEND` 同一个口径 —— 把缺省收成**不产生副作用的那一档**。
+#:
+#: **要验真实现的用例显式传 `post.hook = "auto"`**（`tests/test_post_hook.py` 走的就是这一档）。
+DEFAULT_POST_HOOK = "null"
 
-def apply_capture_backend_default(home: Path) -> Path | None:
-    """把 `DEFAULT_CAPTURE_BACKEND` 填进本用例的 `config.json`（**只补缺、不覆盖已有的值**）。
+#: 测试层补缺省的键 → 值（只补缺，不覆盖用例自己写的值）
+DEFAULT_BACKEND_VALUES: dict[str, str] = {
+    "capture.backend": DEFAULT_CAPTURE_BACKEND,
+    "post.hook": DEFAULT_POST_HOOK,
+}
+
+
+def apply_backend_defaults(home: Path) -> Path | None:
+    """把 `DEFAULT_BACKEND_VALUES` 里缺的那几项填进本用例的 `config.json`
+    （**只补缺、不覆盖已有的值**）。
 
     子进程那条路上的辅助（`spawn_service()` / `ServiceProcess`）不能像 `app_client()` 那样
     「先把值拼好再写盘」—— 用例可能已经自己写了一份 `config.json`（`write_config_json()`），
     也可能故意把它写坏（非法 JSON / 同名目录）让服务拒绝启动。因此这里只做一件事：
-    **文件存在且是合法 JSON 且已经有 `capture.backend` 就一个字节都不动**；缺这一项就补上，
-    文件不存在就建一份只有这一项的。写不进去（同名目录、权限）时**不抛错也不改**：那正是
+    **文件存在且是合法 JSON 且已经有那个键就一个字节都不动**；缺哪一项就补哪一项，
+    文件不存在就建一份只有这几项的。写不进去（同名目录、权限）时**不抛错也不改**：那正是
     用例要的现场，让被测代码照实报错。
 
-    返回被写入的路径；什么都没写（已有值 / 写不进去）时返回 `None`。
+    返回被写入的路径；什么都没写（都已有值 / 写不进去）时返回 `None`。
     """
     path = config_path_of(home)
     if path.exists():
@@ -307,11 +325,16 @@ def apply_capture_backend_default(home: Path) -> Path | None:
             values = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return None  # 读不动 / 不是合法 JSON：那是用例自己的现场，别去动它
-        if not isinstance(values, dict) or "capture.backend" in values:
+        if not isinstance(values, dict):
             return None
     else:
         values = {}
-    values.setdefault("capture.backend", DEFAULT_CAPTURE_BACKEND)
+    missing = {
+        key: value for key, value in DEFAULT_BACKEND_VALUES.items() if key not in values
+    }
+    if not missing:
+        return None
+    values.update(missing)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(values, ensure_ascii=False), encoding="utf-8")
@@ -483,16 +506,17 @@ def spawn_service(
 ) -> ServiceProcess:
     """起一个真服务子进程（默认带 `MEETING_NO_BROWSER=1`，本 Phase 唯一允许的服务变量）。
 
-    **采集后端在这里补上共用缺省**（`apply_capture_backend_default(home)`）：本用例的
-    `config.json` 里没写 `capture.backend` 时补 `dev` 替身。不补的话产品缺省 `auto` 会让
-    子进程 startup 里的 `probe()` 去真枚举、真试开声卡设备（见 `DEFAULT_CAPTURE_BACKEND`
-    的说明）。用例自己写过的值一个字节都不动。
+    **后端在这里补上共用缺省**（`apply_backend_defaults(home)`）：本用例的 `config.json`
+    里没写 `capture.backend` 时补 `dev` 替身（不补的话产品缺省 `auto` 会让子进程 startup
+    里的 `probe()` 去真枚举、真试开声卡设备），没写 `post.hook` 时补 `null`（不补的话
+    收尾第 4 步会起一条后台线程跑整条会后链，往场次目录里落产物）。两处的说明分别见
+    `DEFAULT_CAPTURE_BACKEND` / `DEFAULT_POST_HOOK`。用例自己写过的值一个字节都不动。
 
     子进程要走到「打开浏览器」这一步（`MEETING_NO_BROWSER` 被显式拿掉）时，**必须**同时把
     `fake_browser_module()` 给的环境变量传进来，让子进程的 `webbrowser` 是那份假替身 ——
     这一步的看门断言就在这里，漏了就直接把用例判红，不留「悄悄开真浏览器」的口子。
     """
-    apply_capture_backend_default(Path(home))
+    apply_backend_defaults(Path(home))
     extra = {"MEETING_NO_BROWSER": "1"}
     if env_extra:
         extra.update(env_extra)
@@ -536,11 +560,12 @@ def run_cli(
 ) -> subprocess.CompletedProcess:
     """跑一次 CLI 并等它自己结束（用法错误、`post` 桩、启动前提不成立这些快路径）。
 
-    **采集后端同样在这里补共用缺省**（与 `spawn_service()` 同源）：`web` 这一档在
-    「启动前提不成立」之外的现场会真的起服务，那时缺省 `auto` 一样会走到真实采集入口上。
+    **后端同样在这里补共用缺省**（与 `spawn_service()` 同源）：`web` 这一档在
+    「启动前提不成立」之外的现场会真的起服务，那时缺省 `auto` 一样会走到真实采集入口上，
+    缺省 `post.hook` 一样会让收尾第 4 步起一条后台线程跑会后链。
     只补缺、不动用例自己写的值（含用例故意写坏的那份配置）。
     """
-    apply_capture_backend_default(Path(home))
+    apply_backend_defaults(Path(home))
     args = [sys.executable, "-m", "meeting"]
     if action is not None:
         args.append(action)
@@ -581,6 +606,10 @@ def app_client(
     startup 里的 `probe()` 就去真枚举、真试开声卡设备了（见 `DEFAULT_CAPTURE_BACKEND` 的
     说明）。要 `null` / `auto` / 别的档的用例**自己显式传**，那时以 `values` 为准。
 
+    **会后钩子同样有一个共用缺省**（`DEFAULT_POST_HOOK = "null"`）：`values` 里没写
+    `post.hook` 时补缺席档。不补的话收尾第 4 步会起一条后台线程跑整条会后链、往场次目录里
+    落四五份产物（见 `DEFAULT_POST_HOOK` 的说明）。要验真实现的用例显式传 `auto`。
+
     **这一步里绝不许触达真浏览器**：应用一进 startup 钩子，尾部的「打开浏览器」就会跑。
     夹具因此在构造应用之前把 `service_app.webbrowser.open` 换成本进程内的假实现，离开时还原。
     假实现与真浏览器无关：它只把收到的 URL 追加进 `browser_calls`，并按 `browser` 决定的
@@ -620,8 +649,9 @@ def app_client(
 
     home = Path(home)
     effective = dict(values or {})
-    # 共用缺省：没写 `capture.backend` 就收成 `dev` 替身（不许默认真采集，见本函数说明）
+    # 共用缺省：没写就收成测试层的那两档（都不产生副作用，见两个常量的说明）
     effective.setdefault("capture.backend", DEFAULT_CAPTURE_BACKEND)
+    effective.setdefault("post.hook", DEFAULT_POST_HOOK)
     write_config_json(home, effective)
     old_home, old_profile = os.environ.get("HOME"), os.environ.get("USERPROFILE")
     os.environ["HOME"] = str(home)
@@ -1000,6 +1030,8 @@ __all__ = [
     "FAKE_BROWSER_OUTCOME_ENV",
     "FAKE_BROWSER_PATH_ENV",
     "DEFAULT_CAPTURE_BACKEND",
+    "DEFAULT_POST_HOOK",
+    "DEFAULT_BACKEND_VALUES",
     "FakeBrowser",
     "FakeMeetingServer",
     "OccupiedPort",
@@ -1010,7 +1042,7 @@ __all__ = [
     "ServiceBrowser",
     "SilentListener",
     "app_client",
-    "apply_capture_backend_default",
+    "apply_backend_defaults",
     "can_bind",
     "config_dir_of",
     "config_path_of",

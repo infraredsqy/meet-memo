@@ -76,6 +76,10 @@ def test_default_values_match_the_frozen_table(tmp_path, monkeypatch):
         "capture.backend": "auto",
         "transcriber.backend": "auto",
         "post.hook": "auto",
+        # 会后离线这一层的三个开关（`7c6952e5` 定名）：缺省值取本机实测跑通的那一档
+        "post.engine": "auto",
+        "post.model": "OpenMOSS-Team/MOSS-Transcribe-Diarize",
+        "post.dtype": "bfloat16",
         # 两个设备键位（`dca4539b` 定名）：没配就是 `None`
         "devices.mic": None,
         "devices.loopback": None,
@@ -88,6 +92,94 @@ def test_default_values_match_the_frozen_table(tmp_path, monkeypatch):
     assert loaded.as_dict() == expected
     # 全部来源都是「默认」
     assert set(loaded.sources.values()) == {"默认"}
+
+
+def test_post_layer_keys_defaults_values_and_groups(tmp_path, monkeypatch):
+    """`post.engine` / `post.model` / `post.dtype` 三个键：默认值、合法取值、三分表登记。
+
+    三个键都是**启动时读一次**那一档（`pending_restart`）：会后离线的一次运行在开场前
+    就把引擎与档位定下来，改了要重启。
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    loaded = _load_with_env(monkeypatch, home, {})
+
+    assert loaded.get("post.engine") == "auto"
+    assert loaded.get("post.model") == "OpenMOSS-Team/MOSS-Transcribe-Diarize"
+    assert loaded.get("post.dtype") == "bfloat16"
+    for key in ("post.engine", "post.model", "post.dtype"):
+        assert key in config_module.DEFAULT_VALUES, key
+        assert key in config_module.SETTING_KEY_GROUPS, key
+        assert config_module.setting_group(key) == "pending_restart", key
+        assert key in config_module.STRING_LIMITS, key
+
+
+def test_post_engine_accepts_the_same_selectors_as_the_other_backends():
+    """`post.engine` 与 `capture.backend` / `transcriber.backend` / `post.hook` 同形。"""
+    for value in config_module.BACKEND_SELECTORS:
+        assert config_module.validate_value("post.engine", value) == value
+    # `module:Class` 这种显式写法照旧放行（三个后端键都是这条口径）
+    explicit = "meeting.offline.engine:MossOfflineEngine"
+    assert config_module.validate_value("post.engine", explicit) == explicit
+
+    with pytest.raises(config_module.ConfigValueError) as info:
+        config_module.validate_value("post.engine", "cuda")
+    assert info.value.key == "post.engine"
+    assert "auto" in info.value.legal
+
+
+@pytest.mark.parametrize("dtype", ["bfloat16", "bf16", "float16", "fp16", "float32", "fp32"])
+def test_post_dtype_accepts_every_level_the_engine_knows(dtype):
+    """`post.dtype` 放行的档位名逐个都在 `meeting.offline.engine.DTYPE_NAMES` 里。"""
+    from meeting.offline.engine import DTYPE_NAMES
+
+    assert dtype in DTYPE_NAMES, f"{dtype} 放行了、引擎那边却认不出"
+    assert config_module.validate_value("post.dtype", dtype) == dtype
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["int8", "fp8", "BFLOAT16", "bfloat", "", "   ", 16, None, True],
+)
+def test_post_dtype_rejects_everything_else(value):
+    """档位名写错在启动时就被拦下（报错含键名、收到的值、合法范围）。"""
+    with pytest.raises(config_module.ConfigValueError) as info:
+        config_module.validate_value("post.dtype", value)
+    assert info.value.key == "post.dtype"
+    assert "bfloat16" in info.value.legal
+
+
+def test_post_model_takes_a_repo_id_or_a_local_path():
+    """`post.model` 收 HF 仓库 id 与本地快照绝对路径两种写法；空串被拒。"""
+    for value in ("OpenMOSS-Team/MOSS-Transcribe-Diarize", r"C:\models\mosstd-snapshot"):
+        assert config_module.validate_value("post.model", value) == value
+
+    for bad in ("", "   ", 7, None):
+        with pytest.raises(config_module.ConfigValueError):
+            config_module.validate_value("post.model", bad)
+
+
+def test_post_layer_keys_come_from_config_json(tmp_path, monkeypatch):
+    """三个键都能从 `config.json` 读进来、来源记得清（不是「没配」那一档）。"""
+    home = tmp_path / "home"
+    home.mkdir()
+    helpers.write_config_json(
+        home,
+        {
+            "post.engine": "meeting.offline.engine:MossOfflineEngine",
+            "post.model": r"C:\models\mosstd-snapshot",
+            "post.dtype": "float16",
+        },
+    )
+
+    loaded = _load_with_env(monkeypatch, home, {})
+
+    assert loaded.get("post.engine") == "meeting.offline.engine:MossOfflineEngine"
+    assert loaded.get("post.model") == r"C:\models\mosstd-snapshot"
+    assert loaded.get("post.dtype") == "float16"
+    assert {loaded.source_of(key) for key in ("post.engine", "post.model", "post.dtype")} == {
+        "config.json"
+    }
 
 
 def test_missing_config_json_falls_back_to_defaults(tmp_path, monkeypatch):

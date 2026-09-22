@@ -9,6 +9,8 @@
   - **空闲态 `CTRL_BREAK_EVENT` → `EXIT_OK`** + `收到 SIGBREAK，进入关停` + 信号自检通过两行 log；
   - `install_shutdown_signal_handlers()` 后 `getsignal(SIGINT) is getsignal(SIGBREAK)`（用后复原）；
   - **`meeting` 命令面的最小验证**（`[project.scripts]` + 可调用对象 `is` 同一个入口）；
+  - **`post` extra 的依赖声明**（`[project.optional-dependencies].post` 在场且含 `av`，
+    模型依赖不在这里重复列）；
   - 启动序列第 5 步「打开浏览器」在真子进程里的两种情形（`MEETING_NO_BROWSER=1` 跳过 /
     打开失败只警告且服务照常起来）。**子进程里一律不许出现真浏览器**：要走到「打开浏览器」
     这一步的用例（拿掉 `MEETING_NO_BROWSER` 的那一条）经 `fake_browser_module()` 注入一份假的
@@ -526,6 +528,39 @@ def test_console_script_entry_is_callable_and_shared():
     entry_module = importlib.import_module("meeting.__main__")
     assert entry_module.main is cli_module.main
     assert getattr(entry_module, "main") is resolved
+
+
+def _requirement_name(requirement: str) -> str:
+    """一条依赖声明里的项目名（`"av>=14"` / `"av==14.0.0"` → `"av"`）。"""
+    for separator in ("==", ">=", "<=", "~=", "!=", ">", "<", "[", ";"):
+        requirement = requirement.split(separator, 1)[0]
+    return requirement.strip()
+
+
+def test_post_extra_declares_the_av_decoder():
+    """`pyproject.toml` 的 `[project.optional-dependencies]` 里有 `post`，且含 `av`。
+
+    这条断言只读那一条包装声明：`meeting/offline/audio.py` 在函数体内
+    `import av`，`engine.py` 的 `transcribe()` 每次都会走那个解码器。少了这一格，
+    `pip install "meeting[post]"` 直接失败、装了也每条音频路径都落
+    `engine_error: ModuleNotFoundError` —— 用例全绿证明不了这件事（「范围」表与自检
+    第 9 条因此要求本文件把 `post` extra 钉住）。
+
+    **只放必要的那一条**：模型依赖已经在 `asr` 那一格里（会后离线路径与会中转写共用），
+    在这里重复列一遍会让人以为两格各装各的；`librosa` 是有意避开的（`numba` 与钉死的
+    numpy 冲突），它的缺席出自设计上的取舍。
+    """
+    pyproject = Path(helpers.REPO_ROOT) / "pyproject.toml"
+    with open(pyproject, "rb") as handle:
+        data = tomllib.load(handle)
+
+    extras = data["project"]["optional-dependencies"]
+    assert "post" in extras, f"`post` extra 不在场：{sorted(extras)}"
+    names = {_requirement_name(item) for item in extras["post"]}
+    assert "av" in names, f"`post` extra 里没有 av：{extras['post']}"
+    assert names == {"av"}, f"`post` extra 该只有 av 一条：{sorted(names)}"
+    for duplicated in ("torch", "transformers", "webrtcvad-wheels", "librosa"):
+        assert duplicated not in names, f"{duplicated} 不该出现在 `post` extra 里：{extras['post']}"
 
 
 def test_probe_helper_only_accepts_the_meeting_shape():

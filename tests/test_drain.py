@@ -1610,7 +1610,9 @@ def test_step_over_budget_still_leaves_later_steps_room(tmp_path, monkeypatch):
 DRAIN_LOG_PROBLEM_TEXT = "写结束标记失败：OSError: [Errno 28] No space left on device"
 
 
-def _inprocess_runtime_with_backends(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def _inprocess_runtime_with_backends(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, post_hook_absent: bool = True
+):
     """进程内那一档的 `ServiceRuntime`，**后端已解析**（可直接开一场、跑一趟收尾）。
 
     与 `_inprocess_runtime()` 同一档，差别只在两处：
@@ -1620,6 +1622,9 @@ def _inprocess_runtime_with_backends(tmp_path: Path, monkeypatch: pytest.MonkeyP
       - 走真正的后端解析（`_resolve_backends()`），四条收尾编排因此按 registry 的结论记账 ——
         「采集替身 → `flush` / `transcode` 记 `skipped`」这条骨架构建下的面孔是真的走出来的，
         用例自己的假件只要往 `post` 那一格或步骤方法上注入就够了。
+
+    `post_hook_absent=False` 时不写 `post.hook` 这一格（取值直接来自 `config.DEFAULT_VALUES`
+    里的产品缺省 `auto`）：⑤b3 那一条量的是产品缺省那一档。
     """
     from meeting import config as config_module
     from meeting.service.app import build_runtime
@@ -1629,18 +1634,33 @@ def _inprocess_runtime_with_backends(tmp_path: Path, monkeypatch: pytest.MonkeyP
     # `build_runtime()` 会把这份配置设成当前配置（`config._LOADED`）；用例结束时放回原样
     # —— 进程内用例共用同一份模块级当前配置，留着自己那一份会渗到别的用例里。
     monkeypatch.setattr(config_module, "_LOADED", config_module.current())
-    runtime = build_runtime(_inprocess_config(tmp_path, {"capture.backend": "dev"}))
+    runtime = build_runtime(
+        _inprocess_config(
+            tmp_path, {"capture.backend": "dev"}, post_hook_absent=post_hook_absent
+        )
+    )
     # 后端解析在真服务里由 `startup()` 的 ④ 步触发（本档不起 lifespan），这里显式走一遍 ——
     # 于是 `start_session()` 有一个在位的采集替身，四条收尾也按 registry 的结论记账。
     runtime._resolve_backends()
     return runtime
 
 
-def _inprocess_config(tmp_path: Path, overrides: dict[str, Any]):
+def _inprocess_config(
+    tmp_path: Path, overrides: dict[str, Any], *, post_hook_absent: bool = True
+):
     """进程内用例的一小份配置：**默认值表原样** + 本用例的输出根 + 点名要改的那几个键。
 
     默认值表直接取 `config.DEFAULT_VALUES`（不手抄一份：`settings` 视图、告警阈值与后端解析
     都要读全键集，抄一份迟早漏键）。
+
+    `post_hook_absent=True`（缺省）时，`post.hook` 在这里显式取 `null`（缺席档）：会后钩子
+    （`7c6952e5` phase2 的 `meeting.backends.post:PostProcessHook`）落地之后，产品缺省 `auto`
+    会让收尾第 4 步真的起一条后台线程跑整条会后链 —— 那是会后节点自己的账。本文件里数收尾
+    编排那几步账的用例（⑤b2 那一条逐字断言 `"post": "skipped"`）靠这一格把「缺席」这一档
+    摆出来，第 4 步按缺席记 `skipped` 才是它们该看到的样子。
+
+    `post_hook_absent=False` 时这一格整个不写，`post.hook` 于是取到 `config.DEFAULT_VALUES`
+    里的产品缺省 `auto` —— ⑤b3 那一条量的就是产品缺省那一档（实现落地之后第 4 步该记 `done`）。
     """
     from meeting.config import DEFAULT_VALUES, Config
 
@@ -1649,7 +1669,7 @@ def _inprocess_config(tmp_path: Path, overrides: dict[str, Any]):
         "output.root": str(tmp_path / "out-inprocess-backends"),
         "log.dir": str(tmp_path / "out-inprocess-backends" / "logs"),
         "transcriber.backend": "auto",
-        "post.hook": "auto",
+        **({"post.hook": "null"} if post_hook_absent else {}),
         **overrides,
     }
     return Config(applied=applied, sources={key: "默认" for key in applied}, path="")
@@ -1673,7 +1693,10 @@ def test_log_step_lands_failed_when_the_session_log_write_reports_a_problem(
 
     断的是四件事：那一步 `failed`；`error` 里有「场次日志写失败」这类如实文案与问题原文；
     收尾就此停在 `draining`（`ended.phase` 保持这一档 —— 失败现场留在快照与盘上）；
-    **其余步照常推进**（第 4 步 `post` 仍按构建期缺席落 `skipped`，不是整段 `drain` 抛出去）。
+    **其余步照常推进**（第 4 步 `post` 仍按缺席档落 `skipped`，收尾编排没有整段抛出去）。
+    最后一条同时是本文件里「缺席 → `skipped`」的落点：它走的是真 `drain()` 四步里的
+    真 `_drain_post()`（另断步骤说明与解析结论，证明走到的是缺席那一档）；产品缺省
+    `post.hook = auto` 那一档由 ⑤b3 单独覆盖。
     """
     from meeting import logging_setup as logging_setup_module
     from meeting.state import begin_drain
@@ -1707,11 +1730,83 @@ def test_log_step_lands_failed_when_the_session_log_write_reports_a_problem(
     assert runtime.snapshot.top_state == "ended", runtime.snapshot.top_state
     # 其余步照常推进（第 4 步按缺席落 skipped，收尾编排没有整段抛出去）
     assert statuses["post"] == "skipped", statuses
+    # 「缺席 → skipped」这半边由这一条真跑：走到的正是缺席那一档的 `_drain_post()`
+    # （步骤说明里有「缺席」、解析结论的 `skipped()` 为真）—— ⑤b3 量的是产品缺省那一档。
+    post_step = next(step for step in runtime.snapshot.ended.steps if step.id == "post")
+    assert "缺席" in (post_step.detail or ""), post_step.detail
+    assert runtime.post_resolution.skipped() is True, runtime.post_resolution
     assert set(statuses.values()) <= set(DRAIN_STEP_STATUS), statuses
     print(
         f"[m3 证据] 场次日志写失败：log 步 -> {log_step.status}"
         f"（error={log_step.error!r}）；ended.phase={runtime.snapshot.ended.phase}；"
         f"四步状态={statuses}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# ⑤b3 收尾第 4 步在**产品缺省**那一档落 `done`（**进程内**，审查问题 C2）
+#
+# `_inprocess_config()` 把 `post.hook` 显式钉成 `null`（缺席档），好让 ⑤b2 那条逐字断言
+# `"post": "skipped"` 继续为真 —— 那是「这一格不写实现时记 skipped」的覆盖，值钱的正是
+# 「缺席」这半边。代价是本文件从此不再观察**产品缺省**：`post.hook = auto` 配上
+# `meeting/backends/post.py` 这条真实现，第 4 步该按「有实现且启动成功」记 `done`。
+# 这一条把那半边补回来：`post.hook` 整个不写（`post_hook_absent=False`，取值直接来自
+# `config.DEFAULT_VALUES`）、走真正的 `_resolve_backends()` 与真正的 `drain()` 四步，
+# 只把 `launch()` 换成一条只记账的替身 —— 真 `launch()` 会起后台线程按 `post.engine = auto`
+# 真去加载权重，`tests/conftest.py` 不许任何一个用例碰真模型。
+# ---------------------------------------------------------------------------
+
+
+def test_post_step_lands_done_under_the_product_default_hook(tmp_path, monkeypatch):
+    """产品缺省 `post.hook = auto`：第 4 步解析到真实现、跑完落 `done`（审查问题 C2）。
+
+    与 ⑤b2 同一条进程内路子，差别只在 `post.hook` 这一格：这里**不写它**，
+    配置里那一格的取值就是 `config.DEFAULT_VALUES` 里的产品缺省（先断言它确实是 `auto`，
+    免得缺省值哪天改了这条用例悄悄换成另一档）。断言这几件事：解析落到本单元的钩子类且
+    `skipped()` 为假、第 4 步 `done`、`run_ok is True`、钩子收到的正是本场的场次目录、
+    收尾终态 `ended.phase == "done"`。
+    """
+    from meeting.backends import post as post_module
+    from meeting.config import DEFAULT_VALUES
+    from meeting.state import begin_drain
+
+    assert DEFAULT_VALUES["post.hook"] == "auto", DEFAULT_VALUES["post.hook"]
+
+    runtime = _inprocess_runtime_with_backends(
+        tmp_path, monkeypatch, post_hook_absent=False
+    )
+    # 接线第一段：产品缺省那一档真的解析到本实现（`null` 那一档才落缺席）
+    assert runtime.config.get("post.hook") == "auto", runtime.config.get("post.hook")
+    assert runtime.post_resolution.target == "meeting.backends.post:PostProcessHook", (
+        runtime.post_resolution
+    )
+    assert runtime.post_resolution.skipped() is False
+    assert isinstance(runtime.post_hook, post_module.PostProcessHook)
+
+    launched: list[str] = []
+
+    def fake_launch(self, session_dir: str) -> None:
+        """替身 `launch()`：只记下收到的场次目录（真那条会起线程去加载模型）。"""
+        launched.append(str(session_dir))
+
+    monkeypatch.setattr(post_module.PostProcessHook, "launch", fake_launch)
+
+    async def one_pass() -> None:
+        runtime.start_session()
+        begin_drain(runtime.snapshot, reason="user")
+        await runtime.drain()
+
+    asyncio.run(one_pass())
+
+    statuses = {step.id: step.status for step in runtime.snapshot.ended.steps}
+    assert statuses["post"] == "done", (statuses, runtime.snapshot.ended)
+    assert runtime.post_resolution.run_ok is True
+    assert launched == [runtime.snapshot.session.dir], launched
+    assert runtime.snapshot.ended.phase == "done", runtime.snapshot.ended.phase
+    print(
+        f"[C2 证据] 产品缺省 post.hook=auto：解析到 {runtime.post_resolution.target}；"
+        f"第 4 步 -> {statuses['post']}（run_ok={runtime.post_resolution.run_ok}）；"
+        f"launch 收到的场次目录={launched}；四步状态={statuses}"
     )
 
 

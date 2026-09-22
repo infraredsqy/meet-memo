@@ -380,8 +380,14 @@ def test_capture_alert_snapshot(tmp_path, make_client, contract_regen):
 
 
 def test_capture_ended_done(tmp_path, make_client, contract_regen):
-    """ended·done 快照 + stop 成功体（收尾四步走完的终态）。"""
-    client = make_client({"capture.backend": "dev"})
+    """ended·done 快照 + stop 成功体（收尾四步走完的终态）。
+
+    `post.hook` 显式取 `null`：会后钩子（`7c6952e5` phase2 的 `PostProcessHook`）落地之后，
+    产品缺省 `auto` 会让第 4 步真的起一条后台线程跑会后链、往场次目录里多落四五份产物，
+    于是 `ended-done` 这份 golden 样本里第 4 步的状态与采集到的目录内容都不再稳定。
+    这一步的「有实现就 done」另有 `tests/test_post_hook.py` 与 `tests/test_drain.py` 盯着。
+    """
+    client = make_client({"capture.backend": "dev", "post.hook": "null"})
 
     assert _act(client, "start", {"mode": "both"}).status_code == 200
     _wait_envelope_full(client)

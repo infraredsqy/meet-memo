@@ -536,8 +536,15 @@ def test_finish_drain_keeps_top_state_ended(tmp_path):
     断言逐条对齐 §5.1：`finish_drain()` 之后 `ended.phase == "done"`、`top_state` 停在
     `ended`、`session` 保留（本场时长冻结）、`ended` 摘要留到下一场 `start` 才清空、
     盘上 `state == "done"`。
+
+    `post.hook` 显式取 `null`：会后钩子（`7c6952e5` phase2 的 `PostProcessHook`）落地之后，
+    产品缺省 `auto` 会让第 4 步真的起一条后台线程跑会后链 —— 本用例数的是**收尾编排**的账，
+    第 4 步按缺席记 `skipped` 才是这一场该看到的样子。有实现那一档在
+    `tests/test_post_hook.py` 里验。
     """
-    stack, client, runtime = build_live_client(tmp_path, {"capture.backend": "dev"})
+    stack, client, runtime = build_live_client(
+        tmp_path, {"capture.backend": "dev", "post.hook": "null"}
+    )
     try:
         assert post(client, "start").status_code == 200
         session_dir = Path(runtime.snapshot.session.dir)

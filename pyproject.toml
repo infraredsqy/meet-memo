@@ -57,6 +57,16 @@ asr = [
     "transformers==5.15.0",
     "webrtcvad-wheels==2.0.14",
 ]
+# `post` = 会后离线转写这一层的依赖（`7c6952e5` phase2）。只有 `av` 一条：
+# `meeting/offline/audio.py` 用 PyAV 把任意容器解成 16k 单声道 float32 波形 ——
+# 走 `transformers.audio_utils.load_audio` 的字符串路径会落到 librosa 上，而本机没装它。
+# **有意不加 librosa**：`numba` / `librosa` 与钉死的 numpy 冲突，设计里也一直避开它。
+# torch / transformers / webrtcvad 不在这一格重复列：它们已经在 `asr` 那一格里，
+# 会后离线路径与会中转写共用同一套模型依赖。**不装这一格照样能起服务**：
+# `av` 在函数体内惰性 import，`import meeting.backends.post` 一条重依赖都不拉。
+post = [
+    "av",
+]
 # 测试层：httpx 只服务测试层的真服务子进程；运行时的端口探针走标准库 socket。
 test = [
     "pytest",
@@ -64,11 +74,20 @@ test = [
 ]
 
 [tool.setuptools]
-# 显式列出包：与目录树一一对应（五个包标记都必须在位 —— `meeting.capture` 是
+# 显式列出包：与目录树一一对应（包标记都必须在位 —— `meeting.capture` 是
 # `dca4539b` 建的采集层，漏了它 `pip install` 之后那三个模块就不在包里；
 # `meeting.asr` 是 `9e5db89c` phase1 建的转写核心，漏了它 `transcriber.backend = auto`
-# 在装好的包里会解析失败）。
-packages = ["meeting", "meeting.service", "meeting.backends", "meeting.capture", "meeting.asr"]
+# 在装好的包里会解析失败；`meeting.offline` 是 `7c6952e5` 建的会后离线层，
+# 漏了它 `post.hook = auto`（约定路径 `meeting.backends.post:PostProcessHook`）
+# 在装好的包里会解析不到 `meeting.offline.runner`）。
+packages = [
+    "meeting",
+    "meeting.service",
+    "meeting.backends",
+    "meeting.capture",
+    "meeting.asr",
+    "meeting.offline",
+]
 
 [tool.setuptools.package-data]
 # debug.html 住在包里：pip install 之后 /debug 那页也得在。

@@ -1,0 +1,121 @@
+"""会后钩子（`7c6952e5` phase2）：收尾第 4 步的落点。
+
+`registry.resolve_post_hook()` 按 `post.hook` 找的就是本模块的 `PostProcessHook`
+（`DEFAULT_PATHS["post.hook"]` 那条约定路径）。本模块就位之后，`post.hook = auto`
+的构建里收尾第 4 步从 `skipped` 翻成 `done`，服务侧一行都不用改。
+
+## 契约（`docs/backend-protocols.md`）
+
+  - `launch(session_dir)` **返回即算启动成功**：活儿交给一条 **daemon 线程**，
+    调用方（收尾第 4 步）不等它跑完；
+  - 线程里的任何异常都落进 `meeting_offline_status.json` 的 `error`，
+    **不许把异常抛回收尾流程** —— 收尾那一步记 `done`（启动成功），跑不跑得成
+    由状态文件回答；
+  - 会话级 `session.json` 归收尾流程写，这条后台线程**不去碰它**；
+  - **重依赖在函数体内 import**（`torch` / `transformers` / `av` 都在
+    `meeting.offline` 的那几个模块里，本模块自己一条都不拉）：
+    `import meeting.backends.post` 必须保持轻量，否则 `meeting web` 的启动链会被拖慢。
+
+类的 `__module__` 是 `meeting.backends.post` —— `registry.capabilities_of()` 靠它区分
+替身与本实现（写进别的模块名下会被当成替身）。**不实现 `finalize` / `transcode`**：
+那两项是采集后端的能力，采集侧那两步的闸门只看采集实现。
+"""
+
+from __future__ import annotations
+
+import logging
+import threading
+from datetime import datetime
+from pathlib import Path
+
+_log = logging.getLogger("meeting.backends.post")
+
+#: 后台线程的名字（出现在线程转储与 log 里，一眼能认出是哪一条）
+THREAD_NAME = "post-offline"
+
+#: 状态文件里 `state` 的三档
+STATE_RUNNING = "running"
+STATE_DONE = "done"
+STATE_FAILED = "failed"
+
+
+class PostProcessHook:
+    """会后离线转写的钩子：**起线程就返回**。
+
+    `post.hook` 的四档取值里 `auto` 落在这里；`null` 落 `registry._AbsentPostHook`
+    （缺席记 `skipped`，那是另一个档位的事）。
+    """
+
+    def launch(self, session_dir: str) -> None:
+        """收尾第 4 步调它，**返回即算启动成功**（不等它跑完）。
+
+        `session_dir` 是这一场的场次目录。起一条 daemon 线程跑
+        `meeting.offline.runner.run_session(session_dir)`，随即返回。
+        """
+        target = str(session_dir or "")
+        if not target:
+            # 没有场次目录就没有落点：如实报错，让收尾那一步按「有实现却跑不成」记 failed
+            raise ValueError("launch() 需要场次目录（收到空值）")
+        thread = threading.Thread(
+            target=self._run,
+            args=(target,),
+            name=THREAD_NAME,
+            daemon=True,
+        )
+        thread.start()
+
+    # -- 线程体 -------------------------------------------------------------
+
+    def _run(self, session_dir: str) -> None:
+        """线程体：跑完整条会后链；**任何异常都落进状态文件，绝不外传**。
+
+        `run_session()` 自己会把状态文件从 `running` 落到终态。它整个抛出来时
+        （进程被杀、磁盘写不进去这类），这里把状态文件补成 `failed` 并写上原因，
+        那一格于是不会永远停在 `running`。
+        """
+        try:
+            from meeting.offline.runner import run_session
+
+            run_session(session_dir)
+        except BaseException as exc:  # 后台线程的异常没有别的落点，兜到底
+            _log.exception("会后离线转写失败：%s", session_dir)
+            self._mark_failed(session_dir, exc)
+
+    def _mark_failed(self, session_dir: str, exc: BaseException) -> None:
+        """把状态文件补成 `failed`（**尽力而为**：连这一步都失败就只留一条 log）。"""
+        try:
+            from meeting.offline import artifacts
+
+            path = Path(session_dir) / artifacts.STATUS_NAME
+            existing = None
+            if path.exists():
+                try:
+                    existing = artifacts.read_status(path)
+                except artifacts.ArtifactContractError:
+                    existing = None
+            artifacts.write_status(
+                path,
+                session_id=str((existing or {}).get("session_id") or Path(session_dir).name),
+                state=STATE_FAILED,
+                started_at=str((existing or {}).get("started_at") or _now_iso()),
+                sources=list((existing or {}).get("sources") or []),
+                artifacts=dict((existing or {}).get("artifacts") or {}),
+                finished_at=_now_iso(),
+                error=f"{type(exc).__name__}: {exc}",
+            )
+        except Exception:  # pragma: no cover - 兜底那一步失败时不掩盖原异常
+            _log.exception("会后离线状态文件补写失败（原异常照上面那条 log）")
+
+
+def _now_iso() -> str:
+    """现在的 ISO 时刻（与 `meeting/offline/runner.py` 的 `_now_iso()` 同形）。"""
+    return datetime.now().isoformat(timespec="seconds")
+
+
+__all__ = [
+    "STATE_DONE",
+    "STATE_FAILED",
+    "STATE_RUNNING",
+    "THREAD_NAME",
+    "PostProcessHook",
+]
