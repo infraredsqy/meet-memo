@@ -41,7 +41,22 @@ meeting = "meeting.cli:main"
 # `capture` 这一格**有意留空**（`dca4539b` §5）：音频四件套已经进运行时依赖，
 # 这里再列一遍会让人以为它们是可选的。`asr` 等模型依赖由下游节点各自加（§3.2）。
 capture = []
-asr = []
+# `asr` = 转写（GLM-ASR）的模型依赖（`9e5db89c` phase1 定档）。三个版本号照 V1
+# `meeting-notes\requirements.txt` 的本机实测值**逐项按行**写（Python 3.13.7 / CUDA 12.8）：
+#   torch 2.9.1+cu128（第 10 行；第 9 行是它要的 `--extra-index-url` 索引）·
+#   transformers 5.15.0（第 24 行，GLM-ASR 类由此版进稳定版）·
+#   webrtcvad-wheels 2.0.14（第 27 行，原版 webrtcvad 在 Windows/Py3.13 编译不过）。
+# **不装这一格照样能起服务**：重依赖全在 `meeting/asr/` 的函数体内惰性 import，
+# `import meeting.asr.glm` 一条重依赖都不拉（`tests/test_asr_glm.py` 在全新解释器里盯着这一条）。
+# ⚠ `torch==2.9.1+cu128` 是 CUDA 12.8 构建，PyPI 上没有这个 wheel，装的时候要带索引：
+#   pip install --extra-index-url https://download.pytorch.org/whl/cu128 "meeting[asr]"
+#   （CPU 版写成 `torch==2.9.1`、不用那个索引即可。）
+# numpy 不在这里重复列：它是运行时依赖（音频四件套那一格），版本已经钉死。
+asr = [
+    "torch==2.9.1+cu128",
+    "transformers==5.15.0",
+    "webrtcvad-wheels==2.0.14",
+]
 # 测试层：httpx 只服务测试层的真服务子进程；运行时的端口探针走标准库 socket。
 test = [
     "pytest",
@@ -49,9 +64,11 @@ test = [
 ]
 
 [tool.setuptools]
-# 显式列出包：与目录树一一对应（四个包标记都必须在位 —— `meeting.capture` 是
-# `dca4539b` 建的采集层，漏了它 `pip install` 之后那三个模块就不在包里）。
-packages = ["meeting", "meeting.service", "meeting.backends", "meeting.capture"]
+# 显式列出包：与目录树一一对应（五个包标记都必须在位 —— `meeting.capture` 是
+# `dca4539b` 建的采集层，漏了它 `pip install` 之后那三个模块就不在包里；
+# `meeting.asr` 是 `9e5db89c` phase1 建的转写核心，漏了它 `transcriber.backend = auto`
+# 在装好的包里会解析失败）。
+packages = ["meeting", "meeting.service", "meeting.backends", "meeting.capture", "meeting.asr"]
 
 [tool.setuptools.package-data]
 # debug.html 住在包里：pip install 之后 /debug 那页也得在。
