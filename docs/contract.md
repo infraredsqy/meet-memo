@@ -102,7 +102,7 @@
 - `muted` 说的是**这一条现在会不会出声**（会话级静音生效期间，或这一条还在抑制窗口里）。判定与窗口计算**全在服务侧**：界面只看这个布尔值，`false` 就响一声、`true` 就不出声、界面不算任何窗口。
 - **心跳失联那条致命级由界面自己判、自己画**，服务侧不产生它。
 
-`transcript`：`health ∈ normal｜behind｜stopped`（直接来自转写后端。**空闲态是 `stopped`** —— 真实现没起过场次时报的就是它，`contract/fixtures/snapshot/idle.json` 与 `idle-notice.json` 那两格里就是这个值；缺席档的缺省替身恒报 `normal`）；`last_line_at` 是 ISO \| null（**掩码 `<iso>`**，服务侧收到最近那一行时的墙钟）；`buffered_lines` 是积压段数、`failed_segments` 是累计识别失败段数 —— **这两个计数只进 log 与 `/debug`，产品界面不摆它们**，它们写进快照但不给 `revision` 投票（四格里只有 `health` 的迁移才提交）。刷新路径：开一场就地刷一次、每出一行刷一次，另有一条 0.5 秒的低频节拍兜住「worker 停摆、没有行可等」那一档；**读路径（`GET /api/state`、SSE 首帧）不碰后端，也不改状态**。同一批行逐行落在场次目录里的 `meeting_transcript_<source>.md`（会中临时稿，一行 `[HH:MM] 正文`，见 `docs/state.md` 第 3 章）。
+`transcript`：`health ∈ normal｜behind｜stopped`（直接来自转写后端。**空闲态是 `stopped`** —— 真实现没起过场次时报的就是它，`contract/fixtures/snapshot/idle.json` 与 `idle-notice.json` 那两格里就是这个值；缺席档的缺省替身恒报 `normal`）；`last_line_at` 是 ISO \| null（**掩码 `<iso>`**，服务侧收到最近那一行时的墙钟）；`buffered_lines` 是积压段数、`failed_segments` 是累计识别失败段数 —— **这两个计数只进 log 与 `/debug`，产品界面不摆它们**，它们写进快照但不给 `revision` 投票（四格里只有 `health` 的迁移才提交）。刷新路径：开一场就地刷一次、每出一行刷一次，另有一条 0.5 秒的低频节拍兜住「worker 停摆、没有行可等」那一档；**读路径（`GET /api/state`、SSE 首帧）不碰后端，也不改状态**。同一批行逐行落在场次目录里的 `meeting_transcript_<source>.md`（会中临时稿，一行 `[HH:MM] 正文`，见 `docs/state.md` 第 3 章）；**会中这份是临时稿**，权威底本是会后那份 `meeting_offline_transcript_<source>.md`（每路一份、两路不合并，第 7 章）。
 
 `ended`：`phase ∈ draining｜done`（**`failed` 不是这个字段的取值** —— 它属于盘上 `session.json` 的 `state`，在快照里没有对应位置）；`steps` 是四步各一条，次序恒为 `flush` / `transcode` / `log` / `post`；`error` 是 string \| null。
 
@@ -445,8 +445,10 @@ X-Meeting-Service: 1
 | `GET /api/summaries` | 本场总结记录（按过的几次总结：时间 + 窗口 + 那几条） | 手动总结 / 会后节点 | **路由没有注册**：`all_routes()` 只有四条 `/api/*` + `/debug`，因此这个路径落到末端 404（回 `Not Found`） |
 | `GET /api/sessions` | 场次列表（会后视图的会议选择器） | 会后节点 | 同上：未注册，末端 404 |
 | `GET /api/sessions/{id}` | 单场状态（会后视图的进度区） | 会后节点 | 同上：未注册，末端 404 |
-| 转写历史回看 | 中途订阅能不能拿到已经出过的转写行 | **待下游决断（`9e5db89c` / `070b31e0`）** | **现状是拿不到**：`transcript` 通道只发「订上之后新出的行」，连接时的首帧 `snapshot` 也不带转写正文（`transcript.last_line_at` 只是个时间戳、`buffered_lines` 是计数）。界面在会话中途打开时，**只能显示从那一刻起的新行**，拿不到已有行 |
-| 说话人名字落盘 / 跳过编号 | 用户给某个编号起名、或标记「这个编号不认领」 | **会后管线（`41465462` / `7c6952e5`）** | **本契约不覆盖**：这是会后产物那一侧的事，服务侧的会中契约里没有对应字段 |
+| 转写历史回看 | 中途订阅能不能拿到已经出过的转写行 | **待下游决断（`9e5db89c` / `070b31e0`）** | **现状是拿不到**：`transcript` 通道只发「订上之后新出的行」，连接时的首帧 `snapshot` 也不带转写正文（`transcript.last_line_at` 只是个时间戳、`buffered_lines` 是计数）。界面在会话中途打开时，**只能显示从那一刻起的新行**，拿不到已有行。会中这些行落在场次目录的 `meeting_transcript_<source>.md` 里，会后那份权威转写也住在同一个目录，两样都没有读它们的端点 |
+| 说话人名字落盘 / 跳过编号 | 用户给某个编号起名、或标记「这个编号不认领」 | **会后管线（`41465462` / `7c6952e5`）** | **本契约不覆盖**：这是会后产物那一侧的事，服务侧的会中契约里没有对应字段。会后离线这一层（`7c6952e5`）落地之后仍然没有承载它的字段：`meeting_offline_speakers_<source>.json` 里只有类编号（`mic:S01` 这种限定名）与每段的起止秒数，**名字既不推断、也没有可写的位置**，「不认领」这个标记同样无处安放 |
+
+**会后产物不在本契约里**：会后离线转写与说话人聚类（`7c6952e5`）已经落地，四份产物住在**场次目录里的文件**上 —— `meeting_offline_transcript_<source>.md`（每路一份的权威转写，一行 `[HH:MM] **S01**: 正文`）、`meeting_offline_speakers_<source>.json`（类编号与区间对照表）、`meeting_offline_report.md`、`meeting_offline_status.json`。它们**没有 HTTP 端点、快照里也没有对应字段**（本章那三条 `GET /api/sessions` / `GET /api/sessions/{id}` / `GET /api/summaries` 仍未注册），本契约的端点口径、快照 schema 与 SSE 帧形状都管不到；要读就按场次目录里的文件读，字段契约的正文在 `meeting/offline/artifacts.py` 的模块说明里。**两路各落一份、两路不合并**（文件名与限定名 `mic:S01` 里始终带着 `source`）。这一场跑成什么样由 `meeting_offline_status.json` 回答：收尾第 4 步的 `post` 在会后钩子在场时记 `done`（钩子起线程即返回，启动成功就算完成），跑不跑得成、缺没缺一段写在状态文件与运行报告里。
 
 **「暂停」不做，不留位。** 需求锚里没有任何一条要暂停，而「暂停」恰好就是 R2/R4 要消灭的那种「看起来在录、实际没录」的状态（`docs/ui-design.md` 第 5 章明文）。因此本契约里**没有** `pause` / `resume` 动作、**没有**快照里的 `paused` 之类字段，**也不为将来留占位**。同理，**不做会中的音频源切换**：要录哪几路在开始前定（`mode`），录音期间不切。
 

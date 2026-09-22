@@ -4,7 +4,7 @@
 >
 > 读者是想接这份数据的下游开发者（前端、验收脚本、会后流程）。
 >
-> 代码落点：状态机与全部取值域在 `meeting/state.py`，场次目录与 `session.json` 在 `meeting/session.py`，告警判定在 `meeting/alerts.py`，推送在 `meeting/service/hub.py`，这一切的持有者是 `meeting/service/runtime.py` 的 `ServiceRuntime`。HTTP 面见 `docs/api.md`；**可机读的那份对外形状**（逐键 schema、帧形状、`code`/`detail` 表）见 `docs/contract.md` —— 这份文档与它冲突时以代码实际行为为准，权威落在契约那一本。
+> 代码落点：状态机与全部取值域在 `meeting/state.py`，场次目录与 `session.json` 在 `meeting/session.py`，告警判定在 `meeting/alerts.py`，推送在 `meeting/service/hub.py`，这一切的持有者是 `meeting/service/runtime.py` 的 `ServiceRuntime`；会后那一层在 `meeting/offline/`（`artifacts.py` 管产物的写盘与字段契约、`runner.py` 管主流程），拉起它的钩子是 `meeting/backends/post.py`。HTTP 面见 `docs/api.md`；**可机读的那份对外形状**（逐键 schema、帧形状、`code`/`detail` 表）见 `docs/contract.md` —— 这份文档与它冲突时以代码实际行为为准，权威落在契约那一本。
 
 ## 章节目录
 
@@ -12,7 +12,7 @@
 |---|---|
 | 1 | 四态与迁移 |
 | 2 | 状态快照的形状 |
-| 3 | 场次目录与 `session.json` |
+| 3 | 场次目录、`session.json` 与会后离线产物 |
 | 4 | 心跳与 `recording_alive` |
 | 5 | 告警 |
 | 6 | SSE：四个事件与帧形状 |
@@ -44,11 +44,11 @@
 | 1 | `flush` | 停采集、把归档落盘（后端 `finalize()`：停流 + join + 关文件 + `fsync`） | `dca4539b`（真采集后端已落地） |
 | 2 | `transcode` | 收尾转换（后端 `transcode()`：两份 PCM → 64k MP3，**转完保留 PCM**） | `dca4539b`（真采集后端已落地） |
 | 3 | `log` | 写这一场的结束标记（`session.json` + 服务级主日志） | 本服务（永远在场，永远 `done`） |
-| 4 | `post` | 拉起会后流程（**启动即算完成，不等它跑完**） | `65dd3e4c` |
+| 4 | `post` | 拉起会后流程（**启动即算完成，不等它跑完**）：起一条后台线程跑会后离线转写，钩子返回就记 `done` | `7c6952e5`（`meeting.backends.post:PostProcessHook` 已落地） |
 
 每步的 `status` 取五档之一：`waiting` / `running` / `done` / `failed` / `skipped`。
 
-- **`skipped` = 这个构建里没有真实实现**（采集替身不写真实音频、会后钩子缺席）。它不阻塞 `done`，只留一行 warning。
+- **`skipped` = 这个构建里没有真实实现**（采集替身不写真实音频、`post.hook = null` 那一档的钩子缺席）。它不阻塞 `done`，只留一行 warning。
 - **`failed` = 有实现，但这次调用抛错**。它带 `error`。
 - 判「缺席」只看后端的解析结果（`meeting/backends/registry.py`），不看调用时抛了什么异常。
 
@@ -61,9 +61,9 @@
 | 四步全部落定（`done` / `skipped`）且无 `failed` | `done` | 停在 `ended` | 保留（时长冻结，界面画「已结束·已完成」） | 放行，从 `ended` 直接进 `recording` |
 | 有任一步 `failed`，或四步没全落定就走到了出口 | 保持 `draining` | 停在 `ended` | 保留 | `draining`(409)，`detail` 带失败步与场次 log 路径 |
 
-骨架构建（默认 `null` 替身或 dev 替身 + 钩子缺席）跑一场会的预期终态是固定的：`flush: skipped` / `transcode: skipped` / `log: done` / `post: skipped`，于是 `ended.phase == "done"`。
+骨架构建（`null` 替身或 dev 替身 + `post.hook = null`）跑一场会的预期终态是固定的：`flush: skipped` / `transcode: skipped` / `log: done` / `post: skipped`，于是 `ended.phase == "done"`。
 
-**真采集那一场**（`capture.backend` 取默认值 `auto`，解析到 `meeting.backends.capture:CaptureBackend`）的终态是 `flush: done` / `transcode: done` / `log: done` / `post: skipped`；收尾跑完之后场次目录里躺着两路归档：`meeting_audio_mic.pcm` + `.mp3`、`meeting_audio_loopback.pcm` + `.mp3`（未选中的那一路是 0 字节的 `.pcm`，不产 `.mp3`）。第 1 步落盘失败（例如磁盘满）与第 2 步转码失败（例如 `ffmpeg` 不在 PATH 上）各记 `failed`，**PCM 一个字节都不删**。
+**真采集那一场**（`capture.backend` 取默认值 `auto`，解析到 `meeting.backends.capture:CaptureBackend`）的终态是 `flush: done` / `transcode: done` / `log: done` / `post: done`（`post.hook` 取默认值 `auto`，解析到 `meeting.backends.post:PostProcessHook`）；收尾跑完之后场次目录里躺着两路归档：`meeting_audio_mic.pcm` + `.mp3`、`meeting_audio_loopback.pcm` + `.mp3`（未选中的那一路是 0 字节的 `.pcm`，不产 `.mp3`），会后那条链接着往同一目录里落会后产物（见第 3 章）。第 1 步落盘失败（例如磁盘满）与第 2 步转码失败（例如 `ffmpeg` 不在 PATH 上）各记 `failed`，**PCM 一个字节都不删**。第 4 步记 `done` 说的是**钩子启动成功**，会后那一趟跑成什么样由场次目录里的 `meeting_offline_status.json` 回答。
 
 ### 收尾怎么跑：触发、共享预算、超时与中断
 
@@ -151,7 +151,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 
 `revision` 的递增与广播只经 `ServiceRuntime.commit()` 一处：同一次事实处理里的多次改动合并成一次 `+1`、一次全量快照。被状态机拒绝的动作**不涨 `revision`、不写盘、不广播**。
 
-## 3. 场次目录与 `session.json`
+## 3. 场次目录、`session.json` 与会后离线产物
 
 - 输出根 = `output.root`（默认 `%USERPROFILE%\Documents\meeting\out`）。**根不存在时在 `start` 那一刻建**，服务启动与扫描都不建。
 - 场次目录名 = `YYMMDD`，同名已存在就让位到 `YYMMDD-2`、`YYMMDD-3`……**让位不复用**。
@@ -185,6 +185,45 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 - `sources[*].archive` 的形状固定为 `meeting_audio_<source>.pcm`。**这两个文件无条件都列出来**（冻结项），所以采集侧开场就把两份都建出来 —— 未选中的那一路是 0 字节文件，收尾也不给它产 `.mp3`（`dca4539b` 已落地）。
 - **一场会的事实全在这一份文件里**，不另开服务级状态文件。重启靠它判断上一场走没走完，`meeting post` 也靠它认场次。
 - `start` 阶段写这份文件失败 → **不进 `recording`**，回 503 并把刚建的场次目录清掉、在主 log 留一条痕（「没有落痕就开始录」是不许的）。
+
+### 会后离线产物
+
+收尾第 4 步把会后离线那一套拉起来之后（`7c6952e5` 已落地），一场会在场次目录里多出四类文件（转写与对照表按路各落一份，两路的场次一共六份）。写盘与字段契约在 `meeting/offline/artifacts.py`：
+
+| 文件 | 内容 | 读者 |
+|---|---|---|
+| `meeting_offline_transcript_<source>.md` | 权威转写，每行 `[HH:MM] **S01**: 正文`（**分钟级**） | 人 + 下游对账 |
+| `meeting_offline_speakers_<source>.json` | 类编号 → 每段区间的对照表（`start` / `end` 是**秒级浮点**） | 下游程序 |
+| `meeting_offline_report.md` | 运行报告：逐路的秒数 / 段数 / 类数 / 墙钟 / 实时率、段耗时分布、失败原因分布、缺了哪几段 | 人 |
+| `meeting_offline_status.json` | 状态文件：`running` / `done` / `failed`，外加 `partial` 与 `error` | 下游程序 + 将来的界面 |
+
+- **每路各一份，两路不合并**：转写与对照表的文件名里都带 `<source>`，说话人的限定名一律是 `${source}:${local}`（`mic:S01` 这种形状）。两路的编号互不相认，混成一份就说不出某一行的出处了。
+- 对照表给的是**类编号**（`S01` 这种），这条链不给编号起名，表里也没有名字那一格。
+- 分块跑时的临时块音频住在 `<场次目录>/_offline_chunks/` 下面，跑完一块都不留：正常跑完与中途抛出来都会扫干净。
+- 对照表的必填顶层键是 `schema_version` / `source` / `speakers` / `segments`，`segments` 每一项必填 `start` / `end` / `speaker` / `text`。`schema_version` 缺失或主版本号读方不认识、`source` 缺失的对照表，读方拒绝并如实报错，读的人拿不到一份半信半疑的表。
+
+#### 分块跑的类数读不出人数
+
+`post.chunk_seconds` 到点之后，一场会被切成**连续不重叠**的块逐块调引擎，再把结果拼回整场时间轴（每段的秒数加上该块在原录音上的偏移）。切点是从头开始的固定间隔（`0`、`chunk_seconds`、`2 × chunk_seconds`…），音频在哪里安静不影响切点。
+
+块与块之间不做映射、不做相似度比较、不做合并：块内编号带命名空间（第 1 块的 `S01` 进产物就是 `c01:S01`），**同一个人在两块里各拿一个编号**。于是对照表里 `speakers` 数组的长度在分块跑时等于**各块类数之和**，比这一场真实的人数大。这件事落在 `headcount` 那一格：
+
+| 跑法 | `meaningful` | `class_count` | `chunk_count` | `basis` |
+|---|---|---|---|---|
+| 整段一次跑（1 次引擎调用） | `true` | 模型在这段音频里分出的类数 | `1` | `single_pass_classes` |
+| 分块跑（≥2 块） | `false` | 各块类数之和 | 实际块数（也就是引擎调用次数） | `sum_of_chunk_classes` |
+
+`chunk_count` 记的是**数出来的实际块数**：单趟跑没有块数组、记 `1`，那一次同样是一次引擎调用；块长除不尽时它与「总时长 ÷ 块长」算出来的商对不上（5943.3 秒配 1200 秒块长，商 4.95、实际 5 块）。读这个数当人数之前先看 `meaningful`，下游按它分档。
+
+#### 缺了一段的时候
+
+分成多块跑之后，某一块就可能没成（显存不够、单块抛错、一段都没交回）。这一路缺的那几段音频因此没有转写，**产物照落、整场仍落 `done`**，而这件事在三处同时留痕：
+
+- 状态文件落 `done` 加 `partial: true`，`error` 写明缺的是哪几段区间（秒级，落在原录音时间轴上）；
+- 转写文件的**第一行**是一条注释行（`<!-- ... -->` 形状），写明缺了哪一段 —— 读方按行格式读正文时会跳过它，它不占段号；
+- 对照表的 `audio` 那一格带 `partial` 与 `missing_spans`，`chunks` 数组逐块记成功与失败；运行报告单列一节列出缺失区间。
+
+**每一块都没跑成的那一路落 `failed`**：那一路的转写只剩那一条注释行、对照表是一份空表，终态与原因写在对照表的 `state` / `error` 两格上。整场的终态看两路：有一路跑成就是 `done`（失败那一路的原因进状态文件与报告），两路都失败才落 `failed`。整段一次跑的那一档失败不落产物（没有「哪几块没成」可说），失败原因只在状态文件与报告里。
 
 ### 重启自洽
 

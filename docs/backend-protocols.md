@@ -2,7 +2,7 @@
 
 > 这份文档写服务与后端之间的接缝：三个协议的成员、数据结构、缺省值，以及后端怎么被找到、怎么被注入。
 >
-> 现状：**协议本身已经定死，三个位置里真采集与真转写都已经落地。** `capture.backend` 的默认值 `auto` 解析到真采集后端（`meeting.backends.capture:CaptureBackend`，真探测、真起两路、真落盘与真转码）；`transcriber.backend` 的默认值 `auto` 解析到真转写后端（`meeting.backends.transcribe:TranscriberBackend`，尾读归档 → VAD 切段 → 单 worker 顺序识别 → 每路一份会中临时稿 + 行出口）。**会后钩子眼下仍是缺席**（第 4 步 `post` 记 `skipped`，归 `65dd3e4c`；落地时按这份协议接进来，服务这一侧不需要改代码）。另有一个只给开发与测试用的 dev 替身（默认关闭，**按 key 分流**：`capture.backend = dev` 落采集替身、`transcriber.backend = dev` 落转写替身）。
+> 现状：**协议本身已经定死，三个位置现在都有实现。** `capture.backend` 的默认值 `auto` 解析到真采集后端（`meeting.backends.capture:CaptureBackend`，真探测、真起两路、真落盘与真转码）；`transcriber.backend` 的默认值 `auto` 解析到真转写后端（`meeting.backends.transcribe:TranscriberBackend`，尾读归档 → VAD 切段 → 单 worker 顺序识别 → 每路一份会中临时稿 + 行出口）；`post.hook` 的默认值 `auto` 解析到 `meeting.backends.post:PostProcessHook`（起一条后台线程跑会后离线转写，返回即算启动成功），收尾第 4 步 `post` 因此从 `skipped` 翻成 `done`。**只剩 `post.hook = null` 那一档是缺席**（第 4 步记 `skipped`）；`meeting post` 还是桩，实现归 `65dd3e4c`。会后那条链自己的四个开关是 `post.engine` / `post.model` / `post.dtype` / `post.chunk_seconds`，见第 3 章末。另有一个只给开发与测试用的 dev 替身（默认关闭，**按 key 分流**：`capture.backend = dev` 落采集替身、`transcriber.backend = dev` 落转写替身）。
 >
 > 协议与数据结构住在 `meeting/backends/base.py`（**只放协议与数据结构**，实现全在下游自己的模块里），替身住在 `meeting/backends/null.py` 与 `meeting/backends/dev.py`，解析的唯一入口是 `meeting/backends/registry.py`。
 
@@ -68,7 +68,15 @@
 
 | 成员 | 语义 |
 |---|---|
-| `launch(session_dir)` | 收尾第 4 步调它，**返回即算启动成功**（不等它跑完）。没接后端时该步记 `skipped` |
+| `launch(session_dir)` | 收尾第 4 步调它，**返回即算启动成功**（不等它跑完）。`post.hook = null` 那一档该步记 `skipped` |
+
+真钩子住在 `meeting/backends/post.py`（`7c6952e5` 已落地，`post.hook` 的默认值 `auto` 解析到它）：服务侧一行都没改，收尾第 4 步自己就从 `skipped` 翻成了 `done`。
+
+- `launch(session_dir)` 起一条 daemon 线程跑 `meeting.offline.runner.run_session(session_dir)`，随即返回 —— 收尾不等它跑完，它跑多久都不占收尾那条预算；
+- 线程里的异常落进场次目录的 `meeting_offline_status.json`（`error` 那一格），**不回收尾流程**；`session_dir` 是空值时当场抛错，那一步据实记 `failed`；
+- 会话级 `session.json` 归收尾流程写，这条线程不去碰它；它只往场次目录落会后产物（文件名与字段契约见 `docs/state.md` 第 3 章）；
+- `torch` / `transformers` / `av` 都在函数体内 import，`import meeting.backends.post` 保持轻量，`meeting web` 的启动链不被拖慢；
+- 它**不带 `finalize` / `transcode`**：那两项是采集后端的能力，这两个键上的闸门不看它。
 
 ## 2. 缺省值：缺席时是什么样
 
@@ -83,7 +91,7 @@
 
 转写这一档现在有两层：**默认取值 `auto`** 解析到真转写后端（`meeting.backends.transcribe:TranscriberBackend`，见第 1 章那一节）；`transcriber.backend = null`（或解析失败回退）才是**缺席**那一档 —— `NullTranscriberBackend` 恒 `health = normal`、`backlog_depth() = 0`、`segment_timeout() = 20.0`，收尾预算的输入因此取 `0` 段 / `20.0` 秒这两个缺省值，转写这一侧一行都不产。**缺席档的 `normal` 与真实现空闲态的 `stopped` 各说各的事**：`normal` 说的是「这个构建里没有转写这件事」，`stopped` 说的是「有转写、这一档没在跑」（真实现没起过场次时报的就是它）。
 
-`null` 替身**不长**合成电平或故障注入那类测试逻辑 —— 那是开发替身（`backends/dev.py`）的事。
+`null` 替身**不长**合成电平或故障注入那类测试逻辑 —— 那是开发替身（`backends/dev.py`）的事。会后钩子那一档的缺席占位是 `registry.py` 的 `_AbsentPostHook`（`launch()` 抛错，而缺席那一档根本不会被调用：`has_implementation = false` 直接记 `skipped`）。
 
 ## 3. 后端怎么被找到
 
@@ -101,7 +109,7 @@
 |---|---|
 | `auto`（默认） | 按上面的约定路径找 |
 | `null` | 直接用 `null` 替身 |
-| `dev` | 用开发替身，**按 key 分流**：`capture.backend` 落 `meeting.backends.dev:DevCaptureBackend`、`transcriber.backend` 落 `meeting.backends.dev:DevTranscriberBackend`（会后钩子这一档没有 dev 替身） |
+| `dev` | 用开发替身，**按 key 分流**：`capture.backend` 落 `meeting.backends.dev:DevCaptureBackend`、`transcriber.backend` 落 `meeting.backends.dev:DevTranscriberBackend`。这条分流只认采集与转写两个键：`post.hook = dev` 会落到采集替身上，那个对象没有 `launch()`，收尾第 4 步如实记 `failed`；要关掉整条会后链就写 `post.hook = null` |
 | `module:Class` | 显式指定 |
 
 取到的是**类就无参实例化**（后端构造函数不许有必填参数，运行期依赖一律走 `bind()`）。导入失败、找不到、取到的对象不可调用、无参实例化失败 → **回退替身 + 一条 warning**，服务不会因为后端缺席或写坏而起不来。
@@ -118,6 +126,17 @@
 判定规则：`has_implementation == false` → 该步记 **`skipped`**；`has_implementation == true` 且 `run_ok == false` → 该步记 **`failed`**。**缺席记「跳过」，在场却抛错记「失败」** —— `has_implementation` 只由解析结果回答，调用阶段的异常只许写进 `run_ok`。
 
 `capabilities_of(implementation)` 另外回答采集实现有没有 `finalize` / `transcode` / `dev_inject` 三项能力：`null` / `dev` 这类不写真实音频的替身没有前两项，于是收尾第 1、2 步记 `skipped`；真采集后端（`meeting.backends.capture:CaptureBackend`）前两项都是 `True`，收尾第 1、2 步因此会真的调它（这两步的闸门**只看采集侧**：解析结论与 `capture_capabilities["finalize"]` / `["transcode"]`，transcode 是采集后端的能力，转写后端在不在场与这道闸门无关 —— 见 `docs/state.md` 的「收尾四步与终态」）；`dev_inject` 这一项只有 dev 替身在 —— 真后端**有意不加** `inject_fault`，给真后端加上它会把开发替身的非产品动作在真后端上打开。
+
+### 会后离线那一层的四个开关
+
+`post.hook` 管这一层在不在，另外四个键管它跑起来什么样，都在启动时读一次（非热读，改了要重启）：
+
+| 键 | 默认值 | 谁在读、怎么读 |
+|---|---|---|
+| `post.engine` | `auto` | `meeting/offline/runner.py` 的 `resolve_engine()`。取值口径与 `capture.backend` / `transcriber.backend` / `post.hook` 同形：`auto` 按约定路径落 `meeting.offline.engine:MossOfflineEngine`，`module:Class` 按它导入，`null` 当场抛错（这一层没有替身引擎）。**与会后钩子分开解析**：换引擎时 `post.hook` 那一层一个字不动 |
+| `post.model` | `OpenMOSS-Team/MOSS-Transcribe-Diarize` | 离线引擎构造：HF 仓库 id 或本地快照绝对路径。默认值是本机已有本地快照的那一份 |
+| `post.dtype` | `bfloat16` | 离线引擎构造的精度档位。只认 `meeting/offline/engine.py` 认得的那几个名字（`bfloat16` / `bf16` / `float16` / `fp16` / `float32` / `fp32`），写错档位在启动时就拦下 |
+| `post.chunk_seconds` | `450` | 分块的长度上限（秒），合法范围 `0–86400`：音频长过它就切成连续不重叠的块，逐块调引擎；`0` 显式关掉分块、整段一次跑。默认取 450 是本机实测的安全档 —— 16 GB 卡上块长 450 秒的显存峰值是 7.5 GiB，600 秒到 11.6 GiB，900 秒的 22.9 GiB 已经越过这张卡，1500 秒直接显存不够。短于 450 秒的音频走的就是整段一次跑（块数为 1 时不切块） |
 
 ## 4. 注入与构造规则
 
