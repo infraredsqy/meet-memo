@@ -97,12 +97,12 @@
 
 `alerts`：`critical` 是 `Alert｜null`（**致命级同时只留一条**），`hints` 是 `Alert` 数组（**同类合并、上限 3**）。`Alert` **六字段**：`{level, source, since, duration_seconds, message, muted}`。
 
-- `level ∈ critical` / `hint`；`source` 是那一路的 id（提示级现在也用 `source = transcript`）。
+- `level ∈ critical` / `hint`；`source` 是那一路的 id。提示级那两条（`AlertJudge.on_transcript_health()` / `on_backlog_depth()`）的 `source` 定名也是 `transcript`，不过服务侧还没有它们的调用点：`alerts.hints` 眼下恒为空数组（`docs/state.md` 第 5 章）。
 - `since` 是 ISO（**掩码 `<iso>`**）；`duration_seconds` **掩码 0**。
 - `muted` 说的是**这一条现在会不会出声**（会话级静音生效期间，或这一条还在抑制窗口里）。判定与窗口计算**全在服务侧**：界面只看这个布尔值，`false` 就响一声、`true` 就不出声、界面不算任何窗口。
 - **心跳失联那条致命级由界面自己判、自己画**，服务侧不产生它。
 
-`transcript`：`health ∈ normal｜behind｜stopped`（直接来自转写后端）；`last_line_at` 是 ISO \| null（**掩码 `<iso>`**）；`buffered_lines` 是积压段数、`failed_segments` 是累计识别失败段数 —— **这两个计数只进 log 与 `/debug`，产品界面不摆它们**。骨架阶段（没有转写后端）恒为 `normal` + 0。
+`transcript`：`health ∈ normal｜behind｜stopped`（直接来自转写后端。**空闲态是 `stopped`** —— 真实现没起过场次时报的就是它，`contract/fixtures/snapshot/idle.json` 与 `idle-notice.json` 那两格里就是这个值；缺席档的缺省替身恒报 `normal`）；`last_line_at` 是 ISO \| null（**掩码 `<iso>`**，服务侧收到最近那一行时的墙钟）；`buffered_lines` 是积压段数、`failed_segments` 是累计识别失败段数 —— **这两个计数只进 log 与 `/debug`，产品界面不摆它们**，它们写进快照但不给 `revision` 投票（四格里只有 `health` 的迁移才提交）。刷新路径：开一场就地刷一次、每出一行刷一次，另有一条 0.5 秒的低频节拍兜住「worker 停摆、没有行可等」那一档；**读路径（`GET /api/state`、SSE 首帧）不碰后端，也不改状态**。同一批行逐行落在场次目录里的 `meeting_transcript_<source>.md`（会中临时稿，一行 `[HH:MM] 正文`，见 `docs/state.md` 第 3 章）。
 
 `ended`：`phase ∈ draining｜done`（**`failed` 不是这个字段的取值** —— 它属于盘上 `session.json` 的 `state`，在快照里没有对应位置）；`steps` 是四步各一条，次序恒为 `flush` / `transcode` / `log` / `post`；`error` 是 string \| null。
 
@@ -200,10 +200,10 @@ data: {"revision": 3, "frames": {...}}
 
 | 键 | 类型 | 取值 |
 |---|---|---|
-| `ts` | number | 后端给的秒数（**语义归后端**，服务只透传；fixtures 里那个 `1.5` 是假转写后端的固定值） |
+| `ts` | number | 后端给的秒数（**语义归后端**，服务只透传；fixtures 里那个 `1.5` 是假转写后端的固定值）。真转写后端给的是**采集时刻的墙钟秒数**（epoch 秒）：段一入队就盖章，识别慢不会把后面几行的时间戳挤到一起 |
 | `source` | string | 哪一路（`mic` / `loopback`） |
-| `text` | string | 这一行的正文 |
-| `kind` | string | `line` 或 `gap`（断口） |
+| `text` | string | 这一行的正文。识别失败的段落也照出一行，正文是**占位符**（双层方括号的裸文本，不带时间戳、不含 `**`）：`[[识别失败: 超时 20s]]` / `[[识别失败: 重复循环]]` / `[[识别失败: 无输出]]` |
+| `kind` | string | `line` 或 `gap`（断口）。真转写后端产出的照旧是 `line`，失败段落也走 `line`，靠 `text` 的占位符形状认出来 —— 界面按那个形状把它画成缺口（`docs/ui-design.md` 第 2 章），别按正文渲染 |
 
 一行到来时服务侧只更新 `transcript.last_line_at` 并推这一帧，**不参与状态迁移、不涨 `revision`**。
 

@@ -16,7 +16,7 @@
 | 4 | 心跳与 `recording_alive` |
 | 5 | 告警 |
 | 6 | SSE：四个事件与帧形状 |
-| 7 | dev 采集替身与故障注入 |
+| 7 | dev 替身与故障注入 |
 
 ## 1. 四态与迁移
 
@@ -136,7 +136,14 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 - **这两个子键说的是「用户配的意图」，`sources[*].device_name` 说的是「探测实际落到的那个设备」**（`dca4539b` 的契约陈述，同一段也写在 `docs/contract.md` 第 2 章与 `docs/service.md` 第 8 章）：配了却没命中任何端点时**不报错、也不改写快照里的名字**，按「精确名 → `CABLE Input`（不含 `16ch`）→ 系统默认输出」这条回退顺序走，主 log 一行 `WARNING`（V1 就是这个行为，见 `meeting/capture/devices.py` 的 `loopback_candidates()`）。想知道这一场到底在录哪个设备，看 `sources[*].device_name`。
 - 这里读到的是**运行期生效值**。非热读的键改了要重启才在快照里可见，详见 `docs/service.md` 第 4 章的键态两分。
 
-`transcript` 的语义：`health ∈ normal / behind / stopped`，`buffered_lines` 是积压段数、`failed_segments` 是累计识别失败段数。**这两个计数只进 log 与 `/debug`**，产品界面不摆它们。转写停了不影响录音、电平与告警，只影响总结入口。骨架阶段（没有转写后端）恒为 `normal` + 0。
+`transcript` 的语义（四格都由转写后端刷新，判定权收在 `meeting/service/runtime.py` 的 `_refresh_transcript_snapshot()` 一处）：
+
+- `health ∈ normal / behind / stopped`，三种取值**直接来自转写后端**（`TranscriberBackend.health()`）。真实现（`meeting.backends.transcribe:TranscriberBackend`）在**没起过场次时报 `stopped`** —— 空闲态快照里那一格当场就是这个值；一场里 worker 停摆、模型加载或识别出事也是 `stopped`，积压压过 20 段（`BACKLOG_BEHIND_THRESHOLD`）是 `behind`。转写后端**缺席**（显式 `null` 或解析失败回退）那一档的缺省实现恒报 `normal`。
+- `last_line_at` 是服务侧收到最近那一行转写的墙钟（ISO；这一场还没出过行就是 `null`）。
+- `buffered_lines` 是后端报的积压段数；`failed_segments` 是服务侧累计的识别失败段数 —— 正文以 `[[识别失败` 开头的那一行就是失败档，计数在这里 `+1`。**这两个计数只进 log 与 `/debug`**，产品界面不摆它们。
+- **只有 `health` 的迁移参与状态变更**：`buffered_lines` 与 `failed_segments` 照样写进快照（`/api/state` 读得到），但不给 `revision` 投票 —— 「积压 5 段变 4 段」不是一次状态迁移。
+- **刷新路径四条**：`startup()` 里取一次初值、`start_session()` 里就地刷一次（`stopped -> normal` 跟着那一场自己的提交走）、每来一行刷一次，外加一条 **0.5 秒的低频节拍**（`TRANSCRIBER_HEALTH_INTERVAL_SECONDS`）—— worker 停摆之后不再有行到来，那一档只能靠节拍刷到快照上。读路径（`/api/state`、SSE 首帧）保持纯读：谁读一次都不会涨 `revision`。
+- 转写这一侧出事**不影响录音、电平与告警**，录音照跑、状态机一步都不动。
 
 `notice` 的语义：现在只有 `kind = "restart_unfinished"` 一种，`text` 是「服务重启过。上一场的收尾没走完，音频在 <场次目录>，日志在 <服务级 log 路径>。」，`session_dir` 指没收完的那一场，`log_path` 指**本次启动的服务级日志**（与 `service.log_path` 同一处取值，不是场次日志）。
 
@@ -149,6 +156,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 - 输出根 = `output.root`（默认 `%USERPROFILE%\Documents\meeting\out`）。**根不存在时在 `start` 那一刻建**，服务启动与扫描都不建。
 - 场次目录名 = `YYMMDD`，同名已存在就让位到 `YYMMDD-2`、`YYMMDD-3`……**让位不复用**。
 - 一场会一个目录，目录里只有一份 `session.json` 是服务现在写的。**两路音频归档也落在这里**（`dca4539b` 已落地）：`meeting_audio_mic.pcm` 与 `meeting_audio_loopback.pcm`，16k / 单声道 / int16 小端裸 PCM、无头，**边采边写**（无缓冲追加写，服务被强杀最多丢最后一个块的尾巴）；收尾第 2 步在同目录同名换扩展名产出 `.mp3`（64k），**转码成功之后 PCM 照样留着**（`sources[*].archive` 声明的就是它）。未选中的那一路也建出文件，内容是 0 字节。
+- **两路转写各自落一本会中临时稿**（`9e5db89c` 已落地）：`meeting_transcript_mic.md` 与 `meeting_transcript_loopback.md`，追加写、逐行 flush，每行 `[HH:MM] 正文` —— 时间戳取**分钟级**的采集时刻：段一入队就盖上，识别慢也不会把后面几行的时间戳挤到一起。某一段识别不出来也照落一行，正文是**占位符**：`[[识别失败: 超时 20s]]` / `[[识别失败: 重复循环]]` / `[[识别失败: 无输出]]`（双层方括号、裸文本、不带时间戳、**不含 `**`**；识别过程抛错那一档落 `[[识别失败: 错误]]`）；纯噪声的段落一行都不写，连占位符也不写。同一行同时经 SSE 的 `transcript` 通道推给界面（第 6 章）。它是**临时稿**：会后那条离线转写才作准，界面上也照这么标（`docs/ui-design.md`）。
 - `session.json` **原子写**：同目录临时文件 + `os.replace` + `flush`。**每个阶段变更都写一次**（`start` 的第一版、进收尾中、每一步的 `status`/`detail`、终态那一版），被打断不留半截文件、输出根里不留 `.tmp` 残骸。
 
 字段全貌（**字段名与字段个数是冻结项**，示例里的取值只是某一版的示意）：
@@ -215,8 +223,8 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 分级与合并：
 
 - **致命级**（某路采不到）进 `alerts.critical`，**同时只留一条**。
-- **提示级**进 `alerts.hints`，**同类合并、上限 3**。合并的键是 `(level, source, message)` 三元组，同一个键再次出现时沿用原来那一条的 `since`、把 `duration_seconds` 刷新到当下；到上限后又来新的键，就留下 `since` 最早的三条，多出来的只进 log。两条提示级现在共用 `source = transcript`，靠 `message`（也就是故障类型文案）区分。
-- 提示级现在有两个来源（数值只进 log 与 `/debug`）：`transcript.health` 从 `normal` 掉到 `behind` / `stopped`；待转写段数 ≥ 20 段（`BACKLOG_HINT_THRESHOLD`，写死在代码里、不加配置键）。
+- **提示级**进 `alerts.hints`，**同类合并、上限 3**。合并的键是 `(level, source, message)` 三元组，同一个键再次出现时沿用原来那一条的 `since`、把 `duration_seconds` 刷新到当下；到上限后又来新的键，就留下 `since` 最早的三条，多出来的只进 log。两条提示级都定在 `source = transcript` 上，靠 `message`（也就是故障类型文案）区分。
+- 判定器里那两条提示级的入口已经就位：`AlertJudge.on_transcript_health()`（`transcript.health` 从 `normal` 掉到 `behind` / `stopped`）与 `AlertJudge.on_backlog_depth()`（待转写段数 ≥ 20 段，`BACKLOG_HINT_THRESHOLD` 写死在代码里、不加配置键）。**服务侧还没有它们的调用点** —— 快照里的 `alerts.hints` 眼下恒为空数组，接线归下游节点。
 - **心跳失联那条致命级由界面自己判、自己画**，服务侧不产生它。
 
 `Alert` 六字段：`{level, source, since, duration_seconds, message, muted}`。`level ∈ critical / hint`，`source` 是那一路的 id。
@@ -247,11 +255,11 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 - 慢消费者：每个订阅者一个**有界队列 512**。满了就清空这个订阅者的队列、塞一份带 `resync: true` 与 `dropped: N` 的 `snapshot`；`levels` 满了只留最新一帧。**一个卡住的页面拖不住别人**，广播路径是同步的、不 `await` 慢消费者。
 - 多个连接看的是同一份状态：一次变更同一个 `revision` 同时到所有订阅者。
 
-## 7. dev 采集替身与故障注入
+## 7. dev 替身与故障注入
 
-`meeting/backends/dev.py` 是**只给开发与测试用的非产品路径，默认关闭**：只有把 `capture.backend` 配成 `dev`（或 `MEETING_CAPTURE=dev`）才会被解析到。
+`meeting/backends/dev.py` 是**只给开发与测试用的非产品路径，默认关闭**。同一条取值 `dev` 在两个后端键上**按 key 分流**：`capture.backend = dev`（或 `MEETING_CAPTURE=dev`）落采集替身 `DevCaptureBackend`，`transcriber.backend = dev` 落转写替身 `DevTranscriberBackend`。
 
-它给两样东西：
+**采集替身**给两样东西：
 
 1. **确定性合成电平**：种子是模块级常量 `DEV_LEVEL_SEED`，同一个种子与同一帧序下电平序列逐帧相同；每 **100ms** 一帧事实（`frame_interval = 0.1`），两路 `probe()` 都报 `ready`。
 2. **故障注入**：走 `POST /api/actions` 的 `dev_inject` 动作（非 dev 后端回 `action_unavailable`(404)）。
@@ -268,6 +276,8 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 - 三档故障都**不动状态机的迁移路径**：能不能回 `recording` 由 `alerts.py` 的判定说了算。
 - 它**不写真实音频**，`finalize()` / `transcode()` 只记账。所以收尾第 1、2 步在它身上记 `skipped`。
 - `dev_inject` 要有正在进行的场次：`recording` / `alert` 态可注入，其余态回 `not_recording`(409)。
+
+**转写替身**（`DevTranscriberBackend`）是「会中能看见字幕在动」的那一条：开场 2.0 秒后首发、之后每 0.5 秒经行出口产一行两路轮换的合成转写（`kind = "line"`，正文形如 `dev 替身合成的一行转写（mic #1）`）。它不读归档、不加载模型、**不写产物文件**，`health()` 恒 `normal`、`backlog_depth()` 恒 `0`、`segment_timeout()` 报 `20.0`；`stop()` 之后线程收队、一行都不再产。**它没有环境变量** —— `MEETING_CAPTURE` 只映射 `capture.backend`，要开它在配置文件里写 `"transcriber.backend": "dev"`。
 
 **拿它写用例时的一个实情**：静默阈值与恢复窗口这些等待是真实时长，而测试侧有一条「单条用例 ≤ 5 秒」的红线（看门在 `tests/conftest.py`）。用例的做法是**把阈值写进临时 `config.json` 调小**（代码默认值一个字不动），同时把轮询间隔与观察窗口收在红线以内 —— 被测的语义没有跟着改，改的只是测试等的时长。
 

@@ -288,7 +288,19 @@ class AlertState:
 
 @dataclass
 class TranscriptState:
-    """快照 `transcript`（骨架阶段恒 `normal` + 0 行）。"""
+    """快照 `transcript` 的四格（`9e5db89c` phase2 §7 起由转写后端供数）。
+
+    - `health`：`normal` / `behind` / `stopped`，读的是 `TranscriberBackend.health()`。
+      真实现没起过场次时报 `stopped`，所以这里的字段初值 `normal` 会被 `startup()` 那一次
+      就地读取覆盖掉（缺省替身那一档才恒报 `normal`）。
+    - `last_line_at`：服务侧收到最近那一行转写的墙钟（ISO）。
+    - `buffered_lines`：后端报的积压段数。
+    - `failed_segments`：累计识别失败段数（正文以 `[[识别失败` 开头的那一行加一）。
+
+    四格里**只有 `health` 的迁移参与状态变更**（`revision` 由它投票）；两个计数照样写进
+    快照、不涨 `revision`。刷新与提交的判定权收在 `meeting/service/runtime.py` 的
+    `_refresh_transcript_snapshot()` 一处。
+    """
 
     health: str = "normal"
     last_line_at: str | None = None
