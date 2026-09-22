@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import json as _json
 import threading
 
 import pytest
@@ -65,6 +66,80 @@ def test_document_carries_the_contract_fields() -> None:
         assert set(item) == {"start", "end", "speaker", "local", "text"}
     for row in document["speakers"]:
         assert set(row) == {"id", "local", "label_raw", "segments", "seconds"}
+    # 单趟跑时 `chunks` 是空数组：没有分块这件事本身也看得出来
+    assert document["chunks"] == []
+
+
+def test_chunk_rows_are_recorded_per_block() -> None:
+    """分块跑时逐块记账落进 `chunks`，失败的那块带着原因（缺段因此查得到出处）。"""
+    document = _document(
+        chunks=[
+            {"index": 1, "offset_seconds": 0.0, "seconds": 450.0, "segments": 12, "error": None},
+            {
+                "index": 2,
+                "offset_seconds": 450.0,
+                "seconds": 450.0,
+                "segments": 0,
+                "error": "engine_error：RuntimeError: 显存不够",
+            },
+        ]
+    )
+
+    assert [row["index"] for row in document["chunks"]] == [1, 2]
+    assert document["chunks"][0]["error"] is None
+    assert document["chunks"][1]["error"].startswith("engine_error")
+    assert document["chunks"][1]["offset_seconds"] == 450.0
+
+
+def test_headcount_says_what_the_class_count_means() -> None:
+    """M3：`speakers` 数组长度怎么读写在 `headcount` 上，两种跑法各一套说法。
+
+    整段一次跑：这个数是模型分出的类数；分块跑：它是**各块类数之和**，
+    同一个人在两块里各拿一个编号，读它当人数会错。
+    """
+    single = _document()
+    assert single["headcount"] == {
+        "meaningful": True,
+        "class_count": 2,
+        "chunk_count": 1,
+        "basis": "single_pass_classes",
+    }
+
+    chunked = _document(
+        chunks=[
+            {"index": 1, "offset_seconds": 0.0, "seconds": 450.0, "segments": 2, "error": None},
+            {"index": 2, "offset_seconds": 450.0, "seconds": 450.0, "segments": 1, "error": None},
+        ]
+    )
+    assert chunked["headcount"] == {
+        "meaningful": False,
+        "class_count": 2,
+        "chunk_count": 2,
+        "basis": "sum_of_chunk_classes",
+    }
+    # 那一格一直跟得上 `speakers` 的长度（两处从同一个 `summary` 现算，不会各说各话）
+    assert chunked["headcount"]["class_count"] == len(chunked["speakers"])
+
+
+def test_state_and_error_land_in_the_table() -> None:
+    """M8：这一路的终态与失败原因写在对照表上，读方不必回头读状态文件或报告。"""
+    ok = _document()
+    assert ok["state"] == "done"
+    assert ok["error"] is None
+
+    failed = _document(state="failed", error="all_chunks_failed：2/2 块没跑成")
+    assert failed["state"] == "failed"
+    assert failed["error"].startswith("all_chunks_failed")
+
+
+def test_the_table_still_reads_without_the_new_fields() -> None:
+    """新加的两格是**可选的**：上一版写出来的表（没有 `state` / `headcount`）照样读得回来。"""
+    legacy = _document()
+    for key in ("state", "error", "headcount"):
+        legacy.pop(key)
+
+    assert artifacts.parse_speakers_document(legacy) is legacy
+    assert artifacts.parse_speakers_document(_json.dumps(legacy))["source"] == "loopback"
 
 
 def test_ids_are_namespaced_with_the_source() -> None:
@@ -218,6 +293,35 @@ def test_writer_refuses_to_write_a_broken_document(tmp_path) -> None:
     assert not (tmp_path / "broken.json").exists()
 
 
+@pytest.mark.parametrize(
+    "bad_source",
+    [
+        pytest.param("", id="空字符串"),
+        pytest.param("   ", id="全空白"),
+        pytest.param("\t\n", id="制表与换行"),
+        pytest.param(None, id="None"),
+    ],
+)
+def test_builder_refuses_an_empty_source(bad_source) -> None:
+    """公开的写入侧入口自己拦空 `source`：不许组出限定名退化成 `:S01` 的那种对照表。
+
+    `build_speakers_document()` 是模块的公开入口（不经过 `write_speakers()` 也能被调用），
+    读方那条判据在写入侧同样成立 —— 少了它，`\":S01\"` 这种形状有办法先出现在内存里。
+    """
+    with pytest.raises(artifacts.ArtifactContractError) as info:
+        _document(source=bad_source)
+
+    assert "source" in str(info.value)
+
+
+def test_builder_keeps_a_valid_source_verbatim() -> None:
+    """合法的 `source` 原样进限定名（这道闸只拦空值，不改写别的）。"""
+    document = _document(source="loopback")
+
+    assert document["source"] == "loopback"
+    assert [row["id"] for row in document["speakers"]] == ["loopback:S01", "loopback:S02"]
+
+
 # ---------------------------------------------------------------------------
 # 三、转写：行格式与分钟级时间戳
 # ---------------------------------------------------------------------------
@@ -354,8 +458,52 @@ def test_report_carries_the_b16_sections(tmp_path) -> None:
     assert "no_audio：meeting_audio_loopback.pcm" in text
 
 
+def test_the_session_realtime_factor_divides_by_the_wall_clock(tmp_path) -> None:
+    """C1：整场那一格的算式是**音频合计 ÷ 总耗时**（括号里逐字给出）。
+
+    这一格曾经印的就是 `总耗时`（`120.0s` 音频跑 30.5 秒 → 印成 `30.500×`），
+    与括号里的算式、与逐路那一格都对不上。这里断言算出来的值本身。
+    """
+    target = tmp_path / "meeting_offline_report.md"
+    artifacts.write_report(
+        target,
+        session_id="250919",
+        session_dir=tmp_path,
+        engine={"model": "m", "dtype": "bfloat16", "device": "auto", "selector": "auto"},
+        metrics=_metrics(),
+        total_wall_seconds=30.5,
+    )
+
+    text = target.read_text(encoding="utf-8")
+    assert "- 整场：3.934×（音频合计 120.0s / 总耗时 30.500s" in text
+    assert "整场：30.500×" not in text
+    # 逐路那一格是另一条口径（墙钟 ÷ 音频），两格互为倒数，这一条不变
+    assert "mic：0.250×" in text
+
+
+def test_a_zero_wall_clock_does_not_get_used_as_a_divisor(tmp_path) -> None:
+    """总耗时为 0 时整场那一格落「算不出」：既不印总耗时自己，也不拿 0 当除数。"""
+    target = tmp_path / "meeting_offline_report.md"
+    artifacts.write_report(
+        target,
+        session_id="synthetic-session",
+        session_dir=tmp_path,
+        engine={"model": "m", "dtype": "bfloat16", "device": "auto", "selector": "auto"},
+        metrics=[
+            artifacts.SourceMetrics(
+                source="mic", audio_seconds=90.0, state="done", segments=3, speakers=2
+            )
+        ],
+        total_wall_seconds=0.0,
+    )
+
+    text = target.read_text(encoding="utf-8")
+    assert "- 整场：算不出（总耗时 0.000s，音频合计 90.0s）" in text
+    assert "整场：0.000×" not in text
+
+
 def test_status_file_round_trips(tmp_path) -> None:
-    """状态文件读得回来，八格（含 `schema_version` 与 `error`）都在。"""
+    """状态文件读得回来，九格（含 `schema_version` / `partial` / `error`）都在。"""
     target = tmp_path / "meeting_offline_status.json"
     artifacts.write_status(
         target,
@@ -375,6 +523,7 @@ def test_status_file_round_trips(tmp_path) -> None:
         "finished_at": None,
         "sources": ["mic", "loopback"],
         "artifacts": {},
+        "partial": False,
         "error": None,
     }
 

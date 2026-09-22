@@ -121,6 +121,17 @@ DEFAULT_VALUES: dict[str, Any] = {
     "post.engine": "auto",
     "post.model": "OpenMOSS-Team/MOSS-Transcribe-Diarize",
     "post.dtype": "bfloat16",
+    # 每块音频的长度上限（秒），`0` = 显式关掉分块、整段一次跑。
+    #
+    # **本键的默认值取 450**，这是对 spec「退回显式分块（默认关闭）」的一处有意偏离：
+    # 那句话写在显卡天花板被测出来之前。spec 的「坑与注意」里写着「3060 6GB 这个量级
+    # 要提前量清楚显存」，本机实测（16 GB 卡，`phase3` 报告第二节与 10.1）是
+    # 600 s → 11.6 GiB 峰值（还在卡内）、900 s → 22.9 GiB（已越界换页，墙钟劣化 5–12 倍）、
+    # 1500 s → `OutOfMemoryError`；而本次验收那条 99 分 03 秒的素材是 5943 s，
+    # 整段一次跑必然死在 OOM 上。按「默认关闭」发出去，等于每一场真实会议都失败，
+    # R9 要的那条权威转写一条都出不来。450 s 是实测的安全档（峰值 7.5 GiB、0.10–0.15×），
+    # 因此默认取它；短于 450 s 的音频仍然是「整段一次性跑」——块数为 1 时本模块不切块。
+    "post.chunk_seconds": 450,
     # 两路各自用哪个设备（`dca4539b` 定名）：`None` = 按默认策略挑
     # （mic 挡掉抓取型虚拟端点后按 host API 排序试开；loopback 优先 `CABLE Input` 且不含 16ch）
     "devices.mic": None,
@@ -154,6 +165,11 @@ INT_LIMITS: dict[str, tuple[int, int]] = {
     "asr.timeout_seconds": (1, 86400),
     "asr.max_new_tokens": (1, 2**31),
     "asr.repeat_max_unit": (1, 2**31),
+    # 会后离线的分块长度：下界取 `0` 是**契约给的特例**（`0` = 显式关掉分块、
+    # 整段一次跑；与 `web.port = 0` 那种「一个特殊取值合法、默认值另算」的口径同形）。
+    # 上界取一天：比这更长的会议按段归档本来就是另一件事。
+    # 默认值取 450 的理由写在上面 `DEFAULT_VALUES` 里那一格上面。
+    "post.chunk_seconds": (0, 86400),
 }
 
 #: 浮点范围
@@ -209,9 +225,10 @@ ENV_NO_BROWSER = "MEETING_NO_BROWSER"
 #
 # **只有下面逐条列出的字面键名合法，不按前缀归组、也没有任何前缀白名单**；
 # 表外的任何键名一律 `invalid_setting`(400)。
-# 26 个名字逐一取自上面的键全集（phase1 定死的顶层键 + `asr.*` 五个子键 +
+# 27 个名字逐一取自上面的键全集（phase1 定死的顶层键 + `asr.*` 五个子键 +
 # `dca4539b` 定名的 `devices.mic` / `devices.loopback` 两个设备键位 +
-# `7c6952e5` 定名的 `post.engine` / `post.model` / `post.dtype` 三个会后离线开关）。
+# `7c6952e5` 定名的 `post.engine` / `post.model` / `post.dtype` / `post.chunk_seconds`
+# 四个会后离线开关）。
 # 设备键位是**点号字面键名**（`devices.mic`），快照里才收成 `settings.devices.mic` 这种子键；
 # 按前缀归组或写成 `devices.{...}` 的嵌套形状都不合法（与 `asr.*` 同一套口径）。
 # ---------------------------------------------------------------------------

@@ -76,10 +76,12 @@ def test_default_values_match_the_frozen_table(tmp_path, monkeypatch):
         "capture.backend": "auto",
         "transcriber.backend": "auto",
         "post.hook": "auto",
-        # 会后离线这一层的三个开关（`7c6952e5` 定名）：缺省值取本机实测跑通的那一档
+        # 会后离线这一层的四个开关（`7c6952e5` 定名）：缺省值取本机实测跑通的那一档
         "post.engine": "auto",
         "post.model": "OpenMOSS-Team/MOSS-Transcribe-Diarize",
         "post.dtype": "bfloat16",
+        # 分块块长取实测的安全档 450 秒（`0` = 显式关掉分块、整段一次跑）
+        "post.chunk_seconds": 450,
         # 两个设备键位（`dca4539b` 定名）：没配就是 `None`
         "devices.mic": None,
         "devices.loopback": None,
@@ -157,6 +159,52 @@ def test_post_model_takes_a_repo_id_or_a_local_path():
     for bad in ("", "   ", 7, None):
         with pytest.raises(config_module.ConfigValueError):
             config_module.validate_value("post.model", bad)
+
+
+def test_post_chunk_seconds_defaults_to_the_measured_safe_length(tmp_path, monkeypatch):
+    """`post.chunk_seconds` 默认 450 秒，按普通整数键注册（`DEFAULT_VALUES` + 取值域 + 三分表）。
+
+    **默认 450 是对 spec「默认关闭」的一处有意偏离**：16 GB 卡上实测 600 s → 11.6 GiB、
+    900 s → 22.9 GiB（已越界换页）、1500 s → OOM，而验收素材是 5943 s；默认关闭等于每一场
+    真实会议都失败。理由写在 `config.py` 里那一格上面的注释里。
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    loaded = _load_with_env(monkeypatch, home, {})
+
+    assert config_module.DEFAULT_VALUES["post.chunk_seconds"] == 450
+    assert loaded.get("post.chunk_seconds") == 450
+    assert loaded.source_of("post.chunk_seconds") == "默认"
+    assert "post.chunk_seconds" in config_module.SETTING_KEY_GROUPS
+    assert config_module.setting_group("post.chunk_seconds") == "pending_restart"
+    assert config_module.INT_LIMITS["post.chunk_seconds"] == (0, 86400)
+
+
+def test_post_chunk_seconds_accepts_an_explicit_length_and_zero():
+    """合法值：正数（分块的块长）与 `0`（显式关掉分块、整段一次跑）。"""
+    for value in (0, 1, 450, 600, 86400):
+        assert config_module.validate_value("post.chunk_seconds", value) == value
+
+
+@pytest.mark.parametrize("value", [-1, -450, 86401, 450.0, "450", "", True, None, [450]])
+def test_post_chunk_seconds_rejects_everything_else(value):
+    """非法值在启动时就被拦下（报错含键名、收到的值、合法范围）。"""
+    with pytest.raises(config_module.ConfigValueError) as info:
+        config_module.validate_value("post.chunk_seconds", value)
+    assert info.value.key == "post.chunk_seconds"
+    assert "0" in info.value.legal and "86400" in info.value.legal
+
+
+def test_post_chunk_seconds_comes_from_config_json(tmp_path, monkeypatch):
+    """这个键能从 `config.json` 读进来，来源记得清。"""
+    home = tmp_path / "home"
+    home.mkdir()
+    helpers.write_config_json(home, {"post.chunk_seconds": 600})
+
+    loaded = _load_with_env(monkeypatch, home, {})
+
+    assert loaded.get("post.chunk_seconds") == 600
+    assert loaded.source_of("post.chunk_seconds") == "config.json"
 
 
 def test_post_layer_keys_come_from_config_json(tmp_path, monkeypatch):
