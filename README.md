@@ -172,7 +172,17 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 
 回归入口：
 
-    python -m pytest -q
+    python -m pytest -q -m "not slow"   # 快档：没改模型调用 / 采集 / 服务运行时的时候跑这一条
+    python -m pytest -q -m slow         # 慢档：只跑真子进程与真墙钟那一批
+    python -m pytest -q                 # 全量：提交前、或改了核心代码之后
+
+**三档怎么选**：改文案、纯函数、离线产物这类用例走快档（40 秒上下）；动了模型调用、采集、
+转写、服务运行时的代码，跑慢档那九个文件；拿不准就跑全量（两分钟左右，不加 `-m` 时默认就是
+它）。慢档比快档慢在真子进程与真墙钟等待上，跳过它不等于跳过覆盖率 —— 但**被测代码落在慢档
+文件里时必须跑全量**。归位判据（一条用例什么时候算慢）与九个文件的清单在
+`docs/service.md` 第 7 章「快慢分档」，标记 `slow` 注册在 `pyproject.toml` 的
+`[tool.pytest.ini_options]`（带 `--strict-markers`：代码里 `pytest.mark.xxx` 用到的标记名
+必须先在 `markers` 里注册，没注册就当场报 unknown mark）。
 
 ---
 

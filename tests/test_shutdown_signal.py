@@ -107,19 +107,35 @@ from tests import _drain_fakes as fakes
 from tests import _helpers as helpers
 from tests._service import post_action, read_session_json, wait_until
 
+#: 慢档标记：`pytest.mark.slow` 的归位判据与实测数据见 `docs/service.md` 第 7 章。
+pytestmark = pytest.mark.slow
+
 # ---------------------------------------------------------------------------
 # 本文件的具名常量（§3.8 末「测试侧常量」那张表；用例里不留裸秒数）
 #
 # **取值收口的授权说明（第七轮审查 m3，措辞在下游文件里一字不改地重复）**：
 # 「以上取值由指挥者授权收口（原契约表的值见 phase3.md §3.8 末表；红线：单条用例 ≤5s）」
 # —— 本文件里被这一条覆盖的常量是 `SHUTDOWN_BLOCKING_HOOK_SECONDS`、
-# `SIGBREAK_STATE_POLL_INTERVAL_SECONDS` 与 `E2E_CASE_WALL_CLOCK_LIMIT_SECONDS`；
+# `SIGBREAK_STATE_POLL_INTERVAL_SECONDS`、`SIGBREAK_TERMINAL_POLL_INTERVAL_SECONDS`
+# 与 `E2E_CASE_WALL_CLOCK_LIMIT_SECONDS`；
 # 下面各自那一段说明写清了判据的形状与这几笔钱的来路。数值一律不改。
 # ---------------------------------------------------------------------------
 
 #: ③ 条同步点的轮询间隔（秒）—— 压到 `_service.py` 的等待助手同一档，
 #: 于是「阻塞期间一定查得到 `running`」这条论证的余量更大（阻塞 2.0s / 间隔 0.05s）
 SIGBREAK_STATE_POLL_INTERVAL_SECONDS = 0.05
+
+#: ② 条「退出前读到那份 `/api/state`」的轮询间隔（秒）——**只给收尾终态那一格用**。
+#:
+#: 为什么不跟 0.05 那一档共用：那一格在 `/api/state` 上**可读的窗口只有几十毫秒**。
+#: 本机实测（细读一轮，2ms 间隔）：收尾终态在第 2.006s 起可读、到第 2.043s 进程收场，
+#: 窗口约 **37ms**。0.05 的间隔一整格只能取到一次样、还常常整格错过（实测 30 次单跑里
+#: 有 4 次错过），于是「服务答不上」这件偶发被读成契约违约。间隔压到 0.005 之后，
+#: 同一个 37ms 里能取到 6～8 次样，偶发因此落回它该有的量级。
+#:
+#: **压的是采样频率、不是判据**：谓词、`source == "/api/state"` 那条断言、超时上限
+#: 与「退化到盘上就判红」的口径一个字都没改 —— 采样稀了漏掉的读数，采样密了照样漏不掉。
+SIGBREAK_TERMINAL_POLL_INTERVAL_SECONDS = 0.005
 
 #: ③ / ④ 条轮询 `/api/state` 的超时（秒）
 SIGBREAK_STATE_POLL_TIMEOUT_SECONDS = 20
@@ -407,17 +423,41 @@ def _state_while_alive(proc: Any, predicate, *, what: str) -> dict[str, Any] | N
     收场时它返回 `None`，两种情形都由调用点如实记下来。
 
     **「返回 `None`」的两种来路分开认**（审查问题 m7b，别把两种退化成一种）：① 子进程已经
-    收场（`poll()` 非空）或这次读撞上「服务正在退出、连接被断」（`ConnectError` /
-    `ConnectTimeout`）—— 这两种是真时序，返回 `None`；② 其余任何异常（例如读到一份
-    **非 200 的应答**、或 JSON 解析炸了）一律**原样抛出去**，不再被这里吞成 `None` ——
-    吞掉的话「服务答了个 500」会被读成「刚好在退出」，用例会以「以为在读运行期快照、
-    其实在读盘」的形式静默退化。
+    收场（`poll()` 非空）或这次读撞上「服务正在退出、连接被断」—— 这两种是真时序，返回
+    `None`；② 其余任何异常（例如读到一份**非 200 的应答**、或 JSON 解析炸了）一律**原样抛
+    出去**，不再被这里吞成 `None` —— 吞掉的话「服务答了个 500」会被读成「刚好在退出」，
+    用例会以「以为在读运行期快照、其实在读盘」的形式静默退化。
+
+    **① 里的「连接被断」收一整类、不逐条枚举**（这一条是本用例那条偶发红的根因）：服务退出时
+    监听 socket 先关掉，客户端那条 keep-alive 连接上正在飞的那一次请求因此有三种收场 ——
+    连接都建不起来（`ConnectError`）、连上了但对端不发应答（`ConnectTimeout`）、对端在应答
+    之前把连接断掉。**第三种是本机实测真正撞上的那一种**：`httpx.RemoteProtocolError`
+    （`Server disconnected without sending a response.`），它的 MRO 是
+    `RemoteProtocolError → ProtocolError → TransportError`，**不在 `ConnectError` 那一支下**，
+    此前因此原样抛出去、把用例判红。断在应答中途的那两种（`ReadError` / `ReadTimeout`）与
+    连接池在关停时收走的 `PoolTimeout` 同理。这一格现在按**「传输层没拿到应答」**整类收下，
+    与 `ConnectError` 同一个处置：这一次读不算数、返回 `None`，由调用点继续等。
+
+    **收下的只是「没读到」这件事**：`httpx.HTTPStatusError`（非 200 应答，由
+    `ServiceProcess.snapshot()` 那一条断言抛出）与 JSON 形状问题都**不在**这一类里，
+    照旧原样抛出去判红 —— 「服务答了个 500」与「连接被断」这两件事的分别一处都没丢。
     """
     if proc.poll() is not None:
         return None
     try:
         snapshot = proc.snapshot()
-    except (httpx.ConnectError, httpx.ConnectTimeout):
+    except (
+        # 连接都建不起来：服务正在退出、监听 socket 已关
+        httpx.ConnectError,
+        httpx.ConnectTimeout,
+        # 连上了、但应答之前对端把连接断掉（实测的那一种就是这个）
+        httpx.RemoteProtocolError,
+        # 应答读到一半断了
+        httpx.ReadError,
+        httpx.ReadTimeout,
+        # 连接池里那条连接在关停瞬间被收走
+        httpx.PoolTimeout,
+    ):
         return None
     if snapshot is None:
         return None
@@ -439,6 +479,11 @@ def _state_at_terminal(proc: Any, predicate, *, what: str, timeout: float) -> di
     读到 `/api/state`」这件事的证据（契约 §3.8 第 ② 条要的正是前者）。调用点因此必须显式
     断言 `source == "/api/state"`（② 条就是这么写的）；只判谓词成立就放行，等于把「盘上那份
     也对得上」当成「运行期快照读到了」。
+
+    **轮询间隔在这里单独收紧到 `SIGBREAK_TERMINAL_POLL_INTERVAL_SECONDS`**（那一段常量说明
+    写了实测窗口有多窄、以及为什么 0.05 一整格只能取到一次样）：这一格要抓的是几十毫秒宽的
+    窗口，用 0.05 的间隔等于拿一次采样去赌，赌输了就把「服务答不上」读成契约违约。收紧的只是
+    **采样频率** —— 判据、`source` 那条断言、超时上限与「退化到盘上就判红」的口径都没动。
     """
     deadline = time.monotonic() + float(timeout)
     last: Any = None
@@ -461,7 +506,7 @@ def _state_at_terminal(proc: Any, predicate, *, what: str, timeout: float) -> di
             return None
         if time.monotonic() >= deadline:
             raise AssertionError(f"等待超时（{timeout}s）：{what}（最后观察值 {last!r}）")
-        time.sleep(SIGBREAK_STATE_POLL_INTERVAL_SECONDS)
+        time.sleep(SIGBREAK_TERMINAL_POLL_INTERVAL_SECONDS)
 
 
 def _disk_record(proc: Any) -> dict[str, Any]:
@@ -533,19 +578,26 @@ class _StubProcess:
         return {"top_state": "ended", "ended": {"phase": "done"}}
 
 
-def test_degraded_state_read_still_raises_when_the_service_answers_badly():
-    """「读到运行期快照」这条判据只对两种真时序让位，服务答得不好时照样抛出去（m7b）。
+def test_degraded_state_read_tolerates_only_teardown_and_still_raises_on_bad_answers():
+    """**传输层没拿到应答**整类让位；服务答得不好时照样抛出去（审查问题 m7b 的那道边界）。
 
-    三格逐格写死：
+    四格逐格写死：
 
       1. **子进程已经收场**（`poll()` 非空）→ 返回 `None`（这一路是真的没有运行期可读，
          `_state_at_terminal()` 随后退到盘上那份）；
-      2. **连接被断**（`httpx.ConnectError`，服务正在退出、监听 socket 先关掉）→ 同样返回
-         `None` —— 这正是退化那一步唯一要接住的那一种；
-      3. **其余任何异常**（这里用 `RuntimeError` 代表「读到一份非 200 的应答之后炸出来」
-         —— `ServiceProcess.snapshot()` 现在自己就断言 200，不合格的应答在那一层变成异常）
-         → **原样抛出去**。`_state_while_alive()` 若把它吞成 `None`，上面第 1 / 2 格与这一格
-         就分不开了，「运行期快照真的读到了」这条断言会静默失效。
+      2. **传输层没拿到应答** → 返回 `None`。这一格此前只接 `ConnectError`，实测漏掉了
+         `RemoteProtocolError`（服务退出时对端在应答之前把连接断掉，MRO 走
+         `ProtocolError → TransportError`，不在 `ConnectError` 那一支下），于是那一次偶发
+         表现为**异常冒出去、把用例判红**，而它本该落进「这一次读不算数」。现在这一整类都
+         收下：`ConnectError` / `ConnectTimeout` / `RemoteProtocolError` / `ReadError` /
+         `ReadTimeout` / `PoolTimeout` 六种逐条断言，一条都不许再漏；
+      3. **服务答了个非 200**（`ServiceProcess.snapshot()` 自己就断言 200，不合格的应答在那一层
+         变成 `httpx.HTTPStatusError`）→ **原样抛出去**。这一格是「服务答得不好」与「连接被断」
+         的分水岭：吞掉它，用例就会把「服务答了个 500」读成「刚好在退出」，静默退化到盘上那份；
+      4. **其余任何异常**（这里用 `RuntimeError` 代表「应答体不是 JSON / 形状不对」那一类）
+         → 同样**原样抛出去**。
+
+    正面那一格照旧：进程还活着、应答正常 → 带上 `source` 标记交出去。
     """
     def predicate(snap: dict[str, Any]) -> bool:
         return (snap.get("ended") or {}).get("phase") == "done"
@@ -555,20 +607,41 @@ def test_degraded_state_read_still_raises_when_the_service_answers_badly():
         _state_while_alive(_StubProcess(returncode=0), predicate, what="已收场") is None
     )
 
-    # ② 连接被断（服务正在退出的真时序）
-    assert (
-        _state_while_alive(
-            _StubProcess(returncode=None, error=httpx.ConnectError("连接被断")),
-            predicate,
-            what="连接被断",
-        )
-        is None
-    )
+    # ② 传输层没拿到应答：整类让位（六种逐条钉住，别只钉实测撞上的那一种）
+    for name, error in (
+        ("连接都建不起来", httpx.ConnectError("连接被断")),
+        ("连上了但对端不发应答", httpx.ConnectTimeout("连接超时")),
+        ("应答之前对端断了连接", httpx.RemoteProtocolError("Server disconnected")),
+        ("应答读到一半断了", httpx.ReadError("读到一半断了")),
+        ("应答读取超时", httpx.ReadTimeout("读取超时")),
+        ("连接池在关停瞬间收走连接", httpx.PoolTimeout("池超时")),
+    ):
+        assert (
+            _state_while_alive(
+                _StubProcess(returncode=None, error=error), predicate, what=name
+            )
+            is None
+        ), name
 
-    # ③ 服务答得不好：异常原样冒出去（不许被吞成 None）
+    # ③ 服务答了个非 200：异常原样冒出去（不许被吞成 None）
+    with pytest.raises(httpx.HTTPStatusError):
+        _state_while_alive(
+            _StubProcess(
+                returncode=None,
+                error=httpx.HTTPStatusError(
+                    "GET /api/state 该回 200，实测 500",
+                    request=httpx.Request("GET", "http://127.0.0.1/api/state"),
+                    response=httpx.Response(500),
+                ),
+            ),
+            predicate,
+            what="服务答了个 500",
+        )
+
+    # ④ 其余任何异常（应答体不是 JSON / 形状不对那一类）：同样原样冒出去
     with pytest.raises(RuntimeError):
         _state_while_alive(
-            _StubProcess(returncode=None, error=RuntimeError("读到一份非 200 的应答")),
+            _StubProcess(returncode=None, error=RuntimeError("读到一份形状不对的应答")),
             predicate,
             what="服务答得不好",
         )
@@ -577,7 +650,8 @@ def test_degraded_state_read_still_raises_when_the_service_answers_badly():
     alive = _state_while_alive(_StubProcess(returncode=None), predicate, what="正常应答")
     assert alive is not None and alive["source"] == "/api/state", alive
     print(
-        "[m7b 证据] 已收场与连接被断两格返回 None；服务答得不好那一格抛 RuntimeError；"
+        "[m7b 证据] 已收场与「传输层没拿到应答」六种都返回 None；"
+        "非 200 那一格抛 HTTPStatusError、形状不对那一格抛 RuntimeError；"
         f"正常应答那一格交出的快照 source={alive['source']!r}"
     )
 
@@ -1212,9 +1286,9 @@ def test_sigint_and_sigbreak_share_one_handler(service_process, case_env):
 
     三段合起来看：
 
-      ① **进程内**：`install_shutdown_signal_handlers()` 之后
-         `getsignal(SIGINT) is getsignal(SIGBREAK)`，两个信号号**映射到同一个函数对象**
-         （`handle_shutdown_signal`），用完复原；
+      ① **进程内**：`install_shutdown_signal_handlers()` 之后两个信号号**映射到同一个函数
+         对象**（`handle_shutdown_signal`）—— 逐个信号各断言一次身份，两者的同一性由这两条
+         传递可得，用完复原；
       ② **进程内**：直接调 `handle_shutdown_signal(SIGINT, None)` 与
          `handle_shutdown_signal(SIGBREAK, None)`，两次都落在同一个处理函数上、同一行
          服务级 log（`收到 SIGINT，进入关停` / `收到 SIGBREAK，进入关停`），且
@@ -1236,7 +1310,6 @@ def test_sigint_and_sigbreak_share_one_handler(service_process, case_env):
         assert signal.getsignal(signal.SIGINT) is service_app.handle_shutdown_signal
         assert hasattr(signal, "SIGBREAK"), "SIGBREAK 是本服务要接管的那第二个信号"
         assert signal.getsignal(signal.SIGBREAK) is service_app.handle_shutdown_signal
-        assert signal.getsignal(signal.SIGINT) is signal.getsignal(signal.SIGBREAK)
 
         # ② 同一个处理函数被两个信号各调一次：计数器在它内部自增、第二次是强制打断那一档
         service_app.reset_shutdown_press_count()
@@ -1515,10 +1588,7 @@ def test_drain_exit_code_matrix_including_the_server_crash_fallback():
         )
         == EXIT_FAILURE
     )
-    # 兜底常量取自 `cli.py` 的模块级标识符（与 ③ 的收尾失败档同一个常量）
-    assert cli_module.EXIT_FAILURE == EXIT_FAILURE
-    assert cli_module.EXIT_INTERRUPTED == EXIT_INTERRUPTED
-    assert cli_module.EXIT_OK == EXIT_OK
+    # 兜底常量的取值由 ③ 那一档背书（`cli_module` 与裸名同源，自比一遍没有新信息）
 
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,9 @@
 """`tests/conftest.py` —— **夹具与 pytest hook**（phase2 §4 / §5.4 的五个夹具名在本 Phase 冻结）。
 
+**跑测试的三条命令与快慢分档（哪些用例算慢、为什么按文件分档）见 `docs/service.md` 第 7 章。**
+本文件里那道 5 秒看门是分档能落在**文件粒度**上的前提：没有任何一条用例能超过 5 秒，所以
+「慢」来自文件层面的真子进程与真墙钟等待，标记因此加在文件头（`pytestmark = pytest.mark.slow`）。
+
 本文件装两样东西：下面的**七个夹具**与**两个 autouse 安全兜底**（`_no_real_browser` /
 `_no_real_audio_capture`），以及两条 pytest hook（`pytest_addoption` 注册
 `--regen-contract`；耗时看门那两个 hook 在文末）。**hook 不属于夹具语义**，它们在这里的

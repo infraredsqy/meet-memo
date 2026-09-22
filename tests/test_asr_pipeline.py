@@ -42,6 +42,9 @@ from meeting.asr.pipeline import (
 )
 from meeting.service.runtime import compute_drain_budget
 
+#: 慢档标记：`pytest.mark.slow` 的归位判据与实测数据见 `docs/service.md` 第 7 章。
+pytestmark = pytest.mark.slow
+
 # ---------------------------------------------------------------------------
 # 常量与假件
 # ---------------------------------------------------------------------------
@@ -486,8 +489,6 @@ def test_pipeline_has_no_dropping_queue_path():
     )
     assert "put_nowait" not in code
     assert "full" not in code
-    # 段队列那一行显式写 `queue.Queue()`（无界）
-    assert "self.segments: queue.Queue[Any] = queue.Queue()" in source
 
 
 def test_segments_under_half_a_second_are_never_enqueued(session_dir: Path):

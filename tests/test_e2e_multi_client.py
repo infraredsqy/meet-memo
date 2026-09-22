@@ -239,7 +239,6 @@ def test_session_mute_resets_on_next_session(service_process, meeting_env, sse_c
     assert fresh["alerts"]["critical"] is None
     # `alarm.sound` 的持久化值未变（会话级静音不改它）
     assert fresh["settings"]["alarm_sound"] is True
-    assert fresh["alerts"]["critical"] is None and fresh["alerts"]["hints"] == []
     log_text = read_text(meeting_env.log_dir / "meeting.log")
     assert "本场已静音（会话级；下一场 start 自动复位" in log_text, (
         f"服务级 log 里该有那行「本场已静音」：{log_text[-800:]}"

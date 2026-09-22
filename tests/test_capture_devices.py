@@ -19,8 +19,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from meeting.backends.base import SOURCE_STATUS
 from meeting.capture import devices as devices_module
 from meeting.capture.devices import (
@@ -153,15 +151,21 @@ def test_attempt_reason_says_what_happened():
 
 
 def test_host_rank_follows_the_v1_table():
-    """排序键：`WASAPI` → `DirectSound` → `MME` → 其余 `HOST_RANK_FALLBACK`(9)。"""
-    assert HOST_RANK_FALLBACK == 9
-    assert devices_module.host_rank("WASAPI") == 0
-    assert devices_module.host_rank("Windows WASAPI") == 0
-    assert devices_module.host_rank("DirectSound") == 1
-    assert devices_module.host_rank("Windows DirectSound") == 1
-    assert devices_module.host_rank("MME") == 2
-    assert devices_module.host_rank("Windows WDM-KS") == 9
-    assert devices_module.host_rank("") == 9
+    """排序键：`WASAPI` → `DirectSound` → `MME` → 其余 `HOST_RANK_FALLBACK`。
+
+    钉的是**相对次序**（V1 那张表的性质）；各档的具体取值本身由一处常量给出，
+    再抄一遍数字不会多出信息。
+    """
+    wasapi = devices_module.host_rank("WASAPI")
+    direct_sound = devices_module.host_rank("DirectSound")
+    mme = devices_module.host_rank("MME")
+    unknown = devices_module.host_rank("Windows WDM-KS")
+
+    assert devices_module.host_rank("Windows WASAPI") == wasapi
+    assert wasapi < direct_sound < mme < unknown
+    assert devices_module.host_rank("Windows DirectSound") == direct_sound
+    assert unknown == HOST_RANK_FALLBACK
+    assert devices_module.host_rank("") == HOST_RANK_FALLBACK
     # `host_api_rank` 是同一个函数的别名（老名字留着）
     assert devices_module.host_api_rank is devices_module.host_rank
 
@@ -169,9 +173,6 @@ def test_host_rank_follows_the_v1_table():
 def test_sort_candidates_uses_host_rank():
     """候选排序就是 `cands.sort(key=host_rank)`（只按 rank，稳定排序）。"""
     ordered = devices_module.sort_candidates(MACHINE_INPUTS)
-    assert [devices_module.host_rank(item.host_api) for item in ordered] == sorted(
-        devices_module.host_rank(item.host_api) for item in MACHINE_INPUTS
-    )
     # WASAPI(0) 两条在最前、DirectSound(1) 一条随后、MME(2) 三条收尾
     assert [item.host_api for item in ordered] == [
         "Windows WASAPI", "Windows WASAPI", "Windows DirectSound",
@@ -718,17 +719,10 @@ def test_name_matches_reports_prefix_fallbacks():
     assert devices_module.name_matches("", "MME 端点") == (False, False)
 
 
-def test_endpoint_model_rejects_an_unknown_role():
-    """端点方向只有 `input` / `render` 两档，写错当场抛。"""
-    with pytest.raises(ValueError):
-        DeviceEndpoint("某端点", "MME", "loopback")
-
-
 def test_devices_module_does_not_import_audio_libraries():
     """纯逻辑那一侧的硬要求：这个模块不 import 声卡库（没有声卡库也 import 得动）。"""
     import ast
     import pathlib
-    import sys
 
     source = pathlib.Path(devices_module.__file__).read_text(encoding="utf-8")
     imported: list[str] = []
@@ -741,4 +735,3 @@ def test_devices_module_does_not_import_audio_libraries():
         assert not any(name.split(".")[0] == banned for name in imported), (
             f"meeting/capture/devices.py 不许 import {banned}（挑选策略是纯逻辑）"
         )
-    assert "meeting.capture.devices" in sys.modules

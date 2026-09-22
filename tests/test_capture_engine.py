@@ -19,6 +19,7 @@ import time
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from meeting.backends.base import LevelFrame, SourceFacts, SourceLost
 from meeting.capture.engine import (
@@ -29,9 +30,18 @@ from meeting.capture.engine import (
 )
 from meeting.session import archive_name
 
+#: 慢档标记：`pytest.mark.slow` 的归位判据与实测数据见 `docs/service.md` 第 7 章。
+pytestmark = pytest.mark.slow
+
 #: 一块 0.1 秒的 16k / 单声道 / int16 样本（3200 字节；一秒 32000 字节的由来）
 CHUNK_FRAMES = 1600
 CHUNK_BYTES = CHUNK_FRAMES * 2
+
+#: 「安静的一路照样发帧」那条用例的等待口径：至少等到的电平帧数，与等待的超时（秒）。
+#: 本机实测 0.05 的 `frame_interval` 约 15 拍/秒（`Event.wait()` 被 Windows 定时器粒度
+#: 上取整到 ~62ms），等到 3 帧约 0.19 秒 —— 5 秒超时有 ~26 倍余量。
+MIN_SILENCE_FRAMES = 3
+FRAME_WAIT_TIMEOUT_SECONDS = 5.0
 
 
 def block(value: int = 1200, frames: int = CHUNK_FRAMES) -> bytes:
@@ -375,19 +385,43 @@ def test_level_frames_keep_coming_on_their_own_rhythm(tmp_path: Path):
 
 
 def test_a_quiet_route_keeps_sending_silence_frames(tmp_path: Path):
-    """静下来的那一路**照样发帧**（发的是 `-120 dBFS`）：停发会被误判成「采集停了」。"""
-    #: 一块全零素材：源还在给块，只是没有波形
-    silent = FakeCaptureSource("mic", chunk=block(0))
-    session, facts, _sources = make_session(tmp_path, mode="mic", mic=silent, frame_interval=0.02)
+    """静下来的那一路**照样发帧**（发的是 `-120 dBFS`）：停发会被误判成「采集停了」。
+
+    这条守的是承重契约：服务侧拿 `max(2.0s, 3 × frame_interval)` 判 `recording_alive`，
+    「没有波形」与「采集停了」在这一处必须分得开（R2 要消灭的正是后者那种静默失败）。
+
+    **等法按事件驱动**：早先这一条是 `frame_interval=0.02` + `time.sleep(0.2)` + `>= 4`，
+    在 Windows 上站不住 —— `_tick_loop()` 用 `self._stop.wait(frame_interval)` 打点，
+    `Event.wait()` 受 15.6ms 定时器粒度影响**只会上取整**（本机实测 `wait(0.02)` 实际睡
+    ~23–32ms、`wait(0.05)` ~62ms），0.2 秒窗口里只够 3–6 拍，于是这条会随机红。现在改成
+    「帧数到了就返回」的等待，并按实测节拍留足余量：0.05 的间隔本机实测约 15 拍/秒，
+    等到 3 帧约需 0.19 秒，5 秒超时有 ~26 倍余量。静音源也给了节拍（`pace_seconds`）：
+    不带节拍的假源会以远快于真采集的速度灌块、与打点线程抢 GIL。
+    """
+    #: 一块全零素材：源还在给块，只是没有波形。节拍照真采集一个块 0.1 秒的节奏走。
+    silent = FakeCaptureSource("mic", chunk=block(0), pace_seconds=0.1)
+    session, facts, _sources = make_session(tmp_path, mode="mic", mic=silent, frame_interval=0.05)
     session.start()
-    time.sleep(0.2)
-    session.finalize()
+    try:
+        # 帧跟着时间走：读块被节拍压着，这里等的只是打点线程。
+        assert wait_for(
+            lambda: len(only(facts, LevelFrame)) >= MIN_SILENCE_FRAMES,
+            timeout=FRAME_WAIT_TIMEOUT_SECONDS,
+        ), (
+            f"{FRAME_WAIT_TIMEOUT_SECONDS:.1f} 秒里只等到 "
+            f"{len(only(facts, LevelFrame))} 帧电平事实（阈值 {MIN_SILENCE_FRAMES}）"
+        )
+    finally:
+        session.finalize()
 
     frames = only(facts, LevelFrame)
-    assert len(frames) >= 4
     assert all(frame.dbfs == -120.0 for frame in frames)
     assert all(frame.peak == -120.0 for frame in frames)
     assert all(frame.bar == -120.0 for frame in frames)
+    # 电平帧真的随时间在发（最后一帧与第一帧之间隔着实测节拍量级的时间）
+    assert frames[-1].ts - frames[0].ts >= 0.06
+    # ……而源一直在供上全零块：静音这一档里素材照给，只是没有波形
+    assert silent.fed >= 2
 
 
 def test_a_route_with_no_chunks_at_all_still_ticks(tmp_path: Path):

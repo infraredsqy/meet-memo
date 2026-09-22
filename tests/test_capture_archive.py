@@ -10,7 +10,6 @@
 from __future__ import annotations
 
 import io
-import os
 import threading
 import time
 from pathlib import Path
@@ -313,8 +312,6 @@ def test_open_pcm_keeps_the_bytes_identical_after_a_round_trip(tmp_path: Path):
     with open_pcm(path) as handle:
         handle.write(payload)
     assert path.read_bytes() == payload
-    assert os.path.getsize(path) == len(payload)
-    assert io.BytesIO(path.read_bytes()).getvalue() == payload
 
 
 # ---------------------------------------------------------------------------

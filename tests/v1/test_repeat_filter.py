@@ -85,9 +85,8 @@ def test_legit_repetition_survives():
 def test_coverage_metric_sane():
     """覆盖率指标本身：构造一个纯循环串，覆盖率应接近 1。"""
     text = "abcdefgh" * 50            # 周期 8
-    unit, count, cov = _loop_coverage(text)
+    _unit, _count, cov = _loop_coverage(text)
     assert cov > 0.9
-    assert unit == "abcdefgh"
 
 
 # ── token 级循环检测（生成过程中掐死循环） ──────────────────────

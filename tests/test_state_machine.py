@@ -803,7 +803,6 @@ def test_probe_status_out_of_range_falls_back_to_probe_failed(tmp_path):
     home = tmp_path / "home-weird"
     home.mkdir()
     helpers.write_config_json(home, {"web.port": 8765, "output.root": str(tmp_path / "out-weird")})
-    previous_home = (config_module.home_dir(),)
     import os
 
     old_home, old_profile = os.environ.get("HOME"), os.environ.get("USERPROFILE")
@@ -820,7 +819,6 @@ def test_probe_status_out_of_range_falls_back_to_probe_failed(tmp_path):
             os.environ.pop("USERPROFILE", None)
         else:
             os.environ["USERPROFILE"] = old_profile
-    assert previous_home  # 只为让「家目录隔离」这一手在用例里可见
 
     runtime = service_app.build_runtime(loaded)
     runtime.set_binding("127.0.0.1", 8765)

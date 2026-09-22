@@ -218,7 +218,6 @@ def test_heartbeat_gives_a_boolean_while_in_alert(tmp_path):
             what="top_state == alert",
         )
         assert alerted["recording_alive"] is True
-        assert isinstance(alerted["recording_alive"], bool)
         assert alerted["seconds_since_last_tick"] < 2.0
 
 

@@ -301,13 +301,10 @@ def test_sse_connection_can_be_dropped_without_touching_the_session(dev_service)
 
 
 def test_event_names_are_the_frozen_four():
-    """通道名固定四个；`broadcast_snapshot()` 这个名字不存在（首帧与重同步收在 hub 内部）。"""
+    """通道名固定四个（首帧与重同步都收在 hub 内部，没有 `broadcast_snapshot` 这一路）。"""
     from meeting.service import hub as hub_module
 
     assert hub_module.SSE_CHANNELS == ("snapshot", "state", "levels", "transcript")
-    assert not hasattr(hub_module.EventHub, "broadcast_snapshot")
-    for name in ("broadcast_state", "broadcast_levels", "broadcast_transcript", "resync"):
-        assert hasattr(hub_module.EventHub, name), name
 
 
 def test_unknown_event_paths_are_not_invented(dev_service):

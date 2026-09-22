@@ -32,6 +32,9 @@ from meeting.backends.dev import (
     DevCaptureBackend,
 )
 
+#: 慢档标记：`pytest.mark.slow` 的归位判据与实测数据见 `docs/service.md` 第 7 章。
+pytestmark = pytest.mark.slow
+
 #: 显式等待上限（秒）
 DEV_WAIT_TIMEOUT_SECONDS = 10.0
 #: 故障窗口的长度（够观测「到点生效」与「到点恢复」；
@@ -71,7 +74,6 @@ DEV_ALERT_FAULT_WINDOW_SECONDS = 2.0
 
 def test_seed_is_the_module_level_constant():
     """种子的唯一来源是模块级常量（不来自调用方、配置或环境变量）。"""
-    assert isinstance(DEV_LEVEL_SEED, int)
     assert DevCaptureBackend().seed == DEV_LEVEL_SEED
 
 
@@ -89,10 +91,12 @@ def test_two_instances_produce_the_same_level_sequence():
 
 
 def test_frame_interval_is_a_class_attribute_of_one_tenth():
-    """帧间隔的声明位是**类属性** `frame_interval`，dev 替身报 `0.1` 秒。"""
+    """帧间隔的声明位是**类属性** `frame_interval`，dev 替身报 `0.1` 秒。
+
+    实例上的查找必然落到这个类属性上，再断言一次实例不会多出信息；
+    这个 `0.1` 秒的**行为**由下一条用例按帧间隔实测。
+    """
     assert DevCaptureBackend.frame_interval == 0.1
-    assert DEV_FRAME_INTERVAL_SECONDS == 0.1
-    assert DevCaptureBackend().frame_interval == 0.1
 
 
 def test_dev_emits_frames_at_about_a_hundred_milliseconds():
@@ -118,17 +122,26 @@ def test_dev_emits_frames_at_about_a_hundred_milliseconds():
     assert gaps and all(0.05 <= gap <= 0.25 for gap in gaps), gaps
 
 
-def test_finalize_and_transcode_only_keep_books():
-    """**不写真实音频**：`finalize()` / `transcode()` 只记账。"""
+def test_finalize_and_transcode_only_keep_books(tmp_path):
+    """**不写真实音频**：`finalize()` / `transcode()` 只记账，盘上一份文件都不落地。
+
+    「只记账」的判据落在两处：两笔调用计数各加一；把**真实存在的场次目录**交给替身之后，
+    这两口子跑完目录里依旧空无一物（`iterdir()` 一个条目都没有）。此前这里只断言
+    `_session_dir` 这个字符串还被替身记着 —— 那句话证明不了「没落音频」，因为整条用例
+    并没有碰过盘。现在目录是真的（`tmp_path`），盘上有没有东西由 `iterdir()` 直接说话。
+    """
+    session_dir = tmp_path / "session"
+    session_dir.mkdir()
     backend = DevCaptureBackend()
-    session_dir = backend._session_dir  # noqa: SLF001 - 只为断言「没落任何音频文件」
-    backend.start("both", "<dev-bookkeeping>")
+    backend.start("both", str(session_dir))
     backend.stop()
     backend.finalize()
     backend.transcode()
     assert backend.finalize_calls == 1
     assert backend.transcode_calls == 1
-    assert session_dir is None
+    # 记账那两口子走完之后场次目录仍在（替身只拿它记账），盘上一份音频都没有
+    assert backend._session_dir == str(session_dir)  # noqa: SLF001 - 替身只把它记着，不拿它落盘
+    assert list(session_dir.iterdir()) == [], [p.name for p in session_dir.iterdir()]
 
 
 def test_probe_reports_both_sources_ready():

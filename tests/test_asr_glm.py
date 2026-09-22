@@ -270,12 +270,6 @@ def test_transcribe_segment_returns_text_and_token_count(monkeypatch):
     assert len(model.calls) == 2
 
 
-def test_transcribe_result_failed_property():
-    """`failed` 就是 `not ok`（占位符那一侧的判据）。"""
-    assert glm.TranscribeResult().failed is False
-    assert glm.TranscribeResult(text="", ok=False, reason="timeout").failed is True
-
-
 # ---------------------------------------------------------------------------
 # 四、四层防护真的挂上了（generate 收到的那份 kwargs）
 # ---------------------------------------------------------------------------

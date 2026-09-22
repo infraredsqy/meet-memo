@@ -76,7 +76,6 @@ def test_logger_name_and_propagate(temp_logging):
     """记录器名是 `meeting`，且 `propagate is False`（不污染 torch / transformers 的日志）。"""
     logging_setup.setup_service_logging(str(helpers.log_dir_of(temp_logging)))
     logger = logging.getLogger("meeting")
-    assert logger.name == logging_setup.LOGGER_NAME
     assert logger.propagate is False
 
 

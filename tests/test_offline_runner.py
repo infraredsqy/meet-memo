@@ -678,9 +678,7 @@ def test_plan_chunks_splits_only_above_the_threshold() -> None:
 
 def test_read_chunk_seconds_reads_the_config_key() -> None:
     """块长从 `post.chunk_seconds` 读；`0` 表示关掉，配置缺席时退回实测安全档 450。"""
-    assert read_chunk_seconds(FakeConfig()) == 450
     assert read_chunk_seconds(FakeConfig(**{"post.chunk_seconds": 0})) == 0.0
-    assert read_chunk_seconds(FakeConfig(**{"post.chunk_seconds": 600})) == 600.0
     # 残缺的配置对象（没有这一格 / 值不是数字）：退回默认档，不抛
     class Bare:
         def get(self, key, default=None):

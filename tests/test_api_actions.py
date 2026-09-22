@@ -36,6 +36,9 @@ from tests import _helpers as helpers
 from meeting import config as config_module
 from meeting.service.runtime import ACTION_CODES, ACTION_NAMES
 
+#: 慢档标记：`pytest.mark.slow` 的归位判据与实测数据见 `docs/service.md` 第 7 章。
+pytestmark = pytest.mark.slow
+
 #: 用例里的显式超时（不留裸秒数）
 ACTION_POLL_TIMEOUT_SECONDS = 15.0
 #: 轮询间隔
