@@ -48,8 +48,11 @@
 5943 秒的素材切 14 块，类数是各块之和）。`headcount` 因此把「这个数从几次引擎调用、
 几块里来」一并落在产物上，下游不必回头读报告才知道这件事。
 
-`headcount.chunk_count` 记的是**本路跑了几块**：一块一次引擎调用，因此它也就是**引擎调用
-次数**；单趟跑没有 `chunks` 数组、记 `1`，因为那一次同样是一次引擎调用。它是**数出来的**，
+`headcount.chunk_count` 记的是**本路跑了几块**：一块一次引擎调用，因此它平常也就是**引擎调用
+次数**。**没声跳过的那几块照样算在块数里**（一次调用都没发生），于是跳过发生时这两个数不同：
+块数读 `chunks` 数组的长度、调用次数读 `chunks` 里 `silent` 不为 `true` 的条数（运行报告里
+报的是后者、逐路表那一格报的是前者）。单趟跑没有 `chunks` 数组、记 `1`，因为那一次同样是一次
+引擎调用。它是**数出来的**，
 不是「总时长 ÷ 块长」算出来的——块长除不尽时这两个数不是一回事：5943.3 秒配 1200 秒块长，
 商是 4.95 而实际是 5 块（末块只有 1143.3 秒）。读方拿它对齐的是「这个类数从几块里来」，
 按实际块数读，别按商读。
@@ -68,6 +71,78 @@
     写明缺的是哪一段；`read_transcript_lines()` 认这条注释并跳过，它不占段号、不是正文；
   - 对照表的 `audio` 那一格带 `partial` 与 `missing_spans`，`chunks` 数组逐块记成功与失败；
   - 状态文件与运行报告写明整场 `partial` 与缺失区间。
+
+## 没声的那一段（与「缺了一段」分开记）
+
+`runner` 在调引擎**之前**过一道数字静音门（判据见 `runner.py` 的「数字静音门」一节）：
+一段音频的样本全是 0（实测那一档是 `volumedetect` 读 `-91.0 dB` 的全零样本）时，
+那一段**根本不送进引擎**。这一档什么都没出错，只是那里没有音频；它同样不等于
+「转写好了」——那一段本来就没有字。**四条线**因此必须分得开：
+
+| 档 | 读法 |
+|---|---|
+| 正常跑完 | `state = "done"`、`silent_spans` 为空、`missing_spans` 为空 |
+| 没声跳过 | `state = "done"`、`silent_spans` 非空（`partial` 仍是 `false`） |
+| 引擎失败 / 缺段 | `state = "failed"`，或 `state = "done"` 且 `partial = true` |
+| 跑成而段全零时长 | `state = "done"`、`zero_span_segments > 0`（有字，但形状可疑） |
+
+留痕的四处与「缺了一段」一一对应，但用的是**另一批字段**：
+
+  - 转写文件第一行**另一条**注释行（`silent_note()` 造）：说明这一段没声、没有转写；
+  - 对照表的 `audio` 那一格带 `silent_spans`（与 `missing_spans` 并列，两者不相交）；
+  - 状态文件顶层 `silent` / `silent_spans`，逐路那一格在 `artifacts.<source>` 里；
+  - 运行报告单列一节。
+
+`audio.silent_spans` 的长度 = **跳过的块数**。分块跑时「块=区间」一一对应；单趟跑时整段
+是一次引擎调用、也是一块，因此这一档要么空、要么就是**整段音频**那一个区间
+（`[[0.0, 总时长]]`）——读方按「块」读它，别按「静音子区间」读。
+
+## 门判不了的时候（`audio.gate` / 状态文件的 `gate`）
+
+这道闸要看得见「**它自己没判成**」这件事：音频解不开、要的那一段读不全（文件比区间短）时，
+那一段照常送引擎（读不到就按可能有声处理），而这一趟必须在产物里与一次健康的运行**分得开**。
+少了这一格，一段被污染的输出与一次正常的运行在产物里长得一样，下游无从分辨。记法是三层：
+
+  - **逐块**那一行带 `gate`（`silent` / `not_silent` / `unjudged`）、`gate_method`
+    （门凭什么判的）、`gate_detail`（判不了的那一句为什么）与 `reason`（**结论词**，见下）；
+  - **逐路**的 `audio.gate`（对照表）与 `artifacts.<source>.gate`（状态文件）：
+    `applied` / `method` / `spans_total` / `spans_judged` / `spans_unjudged` /
+    `unjudged_spans` / `unjudged_reason` / `detail`；
+  - **整场**的 `gate`（状态文件顶层，按路列出判不了的那几段）+ 报告开头那一行
+    「数字静音门」与单列的一节。
+
+`gate_method`（逐块）与 `method`（逐路）是同一套词表，见 `runner.GATE_METHOD_*`：
+`pcm_bytes`（按字节扫归档 PCM）/ `waveform`（量长度那一步解好的波形上切片判 —— **单趟跑的
+MP3 落在这一格**）/ `decode_at_plan`（量长度那一步解过而没成，结论必然是「判不了」）/
+`decode_now`（门现解一次，产品路径上到不了）。读方按这一格核「这一段凭什么被判的」。
+
+## 逐块的结论词（`chunks[].reason`，机器可读）
+
+下游原先只能从整场的几个字段反推「这一段为什么没有字」。现在每一块自己带一个词：
+
+| `reason` | 这一段发生了什么 | 对应的整场字段 |
+|---|---|---|
+| `digital_silence` | 门判出样本全零，引擎调用都没发生 | `audio.silent_spans` |
+| `engine_error` | 引擎抛错，这一段没跑成 | `audio.missing_spans` + `error` |
+| `no_segments` | 引擎跑成了但一段都没交回 | `audio.missing_spans` + `error` |
+| `zero_span_segments` | 跑成了，交回的段**每一段都是零时长** | `audio.zero_span_segments` |
+| `transcribed` | 跑成了，交回的段有真实时长 | 无（正常那一档） |
+| `gate_unjudged` | 跑成了、段有真实时长，但这一段的静音与否没人判过 | `audio.gate.unjudged_spans` |
+
+`gate_unjudged` 与它的邻居分得开：门判不了那一段时，那一段照常送引擎，于是它可能跑成
+（`gate_unjudged`）、可能一段没交回（`no_segments`）、也可能抛错（`engine_error`）——
+三种情形下 `gate` 那一格都是 `unjudged`，`reason` 说的是**引擎那一边的结果**。
+
+报告逐块那一行把词与一句人话并排写（`_chunk_reason()`），读报告的人与读表格的程序各取所需。
+
+## 零时长的段（`zero_span_segments`）
+
+产物里的 `segments` 允许出现 `end == start` 的段：解析层（`engine.parse_transcript()`）
+对「模型漏写了 `[结束]`」的那一段故意留着正文、把 `end` 退回 `start`，于是零时长段是一个
+**真实存在的形状**，不能一律丢掉。但实测那台引擎在数字静音上编出来的那几段**每一段都是
+零时长**，它因此是有用的异常信号：逐块那一行数一份、整路汇一个总数记在对照表的
+`audio.zero_span_segments` 与报告里。**只记不改**：这一格是给人看的信号，正文一个字都不动。
+
 
 纯标准库，无重依赖（`json` / `re` / `os`）。
 """
@@ -163,8 +238,23 @@ def incomplete_note(spans: Sequence[Sequence[float]]) -> str:
     )
 
 
+def silent_note(spans: Sequence[Sequence[float]]) -> str:
+    """转写第一行那条注释：写明这段音频有哪几段**没声**、因此没有送进引擎。
+
+    与 `incomplete_note()` 是**两条**注释，各说一件事：那条说「这块没跑成、转写缺了」，
+    这条说「这块本来就没有音频、跳过是对的」。两者都由 `is_transcript_note()` 认出来，
+    因此读方按行格式读正文时两条都不会被当成一段。
+    """
+    listed = "、".join(f"{float(item[0]):.1f}–{float(item[1]):.1f}s" for item in spans)
+    return (
+        f"{TRANSCRIPT_NOTE_PREFIX} 这一路有 {len(spans)} 段音频没声（样本全为零），"
+        f"没有送进引擎：{listed}（不是失败，那一段本来就没有内容；详见 {REPORT_NAME} 与"
+        f" {STATUS_NAME}） {TRANSCRIPT_NOTE_SUFFIX}"
+    )
+
+
 def is_transcript_note(line: str) -> bool:
-    """这一行是不是转写的注释行（第一行那条缺段说明）。"""
+    """这一行是不是转写的注释行（第一行那条缺段说明、或那条没声说明）。"""
     return line.strip().startswith(TRANSCRIPT_NOTE_PREFIX)
 
 
@@ -252,6 +342,18 @@ def build_speakers_document(
                 "seconds": _round(item["seconds"]),
                 "segments": int(item["segments"]),
                 "error": None if item.get("error") is None else str(item["error"]),
+                # **结论词**与门在这一块上的结论（见模块头「逐块的结论词」）：这两格是
+                # 「这一段为什么没有字」的机器可读答案，缺了它们读方只能从整场那几格反推
+                "silent": bool(item.get("silent")),
+                "reason": str(item.get("reason") or ""),
+                "gate": str(item.get("gate") or ""),
+                "gate_method": (
+                    None if item.get("gate_method") is None else str(item["gate_method"])
+                ),
+                "gate_detail": (
+                    None if item.get("gate_detail") is None else str(item["gate_detail"])
+                ),
+                "zero_span_segments": int(item.get("zero_span_segments") or 0),
             }
         )
     chunk_count = len(chunk_rows) or 1
@@ -462,6 +564,17 @@ class SourceMetrics:
     `partial` 立起来表示这一路**缺了区间**（分块跑时某一块没成）：产物照落、`state` 仍是
     `done`，但缺的那几段列在 `missing_spans` 里。整场因此不会把「少了 450 秒」当成
     「整段都转好了」。
+
+    `silent_spans` 记**没声而跳过**的那几段（引擎调用都没发生）：它与 `missing_spans`
+    分开记，两者不相交。这一档 `state` 仍是 `done`、`partial` 仍是 `false` ——
+    「那里本来就没有音频」与「那一块没跑成」在产物里各有各的格子。
+
+    `unjudged_spans` 是第三条线：门**判不了**静音与否的那几段（音频解不开、要的那一段
+    读不全），那几段照常送引擎。它同时进 `gate`（`applied = false` 与 `unjudged_spans`），
+    于是「这一趟的门在哪几段上没做成判断」不必从整场那几个字段去猜。
+
+    `zero_span_segments` 由**逐块的记账**数出来（每一块交回的段里 `end <= start` 的条数之和），
+    与对照表 `audio.zero_span_segments` 同源：整路那一格与逐块那几行的数因此对得上。
     """
 
     source: str
@@ -481,6 +594,34 @@ class SourceMetrics:
     missing_spans: list[tuple[float, float]] = field(default_factory=list)
     #: 这一路是不是缺了区间
     partial: bool = False
+    #: 没声而跳过引擎的区间（秒，原录音时间轴；每条 = 一块）
+    silent_spans: list[tuple[float, float]] = field(default_factory=list)
+    #: 门判不了静音与否、照常送了引擎的区间（秒，原录音时间轴）
+    unjudged_spans: list[tuple[float, float]] = field(default_factory=list)
+    #: 这一路的门做成没做成判断（`applied` / `spans_judged` / `unjudged_spans`…，见 `runner._chunk_gate()`）
+    gate: dict[str, Any] = field(
+        default_factory=lambda: {
+            "applied": False,
+            "spans_total": 0,
+            "spans_judged": 0,
+            "spans_unjudged": 0,
+            "unjudged_spans": [],
+            "unjudged_reason": None,
+            "detail": "这一路没有可判的音频（更早的一步已经落了失败）",
+        }
+    )
+    #: 这一路产物里 `end` 不晚于 `start` 的段数（零时长段，见模块头；逐块数出来再加总）
+    zero_span_segments: int = 0
+
+    @property
+    def silent(self) -> bool:
+        """这一路有没有跳过没声的区间。"""
+        return bool(self.silent_spans)
+
+    @property
+    def gate_applied(self) -> bool:
+        """这一路的门有没有在**每一段**音频上给出结论。"""
+        return bool(self.gate.get("applied"))
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -497,6 +638,11 @@ class SourceMetrics:
             "reasons": dict(self.reasons),
             "partial": bool(self.partial),
             "missing_spans": [[_round(a), _round(b)] for a, b in self.missing_spans],
+            "silent": self.silent,
+            "silent_spans": [[_round(a), _round(b)] for a, b in self.silent_spans],
+            "gate": dict(self.gate),
+            "unjudged_spans": [[_round(a), _round(b)] for a, b in self.unjudged_spans],
+            "zero_span_segments": int(self.zero_span_segments),
             "chunks": [dict(item) for item in self.chunks],
         }
 
@@ -525,6 +671,92 @@ def speaker_rows(
     return rows
 
 
+def _engine_calls(metric: dict[str, Any]) -> int:
+    """这一路**真的调了几次引擎**（单趟记 1）。
+
+    没声跳过的块**不算**：那几块一次调用都没发生（`runner` 的数字静音门）。逐路的
+    `chunks` 数组里那几块的 `silent` 是 `true`，因此「块数」与「引擎调用次数」在跳过
+    发生时不是同一个数 —— 报告里报的是后者，块数另外报在逐路表那一行。
+    """
+    chunks = metric["chunks"]
+    if not chunks:
+        return 1
+    return sum(1 for item in chunks if not item.get("silent"))
+
+
+def _gate_headline(rows: Sequence[dict[str, Any]]) -> str:
+    """报告开头那一行「数字静音门做成没做成判断」。
+
+    「这一趟有没有门」是读报告的人要先知道的一件事：门判不了那几段时（音频解不开、读不全），
+    产物与一次健康运行的形状**不再一样**，这一行让它在第一屏就看得出来。逐路那一格与
+    状态文件的 `gate` 记的是同一件事（见模块头「数字静音门」那一节）。
+
+    这一行按**这一趟实际发生的事**写：一段都没跳过时如实写出来（不许把「跳过」说成发生了），
+    真跳过时写出跳过几段 —— 与逐路那一格 `gate.detail` 同一套说法（`runner._chunk_gate()`）。
+    """
+    total = sum(int(item["gate"].get("spans_total", 0)) for item in rows)
+    judged = sum(int(item["gate"].get("spans_judged", 0)) for item in rows)
+    skipped = sum(len(item["silent_spans"]) for item in rows)
+    methods = sorted(
+        {
+            str(item["gate"]["method"])
+            for item in rows
+            if item["gate"].get("method")
+        }
+    )
+    how = f"，用的尺子是 {'/'.join(methods)}" if methods else ""
+    if total and judged == total:
+        if skipped:
+            return (
+                f"在 {total} 段音频上都给出了结论{how}"
+                f"（其中 {skipped} 段是数字静音，跳过了引擎）"
+            )
+        return (
+            f"在 {total} 段音频上都给出了结论{how}"
+            "（没有一段是数字静音，一段都没跳过引擎）"
+        )
+    blocked = [
+        f"{item['source']} 第 "
+        + "、".join(str(index) for index in _unjudged_indexes(item))
+        + " 块"
+        for item in rows
+        if item["unjudged_spans"]
+    ]
+    detail = "；".join(blocked) if blocked else "没有可判的音频"
+    return f"⚠ **没做成判断**：{judged} / {total} 段判过，其余几段照常送了引擎（{detail}）"
+
+
+def _unjudged_indexes(item: dict[str, Any]) -> list[int]:
+    """这一路门判不了的那几块**是第几块**（逐块记账里的 `gate == "unjudged"`）。"""
+    return [
+        int(run["index"])
+        for run in item["chunks"]
+        if run.get("gate") == "unjudged"
+    ]
+
+
+def _chunk_reason(run: dict[str, Any]) -> str:
+    """逐块那一行末尾的结论：**机器可读的词 + 一句人话**。
+
+    词是 `runner` 给的（`digital_silence` / `engine_error` / `no_segments` /
+    `zero_span_segments` / `transcribed` / `gate_unjudged`），人话照它翻。两个都写上，
+    因为读报告的是人、读对照表的是程序，两边都该看得出「这一段为什么没有字」。
+    """
+    reason = str(run.get("reason") or "")
+    return f"{reason}（{_CHUNK_REASON_TEXT.get(reason, '见逐块记账')}）"
+
+
+#: 逐块结论词 → 一句人话（报告里那一行用）
+_CHUNK_REASON_TEXT = {
+    "digital_silence": "样本全零，没声、跳过引擎",
+    "engine_error": "引擎抛错，这一段没跑成",
+    "no_segments": "引擎跑成了但一段都没交回",
+    "zero_span_segments": "跑成了，交回的段每一段都是零时长",
+    "transcribed": "跑成了",
+    "gate_unjudged": "跑成了，但这一段的静音与否没人判过",
+}
+
+
 def write_report(
     path: Path | str,
     *,
@@ -545,13 +777,21 @@ def write_report(
     整段批处理，没有「一段一段的耗时」可以统计；分了块之后每次调用对应一块，逐块的
     墙钟因此列得出来（块数 1 就是整段一次调用）。分块、缺段这两件事各有一节：
     报告是人读这一场跑成什么样子的地方，缺一段却不写出来的话，读报告的人看不出来。
+
+    **没声跳过的那几段也单列一节**（与「缺了哪几段」分开）：那一档什么都没出错，
+    报告里若与失败混在一处写，读的人会以为这一场坏过。零时长的段同理单列一格
+    （条数从逐路度量的 `zero_span_segments` 取，与对照表 `audio.zero_span_segments` 同源，
+    见模块头）。
     """
     rows = [item.to_dict() for item in metrics]
     total_audio = sum(float(item["audio_seconds"]) for item in rows)
     total_segments = sum(int(item["segments"]) for item in rows)
-    total_calls = sum(len(item["chunks"]) or 1 for item in rows)
+    total_calls = sum(_engine_calls(item) for item in rows)
     failed = [item for item in rows if item["state"] == "failed"]
     incomplete = [item for item in rows if item["missing_spans"]]
+    muted = [item for item in rows if item["silent_spans"]]
+    unjudged = [item for item in rows if item["unjudged_spans"]]
+    zero_counts = {str(item["source"]): int(item["zero_span_segments"]) for item in rows}
     reasons: dict[str, int] = {}
     for item in rows:
         for name, count in item["reasons"].items():
@@ -569,11 +809,28 @@ def write_report(
         f"- 音频：{total_audio:.1f}s（{len(rows)} 路）· 分段：{total_segments}"
         f" · 引擎调用：{total_calls} 次 · 总耗时：{float(total_wall_seconds):.3f}s"
     )
+    lines.append(f"- 数字静音门：{_gate_headline(rows)}")
     if incomplete:
         listed = "、".join(
             f"{item['source']} 缺 {len(item['missing_spans'])} 段" for item in incomplete
         )
         lines.append(f"- ⚠ **这一场的转写不完整**：{listed}（逐段区间见下面那一节）")
+    if muted:
+        listed = "、".join(
+            f"{item['source']} {len(item['silent_spans'])} 段" for item in muted
+        )
+        lines.append(
+            f"- 这一场有 **没声而跳过** 的音频：{listed}"
+            "（样本全为零，没有送进引擎；这一档什么都没出错，逐段区间见下面那一节）"
+        )
+    if unjudged:
+        listed = "、".join(
+            f"{item['source']} {len(item['unjudged_spans'])} 段" for item in unjudged
+        )
+        lines.append(
+            f"- ⚠ **这一场的门在 {listed}上没做成判断**（音频解不开或读不全，那几段照常送了"
+            "引擎；逐段区间见下面那一节）"
+        )
     lines.append("")
     lines.append("## 逐路")
     lines.append("")
@@ -598,8 +855,7 @@ def write_report(
     lines.append("")
     for item in rows:
         calls = len(item["chunks"]) or 1
-        if calls > 1:
-            lines.append(
+        if calls > 1:            lines.append(
                 f"- {item['source']}：切成 {calls} 块跑，`speakers` 的长度（{item['speakers']}）"
                 f"等于**各块类数之和**，它读不出这一场有几个人"
                 f"（对照表 `headcount.meaningful = false`，`basis = sum_of_chunk_classes`）。"
@@ -623,21 +879,83 @@ def write_report(
     for item in rows:
         if item["chunks"]:
             lines.append(
-                f"- {item['source']}：{len(item['chunks'])} 次调用，合计 {item['wall_seconds']:.3f}s"
+                f"- {item['source']}：{_engine_calls(item)} 次调用"
                 f"（音频 {item['audio_seconds']:.1f}s）"
+                f"，合计 {item['wall_seconds']:.3f}s"
             )
             for run in item["chunks"]:
-                state = "没跑成" if run["error"] else "成"
                 lines.append(
                     f"  - 第 {run['index']} 块（{run['offset_seconds']:.1f}s 起，"
                     f"{run['seconds']:.1f}s）：{run['segments']} 段，"
-                    f"墙钟 {run['wall_seconds']:.3f}s，{state}"
+                    f"墙钟 {run['wall_seconds']:.3f}s，{_chunk_reason(run)}"
                 )
         else:
             lines.append(
                 f"- {item['source']}：一次调用 {item['wall_seconds']:.3f}s"
                 f"（音频 {item['audio_seconds']:.1f}s）"
             )
+    lines.append("")
+    lines.append("## 数字静音门（这一段音频的静音与否，判过没有）")
+    lines.append("")
+    lines.append(
+        "每一段音频在调引擎**之前**都过这道闸（单趟跑与分块跑一样，判据见 `docs/state.md`）："
+        "样本全零的那一段根本不送进引擎。这一节记的是**门在每一路上做成没做成判断**——"
+        "逐块那一行末尾的词与这里的数同源。"
+    )
+    lines.append("")
+    for item in rows:
+        gate = item["gate"]
+        verdict = "做成判断" if gate.get("applied") else "⚠ 没做成判断"
+        lines.append(
+            f"- {item['source']}：{verdict}"
+            f"（判过 {int(gate.get('spans_judged', 0))} / "
+            f"{int(gate.get('spans_total', 0))} 段；"
+            f"尺子 {gate.get('method') or '—'}；{gate.get('detail') or '—'}）"
+        )
+        if item["unjudged_spans"]:
+            spans = "、".join(
+                f"{float(span[0]):.1f}–{float(span[1]):.1f}s" for span in item["unjudged_spans"]
+            )
+            lines.append(
+                f"  - 判不了的那 {len(item['unjudged_spans'])} 段（{spans}）："
+                f"{gate.get('unjudged_reason') or '—'}；那几段照常送了引擎，"
+                "转写里有没有字由引擎说了算"
+            )
+    lines.append("")
+    if muted:
+        lines.append("## 没声而跳过的音频（这一档什么都没出错）")
+        lines.append("")
+        lines.append(
+            "下面这几段音频的样本**全为零**（实测那一档是 `volumedetect` 读 `-91.0 dB` 的"
+            "全零样本），因此一**次引擎调用都没发生**：引擎在这种输入上有编出整段假正文的"
+            "实测记录（见节点 `7c6952e5` 的 `phase3/fullrun-250906.md`）。跳过之后转写里"
+            "没有这几段，那是如实的结果；对照表的 `audio.silent_spans`、转写第一行的注释、"
+            "状态文件的 `silent` 三处记的是同一件事。**这一档与 `partial` 分得开**："
+            "`partial` 说的是「有块没跑成」，`silent` 说的是「那块本来就没有音频」。"
+        )
+        lines.append("")
+        for item in muted:
+            spans = "、".join(
+                f"{float(span[0]):.1f}–{float(span[1]):.1f}s" for span in item["silent_spans"]
+            )
+            lines.append(
+                f"- {item['source']}：跳过 {len(item['silent_spans'])} 段（{spans}）"
+            )
+        lines.append("")
+    lines.append("## 零时长的段")
+    lines.append("")
+    lines.append(
+        "`end` 不晚于 `start` 的段逐路记在下面（对照表 `audio.zero_span_segments` 是同一个数）。"
+        "解析层对「模型漏写了 `[结束]`」的那一段故意留着正文、把 `end` 退回 `start`，因此这种"
+        "段本身是正常形状；实测那台引擎在数字静音上编出来的假正文**每一段都是零时长**，"
+        "这一格于是同时是个可核对的异常信号。**只记不改**：正文一个字都没动。"
+    )
+    lines.append("")
+    for item in rows:
+        lines.append(
+            f"- {item['source']}：{zero_counts.get(str(item['source']), 0)} 段"
+            f"（共 {item['segments']} 段）"
+        )
     lines.append("")
     if incomplete:
         lines.append("## 缺了哪几段（这一路的转写不完整）")
@@ -714,6 +1032,9 @@ def write_status(
     finished_at: str | None = None,
     error: str | None = None,
     partial: bool = False,
+    silent: bool = False,
+    silent_spans: Sequence[Sequence[float]] | None = None,
+    gate: dict[str, Any] | None = None,
 ) -> Path:
     """落状态文件（`running` / `done` / `failed` 三档，写盘原子替换）。
 
@@ -721,6 +1042,14 @@ def write_status(
     （产物可用、这一格是终态），而 `partial = true` 加上 `error` 里那句「缺了哪一段」
     让读状态文件的人与程序都看得出这份转写短了一截。没有这个键的话，一份少了 450 秒的
     转写与一份完整的转写在状态文件里长得一模一样。
+
+    `silent` / `silent_spans` 是**另一档**：这一段音频没声、跳过是对的，`state` 照样
+    `done`、`partial` 照样 `false`，但跳过的是哪几段写在 `silent_spans` 里（秒级，
+    原录音时间轴）。读方按这两格分得开「那里本来就没有音频」与「那一块没跑成」。
+
+    `gate` 是**这道闸自己做成没做成判断**：`applied` 为假时（音频解不开、要的那一段读不全）
+    逐路列出判不了的那几段。少了这一格，一次没门可用的运行在状态文件里与一次健康的运行
+    长得一样，而那正是「下游从产物里读不出污染」的那条路。
     """
     if state not in STATES:
         raise ValueError(f"状态只认 {STATES}，收到 {state!r}")
@@ -733,6 +1062,11 @@ def write_status(
         "sources": [str(item) for item in sources],
         "artifacts": {str(key): dict(value) for key, value in artifacts.items()},
         "partial": bool(partial),
+        "silent": bool(silent),
+        "silent_spans": [
+            [_round(item[0]), _round(item[1])] for item in (silent_spans or [])
+        ],
+        "gate": dict(gate) if gate is not None else {},
         "error": error,
     }
     return write_text_atomic(
@@ -777,6 +1111,7 @@ __all__ = [
     "read_speakers_artifact",
     "read_status",
     "read_transcript_lines",
+    "silent_note",
     "speaker_rows",
     "write_report",
     "write_speakers",

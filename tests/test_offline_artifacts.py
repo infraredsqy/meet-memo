@@ -502,8 +502,143 @@ def test_a_zero_wall_clock_does_not_get_used_as_a_divisor(tmp_path) -> None:
     assert "整场：0.000×" not in text
 
 
+def _gate(**overrides) -> dict:
+    """逐路那一格 `gate`（用例按需改其中一格）。"""
+    base = {
+        "applied": True,
+        "method": "pcm_bytes",
+        "spans_total": 3,
+        "spans_judged": 3,
+        "spans_unjudged": 0,
+        "unjudged_spans": [],
+        "unjudged_reason": None,
+        "detail": "3 块判过，没有一块是数字静音（一块都没跳过引擎）",
+    }
+    base.update(overrides)
+    return base
+
+
+def _gate_chunk(index: int, gate: str, reason: str) -> dict:
+    """逐块那一行的形状（与 `runner.ChunkRun.to_dict()` 同形，报告逐块那一节读它）。"""
+    offset = float((index - 1) * 10)
+    return {
+        "index": index,
+        "offset_seconds": offset,
+        "seconds": 10.0,
+        "span": [offset, offset + 10.0],
+        "segments": 2,
+        "wall_seconds": 1.0,
+        "error": None,
+        "silent": gate == "silent",
+        "reason": reason,
+        "gate": gate,
+        "gate_method": "pcm_bytes",
+        "gate_detail": (
+            "归档 PCM 上这一段没读全（文件比这个区间短）" if gate == "unjudged" else None
+        ),
+        "zero_span_segments": 0,
+    }
+
+
+def _headline(tmp_path, metric: artifacts.SourceMetrics, name: str) -> str:
+    """跑一次 `write_report()`，交回开头那一行「数字静音门：…」。"""
+    target = tmp_path / f"report-{name}.md"
+    artifacts.write_report(
+        target,
+        session_id="250919",
+        session_dir=tmp_path,
+        engine={"model": "m", "dtype": "bfloat16", "device": "auto", "selector": "auto"},
+        metrics=[metric],
+        total_wall_seconds=3.0,
+    )
+    for line in target.read_text(encoding="utf-8").splitlines():
+        if line.startswith("- 数字静音门："):
+            return line
+    raise AssertionError("报告里没有「数字静音门」那一行")
+
+
+def test_the_report_headline_only_claims_a_silent_skip_that_happened(tmp_path) -> None:
+    """报告开头那一行**只说这一趟真发生的事**：跳过几段就写几段，没跳过的不许说跳过。
+
+    改前那一行无条件写着「（峰值全零的跳过引擎）」：一次整段都有声的运行（一块都没跳过）
+    照样带着它 —— 这一行是读报告的人第一眼看到的东西，第一句就与逐块记账对不上。
+    三档各钉一个**整行**字符串：一段都没跳过、真跳过一段、判不了那一档（照旧）。
+    """
+    # 1. 三段都有声：整行里不许出现「有段因为没声被跳过」这种说法
+    quiet = artifacts.SourceMetrics(
+        source="mic",
+        audio_file="meeting_audio_mic.pcm",
+        audio_seconds=30.0,
+        state="done",
+        segments=5,
+        speakers=2,
+        seconds=12.0,
+        wall_seconds=3.0,
+        rtf=0.1,
+        gate=_gate(),
+    )
+    line = _headline(tmp_path, quiet, "nothing-skipped")
+    assert line == (
+        "- 数字静音门：在 3 段音频上都给出了结论，用的尺子是 pcm_bytes"
+        "（没有一段是数字静音，一段都没跳过引擎）"
+    )
+    assert "峰值全零" not in line
+
+    # 2. 真跳过一段：跳过的段数写在那一行上
+    hushed = artifacts.SourceMetrics(
+        source="mic",
+        audio_file="meeting_audio_mic.pcm",
+        audio_seconds=30.0,
+        state="done",
+        segments=5,
+        speakers=2,
+        seconds=12.0,
+        wall_seconds=3.0,
+        rtf=0.1,
+        silent_spans=[(10.0, 20.0)],
+        gate=_gate(detail="3 块判过，其中 1 块是数字静音（跳过了引擎）"),
+    )
+    line = _headline(tmp_path, hushed, "one-skipped")
+    assert line == (
+        "- 数字静音门：在 3 段音频上都给出了结论，用的尺子是 pcm_bytes"
+        "（其中 1 段是数字静音，跳过了引擎）"
+    )
+    assert "峰值全零" not in line
+
+    # 3. 判不了那一档照旧：那一行仍走「没做成判断」，一个字都没动
+    blocked = artifacts.SourceMetrics(
+        source="mic",
+        audio_file="meeting_audio_mic.pcm",
+        audio_seconds=30.0,
+        state="done",
+        segments=5,
+        speakers=2,
+        seconds=12.0,
+        wall_seconds=3.0,
+        rtf=0.1,
+        unjudged_spans=[(20.0, 30.0)],
+        chunks=[
+            _gate_chunk(1, "not_silent", "transcribed"),
+            _gate_chunk(2, "not_silent", "transcribed"),
+            _gate_chunk(3, "unjudged", "gate_unjudged"),
+        ],
+        gate=_gate(
+            applied=False,
+            spans_judged=2,
+            spans_unjudged=1,
+            unjudged_spans=[[20.0, 30.0]],
+            unjudged_reason="归档 PCM 上这一段没读全（文件比这个区间短）",
+            detail="1 块的静音与否判不了，照常送了引擎",
+        ),
+    )
+    line = _headline(tmp_path, blocked, "unjudged")
+    assert line == (
+        "- 数字静音门：⚠ **没做成判断**：2 / 3 段判过，其余几段照常送了引擎（mic 第 3 块）"
+    )
+
+
 def test_status_file_round_trips(tmp_path) -> None:
-    """状态文件读得回来，九格（含 `schema_version` / `partial` / `error`）都在。"""
+    """状态文件读得回来，十二格（含 `schema_version` / `partial` / `silent` / `gate` / `error`）都在。"""
     target = tmp_path / "meeting_offline_status.json"
     artifacts.write_status(
         target,
@@ -524,6 +659,12 @@ def test_status_file_round_trips(tmp_path) -> None:
         "sources": ["mic", "loopback"],
         "artifacts": {},
         "partial": False,
+        # 没声跳过那一档的两格：跑成的那一趟是 `False` / 空数组，读方按它们分得开
+        # 「整场都转好了」与「有几段本来就没有音频」
+        "silent": False,
+        "silent_spans": [],
+        # 门那一格在 `running` 那一版还没有可报的（空映射）：它由跑完那一次写全
+        "gate": {},
         "error": None,
     }
 
@@ -543,6 +684,85 @@ def test_status_file_round_trips(tmp_path) -> None:
     assert done["finished_at"] == "2025-09-19T20:10:00"
     assert done["error"].startswith("engine_error")
     assert done["artifacts"]["mic"]["report"] == "r.md"
+
+
+def test_status_file_carries_whether_the_gate_was_applied(tmp_path) -> None:
+    """门做成没做成判断进状态文件顶层与逐路：`applied = false` 时列出**哪几段**判不了。
+
+    这一格要解决的问题：一次门没用上的运行，原先与一次健康的运行在状态文件里一个样
+    （都是 `state: done`、`partial: false`、`silent: false`），下游读不出这一场有一段
+    音频没人判过静音。现在 `applied` 与 `unjudged_spans` 把这件事说出来。
+    """
+    target = tmp_path / "meeting_offline_status.json"
+    per_source_gate = {
+        "applied": False,
+        "spans_total": 3,
+        "spans_judged": 2,
+        "spans_unjudged": 1,
+        "unjudged_spans": [[20.0, 30.0]],
+        "unjudged_reason": "av.error.InvalidDataError: 解不出来",
+        "detail": "1 块的静音与否判不了，照常送了引擎",
+    }
+    artifacts.write_status(
+        target,
+        session_id="250906",
+        state="done",
+        started_at="2025-09-19T20:00:00",
+        sources=["loopback"],
+        artifacts={"loopback": {"transcript": "t.md", "gate": per_source_gate}},
+        finished_at="2025-09-19T21:00:00",
+        gate={
+            "applied": False,
+            "spans_total": 3,
+            "spans_judged": 2,
+            "spans_unjudged": 1,
+            "unjudged_spans": {"loopback": [[20.0, 30.0]]},
+        },
+    )
+
+    document = artifacts.read_status(target)
+    assert document["gate"]["applied"] is False
+    assert document["gate"]["unjudged_spans"] == {"loopback": [[20.0, 30.0]]}
+    assert document["artifacts"]["loopback"]["gate"]["applied"] is False
+    assert document["artifacts"]["loopback"]["gate"]["unjudged_spans"] == [[20.0, 30.0]]
+
+    # 门在每一段上都判过的那一趟（没写 `gate` 时是空映射，与 `running` 那一版同形）
+    artifacts.write_status(
+        target,
+        session_id="250906",
+        state="done",
+        started_at="2025-09-19T20:00:00",
+        sources=["loopback"],
+        artifacts={},
+    )
+    assert artifacts.read_status(target)["gate"] == {}
+
+
+def test_status_file_carries_the_silent_spans_of_the_whole_session(tmp_path) -> None:
+    """没声跳过的那几段进状态文件顶层：`state` 仍是 `done`、`partial` 仍是 `false`。
+
+    这三格必须分得开：`partial` 说「有块没跑成」、`silent` 说「那块本来就没有音频」。
+    把没声混进 `partial` 或 `error`，读方就会以为这一场坏过。
+    """
+    target = tmp_path / "meeting_offline_status.json"
+    artifacts.write_status(
+        target,
+        session_id="250906",
+        state="done",
+        started_at="2025-09-19T20:00:00",
+        sources=["loopback"],
+        artifacts={"loopback": {"transcript": "t.md", "speakers": "s.json", "report": "r.md"}},
+        finished_at="2025-09-19T21:00:00",
+        silent=True,
+        silent_spans=[(2940.0, 3390.0), (6540.0, 6990.0)],
+    )
+
+    document = artifacts.read_status(target)
+    assert document["state"] == "done"
+    assert document["partial"] is False
+    assert document["error"] is None
+    assert document["silent"] is True
+    assert document["silent_spans"] == [[2940.0, 3390.0], [6540.0, 6990.0]]
 
 
 def test_status_file_rejects_an_unknown_state(tmp_path) -> None:
