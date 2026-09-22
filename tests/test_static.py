@@ -460,8 +460,11 @@ def test_api_state_shape_is_the_full_one(tmp_path, client_factory):
 
     assert snapshot["alerts"] == {"critical": None, "hints": []}
     assert set(snapshot["transcript"]) == TRANSCRIPT_KEYS
+    # 空闲态的 `health` 是**从转写后端读来的**真值：这一场还没起过任何场次，真实现如实报
+    # `stopped`（`phase2` 复审 m3 定的口径「空闲 = stopped」；`normal` 是 dataclass 默认值，
+    # 服务起来那一刻就不再是它了）。另三格空闲态就是零。
     assert snapshot["transcript"] == {
-        "health": "normal",
+        "health": "stopped",
         "last_line_at": None,
         "buffered_lines": 0,
         "failed_segments": 0,

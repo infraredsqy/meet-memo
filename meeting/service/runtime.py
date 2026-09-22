@@ -32,6 +32,7 @@ from typing import Any, Callable
 
 from meeting import __version__, config as config_module, logging_setup
 from meeting.alerts import AlertJudge, AlertThresholds
+from meeting.asr import pipeline as asr_pipeline
 from meeting.backends.base import (
     SOURCE_IDS,
     LevelFrame,
@@ -103,6 +104,18 @@ def _interrupted_message() -> str:
 
 #: `levels` 抽帧节奏：对外一律 **4 次/秒**（0.25 秒一帧，两路合在一帧里发）
 LEVELS_INTERVAL_SECONDS = 0.25
+
+#: 转写健康度节拍的间隔（秒）。
+#:
+#: **取值依据**：这一条管的是「转写挂了这件事多久能被看见」。取值只影响**滞后**，不影响开销 ——
+#: 每一拍读的是 `health()` + `backlog_depth()` 两个**纯读**（几个标志位 + 一个队列长度），
+#: 读数没变时一个副作用都不发生（不写快照、不提交、不落 log）。
+#:
+#: 取 0.5 秒的理由：界面里转写健康位（`transcript.health`）与失联横幅本来就按秒级刷新
+#: （`heartbeat.interval_seconds` 默认 10 秒、可配 1–60 秒），半秒的滞后看不出差别；
+#: 再往上加（1 秒以上）只会让「转写停了」这件事在 `/debug` 与界面上多等一拍，
+#: 换不来任何好处。**用例走的就是这条节拍**（不另开接缝），因此整文件耗时也由它限住。
+TRANSCRIBER_HEALTH_INTERVAL_SECONDS = 0.5
 
 # ---------------------------------------------------------------------------
 # 收尾预算（phase3 §3.3；名字由 phase2 冻结，取值与实现归本 Phase）
@@ -250,11 +263,12 @@ def compute_drain_budget(backlog: int, segment_timeout: float) -> float:
     输入来自转写后端的 `backlog_depth()` / `segment_timeout()`；转写后端缺席时调用方按
     `DRAIN_DEFAULT_BACKLOG` / `DRAIN_DEFAULT_SEGMENT_TIMEOUT_SECONDS` 取缺省
     （phase3 §3.3；这两个缺省值与原公式出处是方案 §5.3 行 250 / §7.2 行 338）。
+
+    **公式本体在 `meeting/asr/pipeline.py`**（积压量是转写域的量，那个模块也用它算
+    自己 `stop()` 的收尾预算），这里只做转交：同一趟收尾的两处读数因此永远同源。
+    下面三个常量与那边逐字同值，是**跨 Phase 冻结的名字**（phase3 按它们读账目）。
     """
-    budget = DRAIN_BUDGET_MIN_SECONDS + int(backlog) * (
-        float(segment_timeout) + float(DRAIN_BUDGET_SEGMENT_OVERHEAD_SECONDS)
-    )
-    return float(min(DRAIN_BUDGET_MAX_SECONDS, max(DRAIN_BUDGET_MIN_SECONDS, budget)))
+    return asr_pipeline.compute_drain_budget(backlog, segment_timeout)
 
 
 # ---------------------------------------------------------------------------
@@ -374,6 +388,8 @@ class ServiceRuntime:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._signal_ok = False
         self._ticker: asyncio.Task | None = None
+        #: 转写健康度节拍（低频、只写快照；见 `_transcriber_health_loop()`）
+        self._transcriber_ticker: asyncio.Task | None = None
         self._pending_restart_session: str | None = None
 
     # -- 只读小接口 -------------------------------------------------------
@@ -470,7 +486,8 @@ class ServiceRuntime:
 
     async def startup(self) -> None:
         """启动序列：取事件循环 → 写关停目标 → 信号自检 → 解析后端 → 探测设备 →
-        组装初始快照 → 扫未收尾场次 → 打开浏览器。**绝不自动开始录音。**
+        组装初始快照（**含 `transcript` 三格的初值**，见 ⑤b）→ 扫未收尾场次 → 打开浏览器。
+        **绝不自动开始录音。**
         """
         if self._started:
             return
@@ -496,6 +513,24 @@ class ServiceRuntime:
         # ⑤ 组装初始快照（`top_state: idle`、`session: null`、`sources` 取 probe() 的三态）
         self._probe_devices()
 
+        # ⑤b `transcript` 三格的初值**取自后端**，不留给 dataclass 默认值
+        #
+        # **为什么要有这一步**（复审 m3）：`_refresh_transcript_snapshot()`
+        # 只挂在节拍与「一行到来」上时，快照初值就只能是 `TranscriptState` 的 dataclass 默认
+        # `health = "normal"`；而真实现的空闲态报的是 `stopped`（没起过场次 —— 见
+        # `meeting/backends/transcribe.py` 的 `health()`），于是健康度节拍**第一拍**
+        # （0.5 秒后）才把它刷成 `stopped` 并 `commit()`（`revision 1 -> 2`）。后果有两条：
+        # ① `contract/fixtures/snapshot/idle*.json` 描述的只是「服务起来前半秒」那一瞬的取值，
+        # ② 空闲场次的用例被迫抢在那一拍之前读快照 —— 一条**纯粹的时序依赖**
+        # （机器被压住 >0.5 秒就红）。
+        #
+        # 初值在 `startup()` 里就地取一次之后：空闲档稳定成 `health = "stopped"`、
+        # `revision` 停在 `REVISION_START`（初值不 `commit()`：`startup()` 里没有任何状态迁移），
+        # 上面那两条一起消失。位置放在 ⑤ 之后是必须的 —— `_probe_devices()` 才把转写后端
+        # `bind()` 上（`_config` 也在那里给），早于它调这一步会读到一份没接上配置的后端。
+        # 返回值（= `health` 有没有迁移）在这里**有意丢掉**：`startup()` 不做提交。
+        self._refresh_transcript_snapshot()
+
         # ⑥ 扫未收尾场次（只取最新的一场；命中即挂 notice 并改写现场）
         self._scan_unfinished()
 
@@ -514,15 +549,29 @@ class ServiceRuntime:
             )
 
     async def shutdown(self) -> None:
-        """关停动作：停 ticker、停采集、清关停目标（本 Phase 不做收尾，收尾归 phase3）。"""
+        """关停动作：停 ticker、停采集、**停转写**、清关停目标（本 Phase 不做收尾，收尾归 phase3）。
+
+        `transcriber_backend.stop()` 在关停路径上一直缺一个调用点：协议里这个方法从 phase1
+        就冻结着，而在此之前没有任何一处调它 —— 于是转写的读线程与 worker 会一直挂到进程退出
+        （`9e5db89c` phase2 §7 的那条接线）。它与采集一样**失败只记账、不抛**：关停路径上
+        任何一步出事都不许把进程卡住。
+        """
         if self._ticker is not None:
             self._ticker.cancel()
             self._ticker = None
+        if self._transcriber_ticker is not None:
+            self._transcriber_ticker.cancel()
+            self._transcriber_ticker = None
         try:
             if self.capture_backend is not None:
                 self.capture_backend.stop()
         except Exception:
             _log.exception("关停时停采集失败（如实记账，不静默）")
+        try:
+            if self.transcriber_backend is not None:
+                self.transcriber_backend.stop()
+        except Exception:
+            _log.exception("关停时停转写失败（如实记账，不静默）")
         # 收尾四步的执行器**不等**（工作线程是 daemon：第二次 `Ctrl+C` 之后进程不许被在飞的
         # 同步步拖住）——`wait=False` 顺带把已排队的收尾步丢掉，这正是「立即中止」要的形态。
         self._shutdown_drain_executor()
@@ -938,6 +987,56 @@ class ServiceRuntime:
             return
         self._ticker = self._loop.create_task(self._levels_loop())
 
+    def _ensure_transcriber_health_ticker(self) -> None:
+        """起转写健康度节拍（幂等；没有事件循环时什么都不做）。
+
+        **由 `start_session()` 的收尾那一步起**（`startup()` 里不起）。理由是这个节拍要盯的
+        只有一件事 —— worker 停摆之后不再有行到来、快照得有人刷 —— 而那件事只在场次起来之后
+        才谈得上。反向摆（`startup()` 里就起）会多出一条时序依赖：它的**第一拍**落在什么时刻
+        取决于「用户多快按下开始」，空闲档 `stopped -> normal` 那一次迁移因此会落在这一场第一个
+        提交的前后两种位置，`revision` 跟着差 1（复审 m3 的修法上曾实测到这一点）。
+        场次起来之后这一跳已经由 `start_session()` 自己带走（那一刷就在 `commit()` 前面），
+        节拍随后只管「期间有没有迁移」。
+        """
+        if self._transcriber_ticker is not None or self._loop is None:
+            return
+        self._transcriber_ticker = self._loop.create_task(self._transcriber_health_loop())
+
+    async def _transcriber_health_loop(self) -> None:
+        """转写健康度节拍：**每 `TRANSCRIBER_HEALTH_INTERVAL_SECONDS` 秒**把 `transcript`
+        的三格刷一遍（`_refresh_transcript_snapshot()`），健康度迁移就 `commit()`。
+
+        **为什么要有这一条**（`phase2/task.md` §7：「一行到来时**与 worker 停摆时**把它们写对」）：
+        刷新原先只挂在「一行到来」上，而 **worker 停摆恰恰不会再有行到来** —— 没有行的原因
+        就是它停了。于是真出现「转写挂了」时，快照里的 `health` 会一直停在 `normal`
+        （界面 / `/debug` 都看这一格），直到有人重启或下一场开局；`buffered_lines` 同理
+        （停摆时积压只增不减，正是最该看见的时候）。
+        （**起拍时刻**：这条节拍由 `start_session()` 起，第一拍落在那一场开始之后半秒 ——
+        空闲档的初值与 `stopped -> normal` 那一跳都不归它管，分别由 `startup()` 的 ⑤b 与
+        `start_session()` 自己带走，见那两处。复审 m3。）
+
+        **与水位那一档（`_levels_loop`）分开**：那一条只在 `recording` / `alert` 态跑，
+        而「转写起没起来、还在不在」这件事与会话状态无关（idle 时也要如实报）。
+
+        **拍子的副作用只有快照**：`_refresh_transcript_snapshot()` 只在 `health` 真迁移时
+        返回 `True`，于是 `commit()`（`revision +1` + 一次 `state` 广播）只可能发生在状态真的
+        变了那一刻；积压量变化照旧只写快照，`revision` 原地不动（契约第 3.3 节）。
+        这一条由三条用例钉住：`test_snapshot_reads_do_not_refresh_and_do_not_push_the_revision`
+        （读快照是纯读）、`test_worker_stall_reaches_the_snapshot_without_any_new_line`
+        （本拍子真的把停摆刷上去了）与 `test_backlog_changes_reach_the_snapshot_without_touching_the_revision`
+        （积压量不投票）。
+        """
+        try:
+            while True:
+                await asyncio.sleep(TRANSCRIBER_HEALTH_INTERVAL_SECONDS)
+                try:
+                    if self._refresh_transcript_snapshot():
+                        self.commit()
+                except Exception:  # noqa: BLE001 - 一拍刷不动不许把节拍打死
+                    _log.warning("转写健康度节拍这一拍刷不动（继续下一拍）", exc_info=True)
+        except asyncio.CancelledError:  # pragma: no cover - 关停时取消
+            raise
+
     async def _levels_loop(self) -> None:
         """`levels` 抽帧：**4 次/秒**（降采样落在 runtime 侧，hub 只搬运与背压）。"""
         try:
@@ -1038,10 +1137,30 @@ class ServiceRuntime:
         _log.debug("流存活事实：%s stream_alive=%s", fact.source, fact.stream_alive)
 
     def _apply_transcript_line(self, line: Any) -> None:
-        """一行转写：进 `transcript` 字段并推 `transcript` 通道（**不参与状态迁移**）。"""
+        """一行转写：进 `transcript` 字段并推 `transcript` 通道（**不参与状态迁移**）。
+
+        **本单元补上的三格**（`9e5db89c` phase2 §7）：`transcript.health` /
+        `buffered_lines` / `failed_segments` 在此之前生产代码里一处都没写过 ——
+        一行到来时就地刷新一遍（判定权全部收在 `_refresh_transcript_snapshot()` 一处）。
+        **worker 停摆那一档没有行可等**，所以另有一条不依赖行的刷新路径：健康度节拍
+        `_transcriber_health_loop()`（`startup()` 的 ⑤b 再取一次初值）。
+        **读路径不刷**（`_snapshot_json()` 是纯读，一个字都不问转写后端），理由见
+        `_refresh_transcript_snapshot()` 的 docstring。
+        三个字段的**提交资格只有 `health` 一格**：契约第 3.3 节写明 `transcript` 通道
+        不参与状态迁移（`docs/contract.md:208`），所以「一行到来」「积压量变了」
+        「失败计数多了一格」都不许给 `revision` 添抖动 ——
+        `commit()` 在这里的唯一触发条件是 `health` 的**迁移**（`normal ↔ behind ↔ stopped`），
+        那才是状态真的变了；顺风路径上的每一行都只广播 `transcript` 通道、
+        `revision` 原地不动，而积压量与失败计数照旧写进快照（经 `/api/state` 读得到）。
+        """
         try:
             text = getattr(line, "text", "")
             self.snapshot.transcript.last_line_at = now_iso()
+            if str(text).startswith("[[识别失败"):
+                # 占位符是失败档的唯一形状（`docs/legacy-assets.md` 的 B12）：
+                # 计数只在这里 +1，与后端报的失败原因同源（同一份文本）
+                self.snapshot.transcript.failed_segments += 1
+            changed = self._refresh_transcript_snapshot()
             self.hub.broadcast_transcript(
                 {
                     "revision": int(self.snapshot.revision),
@@ -1053,8 +1172,93 @@ class ServiceRuntime:
                     },
                 }
             )
+            if changed:
+                self.commit()
         except Exception:
             _log.exception("处理一行转写时抛错（不阻塞录音、不影响状态机）")
+
+    def _refresh_transcript_snapshot(self) -> bool:
+        """把 `transcript` 的三个字段刷成**当下**的取值；返回「状态有没有真的迁移」。
+
+        读的是转写后端自己的两个计数（`health()` / `backlog_depth()`）。
+        返回值**只描述 `health` 的迁移**：调用方据此决定要不要 `commit()`（契约第 3.3 节：
+        `transcript` 通道不参与状态迁移，一行到来 / 积压量变化都不该给 `revision` 添抖动）。
+        `buffered_lines` 与 `failed_segments` 照样写进快照（`/api/state` 读得到），
+        但它们**不给 `revision` 投票** —— 「积压 5 段变 4 段」不是一次状态迁移。
+
+        **四个调用点**（`phase2/task.md` §7：「一行到来时**与 worker 停摆时**」）：
+
+          - `startup()` 的 ⑤b：**初值取自后端**一次 —— 不这样做的话快照初值就是
+            dataclass 默认的 `normal`，空闲态要等健康度节拍第一拍（0.5 秒后）才翻成
+            `stopped` 并多提交一次（复审 m3），空闲档于是带上一条时序依赖；
+          - `start_session()`：转写后端刚起（`stopped -> normal`）时就地刷一遍，
+            让这次迁移跟着那一场自己的 `commit()` 走，而不是等下一拍（否则整场里会有一段
+            「转写在跑、快照还写着 `stopped`」的窗口）；
+          - `_apply_transcript_line()`：一行到来时就地刷一遍（顺风路径上 `health` 的迁移
+            立刻 `commit()`，不必等下一拍）；
+          - `_transcriber_health_loop()`：**低频节拍**（`TRANSCRIBER_HEALTH_INTERVAL_SECONDS`）
+            也刷一遍 —— worker 停摆之后不再有行到来，只靠上一个调用点的话这一档永远刷不到
+            快照上，界面 / `/debug` 会一直看到 `health = normal`（而「转写挂了」正是最该看见的）。
+
+        **为什么不挂在读路径上**：`to_dict()` / `_snapshot_json()` 是快照的产出者，
+        而刷新会经 `commit()` 提交（`revision +1` + 一次 `state` 广播）—— 让 `GET /api/state`
+        这种只读请求去改状态，一来把「读一次就涨 `revision`」变成契约假命题，
+        二来 `GET /api/heartbeat` 与随后的 `GET /api/state` 会读到两个不同的 `revision`。
+        节拍与读请求完全解耦，读路径因此保持纯读。
+
+        两个调用点都只写快照、只由 `health` 的迁移触发 `commit()`，因此拍多少下都不会给
+        `revision` 添抖动（本函数在读数没变时是纯读）。`startup()` 那一次丢掉返回值，
+        于是它连「迁移」都不提交（那一刻还没有任何状态迁移可谈）。
+
+        两个后端方法都可能缺席（`null` 替身之外的第三方实现）或抛错：`health` 读不出来按
+        `normal`、`backlog_depth` 读不出来按 `0`，并各留一条 warning —— 快照里宁可少一格
+        数字，也不许因为转写侧的读数把状态机带崩。
+
+        **健康度走的是转写域自己的校验器**（`meeting.asr.pipeline.validate_transcript_health`，
+        三取值 `normal` / `behind` / `stopped`）：采集域那个 `validate_health()` 认的是探针
+        七取值，越界落 `probe_failed` —— 拿它校转写域会让快照里长出前端 schema
+        （`TRANSCRIPT_HEALTHS`）不认的第四个值。两个域各自冻结，校验器就各归各的。
+        """
+        backend = self.transcriber_backend
+        health = "normal"
+        backlog = 0
+        if backend is not None:
+            try:
+                health = asr_pipeline.validate_transcript_health(backend.health())
+            except Exception:
+                _log.warning("转写后端 health() 读不出来（按 normal 落快照）", exc_info=True)
+                health = "normal"
+            try:
+                backlog = max(0, int(backend.backlog_depth()))
+            except Exception:
+                _log.warning("转写后端 backlog_depth() 读不出来（按 0 落快照）", exc_info=True)
+                backlog = 0
+
+        transcript = self.snapshot.transcript
+        changed = False
+        if transcript.health != health:
+            _log.info(
+                "转写健康迁移：%s -> %s（积压 %s 段，门槛 %s 段，单段超时 %ss）",
+                transcript.health, health, backlog,
+                getattr(backend, "behind_threshold", None), self._transcriber_timeout(backend),
+            )
+            transcript.health = health
+            changed = True
+        # **积压量只写进快照，不参与状态迁移、不涨 `revision`**（契约第 3.3 节：
+        # `transcript` 通道不参与状态迁移；`phase2/task.md` §7：这两个计数只在 `/debug`
+        # 与 log 里看着用）。积压量几乎每一行都在变，让它触发 `commit()` 等于给 `state`
+        # 通道加一份高频抖动，并把契约给界面的那句「`id` 变了就是状态变了」变成假命题。
+        # 写进快照之后照样经 `/api/state` 的读路径可见。
+        if transcript.buffered_lines != backlog:
+            transcript.buffered_lines = backlog
+        return changed
+
+    def _transcriber_timeout(self, backend: Any) -> float:
+        """转写后端的 `segment_timeout()`（读不出来按缺省；只给日志用）。"""
+        try:
+            return float(backend.segment_timeout())
+        except Exception:  # noqa: BLE001 - 读数失败不影响别的结论
+            return float(DRAIN_DEFAULT_SEGMENT_TIMEOUT_SECONDS)
 
     # -- 场次生命周期 -----------------------------------------------------
 
@@ -1244,10 +1448,20 @@ class ServiceRuntime:
             except Exception:
                 # 转写起步失败**不阻塞录音**（转写坏了可以重跑）
                 _log.exception("转写后端起步失败（不阻塞录音）")
+            # 场次起来这一刻就地刷一遍 `transcript`（判定权仍在 `_refresh_transcript_snapshot()`）：
+            # 转写后端刚从 `stopped` 变成在跑，而 `commit()` 就在下面 —— 顺手带上这一格。
+            # 这一刷是**必须**的：不刷的话那一次迁移要等健康度节拍，而节拍第一拍落在什么时刻
+            # 取决于「用户多快按下开始」，于是空闲档 `stopped -> normal` 这一跳会落在这一场的
+            # 第一个提交之前、之后两种位置（`revision` 因此差 1）—— 一条把机器快慢烤进
+            # golden 的时序依赖。刷在提交之前，这一跳就固定由这一场的提交带走。
+            # `buffered_lines` 照旧只写快照、不参与这次提交。
+            self._refresh_transcript_snapshot()
 
         self._pending_restart_session = None
         self.last_frame_ts = None
         self.commit()
+        # 健康度节拍**从这一场开始起**（见 `_ensure_transcriber_health_ticker()` 的说明）
+        self._ensure_transcriber_health_ticker()
         return session
 
     def _abort_session(self, session: SessionInfo) -> None:
@@ -2254,6 +2468,7 @@ __all__ = [
     "DRAIN_SETTLE_POLL_SECONDS",
     "LEVELS_INTERVAL_SECONDS",
     "SESSION_MODES",
+    "TRANSCRIBER_HEALTH_INTERVAL_SECONDS",
     "ActionError",
     "DrainLimitExceeded",
     "ServiceRuntime",

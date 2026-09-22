@@ -23,6 +23,23 @@
 
 它**不写真实音频**，只在 `finalize()` / `transcode()` 里**记账**（音频字节是 `dca4539b` 的活），
 因此收尾第 1、2 步在它身上记 `skipped`（判据只看 `registry` 的解析结论与实现能力）。
+
+## 本模块里的第二件替身：`DevTranscriberBackend`（`9e5db89c` phase2 §3.8）
+
+`transcriber.backend = dev` 按 **key 分流**解析到它（采集那一档照旧是 `DevCaptureBackend`，
+两档互不影响 —— 见 `meeting/backends/registry.py` 的 `_target_for()`）。它是一条
+**会中能出合成行**的开发替身：起一条线程，每隔 `DEV_TRANSCRIPT_INTERVAL_SECONDS` 秒经
+`line_sink` 产一行两路轮换的合成转写，不读盘、不加载模型。
+
+它同时是测试用的稳定替身：节奏由 `interval_seconds` / `initial_delay_seconds` 两个构造参数
+给定，`stop()` 之后线程收队、**一行都不再产**；发出去的每一行都是
+`meeting.backends.base.TranscriptLine`（`kind="line"`），形状与真后端逐字段同形。
+
+**首发延迟为什么不是 0**（`DEV_TRANSCRIPT_INITIAL_DELAY_SECONDS = 2.0`）：采集侧开场之后
+服务要先把两路电平喂满一屏（`ENVELOPE_BAR_COUNT` = 15 根 × dev 的 100ms 帧间隔 ≈ 1.5 秒），
+`start` 之后紧接着抓的那一版快照里 `transcript.last_line_at` 因此仍是 `null`；若首行在
+开场几十毫秒内就落地，`contract/fixtures/snapshot/recording.json` 那一格会随抓取时机抖动。
+延迟取 2.0 秒，这一格就是确定的。
 """
 
 from __future__ import annotations
@@ -35,7 +52,14 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from meeting.backends.base import LevelFrame, SourceFacts, SourceLost, SourceProbe
+from meeting.backends.base import (
+    SOURCE_IDS,
+    LevelFrame,
+    SourceFacts,
+    SourceLost,
+    SourceProbe,
+    TranscriptLine,
+)
 
 _log = logging.getLogger("meeting.backends.dev")
 
@@ -57,6 +81,16 @@ DEV_SILENCE_DBFS = -90.0
 #: 合成电平的可闻区间（dBFS）
 DEV_LEVEL_MIN_DBFS = -60.0
 DEV_LEVEL_MAX_DBFS = -6.0
+
+#: dev 转写替身两行之间的间隔（秒）与首发延迟（秒）
+#:
+#: 首发延迟取 2.0 秒的理由写在模块 docstring 的最后一节（`contract/fixtures/snapshot/
+#: recording.json` 那一格的确定性：那一版快照在开场后约 1.5 秒抓取）。
+DEV_TRANSCRIPT_INTERVAL_SECONDS = 0.5
+DEV_TRANSCRIPT_INITIAL_DELAY_SECONDS = 2.0
+
+#: dev 转写替身的合成台词（两路轮换时带上前缀，一眼看出是哪一路）
+DEV_TRANSCRIPT_TEXT = "dev 替身合成的一行转写"
 
 
 @dataclass
@@ -311,6 +345,121 @@ class DevCaptureBackend:
             _log.exception("dev 替身的事实出口抛错（只记一条，合成继续）")
 
 
+class DevTranscriberBackend:
+    """dev 转写替身：会中每隔 `interval_seconds` 秒产一行两路轮换的合成转写。
+
+    **非产品路径**（`transcriber.backend = dev` 才解析到它，见模块 docstring 的最后一节）。
+    它是一条「开发时能看见字幕在动」的稳定替身：不读归档、不加载模型、不写产物文件，
+    只把 `TranscriptLine` 交给 `line_sink`（与真后端同一个出口形状）。
+
+    起停语义与真后端同形：`bind()` → `start(mode, session_dir)` → `stop()`；
+    `stop()` 之后线程收队、**一行都不再产**（`join` 有上界，超时留一条 warning，不静默）。
+    """
+
+    def __init__(
+        self,
+        *,
+        interval_seconds: float | None = None,
+        initial_delay_seconds: float | None = None,
+        sources: tuple[str, ...] = SOURCE_IDS,
+    ) -> None:
+        """三个可选参数（都带缺省，registry 的无参实例化因此照常成立）。
+
+        `interval_seconds` / `initial_delay_seconds` 缺省取本模块的两个常量 ——
+        用例传小值就能把节奏掐快，不必等 0.5 秒一行。
+        """
+        self.interval_seconds = (
+            DEV_TRANSCRIPT_INTERVAL_SECONDS if interval_seconds is None else float(interval_seconds)
+        )
+        self.initial_delay_seconds = (
+            DEV_TRANSCRIPT_INITIAL_DELAY_SECONDS
+            if initial_delay_seconds is None
+            else float(initial_delay_seconds)
+        )
+        self.sources = tuple(sources)
+        self._line_sink: Callable[[Any], None] | None = None
+        self._config: Any = None
+        self._thread: threading.Thread | None = None
+        self._stop = threading.Event()
+        self._mode = "both"
+        self._session_dir: str | None = None
+        #: 记账（用例据此断言「产了几行」）
+        self.lines_emitted = 0
+
+    # -- 协议 -------------------------------------------------------------
+
+    def bind(self, line_sink: Callable[[Any], None], *, config: Any = None) -> None:
+        """记下行出口与只读配置视图（runtime 在 `start()` 之前调一次）。"""
+        self._line_sink = line_sink
+        self._config = config
+
+    def start(self, mode: str, session_dir: str) -> None:
+        """起合成行：先等 `initial_delay_seconds` 秒，之后每 `interval_seconds` 秒一行。"""
+        self._mode = str(mode)
+        self._session_dir = str(session_dir)
+        self._stop.clear()
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._thread = threading.Thread(target=self._run, name="dev-transcriber", daemon=True)
+        self._thread.start()
+        _log.info(
+            "dev 转写替身已起（非产品路径）：mode=%s session=%s 首发 %.1fs 后、每 %.1fs 一行",
+            self._mode, self._session_dir, self.initial_delay_seconds, self.interval_seconds,
+        )
+
+    def stop(self) -> None:
+        """收队（**幂等**）：之后一行都不再产。"""
+        self._stop.set()
+        thread = self._thread
+        if thread is not None and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=2.0)
+            if thread.is_alive():  # pragma: no cover - daemon 线程，不阻塞进程退出
+                _log.warning("dev 转写替身的线程 2s 内没有退出（daemon，不阻塞进程退出）")
+        self._thread = None
+
+    def health(self) -> str:
+        """`normal`：替身按自己的节奏产行，没有「落后」这件事（积压恒 0）。"""
+        return "normal"
+
+    def backlog_depth(self) -> int:
+        """替身不排队，积压恒 0。"""
+        return 0
+
+    def segment_timeout(self) -> float:
+        """替身不走识别，报缺省 20.0 秒（与 `NullTranscriberBackend` 同值）。"""
+        return 20.0
+
+    # -- 合成线程 ---------------------------------------------------------
+
+    def _run(self) -> None:
+        if self._stop.wait(float(self.initial_delay_seconds)):
+            return
+        index = 0
+        while not self._stop.is_set():
+            self._emit_line(index)
+            index += 1
+            if self._stop.wait(float(self.interval_seconds)):
+                return
+
+    def _emit_line(self, index: int) -> None:
+        sink = self._line_sink
+        if sink is None:
+            return
+        source = self.sources[index % len(self.sources)]
+        line = TranscriptLine(
+            ts=time.time(),
+            source=source,
+            text=f"{DEV_TRANSCRIPT_TEXT}（{source} #{index + 1}）",
+            kind="line",
+        )
+        try:
+            sink(line)
+        except Exception:  # pragma: no cover - 出口异常不许把合成线程带走
+            _log.exception("dev 转写替身的行出口抛错（只记一条，合成继续）")
+            return
+        self.lines_emitted += 1
+
+
 __all__ = [
     "DEV_FAULT_DEFAULT_SECONDS",
     "DEV_FAULT_KINDS",
@@ -319,5 +468,9 @@ __all__ = [
     "DEV_LEVEL_MIN_DBFS",
     "DEV_LEVEL_SEED",
     "DEV_SILENCE_DBFS",
+    "DEV_TRANSCRIPT_INITIAL_DELAY_SECONDS",
+    "DEV_TRANSCRIPT_INTERVAL_SECONDS",
+    "DEV_TRANSCRIPT_TEXT",
     "DevCaptureBackend",
+    "DevTranscriberBackend",
 ]

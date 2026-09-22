@@ -50,6 +50,12 @@ DEFAULT_PATHS: dict[str, str] = {
 #: 显式取值 `dev` 指向的采集替身（只给开发与测试用，非产品路径）
 DEV_CAPTURE_PATH = "meeting.backends.dev:DevCaptureBackend"
 
+#: 显式取值 `dev` 指向的**转写**替身（`9e5db89c` phase2 §3.8）：
+#: 同一条取值 `dev` 在两个后端键上按 **key 分流**——`capture.backend = dev` 落
+#: `DEV_CAPTURE_PATH`、`transcriber.backend = dev` 落这一条。分流只做这一件事，
+#: 别的地方（`auto` / `null` / `module:Class`）一个字不动。
+DEV_TRANSCRIBER_PATH = "meeting.backends.dev:DevTranscriberBackend"
+
 
 @dataclass
 class BackendResolution:
@@ -91,7 +97,8 @@ def _target_for(key: str, selector: str) -> str | None:
     if selector == "null":
         return None
     if selector == "dev":
-        return DEV_CAPTURE_PATH
+        # `dev` 一档**按 key 分流**：采集替身与转写替身各归各的（`9e5db89c` phase2 §3.8）
+        return DEV_TRANSCRIBER_PATH if key == "transcriber.backend" else DEV_CAPTURE_PATH
     return selector
 
 
@@ -249,6 +256,7 @@ def capabilities_of(implementation: Any) -> dict[str, bool]:
 
 __all__ = [
     "DEV_CAPTURE_PATH",
+    "DEV_TRANSCRIBER_PATH",
     "DEFAULT_PATHS",
     "BackendResolution",
     "capabilities_of",

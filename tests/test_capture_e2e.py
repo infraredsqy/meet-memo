@@ -117,9 +117,14 @@ def test_a_full_session_reconciles_frame_by_frame(tmp_path: Path, monkeypatch):
     monkeypatch.setenv(PACE_SECONDS_ENV, "0.1")
     monkeypatch.setenv(DELIVER_MIC_ENV, str(RECORD_CHUNKS))
     monkeypatch.setenv(DELIVER_LOOPBACK_ENV, str(RECORD_CHUNKS))
-    with live(tmp_path, {"capture.backend": BACKEND_TARGET}) as (
-        client, runtime, _home, out_root
-    ):
+    # 这一场只验采集侧的账：`transcriber.backend` 显式取 `null` 替身。
+    # 不写这一项的话产品缺省 `auto` 会解析到 `meeting.backends.transcribe:TranscriberBackend`
+    # （`9e5db89c` phase2 落地之后它就在场了），而这一场喂进去的是**真音频**——
+    # 于是那条流水线会真的去加载 GLM 权重（实测把本用例拖到 7 秒，越过单条用例的 5 秒看门，
+    # 也违背「任何用例都不许加载真模型」这条硬要求）。
+    with live(
+        tmp_path, {"capture.backend": BACKEND_TARGET, "transcriber.backend": "null"}
+    ) as (client, runtime, _home, out_root):
         backend = runtime.capture_backend
         # 看门：配置键真的解析到本单元的挂件（解析失败会静默回退替身，这里当场说话）
         assert isinstance(backend, FaultyCaptureBackend)
@@ -218,9 +223,10 @@ def test_a_route_dying_midrun_leaves_the_other_route_intact(tmp_path: Path, monk
     """loopback 喂满 10 块后抛错：该路 `lost`、顶层 `alert`，mic 照常采、MP3 照出。"""
     monkeypatch.setenv(PACE_SECONDS_ENV, "0.1")
     monkeypatch.setenv(ERROR_AT_LOOPBACK_ENV, "10")
-    with live(tmp_path, {"capture.backend": BACKEND_TARGET}) as (
-        client, runtime, _home, _out
-    ):
+    # 同 ①：这一场喂的是**真音频**，转写显式取 `null` 替身，别让那条流水线去加载真模型
+    with live(
+        tmp_path, {"capture.backend": BACKEND_TARGET, "transcriber.backend": "null"}
+    ) as (client, runtime, _home, _out):
         backend = runtime.capture_backend
         assert isinstance(backend, FaultyCaptureBackend)
         assert post(client, "start", {"mode": "both"}).status_code == 200

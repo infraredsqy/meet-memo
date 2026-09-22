@@ -39,7 +39,7 @@
     "hints": []
   },
   "transcript": {
-    "health": "normal",
+    "health": "stopped",
     "last_line_at": null,
     "buffered_lines": 0,
     "failed_segments": 0
