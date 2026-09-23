@@ -83,7 +83,9 @@ test = [
 # 建的会后纪要层，漏了它 `minutes.hook = auto`（约定路径
 # `meeting.backends.minutes:MinutesHook`）在装好的包里会解析不到、
 # `python -m meeting.minutes` 那三个手动子命令（`check` / `chunk` / `prompt`）
-# 也会找不到模块）。
+# 也会找不到模块；`meeting.summary` 是 `1987cb20` phase1 建的会中总结内核，
+# 漏了它装好的包里 `import meeting.summary` 会直接失败（phase2 的服务接线、phase3 的
+# 界面都要经它拿到窗口切片与端点调用那一套）。
 packages = [
     "meeting",
     "meeting.service",
@@ -92,6 +94,7 @@ packages = [
     "meeting.asr",
     "meeting.offline",
     "meeting.minutes",
+    "meeting.summary",
 ]
 
 [tool.setuptools.package-data]

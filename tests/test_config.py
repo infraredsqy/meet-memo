@@ -96,6 +96,15 @@ def test_default_values_match_the_frozen_table(tmp_path, monkeypatch):
         "minutes.chunk_lines": 100,
         "minutes.max_segments": 8,
         "minutes.timeout_seconds": 14400,
+        # 会中总结这一层的七个键（`1987cb20` phase1 定名）：端点四件套 + 预算三件套。
+        # 密钥那一格默认 `None`（没配）—— 它是**可空键**，与两个设备键同一档。
+        "summary.base_url": "https://api.deepseek.com/v1",
+        "summary.api_key": None,
+        "summary.model": "deepseek-chat",
+        "summary.extra_body_json": "",
+        "summary.deadline_seconds": 25.0,
+        "summary.max_attempts": 3,
+        "summary.default_window": "15m",
     }
     assert loaded.as_dict() == expected
     # 全部来源都是「默认」
@@ -348,29 +357,37 @@ def test_priority_environment_beats_json_beats_default(tmp_path, monkeypatch):
     assert loaded.source_of("log.dir") == "环境变量 MEETING_LOG_DIR"
 
 
-def test_env_mapping_is_the_five_frozen_names_only():
-    """环境变量映射就是方案列出的那五个，一个不多一个不少。"""
+def test_env_mapping_is_the_five_frozen_names_plus_the_summary_key():
+    """环境变量映射：契约 §3.11 的那五个 + 会中总结的密钥那一格。
+
+    `MEETING_SUMMARY_API_KEY`（`1987cb20` phase1 定名）是第六个。它是密钥，因此唯一的
+    用法就是环境变量 —— 这一条钉住它走的是与另外五个**同一条**通路（同一个表、同一档
+    优先级），顺带钉住测试层的剔除清单会把它一起剔掉（那条派生见下一条用例）。
+    """
     assert config_module.ENV_KEYS == {
         "MEETING_PORT": "web.port",
         "MEETING_OUT_ROOT": "output.root",
         "MEETING_LOG_DIR": "log.dir",
         "MEETING_CAPTURE": "capture.backend",
+        "MEETING_SUMMARY_API_KEY": "summary.api_key",
     }
     assert config_module.ENV_NO_BROWSER == "MEETING_NO_BROWSER"
+    assert config_module.ENV_SUMMARY_API_KEY == "MEETING_SUMMARY_API_KEY"
 
 
-def test_helpers_service_env_names_derive_from_the_five_frozen_names():
-    """测试层的剔除清单由这五个名字派生，与 §3.11 的清单逐名对齐。
+def test_helpers_service_env_names_derive_from_the_frozen_names():
+    """测试层的剔除清单由这张表派生，与 §3.11 的清单逐名对齐（密钥那一格排在最后）。
 
     `_helpers.SERVICE_ENV_NAMES` 原先手抄了一份副本；改成派生之后，这一条同时钉住两边：
-    派生结果**必须**恰好等于契约里那五个名字（顺序也照 §3.11），因此手抄副本不再有漏剔的
-    余地，`ENV_KEYS` 将来多出键时这里会先红。
+    派生结果**必须**恰好等于契约里那五个名字（顺序也照 §3.11）加新增的密钥那一格，
+    因此手抄副本不再有漏剔的余地，`ENV_KEYS` 将来多出键时这里会先红。
     """
     assert helpers.SERVICE_ENV_NAMES == (
         "MEETING_PORT",
         "MEETING_OUT_ROOT",
         "MEETING_LOG_DIR",
         "MEETING_CAPTURE",
+        "MEETING_SUMMARY_API_KEY",
         "MEETING_NO_BROWSER",
     )
 

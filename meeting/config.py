@@ -6,6 +6,8 @@
   - 不迁移 V1 的 `~/.config/meeting_notes/`，也不做任何自动改写。
 
 优先级：**环境变量 > `config.json` > 代码默认值**（沿用 V1 契约，逐字照搬 B11）。
+环境变量那一层是 `ENV_KEYS` 里的五个加 `MEETING_SUMMARY_API_KEY`（会中总结的密钥，
+`1987cb20` phase1 定名）。
 
 热读范围：**`asr.*` 那五个键每段重新读，`alarm.sound` 写盘那一刻就生效** —— 这六个合起来
 就是 `HOT_KEYS`（出声开关要在勾选那一刻起作用）；
@@ -160,6 +162,28 @@ DEFAULT_VALUES: dict[str, Any] = {
     "minutes.chunk_lines": 100,
     "minutes.max_segments": 8,
     "minutes.timeout_seconds": 14400,
+    # 会中总结这一层的七个键（`1987cb20` phase1 定名，与 `post.*` / `minutes.*` 同形：
+    # 「接口留在这里，值归选型节点」）。四件套 + 预算三件套：
+    #   - `summary.base_url` / `summary.model`：端点地址与模型名。默认值取本机验收时
+    #     实测跑通的那一对（DeepSeek 的 OpenAI 兼容端点与 `deepseek-chat`），
+    #     换一家改这两个键即可 —— 这一层说的是 OpenAI 兼容协议，与厂商无关。
+    #   - `summary.api_key`：**可空键**（进 `NULLABLE_KEYS`）。默认 `None` = 没配，
+    #     `SummarySettings.missing` 会点名它，动作层据此说「缺哪几个键」。
+    #     密钥不进仓库：配置文件里写它、或者用环境变量 `MEETING_SUMMARY_API_KEY` 压住它。
+    #   - `summary.extra_body_json`：厂商特有字段（V1 preset 的 `extra_body`）以**一个
+    #     JSON 字符串键**承载，空串 = 不并。V2 配置层是点号扁平键名的单层映射、
+    #     装载时明确拒收 dict 值，为这一个键放开那条硬约束不值得。
+    #   - `summary.deadline_seconds`：一次总结的**墙钟 deadline**（默认 25 秒）。
+    #     它换掉的是 V1「3 次 × 60 秒硬编码超时」那套最坏 180 秒的账。
+    #   - `summary.max_attempts`：尝试次数上限（默认 3）。它是**上限**：真正的刹车是 deadline。
+    #   - `summary.default_window`：`args.window` 省略时用的那一档（四档取值，默认 `15m`）。
+    "summary.base_url": "https://api.deepseek.com/v1",
+    "summary.api_key": None,
+    "summary.model": "deepseek-chat",
+    "summary.extra_body_json": "",
+    "summary.deadline_seconds": 25.0,
+    "summary.max_attempts": 3,
+    "summary.default_window": "15m",
 }
 
 #: 后端选取键的取值口径（§3.11 / 冻结项 6）
@@ -195,12 +219,19 @@ INT_LIMITS: dict[str, tuple[int, int]] = {
     "minutes.chunk_lines": (10, 1000),
     "minutes.max_segments": (1, 20),
     "minutes.timeout_seconds": (60, 86400),
+    # 会中总结这一层的两个整数键（`1987cb20` phase1）：尝试次数上限与缺省窗口无关的
+    # 那一格在这里只有前者。上界取 10 是「再多的重试也只是把同一个错误重放一遍」的
+    # 直接读数 —— 真正的刹车是 `summary.deadline_seconds` 那条墙钟 deadline。
+    "summary.max_attempts": (1, 10),
 }
 
 #: 浮点范围
 FLOAT_LIMITS: dict[str, tuple[float, float]] = {
     "alert.silence_dbfs": (-200.0, 100.0),
     "asr.repeat_min_coverage": (0.0, 1.0),
+    # 一次会中总结的墙钟 deadline（秒）：下界 1 秒（比它还短的预算拿不到任何应答），
+    # 上界一个小时（再长就不再是「会中随叫随到」那件事了）。
+    "summary.deadline_seconds": (1.0, 3600.0),
 }
 
 #: 会后离线引擎的精度档位（`post.dtype`）：取值逐个对应
@@ -231,12 +262,27 @@ STRING_LIMITS: dict[str, tuple[str, ...] | None] = {
     # 两个设备键位（`dca4539b` 定名）：任意非空字符串（精确名，MME 端点名可前缀兜）
     "devices.mic": None,
     "devices.loopback": None,
+    # 会中总结这一层（`1987cb20` phase1）：
+    #   - `summary.base_url` / `summary.model`：任意非空字符串（地址与模型名，换厂商改这里）；
+    #   - `summary.default_window`：**四档取值**（与设计章 2.3 的四个按钮逐字对应）。
+    #     取值不在这一档里的（比如 `7m`）装载时就拦下。
+    # `summary.api_key` 不在这里：它是**可空键**（见 `NULLABLE_KEYS`）。
+    # `summary.extra_body_json` 也不在这里：它要的是「一段合法 JSON 对象的文本」，
+    # 由 `validate_value()` 里那一支单独管。
+    "summary.base_url": None,
+    "summary.model": None,
+    "summary.default_window": ("5m", "15m", "30m", "full"),
 }
 
 #: 可空键：**设备名没配就是 `None`**（空值形状两端一致 —— 快照 `settings.devices` 的子键在
 #: 没配时是 `null`，配置文件里也写 `null`；`validate_value()` 把空字符串与纯空白串一并归一成
-#: `None`，省得「空串」与「没配」在快照里长出两种形状）
-NULLABLE_KEYS: tuple[str, ...] = ("devices.mic", "devices.loopback")
+#: `None`，省得「空串」与「没配」在快照里长出两种形状）。
+#:
+#: `summary.api_key`（`1987cb20` phase1）也归这一档，理由与设备名同形：**没有密钥就是没配**。
+#: 它在 `SummarySettings.missing` 里点名，动作层据此说「缺 summary.api_key」；
+#: 归一成空串会让「没配」这件事在读方那边长出第二种形状。它进 `ENV_KEYS`
+#: （`MEETING_SUMMARY_API_KEY`），是这一档里唯一一个走环境变量的键。
+NULLABLE_KEYS: tuple[str, ...] = ("devices.mic", "devices.loopback", "summary.api_key")
 
 #: 「`null` 是**一个取值**、原样留着」的可空键（`41465462` phase2 加的 `minutes.hook`）：
 #: 配置文件里写 JSON 的 `null` 就是「不自动跑会后纪要」，它与两个设备键的「没配」不同 ——
@@ -247,13 +293,26 @@ NULL_SENTINEL_KEYS: tuple[str, ...] = ("minutes.hook",)
 #: 全部可写 `null` 的键（设备名那一档 + 上面那一个取值档）
 ALL_NULLABLE_KEYS: tuple[str, ...] = (*NULLABLE_KEYS, *NULL_SENTINEL_KEYS)
 
-#: 环境变量映射（方案明确列出的五个，一个不多一个不少）
+#: 环境变量映射：契约 §3.11 冻结的五个，外加会中总结的密钥那一格
+#: （`1987cb20` phase1 定名）。
+#:
+#: `MEETING_SUMMARY_API_KEY` 落在这一张表里，走的是与另外五个**同一条**通路：装载时求值、
+#: 优先级最高（环境变量 > `config.json` > 代码默认值）、`load()` 的一条 warning 会说它
+#: 压住了文件里的值。它是密钥，所以**唯一的用法就是环境变量**：探针与验收脚本只读
+#: 调用者已经设好的这个环境变量，自己不写、不打印、不进证据。
+#:
+#: 它同时也进了测试层的剔除清单（`tests/_helpers.py` 的 `SERVICE_ENV_NAMES` 由本表派生）：
+#: 于是机主宿主环境里的这个变量不会悄悄漏进任何子进程用例。
 ENV_KEYS: dict[str, str] = {
     "MEETING_PORT": "web.port",
     "MEETING_OUT_ROOT": "output.root",
     "MEETING_LOG_DIR": "log.dir",
     "MEETING_CAPTURE": "capture.backend",
+    "MEETING_SUMMARY_API_KEY": "summary.api_key",
 }
+
+#: 会中总结的密钥那一格的环境变量名（`ENV_KEYS` 里那一条的名字，供探针与文档引用）
+ENV_SUMMARY_API_KEY = "MEETING_SUMMARY_API_KEY"
 
 #: 关掉浏览器打开的开关（值为 `1` 时生效）
 ENV_NO_BROWSER = "MEETING_NO_BROWSER"
@@ -303,11 +362,16 @@ ASR_SETTING_KEYS: tuple[str, ...] = tuple(
     key.split(".", 1)[1] for key in HOT_KEYS if key.startswith("asr.")
 )
 
+#: 两个设备键位（`dca4539b` 定名）—— `DEVICE_SETTING_KEYS` 与快照那一格都按它筛，
+#: 因此后来收进 `NULLABLE_KEYS` 的 `summary.api_key`（也是「没配即 `null`」那一档）
+#: **不会**在快照里长出一个 `settings.devices.api_key`。
+DEVICE_KEYS: tuple[str, ...] = ("devices.mic", "devices.loopback")
+
 #: 快照 `settings.devices` 的子键 ↔ 配置键（`dca4539b` 定名，口径与 `ASR_SETTING_KEYS` 同）：
 #: `devices.mic` / `devices.loopback` 两个点号键位，快照里收成 `settings.devices.mic` /
 #: `settings.devices.loopback` 两个子键。取值的空值形状两端一致：没配即 `null`。
 DEVICE_SETTING_KEYS: tuple[str, ...] = tuple(
-    key.split(".", 1)[1] for key in NULLABLE_KEYS
+    key.split(".", 1)[1] for key in DEVICE_KEYS
 )
 
 
@@ -485,6 +549,8 @@ def _legal_text(key: str) -> str:
     if key in FLOAT_LIMITS:
         low, high = FLOAT_LIMITS[key]
         return f"数字，{low}–{high}"
+    if key == "summary.extra_body_json":
+        return "空字符串，或一段 JSON 对象的文本（例如 {\"thinking\": {\"type\": \"disabled\"}}）"
     if key in STRING_LIMITS:
         allowed = STRING_LIMITS[key]
         text = (
@@ -515,6 +581,27 @@ def validate_value(key: str, value: Any) -> Any:
     if key == "alarm.sound":
         if not isinstance(value, bool):
             raise ConfigValueError(key, value, _legal_text(key), "收到的不是布尔值")
+        return value
+
+    if key == "summary.extra_body_json":
+        # 厂商特有字段（V1 preset 的 `extra_body`）以**一个 JSON 字符串键**承载：
+        # 空串 = 不并；非空时必须是一段**JSON 对象的文本**。数组、数字、`"abc"` 这种
+        # 能解析但不是对象的，与压根解析不了的，都在装载时拦下 —— 让一个读不出来的值
+        # 走到请求那一层，等于把一次总结交给一段语法错误的文本。
+        if not isinstance(value, str):
+            raise ConfigValueError(key, value, _legal_text(key), "收到的不是字符串")
+        if not value.strip():
+            return ""
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ConfigValueError(
+                key, value, _legal_text(key), f"这段文本不是合法 JSON：{exc.msg}"
+            ) from exc
+        if not isinstance(parsed, dict):
+            raise ConfigValueError(
+                key, value, _legal_text(key), "这段 JSON 的顶层不是对象"
+            )
         return value
 
     if key in NULLABLE_KEYS:
@@ -776,9 +863,11 @@ __all__ = [
     "ConfigError",
     "ConfigValueError",
     "DEFAULT_VALUES",
+    "DEVICE_KEYS",
     "DEVICE_SETTING_KEYS",
     "ENV_KEYS",
     "ENV_NO_BROWSER",
+    "ENV_SUMMARY_API_KEY",
     "HOT_KEYS",
     "NULLABLE_KEYS",
     "PENDING_RESTART_SETTING_KEYS",
