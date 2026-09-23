@@ -143,6 +143,9 @@ def _load_models():
     import torch
 
     log.info("loading GLM-ASR model...")
+    # 加载耗时：第二场会（或 `release_gpu()` 之后重载）到底要等多久，今天只有这一条读数。
+    # 形状与 `meeting/backends/transcribe.py` 的释放日志同源（两处都写秒）。
+    started = time.monotonic()
     processor = _load_from_hub(AutoProcessor)
     transcriber = _load_from_hub(
         GlmAsrForConditionalGeneration,
@@ -150,6 +153,7 @@ def _load_models():
         device_map="auto",
     )
     log.info("GLM-ASR loaded on %s", transcriber.device)
+    log.info("GLM-ASR load took %.2fs", time.monotonic() - started)
     return processor, transcriber
 
 

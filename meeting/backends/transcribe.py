@@ -14,6 +14,8 @@
   - `bind(line_sink, *, config)`：记下出口与只读配置视图（runtime 在 `start()` 之前调）；
   - `start(mode, session_dir)`：起流水线（**起步失败不阻塞录音** —— 转写坏了可以重跑，R1 的立场）；
   - `stop()`：停转写（关读线程 + 在收尾预算内把队列里剩下的段尽量做完）；
+  - `release_gpu()`：把会中模型占的显存让出去（收尾第 4 步 `launch()` 之前调；**不在协议里**，
+    只是这个具体后端多出来的一个方法，调用点用 `getattr` 防御式取它）；
   - `health()`：`normal` / `behind` / `stopped` 三态（判定依据逐条写在下面对应的分支上）；
   - `backlog_depth()`：队列里还没处理的段数；
   - `segment_timeout()`：配置里的 `asr.timeout_seconds`（默认 20.0）。
@@ -27,7 +29,9 @@
 from __future__ import annotations
 
 import logging
+import sys
 import threading
+import time
 from typing import Any, Callable
 
 from meeting import config as config_module
@@ -57,6 +61,21 @@ DEFAULT_SEGMENT_TIMEOUT_SECONDS = 20.0
 #: 让「预算内该做完的都做完了」这件事落到 log 上，而不是让本方法先一步返回、
 #: 把 `pipeline.stop()` 那句「还有 N 段没做完」的如实记账打断在进程退出里。
 DRAIN_STOP_SLACK_SECONDS = 1.0
+
+#: `release_gpu()` 等在飞推理收干净的上界（秒）。
+#:
+#: **为什么是这个量级**：会中模型由进程级单例长期持有，而会后离线链（MOSSTD，`meeting/offline/`）
+#: 在收尾第 4 步 `launch()` 之后就**紧接着开始加载**。16 GB 卡上两份模型同住才是真风险，所以
+#: 第 4 步之前要把会中这一份让出去（`meeting/service/runtime.py` 的 `_drain_post()`）。
+#:
+#: 丢掉引用之前要等在飞的推理收干净（否则 worker 那一帧还握着旧模型，而下一段会经
+#: `_transcriber_or_create()` 再造一份 —— 两份 GLM 同时在卡上，每份约 4.3 GiB 权重）。
+#: **等的上界只能是个小值**：第 4 步那一次调用受收尾那一条 deadline 约束，吃掉它的预算会让
+#: `post` 从 `done` 翻成 `failed`、`has_failed_step` 再把整场落 `failed`（`meeting/state.py`）。
+#: `20` 秒（单段超时缺省）与自适应收尾预算（`drain_join_budget()`：下限 35 秒、最坏 305 秒）
+#: 都会顶穿那条 deadline，因此都不用。取 `5.0` 秒：一份**已经加载好**的模型的单段推理在正常
+#: 盘面上是 1–3 秒量级，5 秒盖得住；真卡住时到点就丢引用 + 记一条 log（不抛、不静默）。
+RELEASE_GPU_WAIT_SECONDS = 5.0
 
 #: 完成判定点名的那条实现路径（只在文档与用例里引用，不在运行时使用）
 TRANSCRIBER_TARGET = "meeting.backends.transcribe:TranscriberBackend"
@@ -116,6 +135,15 @@ class TranscriberBackend:
         self._segment_timeout: float | None = None
         self._model_error: str = ""
         self._transcriber: Any = None
+        #: 模型引用这一格的锁：`release_gpu()` 的「丢引用 + `empty_cache()`」与
+        #: `_transcriber_or_create()` 的新建互斥（释放半路被 worker 抢进去 = 两份模型同时在卡上）
+        self._model_lock = threading.RLock()
+        #: 在飞推理的计数**与它的等待条件**（`release_gpu()` 等的就是它回到 0）。
+        #: 用 `Condition` 而不是轮询：等待是事件驱动的（`_transcribe_segment()` 每段都会通知）
+        self._inflight = 0
+        self._inflight_cv = threading.Condition()
+        #: 模型引用已经被释放掉了吗（幂等那一格；`_transcriber_or_create()` 造新模型时复位）
+        self._gpu_released = False
         self._started = False
         self._stopped = False
 
@@ -268,6 +296,137 @@ class TranscriberBackend:
         if worker is not None and worker.is_alive() and worker is not threading.current_thread():
             worker.join(timeout=2.0)
         self._thread = None
+
+    def release_gpu(self) -> bool:
+        """**让出会中模型占的显存**：等干净在飞的推理，丢掉模型引用，然后清一次缓存。
+
+        调用点只有一处：收尾第 4 步 `meeting/service/runtime.py` 的 `_drain_post()` —— 在
+        `post.launch()` **之前**（`launch()` 一返回，那条 daemon 线程就已经在跑 `run_session()`，
+        会后离线链 MOSSTD 的加载紧接着就开始，放在 `launch()` 之后等于没做）。
+
+        逐条语义：
+
+          - **没加载过就 no-op**：`_transcriber is None`（或它内部那两格本来就空）时当场返回
+            `False`，不报错、不 import `torch`、不写日志 —— `meeting post` 那个独立入口
+            （`meeting/cli.py`，归 `65dd3e4c`）的进程里根本没有会中模型，释放必须安静地什么都不做；
+          - **幂等**：连调几次都安全，第二次起是上面那一格；`shutdown()` 之后再来一次也一样
+            （本方法不碰 `_stopped`，也不改 `health()`：那两个是「转写这一档现在产不产出」的域，
+            与「模型占不占显存」无关，混在一起会把收尾期间的健康度节拍推成 `stopped`）；
+          - **有界等待**：见下面「等的上界」那一节；
+          - **释放顺序**：**先**丢掉后端这一格与模型内部那两格（`GlmAsrTranscriber.processor` /
+            `.transcriber`），**之后**才尝试 `torch.cuda.empty_cache()`。`torch` 在函数体内
+            惰性 import（模块顶层只许标准库与包内模块，`tests/test_transcriber_backend.py` 的
+            AST 判据盯着这一条）；`empty_cache()` 用 `try/except` 包住 —— 没装 `torch`、没卡、
+            `empty_cache()` 自己抛错都只是「这一趟没能清缓存」，不影响上面的引用已经丢掉。
+            **`_transcriber` 是唯一那条持有链**（`.processor` / `.transcriber` 是它内部的两格；
+            没有 `lru_cache`、没有模块级模型缓存、worker 每段现取不缓存），丢掉引用就够了。
+
+        **等的上界** = `RELEASE_GPU_WAIT_SECONDS`（那个常量上逐条写了为什么取 5 秒、为什么
+        不用单段超时与 `drain_join_budget()`）—— 本方法**不许**等自适应收尾预算：调用它的那
+        一步受收尾 deadline 约束，吃掉预算会把 `post` 从 `done` 翻成 `failed`。到点就**照旧
+        丢引用**并记一条 warning，不抛、不静默。
+
+        **为什么必须等**：worker 那一帧还在跑推理时旧模型事实上还活着，而下一段会经
+        `_transcriber_or_create()` 再**造一份**（每份约 4.3 GiB 权重）—— 等着是为了不让两份
+        GLM 同时在卡上，叠加 MOSSTD 的峰值才是真的越界。
+
+        返回 `True` = 这一次真的丢掉了模型引用；`False` = 本来就没有可丢的（no-op 那一格）。
+        """
+        with self._model_lock:
+            if not self._has_model_reference_locked():
+                # 没加载过：安静地什么都不做（**连 torch 都不 import**）
+                return False
+            if self._gpu_released:
+                # 已经释放过：幂等那一格，不重复记账、不重复清缓存
+                return False
+        started = time.monotonic()
+        drained = self._wait_for_inflight_inference()
+        waited = max(0.0, time.monotonic() - started)
+        with self._model_lock:
+            if self._gpu_released:  # pragma: no cover - 并发调两次时的第二格，与上面同义
+                return False
+            self._drop_model_references_locked()
+            self._gpu_released = True
+        _log.info(
+            "会中模型让出显存：丢掉模型引用（等了 %.2fs；在飞推理=%s）",
+            waited, "已收干净" if drained else "没等到",
+        )
+        cache_cleared = self._empty_cuda_cache()
+        _log.info(
+            "会中模型让出显存完成：模型引用与 processor 已丢，torch.cuda.empty_cache()=%s",
+            "已调用" if cache_cleared else "跳过",
+        )
+        return True
+
+    def _has_model_reference_locked(self) -> bool:
+        """现在手上真的握着模型引用吗（`release_gpu()` 判 no-op 的那一格）。"""
+        if self._transcriber is None:
+            return False
+        return any(
+            getattr(self._transcriber, name, None) is not None
+            for name in ("processor", "transcriber")
+        )
+
+    def _wait_for_inflight_inference(self) -> bool:
+        """等在飞的推理收干净（事件驱动，上界 `RELEASE_GPU_WAIT_SECONDS`）。
+
+        判据取**在飞推理的计数回到 0**：「现在没有任何一帧还握着旧模型」这件事，正面证据只有
+        它。worker 是「先 `get()` 再处理」的长驻线程（`meeting/asr/pipeline.py` 的
+        `_worker_loop()`），它活着的时候大多正等在 `get()` 上、手里空空；而
+        `TranscriberBackend.stop()` 在生产路径上是**早退空转**（`self._thread` 从没被赋过线程
+        对象），拿它当释放手段既等错了对象、又会走那笔自适应收尾预算。
+
+        等待经 `Condition.wait(timeout=…)` 唤醒 —— `_transcribe_segment()` 每段结束都会通知，
+        因此没有轮询、没有固定 `sleep`。等不到（上界到点）时返回 `False`，由调用方如实记一条
+        warning 并照旧丢引用。
+        """
+        remaining = max(0.0, float(RELEASE_GPU_WAIT_SECONDS))
+        with self._inflight_cv:
+            while self._inflight > 0 and remaining > 0:
+                began = time.monotonic()
+                self._inflight_cv.wait(timeout=remaining)
+                remaining -= max(0.0, time.monotonic() - began)
+            if self._inflight <= 0:
+                return True
+        _log.warning(
+            "会中模型在 %.1fs 内没等到在飞推理收干净（还有 %s 段在跑）：照旧丢掉引用并"
+            "请求清缓存 —— 那一段所在的那一帧可能还握着旧模型，如实记账，不静默也不抛",
+            float(RELEASE_GPU_WAIT_SECONDS), self._inflight,
+        )
+        return False
+
+    def _drop_model_references_locked(self) -> bool:
+        """丢掉模型引用的三格（后端这一格 + `GlmAsrTranscriber` 内部那两格）。"""
+        model = self._transcriber
+        if model is None:
+            return False
+        dropped = False
+        for name in ("processor", "transcriber"):
+            if getattr(model, name, None) is not None:
+                try:
+                    setattr(model, name, None)
+                except Exception:  # noqa: BLE001 - 只读替身上丢不掉这一格，不影响别的
+                    _log.warning("丢掉模型内部那一格 %s 失败（如实记账，不静默）", name, exc_info=True)
+                else:
+                    dropped = True
+        self._transcriber = None
+        return dropped
+
+    def _empty_cuda_cache(self) -> bool:
+        """尽力清一次显存缓存（**必须在丢掉引用之后**）：无 `torch` / 无卡 / 自身抛错都只是跳过。
+
+        `torch` 在函数体内惰性 import（顶层不许有重依赖），并且**先看 `sys.modules`**：
+        释放这件事不该为了清一次缓存去把一个几百兆的重依赖 import 进来。
+        """
+        torch = sys.modules.get("torch")
+        if torch is None:
+            return False
+        try:
+            torch.cuda.empty_cache()
+        except Exception:  # noqa: BLE001 - 无卡机器上它必须是安全的 no-op
+            _log.warning("torch.cuda.empty_cache() 没做成（如实记账，不静默）", exc_info=True)
+            return False
+        return True
 
     def drain_join_budget(self, *, explicit: float | None = None) -> float:
         """`stop()` 等流水线收尾的上界（秒）：**与那笔收尾预算同源，且盖得住内层最坏档**。
@@ -432,24 +591,42 @@ class TranscriberBackend:
         权重不在本地缓存、显存不足都会在这里抛。这一支把原因记进 `_model_error`
         （`health()` 因此落 `stopped`），再把异常原样上抛给流水线 —— 那一段落占位符，
         **绝不静默丢段、也绝不落半截文本**。
+
+        整段包在**在飞计数**里（`release_gpu()` 等的就是它回到 0）：这一个是 worker 唯一
+        握着模型的那一帧，计数在飞期间释放会造出第二份模型（每份约 4.3 GiB 权重）。
         """
+        with self._inflight_cv:
+            self._inflight += 1
         try:
-            transcriber = self._transcriber_or_create()
-            result = transcriber.transcribe_segment(audio)
-        except Exception as exc:  # noqa: BLE001 - 原因要留在 log 与 health 里，异常照旧上抛
-            if not self._model_error:
-                _log.warning("模型这一侧出事（health 落 stopped）：%s", type(exc).__name__, exc_info=True)
-            self._model_error = f"{type(exc).__name__}: {exc}"
-            raise
+            try:
+                transcriber = self._transcriber_or_create()
+                result = transcriber.transcribe_segment(audio)
+            except Exception as exc:  # noqa: BLE001 - 原因要留在 log 与 health 里，异常照旧上抛
+                if not self._model_error:
+                    _log.warning("模型这一侧出事（health 落 stopped）：%s", type(exc).__name__, exc_info=True)
+                self._model_error = f"{type(exc).__name__}: {exc}"
+                raise
+        finally:
+            # 收工就通知等在这一格上的 `release_gpu()`（事件驱动，它不轮询）
+            with self._inflight_cv:
+                self._inflight -= 1
+                self._inflight_cv.notify_all()
         self._model_error = ""
         return result
 
     def _transcriber_or_create(self) -> Any:
-        """现取识别器（第一次真的要用时才造一个，见 `_LazyGlmTranscriber`）。"""
-        if self._transcriber is None:
-            factory = self._transcriber_factory
-            self._transcriber = factory() if factory is not None else glm_module.GlmAsrTranscriber()
-        return self._transcriber
+        """现取识别器（第一次真的要用时才造一个，见 `_LazyGlmTranscriber`）。
+
+        造新的这一格与 `release_gpu()` 的释放互斥（同一把 `_model_lock`）：释放半路进来的
+        一段会在这里再取一次，两件事不交叠就不会同时出现两份模型。新造出来的这一份把
+        「已经释放过」那一格复位 —— 释放过一轮之后再加载的模型，下一轮释放照样管得着。
+        """
+        with self._model_lock:
+            if self._transcriber is None:
+                factory = self._transcriber_factory
+                self._transcriber = factory() if factory is not None else glm_module.GlmAsrTranscriber()
+                self._gpu_released = False
+            return self._transcriber
 
 
 class _LazyGlmTranscriber:
@@ -470,6 +647,7 @@ class _LazyGlmTranscriber:
 __all__ = [
     "DEFAULT_SEGMENT_TIMEOUT_SECONDS",
     "DRAIN_STOP_SLACK_SECONDS",
+    "RELEASE_GPU_WAIT_SECONDS",
     "TRANSCRIBER_TARGET",
     "TranscriberBackend",
 ]

@@ -17,11 +17,14 @@
 from __future__ import annotations
 
 import os
+import logging
 import subprocess
 import sys
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -448,6 +451,223 @@ def test_the_absent_lane_still_records_skipped(tmp_path: Path, monkeypatch) -> N
     # 缺席那一档的说明留着一句「还没接入」（本实现到位之后，这一档只在显式取 null 时出现）
     assert runtime.post_resolution.skipped() is True
     assert runtime.post_resolution.target is None
+
+
+# ---------------------------------------------------------------------------
+# 五之二、收尾第 4 步的**顺序**：会中模型先退出显存，再拉起会后流程
+#
+# 为什么顺序是这一步的全部要点：`launch()` 一返回，那条 daemon 线程就已经在跑
+# `run_session()`，会后离线链（MOSSTD）的加载紧接着就开始 —— 释放放在 `launch()` 之后
+# 等于没做（16 GB 卡上两份模型同住才是真风险）。
+#
+# 判据取**事件列表的顺序**：释放与 `launch()` 各自往同一个列表里记一笔，断言两条事件的先后。
+# 不用固定 `sleep` 赌时序（项目纪律），也不读源码行号。
+# ---------------------------------------------------------------------------
+
+#: 释放抛异常时写进 log 的那一段（用例按它核实「如实记账、不静默」）
+RELEASE_FAILURE_NOTE = "会中模型退出显存失败"
+
+#: 收尾那几步的 logger（record 直接挂在这一层上；见 `recording_log` 的说明）
+RUNTIME_LOGGER_NAME = "meeting.service.runtime"
+
+
+class CapturedLog(logging.Handler):
+    """直接挂在被测 logger 上的记录器。
+
+    为什么不走 pytest 的 `caplog`：项目 `meeting` 那一层 logger 是 `propagate = False`
+    （`meeting/logging_setup.py` 第 58 行，为的是不污染 torch / transformers 的日志），
+    记录冒不到根上，`caplog` 一条都收不到。这里自己挂 handler，判据读实测文本。
+    """
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.DEBUG)
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
+
+    def text(self) -> str:
+        return "\n".join(record.getMessage() for record in self.records)
+
+
+@contextmanager
+def recording_log(logger_name: str = RUNTIME_LOGGER_NAME):
+    """在 `logger_name` 这一路上挂一个记录器（用完摘掉、级别与禁用状态照原样放回）。"""
+    logger = logging.getLogger(logger_name)
+    recorder = CapturedLog()
+    previous_level = logger.level
+    logger.addHandler(recorder)
+    logger.setLevel(logging.DEBUG)
+    logging.disable(logging.NOTSET)
+    try:
+        yield recorder
+    finally:
+        logger.removeHandler(recorder)
+        logger.setLevel(previous_level)
+
+
+def _post_wiring(tmp_path: Path, monkeypatch, *, events: list[str], transcriber_backend: Any):
+    """把运行时推到「第 4 步待跑」那一档：dev 采集替身 + 在场且立刻返回的假会后钩子。
+
+    `events` 由调用方给（替身后端的 `release_gpu()` 与下面那条假 `launch()` 都往这一份里
+    记一笔 —— 两条事件在**同一个列表**里排出的先后，就是这一步的顺序证据）。
+    返回 `(runtime, launched, previous)`。
+    """
+    from meeting.service.app import build_runtime
+    from meeting.state import begin_drain
+
+    home = tmp_path / "home-post-release"
+    home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.delenv("MEETING_CAPTURE", raising=False)
+    previous = config_module.current()
+
+    applied = {
+        **config_module.DEFAULT_VALUES,
+        "output.root": str(tmp_path / "out-post-release"),
+        "log.dir": str(home / "logs"),
+        "capture.backend": "dev",
+        "post.hook": "auto",
+    }
+    launched: list[str] = []
+
+    def fake_launch(self, target: str) -> None:  # noqa: ARG001 - 替身只记账
+        launched.append(str(target))
+        events.append("launch")
+
+    monkeypatch.setattr(post_module.PostProcessHook, "launch", fake_launch)
+    runtime = build_runtime(
+        config_module.Config(
+            applied=applied, sources={key: "默认" for key in applied}, path=""
+        )
+    )
+    runtime._resolve_backends()
+    runtime.start_session()
+    # **替身后端要挂在 `start_session()` 之后**：那一步自己会把三个后端重新解析一遍
+    # （`_resolve_backends()`），挂在它前面会被覆盖回真后端。
+    if transcriber_backend is not None:
+        runtime.transcriber_backend = transcriber_backend
+    begin_drain(runtime.snapshot, reason="user")
+    return runtime, launched, previous
+
+
+def test_the_backend_release_runs_before_the_post_launch(tmp_path, monkeypatch) -> None:
+    """**顺序断言**：`release_gpu()` 落在 `launch()` 之前（事件列表里 `release` 排在前面）。"""
+    import asyncio
+
+    class OrderRecorder:
+        """替身转写后端：只有 `release_gpu` 这一格被用到（把调用记进事件列表）。"""
+
+        def __init__(self, events: list[str]) -> None:
+            self.events = events
+
+        def release_gpu(self) -> bool:
+            self.events.append("release")
+            return True
+
+    events: list[str] = []
+    runtime = None
+    previous = None
+    try:
+        runtime, launched, previous = _post_wiring(
+            tmp_path, monkeypatch, events=events,
+            transcriber_backend=OrderRecorder(events),
+        )
+        asyncio.run(runtime._drain_post(deadline=time.monotonic() + 10.0))
+    finally:
+        config_module.set_current(previous)
+
+    assert events == ["release", "launch"], (
+        f"释放必须排在 launch() 之前，实测顺序 {events}"
+    )
+    assert launched == [runtime.snapshot.session.dir], launched
+    step = next(item for item in runtime.snapshot.ended.steps if item.id == "post")
+    assert step.status == "done", (step.status, step.detail, step.error)
+    # **没有新增 step_id**：`state.py` 的取值域只认 flush / transcode / log / post
+    assert {item.id for item in runtime.snapshot.ended.steps} == {
+        "flush", "transcode", "log", "post",
+    }
+
+
+def test_a_raising_release_still_lets_the_post_step_land_done(
+    tmp_path, monkeypatch, caplog
+) -> None:
+    """释放抛异常**不许把整场拖下水**：如实记一条 log，`post` 照旧落 `done`。
+
+    这一条与 `runtime.py` 相邻几步的既有姿态同源（收尾失败如实记账、别把别的步骤带走）：
+    会后流程该拉起来还得拉起来。
+    """
+    import asyncio
+
+    class ExplodingRelease:
+        def __init__(self, events: list[str]) -> None:
+            self.events = events
+
+        def release_gpu(self) -> bool:
+            self.events.append("release")
+            raise RuntimeError("假替身按要求在释放时抛错")
+
+    events: list[str] = []
+    runtime = None
+    previous = None
+    try:
+        runtime, launched, previous = _post_wiring(
+            tmp_path, monkeypatch, events=events,
+            transcriber_backend=ExplodingRelease(events),
+        )
+        with recording_log() as log:
+            asyncio.run(runtime._drain_post(deadline=time.monotonic() + 10.0))
+            written = log.text()
+    finally:
+        config_module.set_current(previous)
+
+    step = next(item for item in runtime.snapshot.ended.steps if item.id == "post")
+    assert step.status == "done", (
+        f"释放抛错不该让这一步落 failed：{step.status} / {step.detail} / {step.error}"
+    )
+    assert launched == [runtime.snapshot.session.dir], "会后流程该照常拉起"
+    assert events == ["release", "launch"], events
+    assert RELEASE_FAILURE_NOTE in written, f"释放失败该如实进 log：\n{written}"
+
+
+def test_the_product_transcriber_backend_really_takes_this_lane(tmp_path, monkeypatch) -> None:
+    """防御式取法取到的**正是真后端那个方法**：这一条走产品解析出来的 `TranscriberBackend`。
+
+    前两条用的是替身后端；这一条把「真后端上那个 `release_gpu()` 确实经这条线被喊到」补齐 ——
+    真后端此刻**没有加载过会中模型**，于是这一次释放是那四条语义里的 no-op 那一格
+    （与 `meeting post` 那个独立入口的现场同形）。
+    """
+    import asyncio
+
+    from meeting.backends.transcribe import TranscriberBackend
+
+    events: list[str] = []
+    runtime = None
+    previous = None
+    try:
+        runtime, launched, previous = _post_wiring(
+            tmp_path, monkeypatch, events=events, transcriber_backend=None,
+        )
+        assert isinstance(runtime.transcriber_backend, TranscriberBackend), (
+            f"`transcriber.backend = auto` 该解析到这个真实现，实测 "
+            f"{type(runtime.transcriber_backend).__name__}"
+        )
+        real = TranscriberBackend.release_gpu
+
+        def recording_release(self):
+            events.append("release")
+            return real(self)
+
+        monkeypatch.setattr(TranscriberBackend, "release_gpu", recording_release)
+        asyncio.run(runtime._drain_post(deadline=time.monotonic() + 10.0))
+    finally:
+        config_module.set_current(previous)
+
+    assert events == ["release", "launch"], "真后端上的释放该经这条线被喊到一次"
+    assert launched == [runtime.snapshot.session.dir], launched
+    step = next(item for item in runtime.snapshot.ended.steps if item.id == "post")
+    assert step.status == "done", (step.status, step.detail, step.error)
 
 
 # ---------------------------------------------------------------------------

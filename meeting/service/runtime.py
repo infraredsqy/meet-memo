@@ -2563,7 +2563,7 @@ class ServiceRuntime:
         )
 
     async def _drain_post(self, deadline: float) -> None:
-        """第 4 步 `post`：拉起会后流程（**启动即算完成，不等它跑完**）；钩子缺席记 `skipped`。"""
+        """第 4 步 `post`：让会中模型退出显存 → 拉起会后流程（**启动即算完成，不等它跑完**）；钩子缺席记 `skipped`。"""
         step_id = "post"
         self._begin_step(step_id, "拉起会后流程（启动即算完成，不等它跑完）")
         resolution = self.post_resolution
@@ -2571,6 +2571,31 @@ class ServiceRuntime:
             self._skip_step(step_id, "会后流程还没接入（PostProcessHook 缺席，归 65dd3e4c）", resolution)
             return
         session_dir = self.snapshot.session.dir if self.snapshot.session else None
+        # **先让会中模型退出显存，再拉起会后流程**（顺序是这一步的全部要点）：
+        # `post.launch()` 一返回，那条 daemon 线程就已经在跑 `run_session()`，会后离线链
+        # （MOSSTD）的加载紧接着就开始 —— 释放放在 `launch()` 之后等于没做。16 GB 卡上两份
+        # 模型同住才是真风险，而「会中用哪个模型、会后用哪个模型」正是本节要的那一处交接。
+        #
+        # **防御式取法**：`release_gpu()` 只长在 `TranscriberBackend` 这一个具体后端上
+        # （不在 `backends.base` 的协议里），收尾用例挂的那些替身后端没有它 —— 取不到就
+        # 什么都不做。挂假件的用例因此不受这一处接线影响。
+        #
+        # **不新增 step_id**：这一次释放的耗时算在 `"post"` 这一步的记账之内（`state.py` 的
+        # 取值域只有 flush / transcode / log / post）。释放里抛异常照收尾相邻几步的既有姿态办：
+        # 包住、收成一条 log、照旧往下走 —— 释放失败不该把整场收尾拖成 `failed`。
+        release = getattr(self.transcriber_backend, "release_gpu", None)
+        if callable(release):
+            try:
+                # 与其余几步同一形态：同步实现提交到收尾专用的 daemon 工作线程，
+                # 连同等待一起包进这一步的剩余预算里。
+                await self._drain_wait(step_id, release, deadline=deadline, invoke=True)
+            except asyncio.CancelledError:
+                # 取消是强制打断路径（§3.5）：记账交回取消路径，这里不吞
+                raise
+            except Exception:
+                _log.exception(
+                    "会中模型退出显存失败（如实记账，不静默；会后流程照常拉起）"
+                )
         try:
             _value, elapsed = await self._drain_wait(
                 step_id, lambda: self.post_hook.launch(session_dir), deadline=deadline, invoke=True
