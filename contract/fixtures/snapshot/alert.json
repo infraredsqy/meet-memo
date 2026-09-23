@@ -80,7 +80,7 @@
       "since": "<iso>",
       "duration_seconds": 0,
       "message": "loopback 这一路静默已连续达 1 秒（门限 -60 dBFS）",
-      "muted": true
+      "muted": false
     },
     "hints": []
   },

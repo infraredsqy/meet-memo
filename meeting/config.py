@@ -7,8 +7,9 @@
 
 优先级：**环境变量 > `config.json` > 代码默认值**（沿用 V1 契约，逐字照搬 B11）。
 
-热读范围：**只有 `asr.*` 那五个键**是每段重新读（改了立刻生效）；
-其余键（`web.*` / `output.root` / `log.*` / `alert.*` / `alarm.*` / `heartbeat.*` /
+热读范围：**`asr.*` 那五个键每段重新读，`alarm.sound` 写盘那一刻就生效** —— 这六个合起来
+就是 `HOT_KEYS`（出声开关要在勾选那一刻起作用）；
+其余键（`web.*` / `output.root` / `log.*` / `alert.*` / `heartbeat.*` /
 `capture.*` / `transcriber.*` / `post.*` / `devices.*`）都是**启动时读一次，改了要重启**。
 **环境变量一律在 import / 启动时求值**，改了不会热生效（B11 的坑）。
 
@@ -87,8 +88,12 @@ CONFIG_DIR_NAME = (".config", "meeting")
 CONFIG_FILE_NAME = "config.json"
 SERVICE_LOG_FILE_NAME = "meeting.log"
 
-#: 五个热读键（每段重新读，改了立刻生效）
+#: 热读键（写盘那一刻就生效，不必重启）
+#:
+#: 顺序有意把 `alarm.sound` 排在 `asr.*` 前面：`ASR_SETTING_KEYS` 是从这张表里**按
+#: `asr.` 前缀筛**出来的（见那一格），排在前面不参与快照 `settings.asr` 的子键次序。
 HOT_KEYS: tuple[str, ...] = (
+    "alarm.sound",
     "asr.max_segment_seconds",
     "asr.timeout_seconds",
     "asr.max_new_tokens",
@@ -259,7 +264,11 @@ def setting_group(key: str) -> str | None:
 #: 快照 `settings.asr` 的五个子键 ↔ 配置键（**逐字同名**，只是去掉了 `asr.` 前缀）。
 #: 嵌套写法只出现在状态 JSON 里，**不进请求体、不进应答体、不进 `config.json`**
 #: （phase2 §3.5.5：请求 / 应答 / 配置文件 / 读取层四处一律用同一套点号扁平键名）。
-ASR_SETTING_KEYS: tuple[str, ...] = tuple(key.split(".", 1)[1] for key in HOT_KEYS)
+#: 从 `HOT_KEYS` 里**按 `asr.` 前缀筛**：热读键那一档后来收了 `alarm.sound`，直接对整张表
+#: 去前缀会让快照里长出一个 `settings.asr.sound`。
+ASR_SETTING_KEYS: tuple[str, ...] = tuple(
+    key.split(".", 1)[1] for key in HOT_KEYS if key.startswith("asr.")
+)
 
 #: 快照 `settings.devices` 的子键 ↔ 配置键（`dca4539b` 定名，口径与 `ASR_SETTING_KEYS` 同）：
 #: `devices.mic` / `devices.loopback` 两个点号键位，快照里收成 `settings.devices.mic` /
@@ -578,7 +587,10 @@ class Config:
         return dict(self.applied)
 
     def hot_keys(self) -> list[str]:
-        """返回 `asr.*` 五个键（供 log 里「哪些键是热读的」那一行）。"""
+        """返回热读键（供 log 里「哪些键是热读的」那一行）。
+
+        眼下六个：`alarm.sound` 与 `asr.*` 那五个（`HOT_KEYS` 那张表就是清单本身）。
+        """
         return list(HOT_KEYS)
 
     def config_path(self) -> str:
@@ -701,7 +713,7 @@ def as_dict() -> dict[str, Any]:
 
 
 def hot_keys() -> list[str]:
-    """`asr.*` 五个热读键。"""
+    """热读键六个：`alarm.sound` 与 `asr.*` 那五个（清单就是 `HOT_KEYS`）。"""
     return list(HOT_KEYS)
 
 

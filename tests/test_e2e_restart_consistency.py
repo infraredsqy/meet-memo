@@ -132,8 +132,11 @@ def _assert_restart_unfinished(proc, session_dir: Path, *, previous_revision: in
     )
     assert snapshot["session"] is None, "重启后不该留着上一场的 session（不自动续录）"
     assert snapshot["ended"] is None, "重启后不该留着上一场的 ended"
-    assert snapshot["alerts"]["critical"] is None
-    assert snapshot["alerts"]["hints"] == []
+    # 重启后的空闲档告警区**不出现**（`docs/ui-design.md` 章 2.5 那张表）。下面那格
+    # `transcript.health == "stopped"` 报的是「真转写后端还没起过场次」，空闲态本来就没有
+    # 「转写停了」这条提示。
+    assert snapshot["alerts"] == {"critical": None, "hints": []}
+    assert snapshot["transcript"]["health"] == "stopped"
 
     notice = snapshot["notice"]
     assert notice is not None, "重启后的空闲态该挂 restart_unfinished 提示"

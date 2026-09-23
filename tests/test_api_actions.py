@@ -10,13 +10,14 @@
   - `not_recording`(409) 且**重复调用不产生第二次迁移**；
   - `capture_unavailable`(503，显式配 `null` 替身时 `start` 的真实结果，且盘上不留目录)；
   - `mute_session` 立刻改 `muted`、**不动** `alarm.sound`、**下一场 `start` 复位**；
-  - `settings_update` 的 `applied`（`asr.*` 五个点号键名）与 `pending_restart`（三分表里其余
-    16 个键，含 `alarm.sound`）分类、**写盘拓扑**（只写已有键 + 本次改动的键）、
+  - `settings_update` 的 `applied`（`asr.*` 五个点号键名 + `alarm.sound`）与 `pending_restart`
+    （三分表里其余 21 个键）分类、**写盘拓扑**（只写已有键 + 本次改动的键）、
     成功体形状（只多 `applied` / `pending_restart`，成功体里没有 `message`）、
     在 `idle` 与 `ended` 的两种终态照样 200、`invalid_setting`(400)（超时 ≤ 段长、表外键名、
     `devices.*`）、原子写、`persist_failed`(500) 与**校验在写盘之前**；
-  - `alarm.sound` 的行为判据（应答里 `applied` 为空、进 `pending_restart`、主 log 能看到
-    「本场出声开关仍取启动值」、紧接着的快照里仍是启动值）；
+  - `alarm.sound` 的行为判据（应答里进 `applied`、**不进** `pending_restart`、紧接着的快照
+    `settings.alarm_sound` 当场就是新值、`revision` 涨一格、主 log 不再说「仍取启动值」，
+    而同一个请求里真正要重启的键照样进 `pending_restart` 并有它自己那一行）；
   - `dev_inject` 在没有正在进行的场次时回 `not_recording`(409)（三处各断言一次，且一条事实
     都不注入）、非 dev 后端 `action_unavailable`(404)、非法 `source` / `fault` 时
     `invalid_setting`(400)；
@@ -44,20 +45,23 @@ ACTION_POLL_TIMEOUT_SECONDS = 15.0
 #: 轮询间隔
 ACTION_POLL_INTERVAL_SECONDS = 0.05
 
-#: 三分表：可热读的五键
+#: 三分表：可热读的六键（`asr.*` 五个 + `alarm.sound`）
 APPLIED_KEYS = {
+    "alarm.sound",
     "asr.max_segment_seconds",
     "asr.timeout_seconds",
     "asr.max_new_tokens",
     "asr.repeat_max_unit",
     "asr.repeat_min_coverage",
 }
-#: 三分表：其余 18 键（含 `alarm.sound` 与两个设备键位）
+#: 三分表：其余 21 键（两个设备键位、`web.*` / `log.*` / `alert.*`、五个后端选择键
+#: 与会后离线那四个 `post.*`）。三分表总共 27 个键 = `DEFAULT_VALUES` 的键全集。
 PENDING_KEYS = {
     "web.port", "web.dist_dir", "output.root", "log.level", "log.dir",
     "log.max_bytes", "log.backup_count", "alert.silence_dbfs", "alert.silence_seconds",
-    "alert.recover_seconds", "alert.alarm_suppress_seconds", "alarm.sound",
+    "alert.recover_seconds", "alert.alarm_suppress_seconds",
     "heartbeat.interval_seconds", "capture.backend", "transcriber.backend", "post.hook",
+    "post.engine", "post.model", "post.dtype", "post.chunk_seconds",
     "devices.mic", "devices.loopback",
 }
 
@@ -339,7 +343,14 @@ def test_mute_session_flips_muted_and_resets_on_the_next_session(tmp_path):
 
         assert post(client, "start").status_code == 200
         assert runtime.judge.mute_session is False
-        assert snapshot_of(client)["alerts"] == {"critical": None, "hints": []}
+        # 新一场起来之后这条告警本身必须已经撤掉：`mute_session` 复位带走的是会话级静音，
+        # 而**这一场**还没有任何一路出事，所以致命级与提示级都该是空的
+        # （提示级只在 `recording` / `alert` 两态可能有条目，这一场刚进 `recording`，
+        # 上一场那条「转写停了」的记账已经随离开录音态一起清掉了）。
+        snapshot = snapshot_of(client)
+        assert snapshot["alerts"]["critical"] is None
+        assert snapshot["alerts"]["hints"] == []
+        assert snapshot["top_state"] == "recording"
 
 
 def test_critical_muted_recalculates_at_every_commit(tmp_path):
@@ -367,8 +378,8 @@ def test_critical_muted_recalculates_at_every_commit(tmp_path):
 
         # ② 把这一条事件的窗口起点推旧（事件已经过去很久）→ 重算为 False
         track = runtime.judge._tracks["loopback"]  # noqa: SLF001 - 就为了把窗口推旧
-        assert track.event_started_ts is not None
-        track.event_started_ts -= runtime.judge.thresholds.alarm_suppress_seconds * 2
+        assert track.last_raise_ts is not None
+        track.last_raise_ts -= runtime.judge.thresholds.alarm_suppress_seconds * 2
         runtime.commit()
         assert snapshot_of(client)["alerts"]["critical"]["muted"] is False
 
@@ -397,8 +408,8 @@ def test_session_mute_recalculates_instead_of_stamping_true(tmp_path):
         # 会话级静音与抑制窗口这两件事一起松开 → 同一条告警回到会出声
         runtime.judge.reset_session_mute()
         track = runtime.judge._tracks["loopback"]  # noqa: SLF001 - 就为了把窗口推旧
-        assert track.event_started_ts is not None
-        track.event_started_ts -= runtime.judge.thresholds.alarm_suppress_seconds * 2
+        assert track.last_raise_ts is not None
+        track.last_raise_ts -= runtime.judge.thresholds.alarm_suppress_seconds * 2
         runtime.commit()
         assert snapshot_of(client)["alerts"]["critical"]["muted"] is False
 
@@ -409,7 +420,7 @@ def test_session_mute_recalculates_instead_of_stamping_true(tmp_path):
 
 
 def test_settings_update_splits_applied_and_pending_restart(tmp_path):
-    """`applied` = 热读五键；`pending_restart` = 三分表里其余 16 键（含 `alarm.sound`）。"""
+    """`applied` = 热读六键（`asr.*` 五个 + `alarm.sound`）；`pending_restart` = 表里其余 21 键。"""
     with live(tmp_path) as (client, _runtime, _home, _out):
         response = post(
             client,
@@ -427,11 +438,39 @@ def test_settings_update_splits_applied_and_pending_restart(tmp_path):
         assert set(body) == {"ok", "revision", "applied", "pending_restart"}
         assert "message" not in body, "成功体里没有 message 字段"
         assert sorted(body["applied"]) == [
-            "asr.max_segment_seconds", "asr.timeout_seconds",
+            "alarm.sound", "asr.max_segment_seconds", "asr.timeout_seconds",
         ]
         assert sorted(body["pending_restart"]) == [
-            "alarm.sound", "alert.silence_seconds", "output.root",
+            "alert.silence_seconds", "output.root",
         ]
+
+
+def test_settings_key_groups_cover_the_whole_table(tmp_path):
+    """两个数组的键名与配置层的三分表逐键一致（27 个键一个不多、一个不少）。"""
+    with live(tmp_path) as (client, _runtime, _home, _out):
+        response = post(
+            client,
+            "settings_update",
+            {key: config_module.default_for(key) for key in sorted(APPLIED_KEYS | PENDING_KEYS)},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert set(body["applied"]) == APPLIED_KEYS
+        assert set(body["pending_restart"]) == PENDING_KEYS
+        # 两个数组不重叠，合起来正好是整张三分表
+        assert not (APPLIED_KEYS & PENDING_KEYS)
+        assert APPLIED_KEYS | PENDING_KEYS == set(config_module.SETTING_KEY_GROUPS)
+        assert set(config_module.APPLIED_SETTING_KEYS) == APPLIED_KEYS
+        assert set(config_module.PENDING_RESTART_SETTING_KEYS) == PENDING_KEYS
+        # 计数逐条钉住：6 + 21 = 27（三分表 = `DEFAULT_VALUES` 的键全集）
+        assert len(APPLIED_KEYS) == 6
+        assert len(PENDING_KEYS) == 21
+        assert len(config_module.SETTING_KEY_GROUPS) == 27 == len(config_module.DEFAULT_VALUES)
+        # 两个数组按定义就是这一档的补集关系（不是两张各自维护的名单）
+        assert set(config_module.APPLIED_SETTING_KEYS) == set(config_module.HOT_KEYS)
+        assert set(config_module.PENDING_RESTART_SETTING_KEYS) == (
+            set(config_module.DEFAULT_VALUES) - set(config_module.HOT_KEYS)
+        )
 
 
 def test_settings_update_writes_only_existing_plus_changed_keys(tmp_path):
@@ -536,28 +575,82 @@ def test_settings_update_reports_persist_failed(tmp_path):
         assert response.json()["message"]
 
 
-def test_settings_update_logs_the_alarm_sound_pending_restart_line(tmp_path):
-    """`alarm.sound` 的行为判据：进 `pending_restart`，且主 log 有「本场出声开关仍取启动值」。
+def test_settings_update_applies_the_alarm_sound_switch_at_once(tmp_path):
+    """`alarm.sound` 收在热读档：写盘那一刻快照就换过去，`revision` 跟着涨一格。
 
-    「写盘成功」与「快照立刻反映」是两件不同的事：`alarm.sound` 归 `pending_restart`，
-    本次只落盘，紧接着的 `GET /api/state` 里 `settings.alarm_sound` 仍是**启动值** ——
-    这条口径在此显式钉住（评审点名的可观察判据）。
+    「写盘成功」与「快照立刻反映」在这里合成了同一件事 —— 出声开关要在勾选那一刻就改运行期
+    行为（`docs/contract.md` 第 4.6 章）。四条判据逐条咬住：应答分类、快照值、`revision`、
+    写盘确实落了盘。
     """
     with live(tmp_path) as (client, _runtime, home, _out):
         before = snapshot_of(client)["settings"]["alarm_sound"]
+        before_revision = int(snapshot_of(client)["revision"])
+
         response = post(client, "settings_update", {"alarm.sound": not before})
-        assert response.status_code == 200
+        assert response.status_code == 200, response.text
         body = response.json()
-        assert body["applied"] == [], "`alarm.sound` 一处都不进 applied"
-        assert body["pending_restart"] == ["alarm.sound"]
+        assert body["applied"] == ["alarm.sound"], "`alarm.sound` 归热读那一档"
+        assert body["pending_restart"] == [], "它一处都不该进 pending_restart"
+
         # 写盘确实成功了（配置点号扁平键名落进 config.json）
         written = json.loads(helpers.config_path_of(home).read_text(encoding="utf-8"))
         assert written["alarm.sound"] == (not before)
-        # 运行期出声开关仍取启动时的生效值：紧接着问一次快照，读到的还是旧值
+
+        # 紧接着问一次快照：读到的就是新值（运行期生效值换过去了）
+        after = snapshot_of(client)
+        assert after["settings"]["alarm_sound"] is (not before), "改了当场生效"
+        assert int(after["revision"]) == before_revision + 1, "热读键生效提交一次"
+
+        # 改回来同样当场可见
+        assert post(client, "settings_update", {"alarm.sound": before}).status_code == 200
         assert snapshot_of(client)["settings"]["alarm_sound"] is before
 
+
+def test_settings_update_still_flags_the_keys_that_really_need_a_restart(tmp_path):
+    """同一个请求里真正要重启的键照样进 `pending_restart`、照样有它自己那一行 log。
+
+    出声开关那一档改口径之后，那条「仍取启动值」的 log 只该对**真正 pending 的键**说；
+    一句都不说会让「哪些键改了要重启」失去可观察判据，说错对象则是一句与事实相反的话。
+    """
+    with live(tmp_path) as (client, _runtime, home, _out):
+        before_sound = snapshot_of(client)["settings"]["alarm_sound"]
+        response = post(
+            client,
+            "settings_update",
+            {"alarm.sound": not before_sound, "alert.silence_seconds": 200},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["applied"] == ["alarm.sound"]
+        assert body["pending_restart"] == ["alert.silence_seconds"]
+        # 热读那一格当场变，pending 那一格不在快照里露头（它管的是运行期阈值）
+        assert snapshot_of(client)["settings"]["alarm_sound"] is (not before_sound)
+
         log_text = helpers.read_text(helpers.service_log_path_of(home))
-        assert "本场出声开关仍取启动值" in log_text
+        assert "alert.silence_seconds" in log_text
+        assert "归 pending_restart" in log_text
+        # 那句话不再扣到出声开关头上
+        assert "alarm.sound 归 pending_restart" not in log_text
+        assert "本场出声开关仍取启动值" not in log_text
+
+
+def test_settings_update_with_only_pending_keys_writes_without_committing(tmp_path):
+    """全是 `pending_restart` 的改动只写盘、不提交：`revision` 原地不动。
+
+    这一条守住热读那一档的**边界** —— 把「有改动就提交」写进去的话，改一个设备名也会推着
+    `revision` 走，界面上「`id` 变了就是状态变了」就不再成立。
+    """
+    with live(tmp_path) as (client, _runtime, home, _out):
+        before_revision = int(snapshot_of(client)["revision"])
+        response = post(client, "settings_update", {"alert.silence_seconds": 200})
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["applied"] == []
+        assert body["pending_restart"] == ["alert.silence_seconds"]
+        assert int(snapshot_of(client)["revision"]) == before_revision, "pending 改动不提交"
+
+        written = json.loads(helpers.config_path_of(home).read_text(encoding="utf-8"))
+        assert written["alert.silence_seconds"] == 200, "写盘照旧成功"
 
 
 def test_settings_snapshot_shape_stays_frozen(tmp_path):

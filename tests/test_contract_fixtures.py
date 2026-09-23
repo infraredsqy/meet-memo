@@ -163,6 +163,9 @@ def test_capture_idle_baseline(tmp_path, make_client, contract_regen):
     assert snapshot["session"] is None
     assert snapshot["ended"] is None
     assert snapshot["notice"] is None
+    # 空闲态**不发提示级**（`docs/ui-design.md` 章 2.5 那张表：空闲态告警区不出现）。
+    # 这一格与下面的 `transcript.health == "stopped"` 说的是两件事：那一格报的是「真转写
+    # 后端还没起过场次」，提示级说的是「录音中转写跟不上了」。
     assert snapshot["alerts"] == {"critical": None, "hints": []}
     assert snapshot["transcript"]["last_line_at"] is None
     assert all(item["health"] == "ready" for item in snapshot["sources"])
@@ -369,7 +372,12 @@ def test_capture_alert_snapshot(tmp_path, make_client, contract_regen):
     assert critical["level"] == "critical"
     assert critical["source"] == "loopback"
     assert critical["duration_seconds"] >= 1.0
-    assert isinstance(critical["muted"], bool)
+    # **首发那一帧该出声**：`muted` 说的是「这一条现在会不会出声」，一条新起的告警首发是
+    # `false`（界面据此响一声），此后同一条才是 `true`。这条 golden 样本抓的就是首发那一帧。
+    assert critical["muted"] is False, (
+        f"致命级首发帧该是 muted=false（读到 {critical['muted']}）—— "
+        "提交时那次重算把它压住的话，界面按契约看这个布尔值，一声都不会响"
+    )
     loopback = next(item for item in snapshot["sources"] if item["id"] == "loopback")
     assert loopback["health"] == "lost"
     assert loopback["lost_since"]

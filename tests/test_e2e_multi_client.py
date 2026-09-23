@@ -235,6 +235,8 @@ def test_session_mute_resets_on_next_session(service_process, meeting_env, sse_c
         )(_snapshot(proc)),
         timeout=E2E_POLL_TIMEOUT_SECONDS,
     )
+    # 新一场起来之后转写报 `normal`：告警区里那几条提示级（空闲态本来就不发，
+    # 这一场起来之后也不该有）是空数组。
     assert fresh["alerts"]["hints"] == []
     assert fresh["alerts"]["critical"] is None
     # `alarm.sound` 的持久化值未变（会话级静音不改它）

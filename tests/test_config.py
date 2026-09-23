@@ -272,18 +272,27 @@ def test_isolated_config_dir_and_app_client_share_one_home(
     )
 
 
-def test_hot_keys_are_exactly_the_five_asr_keys(tmp_path, monkeypatch):
-    """热读键只有 `asr.*` 那五个。"""
+def test_hot_keys_are_the_asr_five_plus_the_alarm_switch(tmp_path, monkeypatch):
+    """热读键 = `asr.*` 五个 + `alarm.sound`（出声开关要在勾选那一刻生效）。"""
     home = tmp_path / "home"
     home.mkdir()
     loaded = _load_with_env(monkeypatch, home, {})
     assert loaded.hot_keys() == [
+        "alarm.sound",
         "asr.max_segment_seconds",
         "asr.timeout_seconds",
         "asr.max_new_tokens",
         "asr.repeat_max_unit",
         "asr.repeat_min_coverage",
     ]
+    # 快照 `settings.asr` 的子键仍只有那五个：`alarm.sound` 是另一格，不掺进 `asr` 里
+    assert config_module.ASR_SETTING_KEYS == (
+        "max_segment_seconds",
+        "timeout_seconds",
+        "max_new_tokens",
+        "repeat_max_unit",
+        "repeat_min_coverage",
+    )
 
 
 def test_priority_environment_beats_json_beats_default(tmp_path, monkeypatch):

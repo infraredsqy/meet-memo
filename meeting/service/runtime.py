@@ -361,6 +361,15 @@ class ServiceRuntime:
         #: 列为**必须落 log** 的事件；基线按路存一份，于是「从什么值到什么值」永远是实测的。
         self._health_logged: dict[str, str] = {item.id: item.health for item in self.snapshot.sources}
 
+        #: **快照 `alerts.hints` 里眼下摆着哪几条**（按 `(level, source, message)` 记账，有序）。
+        #: 它是「提示级的键集合有没有变」的判据：`_sync_transcript_hints()` 拿它跟判定器刚算出来的
+        #: 那几条比，只有键集合真的动了才返回「有变化」、才让调用点走一次 `commit()`。
+        #: 同一个键集合里 `duration_seconds` 的刷新因此不给 `revision` 投票（契约第 3.3 节：
+        #: 转写通道不参与状态迁移，0.5 秒的节拍不许把它抖起来）。
+        #: **清提示级时它与判定器那份记账一起清**（唯一入口 `_clear_hints()`）：只清一边的话，
+        #: 两者会有一刻对不上、旧记账还会影响下一场的键集合判据（复审 m3）。
+        self._hint_keys: tuple[tuple[str, str, str], ...] = ()
+
         # 收尾 task 句柄（属性名冻结；启动时赋值、走完含被取消那趟后置空）
         self._drain_task: asyncio.Task | None = None
         #: 收尾四步的**同步调用专用**执行器（工作线程是 daemon，见
@@ -431,11 +440,12 @@ class ServiceRuntime:
     def _settings_view(self) -> SettingsView:
         """快照 `settings` 的**生效值**视图。
 
-        口径（§3.5.5 + §7.1 高危点 7）：这里读的是**运行期生效值**，也就是启动时定下来的那一份。
-        `settings_update` 把非热读键写盘成功之后，快照里的 `settings` **不会**立刻反映写进去的
-        新值 —— 那些键（含 `alarm.sound` 与两个设备键位）归 `pending_restart`，要重启才在快照里
-        可见；热读五键（`asr.*`）才在写盘后立刻换成新值（那一处在 `settings_update()` 里按
-        `applied` 重取一次本函数）。
+        口径（§3.5.5 + §7.1 高危点 7）：这里读的是**运行期生效值**。归 `pending_restart` 的那些键
+        （两个设备键位、`web.*` / `log.*` / `alert.*` 与三个后端选择键）由 `settings_update`
+        写盘成功之后，快照里的 `settings` **不会**立刻反映写进去的新值，要重启才可见；
+        热读键才在写盘后立刻换成新值（那一处在 `settings_update()` 里按 `applied` 重取一次
+        本函数）—— `asr.*` 五个之外，`alarm.sound` 也走这一条，于是勾出声开关当场就改
+        运行期行为（`settings.alarm_sound` 与界面响不响一起变，见 `docs/contract.md` 第 4.6 章）。
 
         `settings.devices` 的两个子键逐一取 `devices.mic` / `devices.loopback` 的生效值
         （`dca4539b` 定名；没配时为 `null`，与配置层 `NULLABLE_KEYS` 的空值形状一致）。
@@ -530,6 +540,11 @@ class ServiceRuntime:
         # `bind()` 上（`_config` 也在那里给），早于它调这一步会读到一份没接上配置的后端。
         # 返回值（= `health` 有没有迁移）在这里**有意丢掉**：`startup()` 不做提交。
         self._refresh_transcript_snapshot()
+        # 空闲态不发提示级（`docs/ui-design.md` 章 2.5：空闲态告警区不出现）：快照这一格与
+        # 判定器那份记账一起从零开始。`_refresh_transcript_snapshot()` 的收口判据是
+        # `top_state ∈ {recording, alert}`，开机这一刻是 `idle`，所以它自己不会写进任何提示；
+        # 这里再显式清一次，是为了让「快照 = 记账」这条不变量从第一帧就成立。
+        self._clear_hints()
 
         # ⑥ 扫未收尾场次（只取最新的一场；命中即挂 notice 并改写现场）
         self._scan_unfinished()
@@ -1018,9 +1033,10 @@ class ServiceRuntime:
         **与水位那一档（`_levels_loop`）分开**：那一条只在 `recording` / `alert` 态跑，
         而「转写起没起来、还在不在」这件事与会话状态无关（idle 时也要如实报）。
 
-        **拍子的副作用只有快照**：`_refresh_transcript_snapshot()` 只在 `health` 真迁移时
-        返回 `True`，于是 `commit()`（`revision +1` + 一次 `state` 广播）只可能发生在状态真的
-        变了那一刻；积压量变化照旧只写快照，`revision` 原地不动（契约第 3.3 节）。
+        **拍子的副作用只有快照**：`_refresh_transcript_snapshot()` 只在 `health` 真迁移、
+        或 `alerts.hints` 的键集合变化时返回 `True`，于是 `commit()`（`revision +1` + 一次
+        `state` 广播）只可能发生在状态真的变了那一刻；积压量变化、以及持续提示条的
+        `duration_seconds` 刷新照旧只写快照，`revision` 原地不动（契约第 3.3 节）。
         这一条由三条用例钉住：`test_snapshot_reads_do_not_refresh_and_do_not_push_the_revision`
         （读快照是纯读）、`test_worker_stall_reaches_the_snapshot_without_any_new_line`
         （本拍子真的把停摆刷上去了）与 `test_backlog_changes_reach_the_snapshot_without_touching_the_revision`
@@ -1181,10 +1197,16 @@ class ServiceRuntime:
         """把 `transcript` 的三个字段刷成**当下**的取值；返回「状态有没有真的迁移」。
 
         读的是转写后端自己的两个计数（`health()` / `backlog_depth()`）。
-        返回值**只描述 `health` 的迁移**：调用方据此决定要不要 `commit()`（契约第 3.3 节：
-        `transcript` 通道不参与状态迁移，一行到来 / 积压量变化都不该给 `revision` 添抖动）。
+        返回值描述**两件会进快照 `revision` 的事**：
+          - `health` 的**迁移**（`normal ↔ behind ↔ stopped`）—— 调用方据此 `commit()`
+            （契约第 3.3 节：`transcript` 通道不参与状态迁移，一行到来 / 积压量变化都不该给
+            `revision` 添抖动）；
+          - `alerts.hints` 的**键集合**变化（提示级新增 / 移除 / 被上限挤掉，以及离开
+            `recording` / `alert` 时整格清空）—— 界面要看得见提示条的出现与消失，
+            因此也借既有 `state` 通道提交一次。
         `buffered_lines` 与 `failed_segments` 照样写进快照（`/api/state` 读得到），
-        但它们**不给 `revision` 投票** —— 「积压 5 段变 4 段」不是一次状态迁移。
+        但它们**不给 `revision` 投票** —— 「积压 5 段变 4 段」不是一次状态迁移；同理，同一个
+        键集合里 `duration_seconds` 的刷新也不投票（那正是 0.5 秒节拍每拍都会发生的事）。
 
         **四个调用点**（`phase2/task.md` §7：「一行到来时**与 worker 停摆时**」）：
 
@@ -1206,9 +1228,20 @@ class ServiceRuntime:
         二来 `GET /api/heartbeat` 与随后的 `GET /api/state` 会读到两个不同的 `revision`。
         节拍与读请求完全解耦，读路径因此保持纯读。
 
-        两个调用点都只写快照、只由 `health` 的迁移触发 `commit()`，因此拍多少下都不会给
-        `revision` 添抖动（本函数在读数没变时是纯读）。`startup()` 那一次丢掉返回值，
-        于是它连「迁移」都不提交（那一刻还没有任何状态迁移可谈）。
+        两个调用点都只写快照、只由上面那两件事触发 `commit()`，因此拍多少下都不会给
+        `revision` 添抖动（本函数在读数没变、提示级键集合没变时是纯读）。`startup()` 那一次
+        丢掉返回值，于是它连「迁移」都不提交（那一刻还没有任何状态迁移可谈）；
+        `start_session()` 那一次同样丢掉返回值，因为那一场自己的 `commit()` 就在后面几步。
+
+        **提示级在这里接线**：算出 `health` 与 `backlog` 之后交给 `_sync_transcript_hints()`
+        （它调判定器、再把 `alerts.hints` 摆进快照）。本函数是全仓唯一的转写刷新落点 ——
+        启动、开场、每行、0.5 秒节拍四处都经过它 —— 所以接线只在这里做一次就够，
+        四条路径都会带上提示级。**每次都调判定器**（不是只在 health 迁移那一刻）：
+        提示条要在窗口内一直刷新 `duration_seconds`。
+        **只有在 `recording` / `alert` 态才发提示级**：`top_state ∈ {idle, ended}` 时
+        `_sync_transcript_hints()` 不把读数交给判定器、并把那一格清空（理由与依据见它的
+        docstring：空闲态那个 `health == "stopped"` 报的是「真转写后端还没起过场次」，
+        与录音中「转写停了」是两件事）。
 
         两个后端方法都可能缺席（`null` 替身之外的第三方实现）或抛错：`health` 读不出来按
         `normal`、`backlog_depth` 读不出来按 `0`，并各留一条 warning —— 快照里宁可少一格
@@ -1251,7 +1284,76 @@ class ServiceRuntime:
         # 写进快照之后照样经 `/api/state` 的读路径可见。
         if transcript.buffered_lines != backlog:
             transcript.buffered_lines = backlog
+        if self._sync_transcript_hints(health=health, backlog=backlog):
+            changed = True
         return changed
+
+    def _clear_hints(self) -> None:
+        """把提示级清成空 —— **快照那一格与判定器那份记账一起清**（唯一入口）。
+
+        三样东西必须同进同退：判定器的条目与记时表（`judge.clear_hints()`）、快照的
+        `alerts.hints`、本类那份键集合记账（`_hint_keys`）。只清其中一两样的话，
+        「快照与记账是同一份真相」这条不变量会有一刻不成立，旧记账还会让下一场的键集合判据
+        误判（复审 m3）。**不改**致命级与两条电平计数。
+        """
+        self.judge.clear_hints()
+        self.snapshot.alerts.hints = []
+        self._hint_keys = ()
+
+    def _sync_transcript_hints(self, *, health: str, backlog: int) -> bool:
+        """把**已经算好的** `health` 与积压段数交给判定器，再把它算出的提示级摆进快照。
+
+        返回「提示级的**键集合**有没有变」（新增 / 移除 / 被上限挤掉都算变），调用方据此
+        决定要不要 `commit()`；同一个键集合里 `duration_seconds` 的刷新不算变化。
+
+        **离开 `recording` / `alert` 之后提示级恒为空**（`docs/ui-design.md` 章 2.5 那张表：
+        空闲态与结束档的「告警区」不出现）。判定权随状态收口：`top_state ∈ {idle, ended}`
+        时**不把读数交给判定器**，并把已经挂着的那几条连记账一起清掉（`_clear_hints()`，
+        键集合因此算作变了一次、由调用点借既有 `state` 通道提交一次，界面看得见它消失）。
+
+        **为什么要收这一道口**：空闲态那个 `health == "stopped"` 报的是「真转写后端还没起过
+        场次」（`docs/state.md` 第 4 章那两格 fixtures 的既有口径），与录音中「转写停了」属于
+        两种情形；相位一接线时把算好的 health 无条件交给判定器，等于把前者升成了一条用户可见的
+        告警条 —— 设计稿里空闲态压根没有告警区。这条提示因此只在
+        `top_state ∈ {recording, alert}` 上成立，离开这两个态就归零、下一场 `start` 从零开始。
+
+        **每次都调判定器，不挑时机**：提示条要在窗口内一直刷新 `duration_seconds`
+        （「已经落后 12 秒」这句话得跟着走），只在 health 迁移那一刻调一次的话，条目会停在
+        `duration_seconds = 0`。判定器那边 `_merge_hint()` 本来就幂等（同一个三元组沿用原来
+        那一条、只刷时长），所以每拍都调一遍是它的正常用法。
+
+        `health` 与 `backlog` 由调用方传进来（`_refresh_transcript_snapshot()` 刚读过的同一份
+        读数），**不在这里再问一次后端** —— 读路径是纯读、快照刷新也不该把后端的读数翻倍。
+
+        提示级的来源与阈值都在判定器里（`docs/state.md` 第 6 章）：健康度 `normal / behind /
+        stopped`，积压 `≥ BACKLOG_HINT_THRESHOLD`，两类都定在 `source = transcript` 上、靠
+        `message` 分辨，各自有一条对称的清除路径。
+        """
+        if self.snapshot.top_state not in ("recording", "alert"):
+            if not self.snapshot.alerts.hints and not self._hint_keys:
+                return False
+            _log.info(
+                "离开录音 / 告警态（top_state=%s）：提示级清空（原 %s 条）",
+                self.snapshot.top_state,
+                len(self.snapshot.alerts.hints),
+            )
+            self._clear_hints()
+            return True
+        self.judge.on_transcript_health(health)
+        self.judge.on_backlog_depth(backlog)
+        hints = self.judge.hints()
+        keys = tuple((item.level, str(item.source), str(item.message)) for item in hints)
+        if keys == self._hint_keys:
+            return False
+        _log.info(
+            "提示级键集合变化：%s -> %s（快照 %s 条）",
+            len(self._hint_keys),
+            len(keys),
+            len(hints),
+        )
+        self._hint_keys = keys
+        self.snapshot.alerts.hints = hints
+        return True
 
     def _transcriber_timeout(self, backend: Any) -> float:
         """转写后端的 `segment_timeout()`（读不出来按缺省；只给日志用）。"""
@@ -1409,6 +1511,10 @@ class ServiceRuntime:
 
         # 盘上第一版已稳，这才把状态推进到 recording
         self.judge.reset_for_new_session()
+        # 新一场从零开始：判定器那份提示级记账已经被上面清掉，快照那一格与本类那份键集合
+        # 记账同步归零（三样一起清，见 `_clear_hints()`）—— 上一场的提示级不许跨场留下，
+        # 也不许让本场第一次刷新把它们当成「键集合没变」（复审 m3）。
+        self._clear_hints()
         start_recording(self.snapshot, session=session, mode=mode, devices=devices)
         _log.info("场次开始：%s（目录 %s，mode=%s）", session_id, session_dir, mode)
         # `idle → recording` 的副作用会把两路 `health` 推到 `capturing`（phase2 §3.5.2），
@@ -1473,6 +1579,9 @@ class ServiceRuntime:
         self.snapshot.session = None
         self.snapshot.ended = None
         self.snapshot.top_state = "idle"
+        # 撤回空闲态：提示级不再成立（提示条只在 recording / alert 上出现），连记账一起清，
+        # 于是下面那次提交广播出去的就是「空闲态、告警区不出现」那一份。
+        self._clear_hints()
         for item in self.snapshot.sources:
             item.health = "unprobed"
             item.envelope = []
@@ -1498,6 +1607,11 @@ class ServiceRuntime:
         if session is not None:
             session.elapsed_seconds = max(0.0, time.monotonic() - session.started_monotonic)
         begin_drain(self.snapshot, reason=reason)
+        # 进 `ended` 这一刻提示级一并归零（提示条只在 recording / alert 上成立）：清在下面那次
+        # 提交之前，于是广播出去的「结束档」那一份里 `alerts.hints` 就是空数组 —— 不必等
+        # 0.5 秒那一拍来收尾（收尾四步期间没有任何转写刷新，等节拍会留下一段「已结束、
+        # 还挂着提示条」的窗口）。
+        self._clear_hints()
         _log.info(
             "场次结束：%s（目录 %s，reason=%s，本场 %ss）",
             session.id if session else "?", session.dir if session else "?", reason,
@@ -1597,9 +1711,9 @@ class ServiceRuntime:
         """写 `config.json`（原子写）；**可热读的键立刻生效，其余键写盘成功但要重启**。
 
         「写盘成功」与「快照立刻反映」是两件事：归 `pending_restart` 的那些键本次只落盘，
-        运行期仍取启动时的生效值，快照 `settings` 里读到的还是旧值（`alarm.sound` 的可观察
-        判据是主 log 那一行「本场出声开关仍取启动值」，见 §7.1 高危点 7）；只有当本次改动
-        里有热读五键（`asr.*`）时，才在下面重取一次 `_settings_view()` 并提交。
+        运行期仍取启动时的生效值，快照 `settings` 里读到的还是旧值（可观察判据是主 log 那一行
+        「……仍取启动值」，见 §7.1 高危点 7）；本次改动里凡有热读键（`asr.*` 五个与
+        `alarm.sound`），就在下面重取一次 `_settings_view()` 并提交 —— 出声开关因此勾选即生效。
         """
         try:
             changes = config_module.validate_setting_changes(args, current=self.config)
@@ -1629,7 +1743,7 @@ class ServiceRuntime:
             ) from exc
 
         applied, pending = config_module.split_setting_changes(changes)
-        # 热读五键立刻生效：生效值在内存里换掉（下一段读到的就是新值）
+        # 热读键立刻生效：生效值在内存里换掉（下一段读到的就是新值）
         if applied and self.config is not None:
             values = dict(self.config.applied)
             values.update({key: changes[key] for key in applied})
@@ -1647,9 +1761,17 @@ class ServiceRuntime:
                     "settings_update：%s 被环境变量 %s 压着（写盘值 %r），运行期仍由环境变量说话",
                     key, env_name, changes[key],
                 )
+        # 这一行只对**真正要重启才生效**的那些键说：热读键（含 `alarm.sound`）走上面的
+        # `applied` 分支，写盘那一刻快照与运行期行为就已经换过去了，报「仍取启动值」
+        # 会是一句与事实相反的话（`alarm.sound` 原先归 `pending_restart`，这一行是那时的形状）。
+        if pending:
+            _log.info(
+                "settings_update：%s 归 pending_restart，仍取启动时的生效值（改了要重启才生效）",
+                "、".join(sorted(pending)),
+            )
         if "alarm.sound" in changes:
-            _log.warning(
-                "alarm.sound 归 pending_restart：本场出声开关仍取启动值 %r（改了要重启才生效）",
+            _log.info(
+                "settings_update：alarm.sound 收在热读档，本刻起出声开关 = %r（下一次提交的快照一并可见）",
                 self._value("alarm.sound"),
             )
         return {"applied": applied, "pending_restart": pending}

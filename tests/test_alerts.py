@@ -9,11 +9,13 @@
     才起致命级；
   - 连续有信号 `alert.recover_seconds` 才恢复；抖动式一帧不来回告警（**两条独立的连续计数**）；
   - `alert.alarm_suppress_seconds` 内同一事件（哪一路 + 故障类型）不重复出声，
-    **恢复后再发生算新事件**；
+    **恢复后再发生算新事件**；抑制窗口的锚点是**上一次 raise 的时刻**，于是**首发那一帧
+    的 `muted` 是 `False`**（界面据此响一声），起事件不会被自己压住；
   - `mute_session` 期间新起的告警**继承**会话级静音；
   - 两条提示级（`transcript.health` 掉档、`backlog_depth() ≥ BACKLOG_HINT_THRESHOLD`）
     各出一条，**同类合并的键是 `(level, source, message)` 三元组**、**上限 3**，
-    合并时沿用原有那一条的 `since` 并刷新 `duration_seconds`；
+    合并时沿用原有那一条的 `since` 并刷新 `duration_seconds`；两条**对称的清除路径**都走得通
+    （health 回 `normal`、积压回落到门槛以下），且各清各的、互不牵连；
   - **阈值只许更大、不许更小**（默认值 180 / 10 / 60 / −60 dBFS 在代码里不被兜底改小）。
 """
 
@@ -22,7 +24,9 @@ from __future__ import annotations
 import pytest
 
 from meeting.alerts import (
+    BACKLOG_HINT_MESSAGES,
     BACKLOG_HINT_THRESHOLD,
+    HEALTH_HINT_MESSAGES,
     HINT_LIMIT,
     AlertJudge,
     AlertThresholds,
@@ -191,8 +195,8 @@ def test_refresh_muted_recomputes_the_present_answer():
 
     # 把窗口起点推旧（这一条事件已经过去很久）→ 当下的结论回到「会出声」
     track = j._tracks["mic"]  # noqa: SLF001 - 就为了把窗口起点推旧
-    assert track.event_started_ts is not None
-    track.event_started_ts -= TEST_SUPPRESS_SECONDS + 1.0
+    assert track.last_raise_ts is not None
+    track.last_raise_ts -= TEST_SUPPRESS_SECONDS + 1.0
     j.refresh_muted([alert])
     assert alert.muted is False, "两个条件都松开之后，这条告警该回到「会出声」"
 
@@ -238,14 +242,14 @@ def test_refresh_muted_follows_the_suppression_window():
     window = TEST_SUPPRESS_SECONDS
     started = 1000.0
     # ① 纯判定：窗口内 / 边界上 / 窗口外
-    assert muted_at(event_started_ts=started, moment=started, suppress_seconds=window) is True
-    assert muted_at(event_started_ts=started, moment=started + window - 0.01,
+    assert muted_at(last_raise_ts=started, moment=started, suppress_seconds=window) is True
+    assert muted_at(last_raise_ts=started, moment=started + window - 0.01,
                     suppress_seconds=window) is True
-    assert muted_at(event_started_ts=started, moment=started + window,
+    assert muted_at(last_raise_ts=started, moment=started + window,
                     suppress_seconds=window) is False
-    assert muted_at(event_started_ts=started, moment=started + window * 5,
+    assert muted_at(last_raise_ts=started, moment=started + window * 5,
                     suppress_seconds=window) is False
-    assert muted_at(event_started_ts=None, moment=started, suppress_seconds=window) is False
+    assert muted_at(last_raise_ts=None, moment=started, suppress_seconds=window) is False
 
     # ② 判定器：窗口内的下一条当场就不出声；恢复之后新起的那一条该出声
     j = judge()
@@ -398,6 +402,64 @@ def test_hints_keep_the_earliest_three():
     assert same.since == "2025-09-06T10:00:01+08:00"
 
 
+def test_the_cap_reclaims_the_evicted_key_from_the_judge_bookkeeping():
+    """上限 3 挤掉的那条**从记账里回收**：`hints()` 与 `_hints` 恒同长（复审 m4）。
+
+    只截断 `hints()` 的返回值、把多出来的键留在 `_hints` 里的话，记账会只增不减
+    （探针实测：`hints()` 返回 3 条而内部 4 条，转写回 `normal` 之后仍是 4 条）。
+    回收之后：两条清除路径能把这类键清干净，同一个键再进来算**新起的那一条**。
+    """
+    j = judge()
+    first = j.on_transcript_health("behind")
+    second = j.on_transcript_health("stopped")
+    third = j.on_backlog_depth(BACKLOG_HINT_THRESHOLD)
+    assert first is not None and second is not None and third is not None
+    for index, item in enumerate((first, second, third)):
+        item.since = f"2025-09-06T11:00:0{index}+08:00"
+
+    # 第四条（`since` 最晚）进来：三条留下，多出来的那个键离开记账
+    evicted = j._merge_hint(level="hint", source="transcript", message="第四条")  # noqa: SLF001
+    assert len(j._hints) == HINT_LIMIT == 3, "记账被上限回收，与 `hints()` 同长"  # noqa: SLF001
+    assert ("hint", "transcript", "第四条") not in j._hints  # noqa: SLF001
+    assert len(j._hint_started_at) == 3, "记时表同步收回，不留无主刻度"  # noqa: SLF001
+
+    # 被挤掉的那个键重新进来：算新起的那一条（不是把旧对象翻出来）
+    again = j._merge_hint(level="hint", source="transcript", message="第四条")  # noqa: SLF001
+    assert again is not evicted, "回收过的键重新进来是一条新条目"
+    assert again.duration_seconds == 0.0
+    assert len(j._hints) == HINT_LIMIT  # noqa: SLF001
+
+    # 两条清除路径把剩下的健康度 + 积压提示清干净，一个键都不留在记账里
+    j.on_transcript_health("normal")
+    j.on_backlog_depth(0)
+    assert j.hints() == []
+    assert j._hints == {}, "健康度与积压这两类清完，记账里没有残留"  # noqa: SLF001
+    assert j._hint_started_at == {}  # noqa: SLF001
+
+
+def test_reset_for_new_session_clears_the_hint_bookkeeping():
+    """`reset_for_new_session()` 清判定器时，提示级的**两份记账一起清**（复审 m3）。
+
+    清 `_hints` 而留下 `_hint_started_at`（或反过来）会让「记账与快照是同一份真相」这条
+    不变量有一刻不成立，下一场开场之后旧刻度还会影响新一场的 `duration_seconds`。
+    """
+    j = judge()
+    j.on_transcript_health("behind")
+    j.on_backlog_depth(BACKLOG_HINT_THRESHOLD)
+    assert len(j._hints) == 2 and len(j._hint_started_at) == 2  # noqa: SLF001
+
+    j.reset_for_new_session()
+    assert j.hints() == []
+    assert j._hints == {}  # noqa: SLF001
+    assert j._hint_started_at == {}, "记时表与条目一起清"  # noqa: SLF001
+    assert j.mute_session is False
+
+    # 新一场里同一个键重新进来：`duration_seconds` 从这一刻重新起算
+    fresh = j.on_transcript_health("behind")
+    assert fresh is not None
+    assert fresh.duration_seconds == 0.0
+
+
 # ---------------------------------------------------------------------------
 # 阈值
 # ---------------------------------------------------------------------------
@@ -433,3 +495,191 @@ def test_thresholds_come_from_config_and_are_never_shrunk():
     assert loaded.silence_dbfs == -70.0
     # 判定器原样用它给出的值（没有「取更小值兜底」这一层）
     assert judge(silence_seconds=300.0).thresholds.silence_seconds == 300.0
+
+
+# ---------------------------------------------------------------------------
+# 抑制窗口的锚点：首发那一帧必须放行
+# ---------------------------------------------------------------------------
+
+
+def test_first_raise_is_audible_and_the_anchor_is_written_after_the_judgement():
+    """首发那条致命级广播出去是 `muted: False`（该响一声），锚点落在这一刻。
+
+    这一条咬的是「先算 muted、后写锚点」这个次序，以及首发那一条**扛得住紧随其后的重算**：
+    `commit()` 的重算就发生在锚点刚开的同一刻，少了 `raise_in_flight` 这个记号，
+    同一条告警会被自己刚开的窗口压住，广播出去的第一帧成了 `True`（界面一声都不响）。
+    """
+    j = judge()
+    assert j._tracks == {}, "起点干净：这一路还没 raise 过"
+
+    result = j.on_level_frame("mic", 0.0, -80.0)
+    for index in range(1, 4):
+        result = j.on_level_frame("mic", float(index), -80.0)
+    alert = result.alert
+    assert alert is not None, "静默累计到阈值该起致命级"
+    assert alert.muted is False, "首发那一刻算出来该出声"
+
+    track = j._tracks["mic"]  # noqa: SLF001 - 就看这一刻的锚点与记号
+    assert track.last_raise_ts == 3.0, "锚点取这一路上一次 raise 的时刻"
+    assert track.raise_in_flight is alert, "这一条还没广播出去，记号挂着"
+
+    # 广播那一刻的重算（`commit()` 的那一次）：原样放行，广播出去的就是 False
+    j.refresh_muted([alert])
+    assert alert.muted is False, "首发帧广播出去必须仍然是「会出声」"
+    assert track.raise_in_flight is None, "这一条出去了，记号到此为止"
+
+    # 此后同一条告警再算就落进窗口里，不再重复出声
+    j.refresh_muted([alert])
+    assert alert.muted is True, "同一条告警不重复出声"
+
+    # 窗口之内新起的下一条（新事件）当下就不出声
+    second = j.on_source_lost("mic", 3.5)
+    assert second.muted is True, "窗口内的下一条不出声"
+
+
+def test_refresh_muted_never_releases_the_same_alert_again():
+    """首发之后任意次 `refresh_muted()` 都不把**同一条**告警重新放行。
+
+    `refresh_muted()` 是 `muted` 的唯一入口、每次提交快照都会被调一次。首发那一帧是
+    `False`（响一声），此后同一条告警重算必须落进刚写下的窗口里、保持 `True` ——
+    否则「不重复出声」这道闸在每一次提交上都会被自己放开。
+    """
+    j = judge()
+    for index in range(4):
+        alert = j.on_level_frame("mic", float(index), -80.0).alert
+    assert alert is not None and alert.muted is False
+
+    # 首发帧那一次（广播时刻的重算）：原样放行，仍然是 False
+    j.refresh_muted([alert])
+    assert alert.muted is False, "首发帧广播出去仍然会出声"
+
+    # 一帧都没往前推（帧时钟停在 3.0），此后连着重算多次都保持 True
+    for attempt in range(5):
+        j.refresh_muted([alert])
+        assert alert.muted is True, f"第 {attempt + 1} 次重算把同一条告警又放行了"
+
+    # 会话级静音期间同样一律 True（这一档今天已经对，别改坏）
+    j.mute_session = True
+    j.refresh_muted([alert])
+    assert alert.muted is True
+    j.reset_session_mute()
+
+    # 恢复之后再出事：按新事件处理，首发又是 False
+    j.mark_recovered("mic")
+    track = j._tracks["mic"]  # noqa: SLF001 - 恢复该把锚点清空
+    assert track.last_raise_ts is None, "恢复关掉这一条事件的窗口"
+    fresh = j.on_source_lost("mic", 90.0)
+    assert fresh.muted is False, "恢复后再发生算新事件，首发该出声"
+
+
+def test_session_mute_holds_through_the_raise_in_flight_pass_through():
+    """首发帧那条「刚起、还没广播」的条目在**本场静音期间照样是 `true`**（复审 m5）。
+
+    `refresh_muted()` 对 `raise_in_flight` 那一条跳过的是**抑制窗口那一半**的重算（好让
+    广播出去的首发帧保持 `false`），会话级静音那一半照算。少了这一层，静音期间过一遍
+    标记条目就会把一条本该不出声的告警算成 `false` —— 界面按契约看这个布尔值，本场静音
+    当场失效。运行时里 raise 与 commit 同在一个同步调用里、中间没有 `await`，所以这一档
+    眼下靠调用序撑着；这一条用例把它钉死。
+    """
+    j = judge()
+    first = j.on_source_lost("mic", 100.0)
+    assert first.muted is False, "首发那一刻窗口还开着，该出声"
+    track = j._tracks["mic"]  # noqa: SLF001 - 就看这一刻的记号
+    assert track.raise_in_flight is first, "这一条还没广播出去，记号挂着"
+
+    # 静音在本条广播之前生效（下一场 `start` 之外，静音只由 `mute_session` 动作翻）
+    j.mute_session = True
+    j.refresh_muted([first])
+    assert first.muted is True, "本场静音期间，标记那一条照样不出声"
+    assert track.raise_in_flight is None, "这一条出去了，记号到此为止"
+
+    # 记号清掉之后再算：静音仍然说了算
+    j.refresh_muted([first])
+    assert first.muted is True
+
+    # 静音复位之后回到窗口口径：窗口里的同一条仍是 `true`，恢复后新事件又是 `false`
+    j.reset_session_mute()
+    j.refresh_muted([first])
+    assert first.muted is True, "窗口还没过，这一条仍然不出声"
+    j.mark_recovered("mic")
+    fresh = j.on_source_lost("mic", 200.0)
+    assert fresh.muted is False, "恢复后新事件的首发又该出声"
+
+
+# ---------------------------------------------------------------------------
+# 提示级的清除路径
+# ---------------------------------------------------------------------------
+
+
+def test_health_hint_is_cleared_by_the_normal_transition():
+    """健康度回 `normal` → 那条提示真的从 `hints()` 里消失（含掉到 `stopped` 那条）。
+
+    原先 `on_transcript_health("normal")` 拿 `_health_message("normal")`（`转写正常`）去
+    `pop()`，而存进去的键是 `转写落后了` / `转写停了` —— 那个键一次都没进过字典，于是
+    两条健康度提示一旦出现就**永远消不掉**。这一条按生产的调用路径走一遍。
+    """
+    j = judge()
+    assert HEALTH_HINT_MESSAGES == ("转写落后了", "转写停了")
+
+    j.on_transcript_health("behind")
+    assert [item.message for item in j.hints()] == ["转写落后了"]
+
+    # 掉到 stopped：两条并列（message 不同就是两个键）
+    j.on_transcript_health("stopped")
+    assert sorted(item.message for item in j.hints()) == ["转写停了", "转写落后了"]
+
+    # 回到 normal：这一类的两条一起撤掉
+    assert j.on_transcript_health("normal") is None
+    assert j.hints() == [], "健康度回 normal 之后不该还挂着那两条提示"
+
+
+def test_backlog_hint_is_cleared_when_the_depth_falls_back():
+    """积压回落到门槛以下 → 那条提示真的消失（清除分支与出条分支对称）。
+
+    原先 `on_backlog_depth()` 在低于阈值时直接 `return None`，没有任何撤条动作，于是
+    「待转写段数已达 20 段」在队列清空之后还留在快照上。
+    """
+    j = judge()
+    assert BACKLOG_HINT_THRESHOLD == 20
+
+    j.on_backlog_depth(BACKLOG_HINT_THRESHOLD)
+    assert [item.message for item in j.hints()] == list(BACKLOG_HINT_MESSAGES)
+
+    # 恰好落在门槛上还算越线（判据是 `≥`，这一档不能提前撤）
+    j.on_backlog_depth(BACKLOG_HINT_THRESHOLD)
+    assert len(j.hints()) == 1
+
+    # 回落到门槛以下：撤掉
+    assert j.on_backlog_depth(BACKLOG_HINT_THRESHOLD - 1) is None
+    assert j.hints() == [], "积压回落之后那条提示该消失"
+
+    # 连续回落也不出错（幂等）
+    assert j.on_backlog_depth(0) is None
+    assert j.hints() == []
+
+
+def test_the_two_clear_paths_do_not_touch_each_others_hint():
+    """两条清除路径各清各的：健康度回 `normal` 不动积压那条，反之亦然。
+
+    两类提示共用 `source = transcript`，靠 `message` 分辨。拿 source 一把清会让
+    「转写跟上了」把「队列还堆着 20 段」一起带走 —— 两件事各有各的门槛。
+    """
+    j = judge()
+    j.on_transcript_health("behind")
+    j.on_backlog_depth(BACKLOG_HINT_THRESHOLD)
+    assert len(j.hints()) == 2
+
+    # 健康度回 normal：积压那条留下
+    j.on_transcript_health("normal")
+    assert [item.message for item in j.hints()] == list(BACKLOG_HINT_MESSAGES)
+
+    # 再把健康度掉回来，这回清积压：健康度那条留下
+    j.on_transcript_health("behind")
+    assert len(j.hints()) == 2
+    j.on_backlog_depth(0)
+    assert [item.message for item in j.hints()] == ["转写落后了"]
+
+    # 清除之后再出同一条：`since` 从这一刻重新起算（不是沿用被撤掉那一条的）
+    j.on_backlog_depth(BACKLOG_HINT_THRESHOLD)
+    assert len(j.hints()) == 2
+
