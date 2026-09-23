@@ -141,7 +141,7 @@ $env:MEETING_CAPTURE="dev"; $env:MEETING_NO_BROWSER="1"; meeting web
 | `alert.silence_seconds` | `180` | 告警判定（静默连续多久才起致命级） |
 | `alert.recover_seconds` | `10` | 告警判定（连续有信号多久才算恢复） |
 | `alert.alarm_suppress_seconds` | `60` | 告警判定（同一事件多久内不重复出声） |
-| `alarm.sound` | `true` | 本场出不出声的持久化开关（运行期取启动时的生效值） |
+| `alarm.sound` | `true` | 本场出不出声的持久化开关（**热读**：`settings_update` 写盘那一刻就改运行期行为） |
 | `heartbeat.interval_seconds` | `10`（实现给的合法范围 `1–60` 秒） | **界面**发心跳的周期，进快照 `settings` |
 | `capture.backend` | `auto` | 服务（选取采集后端；`auto` / `null` / `dev` / `module:Class`） |
 | `devices.mic` | `null`（= 没配，按默认策略挑） | 服务（麦克风那一路用哪个输入端点；`dca4539b` 定名，写盘成功、**重启后生效**） |
@@ -160,7 +160,7 @@ $env:MEETING_CAPTURE="dev"; $env:MEETING_NO_BROWSER="1"; meeting web
 
 两个前缀说的两件事：`alert.*` 是**判定阈值**（静默多久算告警、多久算恢复、多久内不重复出声）；`alarm.*` 只管出声。两个「心跳」也不许串线：`heartbeat.interval_seconds` 是**界面**发心跳的周期，服务侧的采集帧心跳窗口是 `max(2.0s, 3 × frame_interval)`。
 
-`asr.*` 五个默认值沿用 V1 实测值（`docs/legacy-assets.md` 的 B1）。
+`asr.*` 五个默认值沿用 V1 实测值（`docs/legacy-assets.md` 的 B1）；`alarm.sound` 的默认值是 `true`（缺省出声）。
 
 ### 环境变量
 
@@ -174,7 +174,7 @@ $env:MEETING_CAPTURE="dev"; $env:MEETING_NO_BROWSER="1"; meeting web
 | `MEETING_CAPTURE` | → `capture.backend`（`dev` 就是那个开发替身） |
 | `MEETING_NO_BROWSER=1` | 关掉自动打开浏览器（不指向任何配置键） |
 
-**环境变量一律在启动时求值**，改了不会热生效。配置里也只有 `asr.*` 那五个键是「每段重新读」的，其余键改了要重启 —— 别把热读范围放大，会出现「我改了配置怎么没用」这类假 bug。
+**环境变量一律在启动时求值**，改了不会热生效。配置里的热读键是 `asr.*` 那五个**加上 `alarm.sound`**（出声开关要在勾选那一刻生效，见 `docs/contract.md` 第 4.6 章），其余键改了要重启 —— 别把热读范围继续放大，会出现「我改了配置怎么没用」这类假 bug。
 
 ### 校验规则
 
@@ -248,18 +248,18 @@ python -m pytest -q -m slow         # 慢档：只跑那九个文件
 python -m pytest tests/test_state_machine.py tests/test_api_actions.py -q   # 只跑某几个文件
 ```
 
-`tests/` 下现在有 **40 个测试文件、710 个用例**（本机实测：`python -m pytest -q` → `710 passed in 117.17s`；这份计数是 prune 审计执行之后的数，审计之前那一版是 712 条 —— 少掉的两条是整段取消的 `test_transcribe_result_failed_property` 与 `test_endpoint_model_rejects_an_unknown_role`。文件数与用例数的口径写在 `docs/spec.md` 的代码现状表里）。不需要先 `pip install`，也不需要可编辑安装。
+`tests/` 下现在有 **41 个测试文件、732 个用例**（本机实测：`python -m pytest -q` → `732 passed in 119.55s`；快档 `python -m pytest -q -m "not slow"` → `551 passed, 181 deselected in 40.59s`）。这一版比上一版多 22 条，来自会中监控界面那个节点的服务侧接线与它的返工轮：新增 `tests/test_transcript_hints.py` 11 条（提示级的接线、广播语义、两条清除路径，以及「提示级只在录音 / 告警态成立」），`tests/test_alerts.py` 补 3 条（上限回收记账、新一场清记账、静音期间过一遍首发标记条目），`tests/test_api_actions.py` 补首发帧与开关当场生效的判据。文件数与用例数的口径写在 `docs/spec.md` 的代码现状表里。不需要先 `pip install`，也不需要可编辑安装。
 
 | 文件 | 用例数 | 验什么 |
 |---|---|---|
-| `tests/test_config.py` | 62 | 默认值表、三层优先级、环境变量映射、五个热读键、键间校验、配置损坏抛错、值非法 → 退出码 `2` |
+| `tests/test_config.py` | 62 | 默认值表、三层优先级、环境变量映射、六个热读键（`asr.*` 五个 + `alarm.sound`）、键间校验、配置损坏抛错、值非法 → 退出码 `2` |
 | `tests/test_port_policy.py` | 23 | 端口与只监听回环、两种占用文案与退出码 `2`、探针 1 秒总超时、用法错误、`post` 桩、空闲态 `CTRL_BREAK_EVENT` → 退出码 `0` 与两行信号 log、console script 入口面 |
 | `tests/test_static.py` | 19 | `/` 的产物与说明页两条分支、**目录存在性按每请求判定**（同一个应用实例里「缺失 → 建出 → 又删掉」三步走完、中间不重启）、`/debug`、`/api/*` 的 `no-store`、Host 校验 `403`、动作头校验 `403`、完整版快照的键集与非空 `service.version`、`revision` 每次状态变更 +1、心跳六字段、空闲态盘上不留任何场次产物 |
 | `tests/test_contract_fixtures.py` | 8 | 与 `contract/fixtures/` 的漂移比对：重走真实服务路径采集 25 个样本逐文件比对（默认模式）、掩码结构断言（顶层十键 / 十二键、两路次序、包络长度 15、`levels` 的 `ts is None` 与 `bar == envelope[-1]`、心跳六键、四帧 `revision` 自洽）、`--regen-contract` 的再生成与幂等 |
 | `tests/test_logging_setup.py` | 17 | 服务级 log 位置与格式、bootstrap 重建、按两个配置键轮转、幂等、主 log 不可写与配置损坏 → 退出码 `3`、扫未收尾场次只报最新一场（那行 `WARNING` 照旧；改写现场的断言归下面的重启用例） |
-| `tests/test_api_actions.py` | 27 | 六个动作的成功与拒绝路径、`mode` 取值域、R17 的两个 409、`capture_unavailable`、`settings_update` 的两分与写盘拓扑与 `persist_failed`、逐动作 × 逐态可用性、`dev_inject` 的三档可用性、信封与 `code` 集合 |
+| `tests/test_api_actions.py` | 30 | 六个动作的成功与拒绝路径、`mode` 取值域、R17 的两个 409、`capture_unavailable`、`settings_update` 的两分（6 个热读键 / 21 个要重启的键）与写盘拓扑与 `persist_failed`、`alarm.sound` 当场生效、`muted` 的首发与重算、逐动作 × 逐态可用性、`dev_inject` 的三档可用性、信封与 `code` 集合 |
 | `tests/test_state_machine.py` | 20 | 四态取值域与全部合法迁移、非法迁移抛错且不涨 `revision`、三条铁律、`elapsed_seconds` 走秒与冻结、15 柱 × 2 秒包络、收尾闭环两个分支（成功档与失败停留档）、取消路径、探针越界取值回退 |
-| `tests/test_alerts.py` | 18 | 逐帧累计（用帧时间戳）、连续性判据、抖动不来回告警、抑制窗口与「恢复后算新事件」、`muted` 的重算、提示级的合并键与上限 3、阈值只从配置读 |
+| `tests/test_alerts.py` | 26 | 逐帧累计（用帧时间戳）、连续性判据、抖动不来回告警、抑制窗口与「恢复后算新事件」、**首发那一帧的 `muted` 是 `false`**（且此后同一条不被重新放行、**本场静音期间过一遍标记条目仍是 `true`**）、`muted` 的重算、提示级的合并键与上限 3（**被挤掉的键从记账里回收**）、**两条对称的清除路径**、**新一场开场把提示级两份记账一起清**、阈值只从配置读 |
 | `tests/test_dev_backend.py` | 15 | dev 替身的确定性与 100ms 节拍、三档故障的语义与到点恢复、重复注入替换前一次、`finalize()` 只记账、非 dev 后端回 404 |
 | `tests/test_sse.py` | 11 | 首帧是 `snapshot` 且与 `GET /api/state` 同源、`state` 是全量且 `id` 对齐 `revision`、`levels` 的 4Hz 与形状、`transcript` 形状、`retry` 与 `: ping`、慢消费者重同步且不拖累别人 |
 | `tests/test_heartbeat.py` | 11 | `idle` 下的空形态、`stall` 之后 `recording_alive == false` 而 HTTP 照常 200、窗口计算、两个心跳不串线、`SourceFacts` / `SourceLost` 不刷新帧时钟、帧间隔读不到时按 0.5 回退 |
@@ -283,6 +283,7 @@ python -m pytest tests/test_state_machine.py tests/test_api_actions.py -q   # �
 | `tests/test_asr_glm.py` | 20 | `meeting/asr/glm.py` 与 `guards.py` 的契约（全程注入假模型，一条都不加载真模型）：四层防护真的挂上了（`no_repeat_ngram_size=8` / `logits_processor=[_LoopGuard]` / `stopping_criteria=StoppingCriteriaList([_DeadlineStop])` 逐条断言）、降级记忆（首次 `TypeError` 去掉该参数重跑一次，开关已是 `False` 时异常照抛）、噪声预筛命中即 `ok=True, reason="noise"` 并省掉那一次生成、**超时与判环都不落部分文本**、拿 V1 那条真实坏行当模型输出喂进去断言砍到 <60 字符、参数一律从 `config.json` 读出、**`import meeting.asr.glm` 在一个全新解释器里一条重依赖都不拉** |
 | `tests/test_asr_pipeline.py` | 17 | 实时转写流水线（进程内、无真模型、无真声卡）：每一行的时间戳落在「那段音频写进归档的墙钟窗口」之内、两路各一个 `meeting_transcript_<source>.md` 且每行匹配 `^\[\d{2}:\d{2}\] `、段队列无界（`maxsize == 0`）且源码里没有 busy-drop、三档占位符的形状（**不含 `**`**）、噪声段连占位符都不写、收尾预算 `30 + n × (timeout + 5)`（下限 30 / 封顶 300）与预算耗完时的如实记账 |
 | `tests/test_transcriber_backend.py` | 20 | 转写后端的协议实现与**解耦证明**：六个成员齐、模块顶层不 import 重依赖、`auto` 落到真实现（`has_implementation is True`）、`dev` 按 key 分流、三态与两个计数，以及把模型换成「睡很久」与「会抛错」两条之后 —— **采集归档的字节数照涨**、随后到来的行时间戳仍贴近采集时刻、`/api/heartbeat` 仍应答 |
+| `tests/test_transcript_hints.py` | 11 | 提示级接线落在 `_refresh_transcript_snapshot()` 上且**每次都调判定器**（时长跟着刷）、键集合变化提交一次而时长刷新不推 `revision`、上限挤掉也算变化、health 回 `normal` 与积压回落两条清除路径、0.5 秒节拍自己把提示带进快照、**空闲与结束档 `alerts.hints` 恒为空数组**（离开录音 / 告警态就清、下一场从零） |
 | `tests/test_offline_audio.py` | 4 | 归档解码：16k / 单声道 / float32 的形状与值域、PCM 与 MP3 两条来源解出同一段波形 |
 | `tests/test_offline_segment.py` | 23 | 会后切段：30ms 帧、静默 2.0 秒收段、丢掉 <500ms 的尾段、单段上限、逐段区间与时间戳 |
 | `tests/test_offline_engine.py` | 29 | 引擎包装：`post.engine`/`post.dtype` 的档位翻译、逐块调用与块内命名空间、失败如实上报 |
@@ -330,9 +331,10 @@ pytest 把「sloww」当成一个谁都不带的标记，表达式于是恒真�
 3. 注入**「慢模型」**（睡很久 / 会抛错）来证明解耦或存活；
 4. 单条用例实测超过 **2.0 秒**。
 
-**只能落在文件粒度**：`tests/conftest.py` 那道看门把单条用例压在 5 秒之内，最慢的一条也才
-3.4 秒（`tests/test_drain.py::test_all_log_event_categories_findable_before_end_marker`），
-「慢」来自文件层面的真子进程与真墙钟等待。九个慢档文件各自在文件头加一行
+**只能落在文件粒度**：`tests/conftest.py` 那道看门（`CASE_WALL_CLOCK_LIMIT_SECONDS = 5.0`）管的是
+**逐条用例**的 `setup + call + teardown` 之和压在 5 秒之内，最慢的一条也才
+3.40 秒（`tests/test_drain.py::test_all_log_event_categories_findable_before_end_marker`），
+「慢」来自文件层面的真子进程与真墙钟等待。十个慢档文件各自在文件头加一行
 `pytestmark = pytest.mark.slow`：
 
 | 慢档文件 | 单文件实测 | 慢在哪一档判据 |
@@ -343,17 +345,18 @@ pytest 把「sloww」当成一个谁都不带的标记，表达式于是恒真�
 | `tests/test_shutdown_signal.py` | 8.70 s | ① 真服务子进程 + `CTRL_BREAK_EVENT` |
 | `tests/test_asr_pipeline.py` | 7.89 s | ② 真归档 + 真线程 + 收尾预算 |
 | `tests/test_port_policy.py` | 7.73 s | ① 真服务子进程 + 端口探针 |
-| `tests/test_api_actions.py` | 6.84 s | ② 进程内真运行时 |
+| `tests/test_api_actions.py` | 6.58 s | ② 进程内真运行时 |
 | `tests/test_capture_engine.py` | 6.71 s | ② 真读写线程 + 打点线程 |
 | `tests/test_capture_e2e.py` | 4.86 s | ① 真运行时 + `ffprobe` + 10 分钟合成 PCM |
+| `tests/test_transcript_hints.py` | 1.84 s | ② 进程内真运行时（那条端到端用例等 0.5 秒节拍） |
 
-**三条命令与实测耗时**（本机，`710` 条用例那一版）：
+**三条命令与实测耗时**（本机，`732` 条用例那一版）：
 
 | 命令 | 用例 | 实测 |
 |---|---|---|
-| `python -m pytest -q -m "not slow"` | **532 passed, 178 deselected** | **39.77 s**（墙钟 40.39 s） |
-| `python -m pytest -q -m slow` | **178 passed, 532 deselected** | **79.16 s**（墙钟 80.01 s） |
-| `python -m pytest -q` | **710 passed** | **117.17 s** |
+| `python -m pytest -q -m "not slow"` | **551 passed, 181 deselected** | **40.59 s**（墙钟 41.22 s） |
+| `python -m pytest -q -m slow` | **181 passed, 551 deselected** | **79.39 s**（墙钟 80.04 s） |
+| `python -m pytest -q` | **732 passed** | **119.55 s**（墙钟 120.20 s） |
 
 **不加 `-m` 时跑全量**，这一点是有意的：新写的用例默认落在快档，只有被显式标 `slow` 才跳过。
 漏跑的风险因此压在「新写的慢用例拖慢快档」这一侧，而不在「忘了标记 → 慢用例从没跑过」那一侧。
@@ -383,10 +386,10 @@ pytest 把「sloww」当成一个谁都不带的标记，表达式于是恒真�
 - **端口被占时那句文案里的「已录多久」**：占用者是本服务时，括号里眼下是**字面写死的「当前空闲」**（`meeting/service/app.py` 的端口探测那一处还没取用会话时长这个值）。`README.md` 与 `docs/api.md` 都照这个现状写。
 - **真机真开一场会**：设备枚举与真实电平只有真开一场才见分晓，这一条是**手工验收**，四条端到端脚本与它无关。自动化边界归下游 `46ae4a08`。
 - **`meeting post`**：只有桩（打印「会后流程还没接入（65dd3e4c）」、退出码 `1`）。它同时是收尾失败后的出路之一，实现归 `65dd3e4c`。
-- **前端**：`web/` 已经落地（React + TypeScript 严格模式 + Vite 6 + vitest 2 + zod），产物落 `web/dist`。它眼下是一页**壳页**：把连接、快照、动作、心跳这条链路走通给人看；电平表盘、告警横幅、设置抽屉归 `070b31e0` 的监控界面。工程自己的说明在 `web/README.md`（前提、五个 npm 脚本、两份 tsconfig 各管哪条线、两条铁律），这里只点两条链路：
+- **前端**：`web/` 已经落地（React + TypeScript 严格模式 + Vite 6 + vitest 2 + zod），产物落 `web/dist`。**会中主视图已经接上**（`070b31e0` phase2：状态胶囊与时长、两路电平表、每路健康、告警区（致命横幅 + 提示级）、心跳四级本地态与「采集已停」处置、实时转写区、手动总结入口的位置与禁用态、告警出声开关；数据全部来自服务推送，界面不造派生数据）。还没进来的：手动总结的行为、设置抽屉、转写历史回看（契约章 7 的保留登记，界面上只有位置与禁用态）。工程自己的说明在 `web/README.md`（视图结构、`src/live/` 各管什么、两份样式的来源与抽取口径、两条铁律），这里只点两条链路：
   - **改界面**：`cd web; npm run dev`，vite 起在 5173、`/api` 转发到 `http://127.0.0.1:${MEETING_PORT ?? 8765}`（服务照常跑着，改文案走 HMR，不必刷新）。
   - **开会**：`cd web; npm run build`（内部先跑 `npm run typecheck`）产出 `web/dist`，再 `meeting web` **由服务直接发这份静态产物** —— 从服务端口（如 `http://127.0.0.1:8765`）打开就是真界面，**运行时不需要 Node**。
-  - 自检是 `npm test`（vitest run，4 个文件 121 个用例）与 `npm run typecheck`。
+  - 自检是 `npm test`（vitest run，10 个文件 241 个用例）与 `npm run typecheck`。
   - 产物缺失时 `/` 给说明页、`/api/*` 与 `/debug` 照常，产物建好刷新即可见（见第 3 章那张表）。
 - **`settings.devices`**：两个子键 `mic` / `loopback`（`dca4539b` 定名），取值是设备名或 `null`（没配）。设备挑选在 `meeting/capture/devices.py`（骨架搬自 V1 `mnotes_core/recorder.py` 的 `_resolve_mic_device` / `_resolve_loopback_speaker`，多加一步：试开时读回一小段样本判有没有波形）；真实枚举、试开与持续采集在 `meeting/capture/sources.py`，会话引擎（两路读侧 / 写侧 / 0.5 秒电平刻度）在 `meeting/capture/engine.py`。**配置键是「用户配的意图」，快照 `sources[*].device_name` 是「探测实际落到的那个设备」**：配了却没命中时按「精确名 → CABLE Input（不含 16ch）→ 系统默认输出」这条回退顺序走，主 log 一行 `WARNING`，不报错（契约陈述见 `docs/contract.md` 第 2 章 `settings.devices` 那一段）。
 

@@ -97,9 +97,11 @@
 
 `alerts`：`critical` 是 `Alert｜null`（**致命级同时只留一条**），`hints` 是 `Alert` 数组（**同类合并、上限 3**）。`Alert` **六字段**：`{level, source, since, duration_seconds, message, muted}`。
 
-- `level ∈ critical` / `hint`；`source` 是那一路的 id。提示级那两条（`AlertJudge.on_transcript_health()` / `on_backlog_depth()`）的 `source` 定名也是 `transcript`，不过服务侧还没有它们的调用点：`alerts.hints` 眼下恒为空数组（`docs/state.md` 第 5 章）。
+- `level ∈ critical` / `hint`；`source` 是那一路的 id。提示级那两条（`AlertJudge.on_transcript_health()` / `on_backlog_depth()`）的 `source` 定名也是 `transcript`，服务侧**每刷一次转写快照就把当前 health 与积压段数交给它们**（接线落在 `ServiceRuntime._refresh_transcript_snapshot()`，见第 3 章那一格与 `docs/state.md` 第 6 章）：`transcript.health` 掉到 `behind` / `stopped` 出一条、待转写段数 ≥ 20 出一条，两条各自对称地清掉（health 回 `normal`、积压回落到 20 以下）。
+- **`hints` 只在 `top_state ∈ {recording, alert}` 时可能有条目**：`idle` 与 `ended` 两档恒为空数组（`docs/ui-design.md` 章 2.5 的「什么状态显示什么」表把空闲态的告警区定成不出现）。空闲态那一格 `transcript.health == "stopped"` 报的是「真转写后端还没起过场次」，与录音中「转写停了」属于两种情形，它不产生提示级；离开录音 / 告警态时服务侧把提示级连内部记账一起清掉，下一场 `start` 从零开始。
 - `since` 是 ISO（**掩码 `<iso>`**）；`duration_seconds` **掩码 0**。
-- `muted` 说的是**这一条现在会不会出声**（会话级静音生效期间，或这一条还在抑制窗口里）。判定与窗口计算**全在服务侧**：界面只看这个布尔值，`false` 就响一声、`true` 就不出声、界面不算任何窗口。
+- `muted` 说的是**这一条现在会不会出声**（会话级静音生效期间，或这一条还在抑制窗口里）。判定与窗口计算**全在服务侧**：界面只看这个布尔值，`false` 就响一声、`true` 就不出声、界面不算任何窗口。**重算只发生在 `ServiceRuntime.commit()` 那一刻**：抑制窗口到点本身不产生提交，所以「窗口已过、下一次提交还没来」那段里快照上的 `muted` 仍是上一次算出来的 `true`（不重复出声）。
+- **首发那一帧是 `false`**：一条**新起**的告警在广播出去的第一帧 `muted` 是 `false`（界面据此响一声），此后同一条是 `true`（不重复出声）；恢复后再次发生按新事件处理，首发又是 `false`。本场静音期间一律 `true`（那条「刚起、还没广播」的条目在静音期间同样算 `true`）。`contract/fixtures/snapshot/alert.json` 抓的就是首发那一帧（`"muted": false`）。
 - **心跳失联那条致命级由界面自己判、自己画**，服务侧不产生它。
 
 `transcript`：`health ∈ normal｜behind｜stopped`（直接来自转写后端。**空闲态是 `stopped`** —— 真实现没起过场次时报的就是它，`contract/fixtures/snapshot/idle.json` 与 `idle-notice.json` 那两格里就是这个值；缺席档的缺省替身恒报 `normal`）；`last_line_at` 是 ISO \| null（**掩码 `<iso>`**，服务侧收到最近那一行时的墙钟）；`buffered_lines` 是积压段数、`failed_segments` 是累计识别失败段数 —— **这两个计数只进 log 与 `/debug`，产品界面不摆它们**，它们写进快照但不给 `revision` 投票（四格里只有 `health` 的迁移才提交）。刷新路径：开一场就地刷一次、每出一行刷一次，另有一条 0.5 秒的低频节拍兜住「worker 停摆、没有行可等」那一档；**读路径（`GET /api/state`、SSE 首帧）不碰后端，也不改状态**。同一批行逐行落在场次目录里的 `meeting_transcript_<source>.md`（会中临时稿，一行 `[HH:MM] 正文`，见 `docs/state.md` 第 3 章）；**会中这份是临时稿**，权威底本是会后那份 `meeting_offline_transcript_<source>.md`（每路一份、两路不合并，第 7 章）。
@@ -206,6 +208,8 @@ data: {"revision": 3, "frames": {...}}
 | `kind` | string | `line` 或 `gap`（断口）。真转写后端产出的照旧是 `line`，失败段落也走 `line`，靠 `text` 的占位符形状认出来 —— 界面按那个形状把它画成缺口（`docs/ui-design.md` 第 2 章），别按正文渲染 |
 
 一行到来时服务侧只更新 `transcript.last_line_at` 并推这一帧，**不参与状态迁移、不涨 `revision`**。
+
+这条「不涨 `revision`」带**一个**例外，口径写死如下：`alerts.hints` 的**键集合**变化（提示级新增 / 移除 / 被上限 3 挤掉，以及离开 `recording` / `alert` 时整格清空）要能被界面看见，于是转写刷新返回「有变化」、由既有调用点借 `state` 通道提交一次（`revision +1` + 一次全量 `state` 广播）；**同一个键集合里 `duration_seconds` 的刷新不算变化**，返回假、不提交 —— 否则 0.5 秒的节拍会把 `revision` 一直推上去，上面那句「不涨 `revision`」当场变成假命题。判据落在 `ServiceRuntime._sync_transcript_hints()`，逐句口径见 `docs/state.md` 第 6 章。
 
 ### 3.4 重连语义
 
@@ -333,7 +337,7 @@ X-Meeting-Service: 1
 
 `settings_update` 写的是配置文件，与「这一场录到哪儿」无关，因此**任何状态下都可用**。`mute_session` 只在本场收尾之前可用 —— 收尾完成后本场已无可静音，复位发生在下一场 `start`。`reprobe` 只在**没有场次在跑**的时候可用（`recording` / `alert` 两态回 `already_recording`）：设备在开场前定下来，会中换设备是明文不做的那一档。
 
-### 4.6 `settings_update`：23 键清单与两档
+### 4.6 `settings_update`：27 键清单与两档
 
 请求的 `args` 就是**「配置点号键名 → 值」的扁平映射**，只有这一层、不按键前缀分组：
 
@@ -347,21 +351,22 @@ X-Meeting-Service: 1
 {"ok": true, "revision": 3, "applied": ["asr.timeout_seconds"], "pending_restart": []}
 ```
 
-**合法键名是逐条列出的 23 个**（不按前缀归组、没有前缀白名单）。表外的任何键名一律 `invalid_setting`(400) 且 `detail = {key, value, legal}`。
+**合法键名是逐条列出的 27 个**（不按前缀归组、没有前缀白名单）。表外的任何键名一律 `invalid_setting`(400) 且 `detail = {key, value, legal}`。
 
 | 归类 | 键（个数） | 为什么 |
 |---|---|---|
-| `applied` | `asr.max_segment_seconds` / `asr.timeout_seconds` / `asr.max_new_tokens` / `asr.repeat_max_unit` / `asr.repeat_min_coverage`（**5 个**） | 这五个是**热读键**，每段重新读，写盘成功就立刻生效 |
-| `pending_restart` | `web.port` / `web.dist_dir` / `output.root` / `log.level` / `log.dir` / `log.max_bytes` / `log.backup_count` / `alert.silence_dbfs` / `alert.silence_seconds` / `alert.recover_seconds` / `alert.alarm_suppress_seconds` / `alarm.sound` / `heartbeat.interval_seconds` / `capture.backend` / `transcriber.backend` / `post.hook` / `devices.mic` / `devices.loopback`（**18 个**） | 这些值在**启动时读一次**，写盘成功但要重启才生效 |
+| `applied` | `alarm.sound` / `asr.max_segment_seconds` / `asr.timeout_seconds` / `asr.max_new_tokens` / `asr.repeat_max_unit` / `asr.repeat_min_coverage`（**6 个**） | 这六个是**热读键**，写盘成功就立刻生效。`alarm.sound` 收在这一档，于是勾选出声开关**当场**改运行期行为 |
+| `pending_restart` | `web.port` / `web.dist_dir` / `output.root` / `log.level` / `log.dir` / `log.max_bytes` / `log.backup_count` / `alert.silence_dbfs` / `alert.silence_seconds` / `alert.recover_seconds` / `alert.alarm_suppress_seconds` / `heartbeat.interval_seconds` / `capture.backend` / `transcriber.backend` / `post.hook` / `post.engine` / `post.model` / `post.dtype` / `post.chunk_seconds` / `devices.mic` / `devices.loopback`（**21 个**） | 这些值在**启动时读一次**，写盘成功但要重启才生效 |
 
 两个数组里也是同一套点号键名，次序**照本次请求里的键逐条走**。
 
 - **两个数组的判据只有一条**：该键在键态表里归哪一档。**「写盘成功」是前提** —— 写盘失败整笔回 `persist_failed`(500)，一处都不生效。
-- **`alarm.sound` 归 `pending_restart`（已登记的偏离）**：设计稿（`docs/ui-design.md` 4.5 一节的交互清单）说勾选「立即生效」，而**服务侧的实际行为是「写盘成功、但要重启才改运行期行为」**，写盘时主 log 里留一行「本场出声开关仍取启动值」。**以服务侧行为为准**；这条偏离登记在此、待复核，界面上按「改了要重启」的现状说明（例如在开关旁给一句提示），**不要**按 `applied` 画成立即生效。
+- **`alarm.sound` 与 `asr.*` 一样当场生效**：写盘成功那一刻主 log 落一行「alarm.sound 收在热读档，本刻起出声开关 = …」，服务侧同时重取一次生效值视图并提交，于是紧接着的 `GET /api/state` 里 `settings.alarm_sound` 就是新值，界面当场按新值决定响不响（设计稿 `docs/ui-design.md` 4.5 要的「勾选立即生效」在这里成立）。
 - **只写用户配置文件里已有的键 + 本次改动的键**，不把代码默认值落盘 —— 一次 `settings_update` 不会凭空长出一份写着全部默认值的配置文件。
 - **校验在写盘之前**：至少落地方案点名的「超时必须大于段长」（`asr.timeout_seconds > asr.max_segment_seconds`，没改到的那一半取生效配置的当前值），违规回 `invalid_setting`(400) 且 `detail = {key, value, legal}`。
 - **被环境变量压着的键不改分类**：`asr.*` 照样进 `applied`、`output.root` 照样进 `pending_restart`；「被环境变量压着」这件事只在主 log 留一条 warning（键名 + 写盘的值 + 压住它的环境变量名），运行期仍由环境变量说话。
 - **配置文件本身与请求同位**：`~/.config/meeting/config.json` 里也只有一层点号扁平键名（例如 `{"alert.silence_seconds": 3}`）。**嵌套形状不合法**。
+- **`pending_restart` 的键在主 log 里点名**：本次改动里有这一档的键时，落一行「… 归 pending_restart，仍取启动时的生效值（改了要重启才生效）」并列出这些键名；热读键不进那一行（它们已经在上面生效了）。
 - **热读键生效之后 `revision` 会 `+1`**（服务侧重取一次生效值视图并提交）；全是 `pending_restart` 的改动**只写盘、不提交**，因此 `revision` 不动 —— 界面别拿 `revision` 当「设置改没改成功」的判据，看 `ok` 与两个数组。
 
 **这一档的 fixtures**：`contract/fixtures/actions/{start-ok,stop-ok,mute-session-ok,settings-update-ok}.json` 与七个 `fail-*.json`。
@@ -422,7 +427,7 @@ X-Meeting-Service: 1
 
 ## 6. 客户端义务
 
-下面七条是**界面必须做到的事**，每一条都由服务侧的某条硬约束逼出来。它们是契约的另一半 —— 服务履行它的那一半（推送、判定、掩码），界面履行这一半。
+下面八条是**界面必须做到的事**，每一条都由服务侧的某条硬约束逼出来。它们是契约的另一半 —— 服务履行它的那一半（推送、判定、掩码），界面履行这一半。
 
 1. **只消费推送，不持本地权威状态。** 状态的唯一权威在服务侧（`ServiceRuntime` 手里的那一份快照）。界面手上那份是**它推过来的副本**，任何分歧以服务为准。
 2. **不用浏览器本地存储（`localStorage` / `sessionStorage` / IndexedDB / Cookie）保存会中状态。** 会中状态（哪一态、时长、告警、静音、转写）一律从服务取；刷新、重开、多开看到的都是同一份。界面自己持久化的只能是**纯界面偏好**（例如心跳周期、面板展开与否这一类与服务无关的东西）。
@@ -431,6 +436,14 @@ X-Meeting-Service: 1
 5. **心跳按配置周期轮询**：默认 10 秒、可配 1–60 秒（`settings.heartbeat_interval_seconds`）。判定用应答里的 `server_time` 作基准；失联按 5 章的处置做（冻结 + 压灰 + 横幅）。
 6. **不自己造派生数据**：包络（`envelope`）与 `bar` 由服务算好推过来，界面**不许自己造**；告警的 `muted` 由服务判定，界面**不算任何抑制窗口**、只按布尔值决定响不响。
 7. **按 `code` 分派失败画法、按 `detail` 有哪个键显示哪个键**：七个 `code` 固定、`detail` 的档位（尤其是 `capture_unavailable` 三档与 `invalid_setting` 四档）以第 4.4 节为准，**不按 `message` 做字符串匹配**。
+8. **决定响不响的时候，持久化开关与本条告警的 `muted` 一起读。** 这两个字段各管一件事，缺一条读法就会读错：
+
+   | 字段 | 谁写的 | 管什么 |
+   |---|---|---|
+   | 快照 `settings.alarm_sound` | 用户按的「告警出声」开关（持久化，跨场次记住） | **这一台机器要不要出声** |
+   | `alerts.*.muted` | 服务侧每次提交时重算 | 这一条告警**此刻**该不该出声（会话级静音 ∨ 抑制窗口） |
+
+   `alarm.sound` 关掉时服务推的 `muted` **仍是 `false`** —— 服务侧只管「本场静音」与「抑制窗口」这两半，持久化开关是界面这一侧的事。所以响一声的判据是**两个都为「放行」**：`settings.alarm_sound === true` **且**这一条告警的 `muted === false`。只读 `muted` 会在开关关掉之后照样响，只读 `alarm_sound` 会在抑制窗口里重复响。
 
 ## 7. 保留登记：定名但未实现
 

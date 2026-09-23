@@ -134,7 +134,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 - `asr` 的五子键与配置键 `asr.*` 逐字同名（去掉前缀），取当前生效值：`max_segment_seconds` / `timeout_seconds` / `max_new_tokens` / `repeat_max_unit` / `repeat_min_coverage`。
 - `devices` 的两个子键 `mic` / `loopback`（`dca4539b` 定名）与配置键 `devices.mic` / `devices.loopback` 逐字同名（去掉前缀），取当前生效值：值为**设备名字符串**，没配就是 `null`（按默认策略挑：mic 先挡掉 `CABLE Output` 这类抓取型虚拟端点，再拿**系统默认输入端点**的名字凑同名候选、按 host API 排序试开；loopback 优先 `CABLE Input` 且不含 `16ch`）。空值形状两端一致 —— 配置文件里也写 `null`。
 - **这两个子键说的是「用户配的意图」，`sources[*].device_name` 说的是「探测实际落到的那个设备」**（`dca4539b` 的契约陈述，同一段也写在 `docs/contract.md` 第 2 章与 `docs/service.md` 第 8 章）：配了却没命中任何端点时**不报错、也不改写快照里的名字**，按「精确名 → `CABLE Input`（不含 `16ch`）→ 系统默认输出」这条回退顺序走，主 log 一行 `WARNING`（V1 就是这个行为，见 `meeting/capture/devices.py` 的 `loopback_candidates()`）。想知道这一场到底在录哪个设备，看 `sources[*].device_name`。
-- 这里读到的是**运行期生效值**。非热读的键改了要重启才在快照里可见，详见 `docs/service.md` 第 4 章的键态两分。
+- 这里读到的是**运行期生效值**。`pending_restart` 那一档的键改了要重启才在快照里可见，`alarm.sound` 与 `asr.*` 一样是热读键、写盘那一刻就换过来，详见 `docs/service.md` 第 4 章的键态两分。
 
 `transcript` 的语义（四格都由转写后端刷新，判定权收在 `meeting/service/runtime.py` 的 `_refresh_transcript_snapshot()` 一处）：
 
@@ -303,15 +303,29 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 分级与合并：
 
 - **致命级**（某路采不到）进 `alerts.critical`，**同时只留一条**。
-- **提示级**进 `alerts.hints`，**同类合并、上限 3**。合并的键是 `(level, source, message)` 三元组，同一个键再次出现时沿用原来那一条的 `since`、把 `duration_seconds` 刷新到当下；到上限后又来新的键，就留下 `since` 最早的三条，多出来的只进 log。两条提示级都定在 `source = transcript` 上，靠 `message`（也就是故障类型文案）区分。
-- 判定器里那两条提示级的入口已经就位：`AlertJudge.on_transcript_health()`（`transcript.health` 从 `normal` 掉到 `behind` / `stopped`）与 `AlertJudge.on_backlog_depth()`（待转写段数 ≥ 20 段，`BACKLOG_HINT_THRESHOLD` 写死在代码里、不加配置键）。**服务侧还没有它们的调用点** —— 快照里的 `alerts.hints` 眼下恒为空数组，接线归下游节点。
+- **提示级**进 `alerts.hints`，**同类合并、上限 3**。合并的键是 `(level, source, message)` 三元组，同一个键再次出现时沿用原来那一条的 `since`、把 `duration_seconds` 刷新到当下；到上限后又来新的键，就留下 `since` 最早的三条，**多出来的那个键在合并那一刻就从判定器的记账里回收**（`hints()` 与记账本因此恒同长；被挤掉的那条只进 log），同一个键后来重新进榜算新起的那一条。两条提示级都定在 `source = transcript` 上，靠 `message`（也就是故障类型文案）区分。
+- 判定器里那两条提示级的入口：`AlertJudge.on_transcript_health()`（`transcript.health` 从 `normal` 掉到 `behind` / `stopped`）与 `AlertJudge.on_backlog_depth()`（待转写段数 ≥ 20 段，`BACKLOG_HINT_THRESHOLD` 写死在代码里、不加配置键）。**两处都在 `ServiceRuntime._refresh_transcript_snapshot()` 里接线**，而那个函数是转写刷新的唯一落点（启动、开场、每行、0.5 秒节拍四条路径都经过它），所以接一次就覆盖四条路径。
+- **每刷一次就调一次判定器**（不是只在 `health` 迁移那一刻）：持续提示条要在窗口内一直刷新 `duration_seconds`，只在迁移时调的话它会停在 `0`。判定器那边本来就是幂等的（同一个三元组沿用原来那一条、只刷时长）。
+- **提示级只在录音与告警态成立**：`top_state ∈ {recording, alert}` 时这一格才可能有条目，`idle` 与 `ended` 两档恒为空数组（`docs/ui-design.md` 章 2.5 那张「什么状态显示什么」表里，空闲态与结束档的告警区都是**不出现**）。判定权随状态收口：在那两个态里服务侧才把 `health` / 积压读数交给判定器；离开 `recording` / `alert` 时把已经挂着的那几条**连内部记账一起清掉**（`ServiceRuntime._clear_hints()`：判定器的条目与记时表、快照那一格、`_hint_keys` 三样同进同退），于是下一场 `start` 从零开始。**空闲态那个 `health == "stopped"` 报的是「真转写后端还没起过场次」**（见第 4 章那两格 fixtures），与录音中「转写停了」属于两种情形，它不构成一条提示级。
+- **两条提示各有对称的清除路径**：`health` 回到 `normal` 撤掉健康度那两条文案（「转写落后了」/「转写停了」），积压回落到 20 段以下撤掉积压那一条。两类共用 `source = transcript`、靠 `message` 分辨，各清各的 —— 转写跟上了并不代表队列已经清空。
 - **心跳失联那条致命级由界面自己判、自己画**，服务侧不产生它。
 
 `Alert` 六字段：`{level, source, since, duration_seconds, message, muted}`。`level ∈ critical / hint`，`source` 是那一路的 id。
 
 `muted` 说的是**这一条现在会不会出声**，判据是「本场静音生效期间」**或**「这一条还在抑制窗口里」。抑制窗口按「哪一路 + 故障类型」跟踪，**判定与计算全在服务侧**：界面只看这个布尔值，`false` 就响一声、`true` 就不出声，界面不算任何窗口。
 
-两条相关动作见 `docs/api.md`：`mute_session`（会话级，下一场 `start` 自动复位，不改持久化开关 `alarm.sound`）与 `dev_inject`。抑制窗口到点、会话级静音复位、下一场开场之后，同一条告警的 `muted` 会自己回到 `false`。
+**首发那一帧给 `false`** —— 这是本场告警能不能响的那一步：
+
+- 抑制窗口的锚点是**上一次 raise 的时刻**（`_SourceTrack.last_raise_ts`），窗口 = `[锚点, 锚点 + alert.alarm_suppress_seconds)`；
+- 一条**新起**的告警在广播出去的第一帧 `muted` 是 `false`（界面据此响一声）。`ServiceRuntime.commit()` 在写下锚点之后还会重算一遍 `muted`，而那次重算就发生在锚点刚开的同一刻 —— 所以刚起的那一条在 `_SourceTrack.raise_in_flight` 上挂一个记号，`AlertJudge.refresh_muted()` 认出「正是这一条还没出去」就跳过窗口那一半的重算、把它算好的 `false` 留到这一帧，跑完把记号清掉；**会话级静音那一半照算**，本场静音期间这条标记条目照样是 `true`；
+- 此后同一条告警重算是 `true`（不重复出声）；`alert.alarm_suppress_seconds` 保留为「同一条事件在窗口内反复 raise 不重新放行」的那道闸；
+- `mark_recovered()` 关掉窗口，恢复后再发生按**新事件**处理，首发又是 `false`；本场静音期间一律 `true`。
+
+`contract/fixtures/snapshot/alert.json` 抓的就是首发那一帧（`"muted": false`）。
+
+两条相关动作见 `docs/api.md`：`mute_session`（会话级，下一场 `start` 自动复位，不改持久化开关 `alarm.sound`）与 `dev_inject`。
+
+**`muted` 什么时候重算**：它的唯一入口是 `AlertJudge.refresh_muted()`，而那个函数只在 `ServiceRuntime.commit()` 里被调一次 —— 也就是说，快照上这个布尔值**在下一次提交那一刻**才按当下的窗口与会话级静音重新算一遍（`revision` 只在那时 `+1` 并广播）。抑制窗口自己到点不产生任何提交，`AlertJudge.is_muted()` 在全仓也没有读路径或定时路径调用它，因此「窗口已过、下一次提交还没来」的那一段里，快照上的 `muted` 仍是上一次算出来的 `true`（方向是**不重复出声**：事故还在继续时不会又响一次）。会话级静音复位、下一场 `start` 复位同理 —— 都在紧随其后的那次提交里落到快照上。
 
 ## 6. SSE：四个事件与帧形状
 
@@ -331,6 +345,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 | `transcript` | 每出一行转写 | `{revision, line: {ts, source, text, kind}}` |
 
 - `levels` **不占 `revision`**，只带当前值作参照。
+- **`transcript` 通道同样不占 `revision`**（第 3.3 节：那一格不参与状态迁移）。提示级是这条规矩上唯一的例外，口径写死如下：`alerts.hints` 的**键集合**变化（提示级新增 / 移除 / 被上限 3 挤掉，以及离开 `recording` / `alert` 时整格清空）**要能被界面看见**，于是转写刷新返回「有变化」、由既有调用点借 `state` 通道提交一次（`revision +1` + 一次全量 `state` 广播）；**同一个键集合里 `duration_seconds` 的刷新不算变化**，返回假、不提交 —— 否则 0.5 秒的节拍会把 `revision` 一直推上去，契约给界面的那句「`id` 变了就是状态变了」当场变成假命题。判据落在 `ServiceRuntime._sync_transcript_hints()`：它按 `(level, source, message)` 有序记账，键集合动了才返回真。
 - **`levels` 帧里每一路的 `ts` 恒为 `null`**：这一格的语义是「这条读数的时刻」，而电平帧自带固定节奏（4 次/秒），服务不按帧填它 —— 客户端拿 `data.revision` 与帧到达时刻定位即可。`transcript` 帧的 `line.ts` 是另一回事：那一格由转写后端给，真值可以是非 null。
 - 慢消费者：每个订阅者一个**有界队列 512**。满了就清空这个订阅者的队列、塞一份带 `resync: true` 与 `dropped: N` 的 `snapshot`；`levels` 满了只留最新一帧。**一个卡住的页面拖不住别人**，广播路径是同步的、不 `await` 慢消费者。
 - 多个连接看的是同一份状态：一次变更同一个 `revision` 同时到所有订阅者。

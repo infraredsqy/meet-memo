@@ -118,10 +118,10 @@
 
 | 归类 | 键 | 为什么 |
 |---|---|---|
-| `applied`（5 个） | `asr.max_segment_seconds` / `asr.timeout_seconds` / `asr.max_new_tokens` / `asr.repeat_max_unit` / `asr.repeat_min_coverage` | 这五个是热读键，每段重新读，写盘成功就立刻生效 |
-| `pending_restart`（22 个） | `web.port` / `web.dist_dir` / `output.root` / `log.level` / `log.dir` / `log.max_bytes` / `log.backup_count` / `alert.silence_dbfs` / `alert.silence_seconds` / `alert.recover_seconds` / `alert.alarm_suppress_seconds` / `alarm.sound` / `heartbeat.interval_seconds` / `capture.backend` / `transcriber.backend` / `post.hook` / `post.engine` / `post.model` / `post.dtype` / `post.chunk_seconds` / `devices.mic` / `devices.loopback` | 这些值在启动时读一次，写盘成功但要重启才生效 |
+| `applied`（6 个） | `alarm.sound` / `asr.max_segment_seconds` / `asr.timeout_seconds` / `asr.max_new_tokens` / `asr.repeat_max_unit` / `asr.repeat_min_coverage` | 这六个是热读键，写盘成功就立刻生效。`alarm.sound` 收在这一档，于是勾选出声开关**当场**改运行期行为 |
+| `pending_restart`（21 个） | `web.port` / `web.dist_dir` / `output.root` / `log.level` / `log.dir` / `log.max_bytes` / `log.backup_count` / `alert.silence_dbfs` / `alert.silence_seconds` / `alert.recover_seconds` / `alert.alarm_suppress_seconds` / `heartbeat.interval_seconds` / `capture.backend` / `transcriber.backend` / `post.hook` / `post.engine` / `post.model` / `post.dtype` / `post.chunk_seconds` / `devices.mic` / `devices.loopback` | 这些值在启动时读一次，写盘成功但要重启才生效 |
 
-- **`alarm.sound` 归 `pending_restart`**：勾了出声开关要重启才改运行期行为，主 log 里会留一行「本场出声开关仍取启动值」。这是与设计稿「勾选即立即生效」的**已知偏离**（`docs/ui-design.md` 4.5），登记待复核。
+- **`alarm.sound` 与 `asr.*` 一起当场生效**：写盘那一刻主 log 落一行「alarm.sound 收在热读档，本刻起出声开关 = …」，服务侧同时重取一次生效值视图并提交 —— 紧接着的 `GET /api/state` 里 `settings.alarm_sound` 就是新值，`revision` 涨一格，界面当场按新值决定响不响（设计稿 `docs/ui-design.md` 4.5 要的「勾选立即生效」在这里成立）。
 - **会后那四个键**（`post.engine` / `post.model` / `post.dtype` / `post.chunk_seconds`）也归 `pending_restart`：`post.engine` 与三个后端选择键同形（`auto` / `null` / `module:Class`），`post.model` 收 HF 仓库 id 或本地快照路径，`post.dtype` 只认 `bfloat16` / `bf16` / `float16` / `fp16` / `float32` / `fp32` 这几个档位名，`post.chunk_seconds` 是每块音频的长度上限（整数 `0`–`86400`，默认 `450`，`0` = 关掉分块、整段一次跑）。键名与取值范围的判据在 `meeting/config.py`，档位名要跟 `meeting/offline/engine.py` 的 `DTYPE_NAMES` 对得上，写错的名字在写盘前就被拦下。
 - **配置文件本身的键形与请求同位**：`~/.config/meeting/config.json` 里也只有一层点号扁平键名，例如 `{"alert.silence_seconds": 3}`。嵌套形状不合法。
 - **只写用户配置文件里已有的键 + 本次改动的键**，不把代码里的默认值落盘 —— 一次 `settings_update` 不会凭空长出一份写着全部默认值的配置文件。

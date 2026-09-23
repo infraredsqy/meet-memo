@@ -93,12 +93,16 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 
 ## 3. 热读键有哪些
 
-**只有 `asr.*` 那五个键**每段重新读，改完立刻生效：
+**`asr.*` 那五个键每段重新读，`alarm.sound` 写盘那一刻就生效** —— 这六个合起来是热读键：
 
+    alarm.sound
     asr.max_segment_seconds / asr.timeout_seconds / asr.max_new_tokens /
     asr.repeat_max_unit / asr.repeat_min_coverage
 
-其余键（`web.*` / `output.root` / `log.*` / `alert.*` / `alarm.*` / `heartbeat.*` /
+`alarm.sound`（本场出不出声的持久化开关）收在热读档，是为了让钩子上的「出声开关」勾选即生效：
+`settings_update` 写盘成功那一刻快照里的 `settings.alarm_sound` 就换过去了。
+
+其余键（`web.*` / `output.root` / `log.*` / `alert.*` / `heartbeat.*` /
 `capture.*` / `transcriber.*` / `post.*`）**改完要重启**。这份「其余键」清单以
 `meeting/config.py` 的键全集为准。
 
@@ -214,7 +218,7 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 自检：
 
     cd web
-    npm test           # vitest run，4 个文件 121 个用例
+    npm test           # vitest run，10 个文件 241 个用例
     npm run typecheck  # 两条 tsc --noEmit -p，各查各的 project
 
 `npm run build` 里已经含 `npm run typecheck`，所以构建过一次就不必再单独跑；只改类型不看产物时跑 `typecheck` 更快。契约正文在 `docs/contract.md`，可机读基准（25 个 golden 样本与掩码规则）在 `contract/`，前端工程的五个脚本（`dev` / `typecheck` / `build` / `preview` / `test`）与其余说明在 `web/README.md`。
