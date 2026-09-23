@@ -14,6 +14,12 @@
 （在 `bind_*()` 里包好交给后端，后端拿不到裸的状态对象）；
 **`to_dict()` 与 `commit()` 配合**：状态变更后经 `commit()` 一次完成「`revision +1` +
 广播一次全量 `state`」，别处一律不自己改 `revision`、不自己发 `state`。
+
+**唯一的例外是「等待一条同步调用」**：收尾四步（`_drain_wait()`）与会中总结那一次模型调用
+（`summarize()` → `_summary_wait()`，`1987cb20` phase2 的复审裁定）都**不**在事件循环上跑
+同步实现 —— 它们提交到各自的 daemon 工作线程，事件循环只等结果，`/api/state`、三个 SSE 通道、
+心跳与健康节拍照旧转。两条等待的上限都是自己那条 deadline（收尾是 `compute_drain_budget()`、
+总结是 `summary.deadline_seconds`）。
 """
 
 from __future__ import annotations
@@ -56,6 +62,15 @@ from meeting.session import (
     restart_unfinished_text,
     state_for,
     steps_from_ended,
+)
+from meeting.summary import (
+    WINDOW_CHOICES,
+    ModelClient,
+    SummaryOutcome,
+    SummarySettings,
+    TranscriptBuffer,
+    run_summary,
+    sections_for,
 )
 from meeting.state import (
     DRAIN_STEP_IDS,
@@ -167,6 +182,22 @@ DRAIN_SETTLE_POLL_SECONDS = 0.05
 #: 同时仍是一个小规模、daemon、不登记 `_threads_queues` 的池。
 DRAIN_EXECUTOR_MAX_WORKERS = 4
 
+#: 会中总结那一次模型调用专用的工作线程条数（`1987cb20` phase2 的复审裁定）。
+#:
+#: **为什么它会中总结要另起一台池**（复审 minor 6）：那次模型调用是一条同步的
+#: `urllib.request`，跑在事件循环上就把 `/api/state`、三个 SSE 通道、心跳与健康节拍
+#: 一起按住（复审实测：假客户端原地 sleep 3 秒，同一刻另一条 `GET /api/state` 等了 2.70 秒；
+#: 真端点预算默认 25 秒，按住的就是这么久）。设计章 4.5 对 `summary-running` 那一档写的是
+#: 「总结区 `正在总结刚才的 15 分钟…`；**其余照常**」—— 被按住的界面正好是那一档要避免的样子。
+#:
+#: **为什么是 2 而不是 1**：`summary.deadline_seconds`（默认 25 秒）到点时，
+#: `_summary_wait()` 放弃的是**等待**，已经交给工作线程的那次调用会照着它自己拿到的
+#: `timeout_seconds` 跑到底（契约与 `_drain_wait()` 同一口径）。弃等之后紧接着按下的第二次
+#: 总结因此需要另有一条线程可用，否则它要排在前一次调用的尾巴上、自己那 25 秒预算在队列里
+#: 白等。两条线程把「被放弃的那一次仍在飞 + 新按下的这一次要开跑」这一幕整个装下，
+#: 同时仍是一个小规模、daemon、不登记 `_threads_queues` 的池。
+SUMMARY_EXECUTOR_MAX_WORKERS = 2
+
 
 class DrainLimitExceeded(TimeoutError):
     """某一步超出这一趟收尾的共享预算。
@@ -177,7 +208,11 @@ class DrainLimitExceeded(TimeoutError):
 
 
 class _DaemonThreadPoolExecutor(_ThreadPoolExecutor):
-    """工作线程是 **daemon** 的线程池（收尾四步的同步调用专用）。
+    """工作线程是 **daemon** 的线程池（同步实现丢进工作线程的那些调用专用）。
+
+    两处调用点：**收尾四步**（`_drain_wait()`）与**会中总结那一次模型调用**
+    （`_summary_wait()`，`1987cb20` phase2 的复审裁定）。两处各起一台池（收尾那台 4 条线程、
+    会中总结那台按 `SUMMARY_EXECUTOR_MAX_WORKERS`），工作线程都是本类的 daemon 线程。
 
     **为什么必须是 daemon**（phase3 §3.5 行为表第二行「**立即中止**」）：第二次 `Ctrl+C`
     的语义是「先落盘（`draining` + `interrupted: true`）、再 `cancel()` 收尾 task、随即请求
@@ -208,6 +243,11 @@ class _DaemonThreadPoolExecutor(_ThreadPoolExecutor):
     **只给收尾四步用**：事件循环的默认执行器一律不动（`asyncio.to_thread()` 那一路照旧），
     于是「收尾之外还有谁在用线程池」这件事不受本类影响。
 
+    **两处调用点各起一台池（`__init__` 的两个入参因此可传）**：收尾四步那台取
+    `DRAIN_EXECUTOR_MAX_WORKERS` = 4、线程名前缀 `drain-step`；会中总结那台取
+    `SUMMARY_EXECUTOR_MAX_WORKERS` = 2、前缀 `summary-call`。两台**互不占线程**：
+    会中总结按下的那几秒里，收尾四步的调用照旧有四条线程可用，反过来也一样。
+
     **工作线程取 `DRAIN_EXECUTOR_MAX_WORKERS` 条（审查问题 m7 的直接修复）**：四步的调用
     在**编排**上是**严格串行**的（§3.1 的顺序写死），而「被放弃的步」与「后续步」在**线程
     占用**上会叠在一起。某一步被 `wait_for` 按剩余预算判超时之后，它的**等待**被放弃，
@@ -221,10 +261,9 @@ class _DaemonThreadPoolExecutor(_ThreadPoolExecutor):
     与线程数无关。
     """
 
-    def __init__(self) -> None:
-        super().__init__(
-            max_workers=DRAIN_EXECUTOR_MAX_WORKERS, thread_name_prefix="drain-step"
-        )
+    def __init__(self, *, max_workers: int = DRAIN_EXECUTOR_MAX_WORKERS,
+                 thread_name_prefix: str = "drain-step") -> None:
+        super().__init__(max_workers=max_workers, thread_name_prefix=thread_name_prefix)
 
     def _adjust_thread_count(self) -> None:
         """与标准库同一套起线程逻辑，两处不同：线程是 **daemon**、**不登记**进退出时的 join 表。
@@ -257,6 +296,27 @@ class _DaemonThreadPoolExecutor(_ThreadPoolExecutor):
             # 本类**故意不写**（见类说明：那一张表是解释器退出时无条件 join 的来源）。
 
 
+class _AttemptsSeen:
+    """把总结客户端包一层，**只记一件事**：`complete()` 被调了几次。
+
+    会中总结的尝试次数由内核 `run_summary()` 逐个 attempt 累加，正常路径上那两格
+    （`elapsed_seconds` / `attempts`）随 `SummaryOutcome.detail` 一起给出来。走到
+    「墙钟预算到点、等待被放弃」那一档时内核还没返回，它的记账读不到 —— 契约那一档要的
+    仍是 `{elapsed_seconds, attempts}`，于是**在交给内核的客户端上**记一份。
+
+    读数为什么可信：内核每一次 attempt 都先经 `complete()` 才可能卡住（`runner.py` 的循环
+    第一件事就是这次调用），因此到点时这里记下的就是**已经发出去的那几次**。
+    """
+
+    def __init__(self, client: Any) -> None:
+        self._client = client
+        self.attempts = 0
+
+    def complete(self, messages: Any, *, timeout_seconds: float) -> str:
+        self.attempts += 1
+        return self._client.complete(messages, timeout_seconds=timeout_seconds)
+
+
 def compute_drain_budget(backlog: int, segment_timeout: float) -> float:
     """`budget = 30 + backlog × (segment_timeout + 5)`（下限 30、封顶 300）。
 
@@ -272,10 +332,10 @@ def compute_drain_budget(backlog: int, segment_timeout: float) -> float:
 
 
 # ---------------------------------------------------------------------------
-# 动作层的错误（`code` 取值只用已冻结的那七个串，不自造）
+# 动作层的错误（`code` 取值只用 `ACTION_CODES` 里已冻结的那九个串，不自造）
 # ---------------------------------------------------------------------------
 
-#: 动作失败的 `code` 全集（phase2 §3.6.2）
+#: 动作失败的 `code` 全集（phase2 §3.6.2；`1987cb20` phase2 补上会中总结那两档）
 ACTION_CODES: tuple[str, ...] = (
     "already_recording",
     "draining",
@@ -284,9 +344,11 @@ ACTION_CODES: tuple[str, ...] = (
     "invalid_setting",
     "persist_failed",
     "action_unavailable",
+    "transcript_unavailable",
+    "summary_failed",
 )
 
-#: 动作名清单（phase2 §3.13 + `dca4539b` 的 `reprobe`）
+#: 动作名清单（phase2 §3.13 + `dca4539b` 的 `reprobe` + `1987cb20` phase2 的 `summarize`）
 ACTION_NAMES: tuple[str, ...] = (
     "start",
     "stop",
@@ -294,6 +356,7 @@ ACTION_NAMES: tuple[str, ...] = (
     "settings_update",
     "reprobe",
     "dev_inject",
+    "summarize",
 )
 
 #: `start` 的 `mode` 取值域与缺省
@@ -400,6 +463,30 @@ class ServiceRuntime:
         #: 转写健康度节拍（低频、只写快照；见 `_transcriber_health_loop()`）
         self._transcriber_ticker: asyncio.Task | None = None
         self._pending_restart_session: str | None = None
+
+        # -- 会中总结（`1987cb20` phase2 §3.6）--------------------------------
+        #
+        # 两样东西都是**内存里的、会话级的、不落文件**（设计章 2.3 / 5.1：会中总结做完就该消失）：
+        #
+        #   - `summary_buffer`：**内存里那条追加中的实时转写**。盘上的会中临时稿只有分钟级
+        #     `[HH:MM]`（秒被丢掉、同一分钟撞成一个戳），切不了窗口；内存这一份带完整的墙钟浮点
+        #     `ts` 与入队序。喂它的入口只有一个：`bind_transcriber()` 包出来的那个 sink；
+        #   - `summary_records`：**本场按过的、成功产出的那几次**（时刻 + 窗口 + 那几条）。
+        #     只记成功的那几次 —— 失败没有「那几条」可记。`GET /api/summaries` 读的就是它。
+        #
+        # `summary_client` 是**可注入的总结客户端**（`ModelClient` 或同形的假件）：不给就由
+        # `run_summary()` 按 `SummarySettings` 现造一个真客户端。用例从这里塞记账用的假件。
+        #
+        # `summary_client` 那一次 `complete()` 是一条**同步**调用：`summarize()` 经
+        # `_summary_wait()` 把它提交到下面这台池的工作线程，事件循环因此在总结期间照旧转
+        # （复审 minor 6：跑在事件循环上时，`/api/state` 与三个 SSE 通道会被一起按住）。
+        # **惰性创建**：没人按下总结的进程一个线程都不起。
+        self.summary_buffer = TranscriptBuffer()
+        self.summary_records: list[dict[str, Any]] = []
+        self.summary_client: Any = None
+        #: 会中总结那一次模型调用的**同步调用专用**执行器（工作线程是 daemon，
+        #: 与收尾四步那台分属两台池，见 `_DaemonThreadPoolExecutor` 的说明）
+        self._summary_executor: _DaemonThreadPoolExecutor | None = None
 
     # -- 只读小接口 -------------------------------------------------------
 
@@ -590,6 +677,11 @@ class ServiceRuntime:
         # 收尾四步的执行器**不等**（工作线程是 daemon：第二次 `Ctrl+C` 之后进程不许被在飞的
         # 同步步拖住）——`wait=False` 顺带把已排队的收尾步丢掉，这正是「立即中止」要的形态。
         self._shutdown_drain_executor()
+        # 会中总结那台执行器照同一口径收场：到点被放弃的那次调用仍在飞，关停不等它
+        # （它同样是一条只读的模型调用，写不出半截现场）。
+        self._shutdown_summary_executor()
+        # 会中总结那两样一并清掉（缓冲与记录表走同一个入口）：关停之后这两笔内存不该留着
+        self._clear_session_summary(reason="服务关停")
         from meeting.service import app as service_app
 
         service_app.clear_shutdown_target()
@@ -604,6 +696,17 @@ class ServiceRuntime:
             executor.shutdown(wait=False, cancel_futures=True)
         except Exception:  # pragma: no cover - 收场路径不掩盖别的结论
             _log.exception("收尾执行器收场失败（工作线程是 daemon，不影响进程退出）")
+
+    def _shutdown_summary_executor(self) -> None:
+        """会中总结执行器收场（幂等）：与收尾那台同一口径，**不等待**在飞的工作线程。"""
+        executor = self._summary_executor
+        if executor is None:
+            return
+        self._summary_executor = None
+        try:
+            executor.shutdown(wait=False, cancel_futures=True)
+        except Exception:  # pragma: no cover - 收场路径不掩盖别的结论
+            _log.exception("会中总结执行器收场失败（工作线程是 daemon，不影响进程退出）")
 
     # -- 后端与探测 -------------------------------------------------------
 
@@ -657,10 +760,22 @@ class ServiceRuntime:
         return sink
 
     def bind_transcriber(self, backend: Any) -> Callable[[Any], None]:
-        """转写后端的 `line_sink` 同样只经 `call_soon_threadsafe` 进循环。"""
+        """转写后端的 `line_sink` 同样只经 `call_soon_threadsafe` 进循环。
+
+        **顺路把这一行收进会中总结那条内存缓冲**（`1987cb20` phase2）：缓冲只在这一个 sink 里
+        喂，`bind()` 被调两次也**只装一层**（两次都返回本方法包出来的 sink，收行的那一步在
+        sink 内部、与装了几层无关，于是同一行不会进缓冲两遍）。收行**先于**
+        `_call_soon_threadsafe`：缓冲自己是线程安全的，事件循环没起来 / 已经关掉时那一支
+        （`loop is None` 时同步处理、其余丢弃）也照旧把这行收下 —— 「谁收行」与「谁推状态」
+        是两件事。
+        """
         del backend  # 同 `bind_capture()`：出口属于 runtime
 
         def sink(line: Any) -> None:
+            try:
+                self.summary_buffer.append(line)
+            except Exception:  # noqa: BLE001 - 缓冲出意外不许把一行转写挡在门外
+                _log.warning("转写行进会中总结缓冲失败（这一行照旧往下走）", exc_info=True)
             loop = self._loop
             if loop is None or not loop.is_running():
                 if loop is None:
@@ -1515,6 +1630,9 @@ class ServiceRuntime:
         # 记账同步归零（三样一起清，见 `_clear_hints()`）—— 上一场的提示级不许跨场留下，
         # 也不许让本场第一次刷新把它们当成「键集合没变」（复审 m3）。
         self._clear_hints()
+        # 会中总结那两样同样从零开始（缓冲与记录表**走同一个入口**清，见
+        # `_clear_session_summary()`）：上一场的行与那几次总结不许跟着进这一场。
+        self._clear_session_summary(reason="新的一场开始")
         start_recording(self.snapshot, session=session, mode=mode, devices=devices)
         _log.info("场次开始：%s（目录 %s，mode=%s）", session_id, session_dir, mode)
         # `idle → recording` 的副作用会把两路 `health` 推到 `capturing`（phase2 §3.5.2），
@@ -1801,6 +1919,268 @@ class ServiceRuntime:
                 "invalid_setting", str(exc), status=400,
                 detail={"source": source, "fault": fault, "error": str(exc)},
             ) from exc
+
+    # -- 会中总结（`1987cb20` phase2：动作、记录表、缓冲的清理） ------------
+
+    def _clear_session_summary(self, *, reason: str) -> None:
+        """把会中总结那两样**一起**清成空：内存缓冲（`summary_buffer`）与本场记录表
+        （`summary_records`）。
+
+        **唯一入口**（照 `_clear_hints()` 那种同进同退的先例）：两样必须一起清 —— 只清缓冲
+        会留下「记录里那几条还挂着、它们指的窗口已经取不回」的现场，只清记录又会把上一场的行
+        留给这一场。两个调用点：
+        `start_session()`（新的一场从零开始）与 `shutdown()`（关停之后这两笔内存不留）。
+        **不动** `summary_client`（那是注入进来的协作者，与本场的数据无关）。
+        """
+        had_lines = len(self.summary_buffer)
+        had_records = len(self.summary_records)
+        self.summary_buffer.clear()
+        self.summary_records.clear()
+        if had_lines or had_records:
+            _log.info(
+                "会中总结的两笔内存已清空（%s）：转写缓冲 %s 行、本场记录 %s 条",
+                reason, had_lines, had_records,
+            )
+
+    def _session_id_for_summary(self) -> str | None:
+        """本场总结记录归属的场次目录名（没有场次时 `null`）。"""
+        session = getattr(self.snapshot, "session", None)
+        return None if session is None else str(session.id)
+
+    def summaries_dict(self) -> dict[str, Any]:
+        """`GET /api/summaries` 的应答体：本场按过的、**成功产出的**那几次（按时间先后）。
+
+        没有场次或一次都没按过时 `session_id` 为 `null`、`entries` 是空数组。每一格的形状由
+        `phase2/task.md` 的接口口径写死（`window` / `window_label` / `at` / `elapsed_seconds` /
+        `what` / `where` / `lost` —— **没有 `lines` 与 `bullets`**）。
+        """
+        return {
+            "session_id": self._session_id_for_summary(),
+            "entries": [dict(entry) for entry in self.summary_records],
+        }
+
+    def _summary_executor_or_create(self) -> _DaemonThreadPoolExecutor:
+        """会中总结那台执行器（**惰性创建**：不按下总结的进程一个线程都不起）。"""
+        if self._summary_executor is None:
+            self._summary_executor = _DaemonThreadPoolExecutor(
+                max_workers=SUMMARY_EXECUTOR_MAX_WORKERS,
+                thread_name_prefix="summary-call",
+            )
+        return self._summary_executor
+
+    async def _summary_wait(
+        self,
+        *,
+        window: str,
+        settings: SummarySettings,
+        client: Any,
+        started_at: str | None,
+    ) -> SummaryOutcome:
+        """把一次**同步**的会中总结调用丢进工作线程，连同 `asyncio.wait_for` 一起等。
+
+        形状照收尾那套先例（`_drain_wait()` + `_DaemonThreadPoolExecutor`）：
+
+          - `run_summary(...)` 经 `loop.run_in_executor(self._summary_executor_or_create(), …)`
+            提交，返回的线程 Future 由 `asyncio.wrap_future()` 包成可等待对象 —— 事件循环在
+            这一段只负责等，`/api/state`、三个 SSE 通道、心跳与健康节拍照旧转；
+          - 等待上限 = `settings.deadline_seconds`（配置里那条 `summary.deadline_seconds`，
+            默认 25 秒）。它与内核 `run_summary()` 现算剩余量用的是同一条线，**一秒都不多给**；
+          - 到点时放弃的是**等待**：已经交给工作线程的那次调用照跑到底（与 `_drain_wait()` 的
+            `cancel()` 口径同一句），因此紧接着按下的第二次总结由池里另一条线程接住
+            （`SUMMARY_EXECUTOR_MAX_WORKERS` 取 2 的来路）。
+
+        `client` 外面包一层 `_AttemptsSeen` 记账：走到超时这一档时内核的
+        `SummaryOutcome.detail` 已经拿不到了，`attempts` 只能从这里读（见那个类的说明）。
+
+        到点的报法与内核判「预算用尽」那一档同形：`ActionError("summary_failed", …, 502,
+        detail={"elapsed_seconds", "attempts"})`。`summarize()` 那个 try 里有一条
+        `except ActionError: raise` 专门放它过去（否则会被「动手之后出的意外」那一条重新包成
+        `{error: ...}`，`detail` 的形状就偏了）。
+        """
+        loop = asyncio.get_running_loop()
+        seen = _AttemptsSeen(client)
+        lines = self.summary_buffer.lines()
+        pending = asyncio.wrap_future(
+            loop.run_in_executor(
+                self._summary_executor_or_create(),
+                lambda: run_summary(
+                    lines,
+                    window=window,
+                    settings=settings,
+                    client=seen,
+                    started_at=started_at,
+                ),
+            )
+        )
+        started = time.monotonic()
+        try:
+            return await asyncio.wait_for(
+                pending, timeout=max(0.0, float(settings.deadline_seconds))
+            )
+        except asyncio.TimeoutError as exc:
+            elapsed = time.monotonic() - started
+            attempts = max(1, seen.attempts)
+            _log.warning(
+                "会中总结等满预算（%ss）还没结果：按 summary_failed 如实上报"
+                "（实测等了 %ss、试了 %s 次）",
+                settings.deadline_seconds, round(elapsed, 3), attempts,
+            )
+            raise ActionError(
+                "summary_failed",
+                f"等了 {elapsed:.1f} 秒（预算 {settings.deadline_seconds:g} 秒）还没有结果，"
+                f"试了 {attempts} 次",
+                status=502,
+                detail={"elapsed_seconds": round(elapsed, 3), "attempts": attempts},
+            ) from exc
+
+    async def summarize(self, args: dict[str, Any]) -> dict[str, Any]:
+        """`summarize`：按一下，把最近这段时间的实时转写读一遍，给回三小段。
+
+        **判定的先后是固定的**（照 `start` 的先例，`phase2/task.md` 的接口口径）：
+
+          1. 判态 —— 没有在录的场次（`idle` / `ended`）→ `not_recording`(409)；
+          2. 校验 `window` —— 取值不在四档里 → `invalid_setting`(400)（**不静默落缺省档**：
+             动作层的非法取值是一句话就说清的事，悄悄替人挑一档会让人以为按对了）；
+          3. 看转写健康 —— `stopped`（转写停了 / 没起过）→ `transcript_unavailable`(503)；
+          4. 看模型端点配置 —— 端点三件套缺一个 → `summary_failed`(502)，`detail.missing`
+             点名缺哪几个键；
+          5. **才动手**。
+
+        **前四档没过，一个请求都不发出去、一条记录都不写**（判据是用例里那个记账的假客户端
+        读数为 0）。第 3 / 4 档的读数在读到的当口就判掉：判定与动手之间不再把后端或配置问第二遍。
+
+        **这是一条协程，而且「动手」那一段经 `_summary_wait()` 丢进工作线程**
+        （复审 minor 6 的直接修复）：`run_summary()` 是一次**同步**调用（真客户端是
+        `urllib.request`），放在事件循环上跑就把 `/api/state`、三个 SSE 通道、心跳与健康节拍
+        一起按住 —— 真端点预算默认 25 秒就是按住 25 秒，而设计章 4.5 对 `summary-running`
+        那一档写的正是「总结区 `正在总结刚才的 15 分钟…`；**其余照常**」。
+        挪出循环之后，总结期间别处的请求照常应答（判据见
+        `tests/test_summary_action.py` 里那条量往返耗时的用例）。
+
+        **预算语义一个字不改**：那一次调用的等待上限就是配置里那条
+        `summary.deadline_seconds`（默认 25 秒），与内核 `run_summary()` 现算剩余量时用的
+        是同一条线；到点时报的还是 `{elapsed_seconds, attempts}` 那一档（契约 4.7 与
+        `docs/contract.md` 章 4 的 `summary_failed` 表）。
+
+        **总结是只读的**：成功与失败两条路都不调 `commit()`、不涨 `revision`、不广播 ——
+        快照里一个字都不变（结果走这个应答体，记录走 `GET /api/summaries`）。
+
+        返回值就是应答体里那个 `summary` 子对象（`routes.py` 把它挂在通用信封上）。
+        """
+        if self.snapshot.top_state not in ("recording", "alert"):
+            raise ActionError("not_recording", "现在没有在录的场次，总结动作无效", status=409)
+
+        window = args.get("window")
+        choice = str(window).strip() if window is not None else None
+        if choice is not None and choice not in WINDOW_CHOICES:
+            raise ActionError(
+                "invalid_setting",
+                f"window 取值非法：{window!r}（只能是 {' / '.join(WINDOW_CHOICES)}）",
+                status=400,
+                detail={"key": "window", "value": window, "legal": list(WINDOW_CHOICES)},
+            )
+
+        settings = SummarySettings.from_config(self._config_view())
+
+        # 转写健康度：**这一档的读数只读一次**（判定与动手之间不许再问一遍后端）
+        health = None
+        if self.transcriber_backend is not None:
+            try:
+                health = asr_pipeline.validate_transcript_health(self.transcriber_backend.health())
+            except Exception:
+                _log.warning("会中总结：转写后端 health() 读不出来", exc_info=True)
+                health = None
+        if health in (None, "stopped"):
+            raise ActionError(
+                "transcript_unavailable",
+                "转写没在跑（没起过，或者已经停了）：会中总结吃的是实时转写，现在没有可用的那一路",
+                status=503,
+                detail={"health": "stopped"},
+            )
+
+        missing = tuple(settings.missing)
+        if missing:
+            raise ActionError(
+                "summary_failed",
+                f"模型端点没配齐，缺这些配置键：{'、'.join(missing)}"
+                "（配好 summary.base_url / summary.api_key / summary.model 之后再来一次）",
+                status=502,
+                detail={"missing": list(missing)},
+            )
+
+        session = getattr(self.snapshot, "session", None)
+        started_at = None if session is None else str(session.started_at)
+        try:
+            client = self.summary_client
+            if client is None:
+                client = ModelClient.from_settings(settings)
+            outcome = await self._summary_wait(
+                window=choice if choice is not None else settings.default_window,
+                settings=settings,
+                client=client,
+                started_at=started_at,
+            )
+        except ActionError:
+            # 已经按契约分好档的那一条（`_summary_wait()` 判到墙钟预算到点）：**原样上抛**，
+            # `detail` 就是契约里那两格，不许在这里被重新包成 {error: ...}
+            raise
+        except Exception as exc:
+            # 「才动手」之后出的意外同样按这一档报（配置与态都已经过了，这不是参数错）
+            _log.exception("会中总结在「动手」之后出的意外（如实回 summary_failed）")
+            raise ActionError(
+                "summary_failed",
+                f"会中总结失败：{type(exc).__name__}: {exc}",
+                status=502,
+                detail={"error": f"{type(exc).__name__}: {exc}"},
+            ) from exc
+
+        if not outcome.ok:
+            raise ActionError(
+                "summary_failed",
+                outcome.error or "会中总结没拿到结果",
+                status=502,
+                detail=dict(outcome.detail),
+            )
+
+        entry = self._summary_result(outcome)
+        _log.info(
+            "会中总结完成：window=%s（%s）lines=%s attempts=%s elapsed=%ss",
+            entry["window"], entry["window_label"], outcome.lines,
+            int(outcome.attempts), entry["elapsed_seconds"],
+        )
+        # **只记成功产出的那几次**（失败没有「那几条」可记）；记录活在内存里，不落文件。
+        # 记录这一条按 `GET /api/summaries` 写死的形状来（`phase2/task.md` 那一份没有 `lines`），
+        # 与上面交给应答体的那一份是**两个形状**：应答体多一格窗口行数。
+        self.summary_records.append(self._summary_entry(outcome))
+        return entry
+
+    @staticmethod
+    def _summary_result(outcome: SummaryOutcome) -> dict[str, Any]:
+        """`SummaryOutcome` → 应答体里那个 `summary` 子对象（逐键照接口口径）。
+
+        形状写死（`phase2/task.md` 的成功体）：`window` / `window_label` / `at` /
+        `elapsed_seconds` / `lines` / `what` / `where` / `lost`。**`ok` / `bullets` / `attempts` /
+        `detail` 不进应答体** —— 失败那几档走失败信封的 `code` + `detail`。`at` 由这里现取
+        （`now_iso()`，与快照里那些时刻同一个格式），此后不再变。
+        """
+        return {
+            "window": str(outcome.window),
+            "window_label": str(outcome.window_label),
+            "at": now_iso(),
+            "elapsed_seconds": float(outcome.elapsed_seconds),
+            "lines": int(outcome.lines),
+            **sections_for(outcome),
+        }
+
+    @classmethod
+    def _summary_entry(cls, outcome: SummaryOutcome) -> dict[str, Any]:
+        """`SummaryOutcome` → 记录表里那一条（`GET /api/summaries` 写死的形状）。
+
+        与 `_summary_result()` 同一份来源、少一格 `lines`（那一份是 `GET` 的口径里没有的）。
+        """
+        result = cls._summary_result(outcome)
+        result.pop("lines")
+        return result
 
     # -- 收尾编排（三步记账 + 终态判定；预算与失败出路的完整语义归 phase3） --
 
@@ -2590,6 +2970,7 @@ __all__ = [
     "DRAIN_SETTLE_POLL_SECONDS",
     "LEVELS_INTERVAL_SECONDS",
     "SESSION_MODES",
+    "SUMMARY_EXECUTOR_MAX_WORKERS",
     "TRANSCRIBER_HEALTH_INTERVAL_SECONDS",
     "ActionError",
     "DrainLimitExceeded",

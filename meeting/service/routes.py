@@ -1,11 +1,12 @@
-"""五条路由的**唯一注册点**（phase2 §3.7 / §3.8 / §3.9 / §3.11 / §3.12）。
+"""六条路由的**唯一注册点**（phase2 §3.7 / §3.8 / §3.9 / §3.11 / §3.12；`1987cb20` phase2 加 `summaries`）。
 
 全应用只在这里注册一次：
 
   - `GET /api/state`（完整版，body 就是 `to_dict()` 的产出）；
   - `GET /api/events`（SSE：`snapshot` 先行 + `state` / `levels` / `transcript` 三通道）；
   - `GET /api/heartbeat`（完整版，`service` 字面量必须有）；
-  - `POST /api/actions`（信封 + 六个动作名 + `code` 表）；
+  - `POST /api/actions`（信封 + 七个动作名 + `code` 表）；
+  - `GET /api/summaries`（本场按过的、成功产出的那几次会中总结；读内存，不落文件）；
   - `GET /debug`（骨架自检页，从包内读）。
 
 **装配模块 `app.py` 里那两条最小版注册与 `static.py` 的 `/debug` 注册都已在本 Phase 摘除**：
@@ -96,6 +97,25 @@ async def _api_heartbeat(request: Request) -> Response:
 
 
 # ---------------------------------------------------------------------------
+# GET /api/summaries（`1987cb20` phase2：本场按过的那些次会中总结）
+# ---------------------------------------------------------------------------
+
+
+async def _api_summaries(request: Request) -> Response:
+    """本场总结记录：`{session_id, entries}`（**200**，任何状态下都给）。
+
+    记录活在运行时的内存里、**不落文件**（设计章 2.3 / 5.1）；只记**成功产出**的那几次，
+    按时间先后排。没有场次或一次都没按过时 `session_id` 为 `null`、`entries` 是空数组。
+    读它是**纯读**：不提交、不涨 `revision`、不广播。
+    """
+    runtime = _runtime_of(request)
+    if runtime is None:  # pragma: no cover - 应用未装配
+        return JSONResponse({"error": "runtime 未装配"}, status_code=500)
+    runtime.bind_from_scope(request.scope)
+    return JSONResponse(runtime.summaries_dict())
+
+
+# ---------------------------------------------------------------------------
 # GET /api/events（SSE）
 # ---------------------------------------------------------------------------
 
@@ -122,7 +142,7 @@ async def _api_events(request: Request) -> Response:
 
 
 async def _api_actions(request: Request) -> Response:
-    """动作端点：信封 + 六个动作名 + `code` 表（中间件已校验两个必需请求头）。"""
+    """动作端点：信封 + 七个动作名 + `code` 表（中间件已校验两个必需请求头）。"""
     runtime = _runtime_of(request)
     if runtime is None:  # pragma: no cover - 应用未装配
         return JSONResponse({"error": "runtime 未装配"}, status_code=500)
@@ -176,6 +196,20 @@ async def _api_actions(request: Request) -> Response:
             )
         elif action == "dev_inject":
             runtime.dev_inject(args)
+        elif action == "summarize":
+            # 成功体在通用信封上多一个 `summary` 键（先例是 `settings_update` 的
+            # `applied` / `pending_restart`）；`revision` 是**当前**版本号 —— 总结是只读的，
+            # 这里不提交、不涨版本、不广播。
+            # `summarize()` 是一条协程：那一次模型调用在**工作线程**里跑
+            # （`runtime._summary_wait()`，复审 minor 6），等它的只有本请求这一条协程 ——
+            # 于是总结那几秒里 `/api/state` 与三个 SSE 通道照常应答。
+            return JSONResponse(
+                {
+                    "ok": True,
+                    "revision": runtime.revision,
+                    "summary": await runtime.summarize(args),
+                }
+            )
     except ActionError as exc:
         return _error_response(exc)
     except Exception as exc:  # 未捕获异常带堆栈进 log（R16 的最低要求）
@@ -211,12 +245,13 @@ async def _debug_page(request: Request) -> Response:
 
 
 def api_routes() -> list[Route]:
-    """四条 `/api/*` 路由（`/debug` 在 `debug_routes()` 里，同一个模块）。"""
+    """五条 `/api/*` 路由（`/debug` 在 `debug_routes()` 里，同一个模块）。"""
     return [
         Route("/api/state", _api_state, methods=["GET"]),
         Route("/api/events", _api_events, methods=["GET"]),
         Route("/api/heartbeat", _api_heartbeat, methods=["GET"]),
         Route("/api/actions", _api_actions, methods=["POST"]),
+        Route("/api/summaries", _api_summaries, methods=["GET"]),
     ]
 
 
@@ -226,7 +261,7 @@ def debug_routes() -> list[Route]:
 
 
 def all_routes() -> list[Route]:
-    """五条路由一次给全（装配模块只负责把它们挂上应用）。"""
+    """六条路由一次给全（装配模块只负责把它们挂上应用）。"""
     return api_routes() + debug_routes()
 
 

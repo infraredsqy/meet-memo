@@ -1,0 +1,20 @@
+{
+  "session_id": "<session-id>",
+  "entries": [
+    {
+      "window": "15m",
+      "window_label": "15 分钟",
+      "at": "<iso>",
+      "elapsed_seconds": 0,
+      "what": [
+        "在过下周的排期"
+      ],
+      "where": [
+        "说到第三项"
+      ],
+      "lost": [
+        "有一处识别失败的缺口"
+      ]
+    }
+  ]
+}

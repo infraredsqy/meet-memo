@@ -1,0 +1,27 @@
+{
+  "action": "summarize",
+  "args": {
+    "window": "15m"
+  },
+  "status": 200,
+  "body": {
+    "ok": true,
+    "revision": 2,
+    "summary": {
+      "window": "15m",
+      "window_label": "15 分钟",
+      "at": "<iso>",
+      "elapsed_seconds": 0,
+      "lines": 12,
+      "what": [
+        "在过下周的排期"
+      ],
+      "where": [
+        "说到第三项"
+      ],
+      "lost": [
+        "有一处识别失败的缺口"
+      ]
+    }
+  }
+}

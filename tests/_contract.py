@@ -187,12 +187,40 @@ def emit(records: dict[str, Any], *, regen: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
+# 会中总结的两个假件（`summarize` 与 `GET /api/summaries` 那两份样本的来源）
+# ---------------------------------------------------------------------------
+
+#: 假总结客户端答的那份固定输出（三条固定标签齐备；与窗口文本无关，因此样本逐字确定）
+SUMMARY_STUB_CONTENT = (
+    '{"bullets": ["【讲什么】在过下周的排期", "【讲到哪】说到第三项",'
+    ' "【丢掉什么】有一处识别失败的缺口"]}'
+)
+
+
+class SummaryStub:
+    """**假总结客户端**（会中总结的注入点 `runtime.summary_client` 收到的那一个）。
+
+    只实现 `run_summary()` 用到的 `complete()`，答一份固定输出：样本里的三小段因此与窗口
+    内容无关、逐字确定（真端点那一档在本仓由 `.work/` 下的探针跑，契约样本记的是**形状**，
+    模型的话归那一档）。`calls` 只用于用例自检。
+    """
+
+    def __init__(self, content: str = SUMMARY_STUB_CONTENT) -> None:
+        self.content = content
+        self.calls = 0
+
+    def complete(self, messages, *, timeout_seconds: float) -> str:
+        del messages, timeout_seconds
+        self.calls += 1
+        return self.content
+
+
+# ---------------------------------------------------------------------------
 # 假转写后端（transcript 帧样本的来源；经 module:Class 挂进真服务子进程）
 # ---------------------------------------------------------------------------
 
 #: 写出去的那份模块名（`transcriber.backend` 取 `<名>:PeriodicTranscriber`）
 TRANSCRIBER_STUB_MODULE_NAME = "meeting_contract_transcriber"
-
 #: 假后端每两行之间的间隔（秒）
 STUB_EMIT_INTERVAL_SECONDS = 0.3
 
@@ -271,6 +299,8 @@ __all__ = [
     "PATH_PLACEHOLDER",
     "PORT_PLACEHOLDER",
     "SESSION_ID_PLACEHOLDER",
+    "SUMMARY_STUB_CONTENT",
+    "SummaryStub",
     "URL_PLACEHOLDER",
     "emit",
     "fixture_path",

@@ -1,0 +1,15 @@
+{
+  "action": "summarize",
+  "args": {
+    "window": "15m"
+  },
+  "status": 503,
+  "body": {
+    "ok": false,
+    "code": "transcript_unavailable",
+    "message": "转写没在跑（没起过，或者已经停了）：会中总结吃的是实时转写，现在没有可用的那一路",
+    "detail": {
+      "health": "stopped"
+    }
+  }
+}

@@ -4,9 +4,9 @@
 本文件里那道 5 秒看门是分档能落在**文件粒度**上的前提：没有任何一条用例能超过 5 秒，所以
 「慢」来自文件层面的真子进程与真墙钟等待，标记因此加在文件头（`pytestmark = pytest.mark.slow`）。
 
-本文件装两样东西：下面的**七个夹具**与**两个 autouse 安全兜底**（`_no_real_browser` /
-`_no_real_audio_capture`），以及两条 pytest hook（`pytest_addoption` 注册
-`--regen-contract`；耗时看门那两个 hook 在文末）。**hook 不属于夹具语义**，它们在这里的
+本文件装两样东西：下面的**七个夹具**与**四个 autouse 安全兜底**（`_no_real_browser` /
+`_no_real_audio_capture` / `_no_real_minutes_session` / `_no_real_model_call`），以及两条
+pytest hook（`pytest_addoption` 注册 `--regen-contract`；耗时看门那两个 hook 在文末）。**hook 不属于夹具语义**，它们在这里的
 唯一理由是 pytest 只认 conftest / 插件里的 `pytest_addoption`（写进测试模块会被静默忽略），
 详见下文各自那一段。**本文件里没有一条用例**。
 
@@ -73,6 +73,25 @@ pytest **父进程**里 `meeting.service.app.webbrowser` 就是**标准库那个
 才第一次被 import，撞上的都是桩。这条不依赖导入顺序的性质由
 `tests/test_real_capture_guard.py` 在**一个全新解释器**里逐条验（子进程里先不 import 库、
 直接调 `sd.InputStream`，必须被拦下）。
+
+## 模型出口兜底（安全要求，autouse）
+
+第三类保护的落点是**会中总结那条 HTTP 出口**：`meeting/summary/client.py` 的
+`_http_post()` 是这套代码里唯一一次真的往外发模型请求的地方（标准库 `urllib.request`）。
+谁让它跑起来而没先注入假客户端，那一下就是**真的一次模型调用**：`meeting/config.py` 里
+`summary.base_url` 的默认值就是真地址（`https://api.deepseek.com/v1`），配置里补上
+`summary.api_key` 之后「忘了注入」与「真发出去」之间一件事都不差 —— 代价是机主的 token。
+
+因此这里装 **autouse** 夹具 `_no_real_model_call`：把 `urllib.request.urlopen` 换成一个
+**按目标地址判**的包装 —— 本机回环（`localhost` / `127.0.0.0/8` / `::1`）**原样放行**给真
+传输层（将来接本地假端点不受影响），其余一律在出口处当场抛 `RealModelCallForbidden`
+（一个 `RuntimeError` 子类：它在请求里被收成 `summary_failed`(502) 那条既定失败档、消息里
+带着兜底的名字与被拦下的地址；为什么不用 `BaseException` 直系子类见那个类的说明 —— 实测
+那样会让 ASGI 门户的收场抛一个空消息的 `CancelledError`，把真正有用的信号盖住）。
+
+自证用 `tests/test_summary_action.py::test_a_missing_injection_is_blocked_at_the_egress_guard`：
+那一条**故意不注入** `runtime.summary_client`（配置里就是真地址），断言夹具的记账清单里
+恰好一笔、就是那个地址，而这一趟总结回的是带着兜底名字的 502 —— 它**没有出门**。
 """
 
 from __future__ import annotations
@@ -264,6 +283,105 @@ def _no_real_minutes_session(monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
     """
     monkeypatch.setenv(MINUTES_CHILD_FLAG, "1")
     yield MINUTES_CHILD_FLAG
+
+
+# ---------------------------------------------------------------------------
+# 安全兜底：绝不许向真实模型端点发请求（会中总结那条 HTTP 出口）
+# ---------------------------------------------------------------------------
+
+#: 打桩时报错的那句话（用例看到它就是「这条用例在往外发模型请求」）
+REAL_MODEL_CALL_FORBIDDEN_MESSAGE = (
+    "自动化测试不许向真实模型端点发请求（那会花机主的 token）："
+    "会中总结的假客户端请从 `runtime.summary_client` 注入"
+    "（`ModelClient` 只在生产路径上用）。"
+)
+
+#: 唯一放行的目标：本机回环（`localhost` / `127.0.0.0/8` / `::1`）。
+#:
+#: 判据按**目标地址**来，与调用点无关：将来给会中总结接一个本地假端点（回环上的 HTTP
+#: 服务）时，这一档照常放行；只有真往本机之外发才拦。
+LOCAL_MODEL_HOSTNAMES: tuple[str, ...] = ("localhost",)
+
+
+class RealModelCallForbidden(RuntimeError):
+    """**看门抛的异常**：它在出口处当场抛出，名字与消息都点名「这是测试兜底拦的」。
+
+    **这一档收下 `RuntimeError` 子类、不照抄 `RealCaptureForbidden` 那份 `BaseException` 形状**
+    （来路是本机的两条实测，写在下面）：会中总结那一次调用跑在**工作线程**上（`runtime._summary_wait()` 的
+    `loop.run_in_executor` → `asyncio.wrap_future()`），请求由 ASGI 门户（anyio）驱动。
+    本机实测两条路：
+
+      - 抛 `BaseException` 直系子类：请求处确实抛出，但 ASGI 门户那次任务的收场被带走，
+        紧接着 `TestClient.__exit__` 抛 `concurrent.futures.CancelledError` —— 真正有用的那句
+        「这是测试兜底拦的」被一个空消息的 `CancelledError` 盖住，谁看了都不知道发生了什么；
+      - 抛 `RuntimeError` 子类（就是本类）：请求仍**没有出门**，而是照既有口径回
+        `summary_failed`(502)，`message` 与 `detail.error` 里带着本类的名字与被拦下的地址
+        （`meeting/service/runtime.py` 的 `except Exception` 把它收成那条既定失败档），
+        `TestClient` 收场干净。
+
+    于是这一档选后者：**拦下外发**这件事两条路都做到了，而「报出来」这件事只有后者干净。
+    替身的记账清单（夹具的返回值）是「拦下了哪几笔」的权威读法，用例读它就不必依赖异常
+    怎么冒泡。
+    """
+
+
+def is_local_endpoint(url: Any) -> bool:
+    """目标地址是不是本机回环（是 → 放行给真传输层）。
+
+    认三种写法：`localhost`、IPv4 回环（`127.0.0.0/8`，含常见的 `127.0.0.1`）、IPv6 回环
+    `::1`。**读不出来的一律判「不是本机」**（拦下来比漏出去安全）。
+    """
+    import urllib.parse
+
+    try:
+        host = (urllib.parse.urlsplit(str(url)).hostname or "").lower()
+    except ValueError:  # pragma: no cover - 畸形 URL 一律按「不是本机」处理
+        return False
+    if not host:
+        return False
+    if host in LOCAL_MODEL_HOSTNAMES:
+        return True
+    import ipaddress
+
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+@pytest.fixture(autouse=True)
+def _no_real_model_call(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
+    """**autouse 兜底**：会中总结那条 HTTP 出口只许打本机回环，其余当场抛错。
+
+    打桩落在 `meeting/summary/client.py` 的 `_http_post()` 真正会走到的那个名字上
+    （`urllib.request.urlopen`，`_http_post()` 只在函数体里按模块属性取它）：包装函数先按
+    目标地址判 —— 本机回环**原样交给真 `urlopen`**，其余记一笔进返回值并抛
+    `RealModelCallForbidden`（`RuntimeError` 子类，见那个类）。
+
+    为什么必须有这一道：`runtime.summarize()` 在 `summary_client` 为空时**静默现造一个真
+    `ModelClient`**（那是生产路径该有的行为），而 `summary.base_url` 的配置默认值就是真地址
+    —— 一份「端点配齐了、忘了注入假件」的用例会真的把窗口文本 POST 出去。用例一律从
+    `runtime.summary_client` 注入假件（`tests/_drain_fakes.py` 那一档同源），这一道是**网**：
+    谁忘了，红在出口处，机主的账单一个字都不动。
+
+    返回值是被拦下的目标地址清单（`blocked`），用例要断言「拦的是哪一个」时读它。
+    """
+    from meeting.summary import client as summary_client
+
+    blocked: list[str] = []
+    real_urlopen = summary_client.urllib.request.urlopen
+
+    def guarded(url: Any, *args: Any, **kwargs: Any) -> Any:
+        target = str(getattr(url, "full_url", url))
+        if is_local_endpoint(target):
+            return real_urlopen(url, *args, **kwargs)
+        blocked.append(target)
+        raise RealModelCallForbidden(
+            f"{REAL_MODEL_CALL_FORBIDDEN_MESSAGE}（被拦下的请求：{target}）"
+        )
+
+    monkeypatch.setattr(summary_client.urllib.request, "urlopen", guarded)
+    yield blocked
 
 
 # ---------------------------------------------------------------------------

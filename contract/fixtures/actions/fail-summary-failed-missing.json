@@ -1,0 +1,18 @@
+{
+  "action": "summarize",
+  "args": {
+    "window": "15m"
+  },
+  "status": 502,
+  "body": {
+    "ok": false,
+    "code": "summary_failed",
+    "message": "模型端点没配齐，缺这些配置键：summary.base_url、summary.api_key（配好 summary.base_url / summary.api_key / summary.model 之后再来一次）",
+    "detail": {
+      "missing": [
+        "summary.base_url",
+        "summary.api_key"
+      ]
+    }
+  }
+}

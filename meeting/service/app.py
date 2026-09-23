@@ -15,8 +15,9 @@
   - 端口策略（`bind_http_socket()` / `probe_meeting_service()`，**标准库 socket + 单调时钟
     deadline**，运行时代码不许 import httpx）。
   - 三道本地最低防线（Host 校验 / 动作自定义头 / 不开 CORS）与 `/api/*` 的 `no-store`。
-  - **五条路由全部只在 `meeting/service/routes.py` 注册一次**：本模块把路由模块挂上应用，
-    自己不留 `/api/state` 与 `/api/heartbeat` 的最小版注册（phase1 的那两条已随本次搬迁摘除）。
+  - **六条路由全部只在 `meeting/service/routes.py` 注册一次**（五条 `/api/*` + `GET /debug`）：
+    本模块把路由模块挂上应用，自己不留 `/api/state` 与 `/api/heartbeat` 的最小版注册
+    （phase1 的那两条已随本次搬迁摘除）。
 """
 
 from __future__ import annotations
@@ -433,7 +434,7 @@ def bind_http_socket(
     )
 
 # ---------------------------------------------------------------------------
-# 应用组装（注册次序是硬约束：五条路由先注册，静态 / 说明页最后挂）
+# 应用组装（注册次序是硬约束：六条路由先注册，静态 / 说明页最后挂）
 # ---------------------------------------------------------------------------
 
 
@@ -463,9 +464,9 @@ async def _not_found(request: Any) -> Response:
 
 
 def build_app(runtime: ServiceRuntime, config: Any = None) -> Starlette:
-    """组装 Starlette 应用（五条路由 + 三道防线 + `/` 的二选一分支）。
+    """组装 Starlette 应用（六条路由 + 三道防线 + `/` 的二选一分支）。
 
-    **五条路由（四条 `/api/*` + `GET /debug`）只在 `meeting/service/routes.py` 注册一次**：
+    **六条路由（五条 `/api/*` + `GET /debug`）只在 `meeting/service/routes.py` 注册一次**：
     phase1 在装配模块里注册的 `GET /api/state` / `GET /api/heartbeat` 两条最小版已随本次
     搬迁摘除（处理体与状态 JSON 产出函数随 `ServiceRuntime` 进了 `runtime.py`），
     `static.py` 里那份 `/debug` 注册同样已摘除 —— 否则完整版会永远不生效。
@@ -489,7 +490,7 @@ def build_app(runtime: ServiceRuntime, config: Any = None) -> Starlette:
             await runtime.shutdown()
 
     routes: list[Any] = [
-        # 五条路由（四条 /api/* + GET /debug）**先注册**：唯一注册点是 service/routes.py
+        # 六条路由（五条 /api/* + GET /debug）**先注册**：唯一注册点是 service/routes.py
         *routes_module.all_routes(),
     ]
     # 静态 / 说明页的挂载函数**必须最后调用**（否则会把 API 与自检页一起吃走）

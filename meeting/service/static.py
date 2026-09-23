@@ -64,7 +64,7 @@ def debug_routes() -> list:
 
     保留这个函数只为一个明确的目的：它**不返回任何路由**，于是任何还照着旧写法
     `routes.extend(static_module.debug_routes())` 挂载的地方都挂不上第二条 `GET /debug`。
-    全应用五条路由只在 `routes.py` 注册一次（重复注册不报错但会让其中一份永远不生效）。
+    全应用六条路由只在 `routes.py` 注册一次（重复注册不报错但会让其中一份永远不生效）。
     """
     return []
 

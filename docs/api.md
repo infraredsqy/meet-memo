@@ -1,6 +1,6 @@
 # meeting · HTTP 面
 
-> 这份文档写服务对外的那几条线：五个端点、动作的信封、动作表与 `code` 表、以及本地防线。
+> 这份文档写服务对外的那几条线：六个端点、动作的信封、动作表与 `code` 表、以及本地防线。
 >
 > 读者是接这套 API 的人：前端、验收脚本、命令行复核。四态状态机、快照字段、`session.json`、SSE 帧形状、告警判定写在 `docs/state.md`；怎么起服务写在 `docs/service.md`。
 >
@@ -10,14 +10,14 @@
 
 | 章 | 标题 |
 |---|---|
-| 1 | 五个端点 |
+| 1 | 六个端点 |
 | 2 | 请求信封与应答形状 |
 | 3 | 动作表与 `code` 表 |
 | 4 | `settings_update`：写哪些键、什么时候生效 |
 | 5 | 端口与本地最低防线 |
 | 6 | 复核时怎么打 |
 
-## 1. 五个端点
+## 1. 六个端点
 
 | 端点 | 给什么 |
 |---|---|
@@ -26,6 +26,7 @@
 | `GET /api/state` | 完整状态快照，`200`。body 与 SSE 首帧那份 `snapshot` 同源（同一个 `to_dict()`） |
 | `GET /api/events` | SSE。**第一帧一定是 `snapshot`**，之后是 `state` / `levels` / `transcript` 三条通道 |
 | `GET /api/heartbeat` | `{"service": "meeting", "server_time", "revision", "top_state", "recording_alive", "seconds_since_last_tick"}`，`200`，任何状态下都给。`service` 这个字面量是端口探测认亲用的，必须有 |
+| `GET /api/summaries` | 本场按过的、成功产出的那几次会中总结（时刻 + 窗口 + 那几条），`200`，任何状态下都给。记录活在服务侧内存里、**不落文件**，新的一场 `start` 清空 |
 | `POST /api/actions` | 动作端点，见第 2–4 章 |
 
 `/api/*` 的应答一律带 `Cache-Control: no-store`，并且**不发 `Access-Control-Allow-Origin`**（不开 CORS，前端与本服务同源）。
@@ -44,17 +45,19 @@
 
 ## 3. 动作表与 `code` 表
 
-六个动作：`start` / `stop` / `mute_session` / `settings_update` / `reprobe` / `dev_inject`。七个 `code`：
+七个动作：`start` / `stop` / `mute_session` / `settings_update` / `reprobe` / `dev_inject` / `summarize`。九个 `code`：
 
 | `code` | HTTP | 意思 | 谁会回它 |
 |---|---|---|---|
 | `already_recording` | 409 | 已经有一场在录 | `start` / `reprobe` |
 | `draining` | 409 | 上一场还在收尾（或收尾失败后停留、或启动扫描到的那一场没收完），这场不能开 | `start` |
 | `capture_unavailable` | 503 | 采集后端不可用：没接入、或设备起不来 | `start` |
-| `not_recording` | 409 | 现在没有在录的场次 | `stop` / `mute_session` / `dev_inject` |
+| `not_recording` | 409 | 现在没有在录的场次 | `stop` / `mute_session` / `dev_inject` / `summarize` |
 | `invalid_setting` | 400 | 参数或键名非法（校验都在动手之前） | 各动作 |
 | `persist_failed` | 500 | 配置写盘失败，这次改动一处都没生效 | `settings_update` |
 | `action_unavailable` | 404 | 这个后端没有这个动作 | `dev_inject`（非 dev 后端） |
+| `transcript_unavailable` | 503 | 转写没在跑（没起过，或者已经停了）；`detail = {"health": "stopped"}` | `summarize` |
+| `summary_failed` | 502 | 会中总结没拿到结果：`detail` 是 `{missing: [...]}`（端点没配齐）或 `{elapsed_seconds, attempts}`（预算用尽 / 端点报错 / 解析连试带败） | `summarize` |
 
 ### 逐动作 × 逐态的可用性
 
@@ -66,8 +69,9 @@
 | `settings_update` | 200 | 200 | 200 | 200 | 200 |
 | `reprobe` | 200：重新枚举并试开设备，两路快照随之更新（`revision +1`） | 409 `already_recording` | 409 `already_recording` | 200：同上 | 200：同上（采集已经停了，重新探测不干扰在飞的东西） |
 | `dev_inject` | 409 `not_recording` | 200（非 dev 后端 404） | 200（非 dev 后端 404） | 409 `not_recording` | 409 `not_recording` |
+| `summarize` | 409 `not_recording` | 200：**只读**，结果在应答体的 `summary` 键里（转写没在跑 503、端点没配齐 502） | 200：同上 | 409 `not_recording` | 409 `not_recording` |
 
-`settings_update` 写的是配置文件，与「这一场录到哪儿」无关，因此**任何状态下都可用**。`mute_session` 只在本场收尾之前可用 —— 收尾完成后本场已无可静音，复位发生在下一场 `start`。`reprobe` 只在**没有场次在跑**的时候可用（`recording` / `alert` 两态回 `already_recording`）：设备在开场前定下来，会中换设备是明文不做的那一档。
+`settings_update` 写的是配置文件，与「这一场录到哪儿」无关，因此**任何状态下都可用**。`mute_session` 只在本场收尾之前可用 —— 收尾完成后本场已无可静音，复位发生在下一场 `start`。`reprobe` 只在**没有场次在跑**的时候可用（`recording` / `alert` 两态回 `already_recording`）：设备在开场前定下来，会中换设备是明文不做的那一档。`summarize` 只在**有场次在跑**的时候可用（它读的是这一场的实时转写）。
 
 ### 逐个动作的语义
 
@@ -104,6 +108,17 @@
 - `after_seconds` 到点生效（可为 0），`duration_seconds` 到点恢复（正数，可省，缺省 `30.0` 秒）。
 - 非 dev 后端回 `action_unavailable`(404)；没有正在进行的场次回 `not_recording`(409)。三档故障的语义与「用完怎么恢复」见 `docs/state.md` 第 7 章。
 
+**`summarize`** —— 会中一键总结：把最近这段时间的实时转写读一遍，给回「刚才在讲什么 / 讲到哪儿了 / 丢掉了什么」三小段：
+
+```json
+{"action": "summarize", "args": {"window": "15m"}}
+```
+
+- `window` 取 `5m` / `15m` / `30m` / `full`，**省略时取配置的 `summary.default_window`**（默认 `15m`）；取值非法回 `invalid_setting`(400)。
+- 成功体比通用信封多一个 `summary` 键：`{window, window_label, at, elapsed_seconds, lines, what, where, lost}`。**结果不进快照、不动 `revision`**（`revision` 只是当前版本号）；窗口里一行都没有时照旧 200、三段都是空数组。
+- 逐档失败：没有在录的场次 `not_recording`(409)、`window` 非法 `invalid_setting`(400)、转写没在跑 `transcript_unavailable`(503)、模型端点没配或预算用尽 `summary_failed`(502)。**判定次序固定**（判态 → 校验 `window` → 看转写健康 → 看模型端点配置 → 才动手），前面几档没过时**一个模型请求都不发出去、一条记录都不写**。
+- 本场记录用 `GET /api/summaries` 取（只记成功产出的那几次，按时间先后；服务侧不做并发闸，两个页面同时按下就是两次独立的总结）。逐档 `detail` 与成功体的全文见 `docs/contract.md` 第 4.7 节。
+
 ## 4. `settings_update`：写哪些键、什么时候生效
 
 请求的 `args` 就是**「配置点号键名 → 值」的扁平映射**，只有这一层、不按键前缀分组：
@@ -114,12 +129,14 @@
 
 应答是 `{"ok": true, "revision": N, "applied": [...], "pending_restart": [...]}` —— 两个数组里也是同一套点号键名。**成功体里没有 `message` 字段**，需要给人看的话由界面按两个数组自己组织。
 
-**合法键名是逐条列出的 31 个**（不按前缀归组、没有前缀白名单）。表外的任何键名一律 `invalid_setting`(400)，`devices.mic_device` 这种没定名的名字也在表外。
+**合法键名是逐条列出的 38 个**（不按前缀归组、没有前缀白名单）。表外的任何键名一律 `invalid_setting`(400)，`devices.mic_device` 这种没定名的名字也在表外。
 
 | 归类 | 键 | 为什么 |
 |---|---|---|
 | `applied`（6 个） | `alarm.sound` / `asr.max_segment_seconds` / `asr.timeout_seconds` / `asr.max_new_tokens` / `asr.repeat_max_unit` / `asr.repeat_min_coverage` | 这六个是热读键，写盘成功就立刻生效。`alarm.sound` 收在这一档，于是勾选出声开关**当场**改运行期行为 |
-| `pending_restart`（25 个） | `web.port` / `web.dist_dir` / `output.root` / `log.level` / `log.dir` / `log.max_bytes` / `log.backup_count` / `alert.silence_dbfs` / `alert.silence_seconds` / `alert.recover_seconds` / `alert.alarm_suppress_seconds` / `heartbeat.interval_seconds` / `capture.backend` / `transcriber.backend` / `post.hook` / `post.engine` / `post.model` / `post.dtype` / `post.chunk_seconds` / `minutes.hook` / `minutes.chunk_lines` / `minutes.max_segments` / `minutes.timeout_seconds` / `devices.mic` / `devices.loopback` | 这些值在启动时读一次，写盘成功但要重启才生效 |
+| `pending_restart`（32 个） | `web.port` / `web.dist_dir` / `output.root` / `log.level` / `log.dir` / `log.max_bytes` / `log.backup_count` / `alert.silence_dbfs` / `alert.silence_seconds` / `alert.recover_seconds` / `alert.alarm_suppress_seconds` / `heartbeat.interval_seconds` / `capture.backend` / `transcriber.backend` / `post.hook` / `post.engine` / `post.model` / `post.dtype` / `post.chunk_seconds` / `minutes.hook` / `minutes.chunk_lines` / `minutes.max_segments` / `minutes.timeout_seconds` / `summary.base_url` / `summary.api_key` / `summary.model` / `summary.extra_body_json` / `summary.deadline_seconds` / `summary.max_attempts` / `summary.default_window` / `devices.mic` / `devices.loopback` | 这些值在启动时读一次，写盘成功但要重启才生效 |
+
+- **会中总结那七个键**（`summary.base_url` / `summary.api_key` / `summary.model` / `summary.extra_body_json` / `summary.deadline_seconds` / `summary.max_attempts` / `summary.default_window`）同样归 `pending_restart`：`summary.base_url` / `summary.model` 收非空字符串（默认 `https://api.deepseek.com/v1` 与 `deepseek-chat`），`summary.api_key` 是**可空键**（`null` = 没配，与两个设备键位同形），`summary.extra_body_json` 收「一段合法 JSON 对象的文本」（厂商特有字段），`summary.default_window` 只认 `5m` / `15m` / `30m` / `full` 四档（默认 `15m`），`summary.deadline_seconds` 收 `1.0`–`3600.0` 秒（默认 `25.0`），`summary.max_attempts` 收 `1`–`10`（默认 `3`）。键名与取值范围在 `meeting/config.py`；这一层怎么用见第 3 章 `summarize` 那一段。
 
 - **`alarm.sound` 与 `asr.*` 一起当场生效**：写盘那一刻主 log 落一行「alarm.sound 收在热读档，本刻起出声开关 = …」，服务侧同时重取一次生效值视图并提交 —— 紧接着的 `GET /api/state` 里 `settings.alarm_sound` 就是新值，`revision` 涨一格，界面当场按新值决定响不响（设计稿 `docs/ui-design.md` 4.5 要的「勾选立即生效」在这里成立）。
 - **会后那四个键**（`post.engine` / `post.model` / `post.dtype` / `post.chunk_seconds`）也归 `pending_restart`：`post.engine` 与三个后端选择键同形（`auto` / `null` / `module:Class`），`post.model` 收 HF 仓库 id 或本地快照路径，`post.dtype` 只认 `bfloat16` / `bf16` / `float16` / `fp16` / `float32` / `fp32` 这几个档位名，`post.chunk_seconds` 是每块音频的长度上限（整数 `0`–`86400`，默认 `450`，`0` = 关掉分块、整段一次跑）。键名与取值范围的判据在 `meeting/config.py`，档位名要跟 `meeting/offline/engine.py` 的 `DTYPE_NAMES` 对得上，写错的名字在写盘前就被拦下。
@@ -167,5 +184,5 @@ curl.exe -s -X POST http://127.0.0.1:8765/api/actions `
 - 怎么起服务、配置、日志、退出码、跑测试：`docs/service.md`
 - 后端协议与 dev 替身：`docs/backend-protocols.md`
 - 前端工程怎么跑、怎么构建：`web/README.md`
-- 契约的可机读基准（25 个 golden 样本与掩码规则）：`contract/README.md`
+- 契约的可机读基准（29 个 golden 样本与掩码规则）：`contract/README.md`
 - 索引：`docs/spec.md`
