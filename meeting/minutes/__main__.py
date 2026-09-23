@@ -34,11 +34,11 @@ SUBCOMMANDS: dict[str, str] = {
 
 
 def _inputs_near(segmentation: Path) -> Path | None:
-    """按方案的落点找那一份 `working/inputs.json`（找不着给 `None`）。
+    """在传进来的那份方案旁边找 `working/inputs.json`（找不着给 `None`）。
 
-    `check` 拿到的路径有两种写法（提示词里那条命令写的是 `working/segmentation.json`，
-    而 spec 钉死的一份方案落在 `working/<source>/segmentation.json`），两种都认：
-    先看方案自己那一层，再看 `working/` 那一层。
+    `check` 拿到的路径，两种**参数写法**都认（跟落点口径无关，纯粹是手动排查时好使：方案平时
+    在 `working/` 这一层，翻某一条 source 的东西时也可能传来一条子目录下的路径）：先看方案自己
+    那一层，再看 `working/` 那一层。
     """
     working = segmentation.parent
     candidates = (

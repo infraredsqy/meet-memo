@@ -1,5 +1,8 @@
-"""分块 → 逻辑段的契约校验（`41465462` spec「交付物形状」里的
-`working/<source>/segmentation.json`）。
+"""分块 → 逻辑段的契约校验。
+
+分段方案落在 `working/segmentation.json`——**一份**覆盖这场会的一到两条输入
+（每条段自带 `source`；两路的行号空间互不相干，所以界面上把它写成
+`working/<source>/…` 会让人以为一条一路，那是错的）。
 
 这个模块服务 spec 里这一条：分块方案由 sub agent 交回一份 JSON，主 agent 在拿它往下走之前
 必须先证明**它把每一条输入的每一行都盖住了、一行不漏也不重叠**——否则后面按段写摘要时，
@@ -52,7 +55,7 @@ KNOWN_SCHEMA_MAJOR = 1
 #: 一份方案里每个 source 的段数上限（`minutes.max_segments` 配置键的取值域是 1–20）
 DEFAULT_MAX_SEGMENTS = 8
 
-#: 方案的文件名（`working/<source>/segmentation.json`，spec 交付物表钉死的）
+#: 方案的文件名（落在 `working/` 那一层，spec 交付物表钉死的）
 SEGMENTATION_NAME = "segmentation.json"
 
 #: 输入清单的文件名（`working/inputs.json`，spec 交付物表钉死的）。
@@ -424,15 +427,6 @@ def expected_lines_from_chunks(chunks: Mapping[str, Any]) -> dict[str, int]:
     return result
 
 
-def segmentation_path(session_dir: str | Path, source: str) -> Path:
-    """方案本轮的落点：`<场次目录>/working/<source>/segmentation.json`（spec 交付物表钉死的）。
-
-    一份方案覆盖一到两条输入，因此它落在**自己那条 source 的工作目录**里；两路各交一份时，
-    两份各自只判自己那一条的连续性。
-    """
-    return Path(session_dir) / "working" / source / SEGMENTATION_NAME
-
-
 __all__ = [
     "DEFAULT_MAX_SEGMENTS",
     "INPUTS_NAME",
@@ -445,6 +439,5 @@ __all__ = [
     "expected_lines_from_chunks",
     "expected_lines_from_inputs",
     "load_segmentation",
-    "segmentation_path",
     "validate_segmentation",
 ]

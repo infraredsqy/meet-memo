@@ -1,10 +1,11 @@
 """`meeting/minutes/contract.py` 的契约用例：按 source 各判一遍的连续性、读盘三档错误。
 
-盯的是四件事：
+盯的是五件事：
 
   - 连续性**按 `source` 各判一遍**（两路的行号空间互不相干，拼成一条链去判是错的）；
   - 失败抛的是自己的错误类 `SegmentationContractError`，消息里点得出 source 与段号；
   - 段数**按 source 各自** ≤ `max_segments`；
+  - 方案的落点在 `working/` 那一层（本包源码里没有一处说它落在某条 source 的子目录下）；
   - 新包在**全新解释器**里 import 之后 `sys.modules` 里没有重依赖。
 """
 
@@ -12,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -28,9 +30,11 @@ from meeting.minutes.contract import (
     expected_lines_from_chunks,
     expected_lines_from_inputs,
     load_segmentation,
-    segmentation_path,
     validate_segmentation,
 )
+
+#: 本包源码的目录（`working/<source>/` 那一档错口径不许在里面出现，见下面那条用例）
+_MINUTES_PACKAGE = Path(minutes_main.__file__).resolve().parent
 
 #: 两条输入各自的真实行数（切块那一步数出来的）
 EXPECTED = {"loopback": 20, "mic": 12}
@@ -651,11 +655,68 @@ def test_load_segmentation_reports_a_contract_failure(tmp_path: Path) -> None:
         load_segmentation(path, expected_lines={"mic": 12})
 
 
-def test_segmentation_path_is_the_agreed_landing_spot(tmp_path: Path) -> None:
-    """方案的落点：`<场次目录>/working/<source>/segmentation.json`。"""
-    assert segmentation_path(tmp_path, "loopback") == (
-        tmp_path / "working" / "loopback" / SEGMENTATION_NAME
-    )
+def test_segmentation_lands_in_the_working_directory(tmp_path: Path) -> None:
+    """方案的落点就是 `working/` 那一层（`working/segmentation.json`，**一份**）。
+
+    `SEGMENTATION_NAME` 与那一层是各处的共同口径（`runner` 落盘、提示词阶段 2、`check` 入口），
+    所以这一条把它们一起钉住；`_inputs_near` 另外三条用例盖两种调用写法与「找不到清单」。
+    """
+    assert SEGMENTATION_NAME == "segmentation.json"
+
+    working = tmp_path / "working"
+    working.mkdir()
+    (working / "inputs.json").write_text("{}", encoding="utf-8")
+
+    assert minutes_main._inputs_near(working / SEGMENTATION_NAME) == (working / "inputs.json")
+
+
+def test_the_check_subcommand_also_recognizes_a_nested_plan_path(tmp_path: Path) -> None:
+    """某条 source 子目录下的那一种**调用写法**照样认：先看方案那一层，再看 `working/`。"""
+    working = tmp_path / "working"
+    nested = working / "loopback"
+    nested.mkdir(parents=True)
+    (working / "inputs.json").write_text("{}", encoding="utf-8")
+
+    assert minutes_main._inputs_near(nested / SEGMENTATION_NAME) == (working / "inputs.json")
+
+
+def test_the_check_subcommand_reports_no_inputs_json_when_there_is_none(
+    tmp_path: Path,
+) -> None:
+    """两层都没有 `inputs.json` → `None`（`check` 据此退回方案自述那一档），不猜路径。"""
+    working = tmp_path / "working"
+    working.mkdir()
+
+    assert minutes_main._inputs_near(working / SEGMENTATION_NAME) is None
+
+
+#: 方案那一份被写成 `working/<source>/segmentation.json` 的样子。命中要同时满足两件事：
+#: 一行里**在讲方案**（`SEGMENTATION_NAME` 或它的字面 `segmentation.json` 或「方案」两个字），
+#: 并且紧跟其后就是那条带 source 一格的路径。
+#:
+#: 一条不算：切块的块与区间表本来就落 `working/<source>/`（那是真事，不在这条用例的范围里）。
+#: 这个形状是本包此前的错口径（`contract.py` 一个算路径的帮手 + 两处注释长这样），按它来盯。
+_PHANTOM_PATH = re.compile(
+    r"(SEGMENTATION_NAME|segmentation\.json|方案)[^\n]{0,40}`?working[/\\]"
+    r"(<source>|\{source\})[^`]{0,60}segmentation"
+)
+
+
+def test_no_module_advertises_a_segmentation_plan_below_a_source_directory() -> None:
+    """本包的源码里没有一个字把 `working/<source>/` 说成方案那一份的落点。
+
+    这条钉的是那个坑本身：`contract.py` 里曾有一个算路径的帮手 + 两处注释把它写成 spec 钉死
+    的落点，而 `runner` 与提示词阶段 2 都只落 `working/` 这一份，照着它写就写进一个没人读的
+    地方。落点口径改了，这里就先报错。
+    """
+    hits = [
+        f"{path.name}:{number}: {line.strip()}"
+        for path in sorted(_MINUTES_PACKAGE.glob("*.py"))
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1)
+        if _PHANTOM_PATH.search(line)
+    ]
+
+    assert hits == [], f"这些行又把方案写在某条 source 的子目录下了：{hits}"
 
 
 def test_expected_lines_from_chunks_reads_the_chunk_reports(tmp_path: Path) -> None:
