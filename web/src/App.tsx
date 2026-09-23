@@ -4,12 +4,14 @@ import type { CSSProperties, ErrorInfo, ReactNode } from 'react';
 import {
   createEventsClient,
   createHeartbeatClient,
+  fetchSummaries,
   postAction,
+  type ActionResult,
   type ConnectionState,
   type HeartbeatTick,
 } from './api';
 import { failureFrom, type ActionFailureView } from './failure';
-import type { Heartbeat, LevelsData, Snapshot } from './contract';
+import type { Heartbeat, LevelsData, Snapshot, SummaryWindowChoice } from './contract';
 import { decideAlarmSound, initialAlarmSound } from './live/alarm';
 import {
   applyHeartbeatReading,
@@ -27,6 +29,21 @@ import { emptyLossRecord, observeLosses, type LossRecord } from './live/loss';
 import { holdFrameWhileDataStopped, releaseHeldFrame, type StoredLevels } from './live/levels';
 import { healthView } from './live/status';
 import { createAlarmSound, browserAudioContextFactory } from './live/sound';
+import {
+  SUMMARY_CLIENT_TIMEOUT_SECONDS,
+  SUMMARY_WINDOWS,
+  summaryAvailable,
+  summaryFailureView,
+  summaryLogLabel,
+  summaryRunningNote,
+  summaryWhy,
+} from './live/summary';
+import {
+  createSummaryController,
+  type SummaryAnswer,
+  type SummaryController,
+  type SummaryRecord,
+} from './live/summary-controller';
 import {
   appendRow,
   insertGap,
@@ -48,36 +65,15 @@ import type { ChannelView } from './live/view';
  * 界面自己只记三样观察：心跳四级、两路丢过的窗口、转写窗口 —— 三样都只活在内存里，
  * 不进 localStorage / sessionStorage / Cookie（契约章 6 第 2 条）。
  *
- * 手动总结只在**位置与禁用态**上落地：按钮常禁用、旁注写明原因，一行行为都不写
- * （契约章 7：那能力还没进来，不要探测、不留死代码分支）。
+ * 手动总结那四件套（按钮 / 四档窗口 / 进行中 / 结果面板）与底部的本场记录回看接在这里：
+ * 请求状态机与三小段的读法在 `live/summary.ts` 与 `live/summary-controller.ts`，
+ * 组件只把算好的东西摆到位置上 —— **只有这一次动作的应答与本场记录那一次 GET 进视图**，
+ * 两者都是服务给的原文，界面不派生（契约章 6 第 1 条）。
  */
 
 /** 手工核对用的网址：界面不自取快照，权威来自 SSE 推送，这一条只在排障时打。 */
 export const STATE_PROBE_URL = '/api/state';
 
-/** 手动总结的四个窗口档位。**只有位置与禁用态**，不接任何行为。 */
-const SUMMARY_WINDOWS = ['5 分钟', '15 分钟', '30 分钟', '整场'] as const;
-
-/**
- * 总结入口为什么按不了。
- *
- * 四档各自成句：空闲态用设计章 2.5 的现成口径；收尾与已完成说这场已经结束；
- * 心跳失联与采集已停时先说眼前这件更要紧的事；录音中如实说总结能力还没进来
- * （任务书「边界」第 1 条）。
- */
-function summaryWhy(
-  topState: Snapshot['top_state'],
-  lost: boolean,
-  stalled: boolean,
-  transcriptHealth: Snapshot['transcript']['health'],
-): string {
-  if (topState === 'idle') return '开始录音后才能总结';
-  if (topState === 'ended') return '这场已经结束，会中总结只在录音时按。';
-  if (lost) return '心跳失联，先看服务那边';
-  if (stalled) return '采集已经停了，先看服务那边';
-  if (transcriptHealth === 'stopped') return '转写停了，总结没有材料可读';
-  return '会中总结还没进来（总结能力归下游节点），这一轮只落位置。';
-}
 
 /** 错误边界：主视图崩了就画一页说明，别留白屏。 */
 class ShellErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
@@ -235,6 +231,85 @@ function FailureBlock({
   );
 }
 
+/**
+ * 总结结果面板与失败面板共用的那一块（设计章 2.3）。
+ *
+ * 位置归调用方（排在每路健康之后、告警带之前），这里只有面板本体：右上角一个 `关闭`，
+ * 头一行是**这一次**的窗口（`刚才的 15 分钟`），底下按三小段摆那几条。
+ * **关掉即消失、不落文件** —— 记录仍在底部的本场总结记录里。
+ *
+ * 面板本体（`.summary-card`）与三小段的类名都来自设计章 7.10 的类名契约，
+ * 一个字都不新造。
+ */
+function SummaryCard({
+  title,
+  onClose,
+  children,
+}: {
+  title: string;
+  onClose: () => void;
+  children: ReactNode;
+}): ReactNode {
+  return (
+    <div className="summary-card" id="summary-card">
+      <div className="summary-card__head">
+        <span className="summary-card__title" id="summary-card-title">
+          {title}
+        </span>
+        <button className="btn btn--small btn--ghost" type="button" onClick={onClose}>
+          关闭
+        </button>
+      </div>
+      <div id="summary-card-body">{children}</div>
+    </div>
+  );
+}
+
+/** 三小段：段标题 + 那几条（结果面板与记录回看两处共用同一种摆法）。 */
+function SummarySections({
+  sections,
+  emptyNote,
+}: {
+  sections: { title: string; items: string[] }[];
+  emptyNote: string | null;
+}): ReactNode {
+  return (
+    <>
+      {emptyNote !== null && <p className="summary-card__item">{emptyNote}</p>}
+      {sections.map((section) => (
+        <div key={section.title}>
+          <p className="summary-card__sub">{section.title}</p>
+          {section.items.map((item, index) => (
+            <p className="summary-card__item" key={`${section.title}-${index}`}>
+              {item}
+            </p>
+          ))}
+        </div>
+      ))}
+    </>
+  );
+}
+
+/** 失败面板：一句原因 +（有就有的）补充行，右上角同样是 `关闭`。 */
+function SummaryFailureCard({
+  view,
+  onClose,
+}: {
+  view: { text: string; lines: string[] };
+  onClose: () => void;
+}): ReactNode {
+  return (
+    <SummaryCard title="这一次总结没成" onClose={onClose}>
+      <p className="summary-card__item">{view.text}</p>
+      {view.lines.map((line) => (
+        <p className="summary-card__item" key={line}>
+          {line}
+        </p>
+      ))}
+    </SummaryCard>
+  );
+}
+
 function LiveView(): ReactNode {
   /** 服务推过来的那一份。界面手上这份是**副本**，分歧以服务为准。 */
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
@@ -253,6 +328,27 @@ function LiveView(): ReactNode {
   const [transcriptOpen, setTranscriptOpen] = useState(false);
   const [jumpVisible, setJumpVisible] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  /** 本场总结记录那一块开着没有（结果面板与它是两块内容，各自关各自的）。 */
+  const [summaryLogOpen, setSummaryLogOpen] = useState(false);
+  /** 总结区那台状态机（这一次请求的状态、当前档位、记录那一份）。 */
+  const summaryRef = useRef<SummaryController | null>(null);
+  if (summaryRef.current === null) {
+    summaryRef.current = createSummaryController({
+      // 这一次动作的应答原文：三小段、窗口标签、时刻、耗时都是服务给的
+      request: async (window: SummaryWindowChoice): Promise<SummaryAnswer> => {
+        const result: ActionResult = await postAction('summarize', { window });
+        if (result.kind !== 'summarize') {
+          throw new Error(`summarize 的成功体该带 summary 键，收到的是 ${result.kind}`);
+        }
+        return result.summary;
+      },
+      // 本场记录那一次 GET 的原文
+      loadLog: async (): Promise<SummaryRecord[]> => (await fetchSummaries()).entries,
+      timeoutSeconds: SUMMARY_CLIENT_TIMEOUT_SECONDS,
+    });
+  }
+  const summary = summaryRef.current;
+  const [, bumpSummary] = useState(0);
 
   const eventsRef = useRef<ReturnType<typeof createEventsClient> | null>(null);
   const heartRef = useRef<ReturnType<typeof createHeartbeatClient> | null>(null);
@@ -289,6 +385,7 @@ function LiveView(): ReactNode {
           code: 'invalid_setting',
           message: error.message,
           detail: [],
+          fields: {},
         });
       },
     });
@@ -328,14 +425,26 @@ function LiveView(): ReactNode {
   }, [heartbeatSeconds]);
 
   // 换新场次时清掉上一场的增量流与转写窗口：免得旧电平、旧正文顶着新状态。
+  // 总结区那两样（这一次的应答 / 本场记录那一份）跟着一起收：新的一场从零开始，
+  // 服务侧 `start_session()` 也把缓冲与记录一起清了（phase2 的「缓冲与生命周期」）。
   useEffect(() => {
     if (snapshot === null) return;
     if (snapshot.top_state === 'idle' && snapshot.session === null) {
       setLevels(null);
       setRows([]);
       lastRowIdRef.current = 0;
+      summary.close();
     }
-  }, [snapshot]);
+  }, [snapshot, summary]);
+
+  // 总结区那台状态机一变就重画（它只在事件里改状态，不走 React 的 setState）。
+  useEffect(() => summary.subscribe(() => bumpSummary((n) => n + 1)), [summary]);
+
+  // 记录那一块的面板开着的时候，成功的这一次顺手把列表刷新一遍（新的一条就进来了）。
+  useEffect(() => {
+    summary.setLogOpen(summaryLogOpen);
+    if (summaryLogOpen && summary.log() === null) void summary.loadRecords();
+  }, [summaryLogOpen, summary]);
 
   /**
    * 发声：每来一份新快照判一次「这一帧该不该响」。
@@ -382,18 +491,41 @@ function LiveView(): ReactNode {
     };
   }, []);
 
-  const runAction = useCallback(async (name: string, args: Record<string, unknown> = {}) => {
-    setBusy(true);
-    setFailure(null);
-    try {
-      await postAction(name, args);
-      // 权威状态由服务随后推过来，这里不自己改任何状态。
-    } catch (error) {
-      setFailure(failureFrom(error));
-    } finally {
-      setBusy(false);
-    }
-  }, []);
+  /**
+   * 打一个动作。**返回值交给调用方** —— 会中总结那一条要吃应答体里那份 `summary`
+   * （三小段是它画的），所以这里是 `async` 并且把 `ActionResult` 交回去。
+   *
+   * **只有这一处让动作的应答进视图，而且它只进这一个视图**：应答的原文原样交给
+   * 「这一次总结」那块面板，权威状态照旧等服务的下一次推送 —— 这里一个状态都不改
+   * （契约章 6 第 1 条）。
+   */
+  const runAction = useCallback(
+    async (name: string, args: Record<string, unknown> = {}): Promise<ActionResult> => {
+      setBusy(true);
+      setFailure(null);
+      try {
+        // 返回的是服务给的应答原文（**权威状态照旧等服务的下一次推送**：这里一个状态都不改）
+        return await postAction(name, args);
+      } catch (error) {
+        setFailure(failureFrom(error));
+        throw error;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [],
+  );
+
+  /**
+   * 打一个动作；失败时**只画失败块**，不往外抛 —— 调用方是 `onClick`，抛出去就是一条
+   * 未处理的 promise 拒绝（失败块已经说清楚了，控制台上那条噪声没有用处）。
+   */
+  const runActionQuietly = useCallback(
+    (name: string, args: Record<string, unknown> = {}): void => {
+      void runAction(name, args).catch(() => undefined);
+    },
+    [runAction],
+  );
 
   /**
    * 「数据已停」＝失联（界面看不见服务）或采集已停（服务在应答但没有帧）。
@@ -488,7 +620,7 @@ function LiveView(): ReactNode {
       ...drainFailedSteps,
     ];
     if (detail.length === 0) return null;
-    return { kind: 'envelope', code: 'persist_failed', message: '收尾没走完', detail };
+    return { kind: 'envelope', code: 'persist_failed', message: '收尾没走完', detail, fields: {} };
   }, [failure, snapshot, drainFailedSteps]);
 
   const bodyClass = [
@@ -522,6 +654,29 @@ function LiveView(): ReactNode {
   const captureNote = stalled === null ? null : `采集已停 · ${stalled.seconds.toFixed(1)} 秒没收到音频帧`;
   /** 失联横幅的正文两处：周期与「最后一次应答 HH:MM:SS」。 */
   const lostView = lostBanner(heartbeat, heartbeatSeconds ?? 10);
+
+  /**
+   * 总结区那四样。**能不能按**由服务推来的那份快照算（四态 + 心跳失联 + 采集已停 +
+   * 转写健康位），**这一次请求的状态**由界面那台状态机给 —— 两样分得清，谁也不冒充谁。
+   */
+  const summaryState = summary.state();
+  const summaryAvailability = {
+    topState: snapshot.top_state,
+    lost,
+    stalled: stalled !== null,
+    transcriptHealth: snapshot.transcript.health,
+    running: summaryState.phase === 'running',
+  };
+  const summaryReady = summaryAvailable(summaryAvailability);
+  // 跑起来时旁边写进行中那一句（不写禁用原因），其余各档照 `summaryWhy()` 的现成文案
+  const summaryWhyText = summaryWhy(summaryAvailability);
+  const logView = summary.log();
+  /** 记录那一块取不到时给的那句话（取到了就是 `null`）。 */
+  const logError = summary.logError();
+  const summaryFailureText =
+    summaryState.phase === 'failure' && summaryState.failure !== null
+      ? summaryFailureView(summaryState.failure, summaryState.elapsedSeconds)
+      : null;
 
   return (
     <>
@@ -588,7 +743,7 @@ function LiveView(): ReactNode {
               className="btn btn--primary btn--start"
               type="button"
               disabled={busy}
-              onClick={() => void runAction('start', { mode: 'both' })}
+              onClick={() => runActionQuietly('start', { mode: 'both' })}
             >
               开始录音
             </button>
@@ -598,7 +753,7 @@ function LiveView(): ReactNode {
               className="btn btn--primary btn--end"
               type="button"
               disabled={busy}
-              onClick={() => void runAction('stop')}
+              onClick={() => runActionQuietly('stop')}
             >
               结束录音
             </button>
@@ -613,7 +768,7 @@ function LiveView(): ReactNode {
               checked={alarmSoundOn}
               disabled={busy}
               onChange={(event) =>
-                void runAction('settings_update', { 'alarm.sound': event.target.checked })
+                runActionQuietly('settings_update', { 'alarm.sound': event.target.checked })
               }
             />
             <label className="kv__k" htmlFor="alarm-switch-main">
@@ -647,26 +802,56 @@ function LiveView(): ReactNode {
               ))}
             </div>
             <div className="live-tools">
+              {/* 四个窗口档位（设计章 2.3）。缺省选中的是「15 分钟」；按下之后请求里带的
+                  取值来自 `SUMMARY_WINDOWS` —— 界面上写的是人话，请求里带的是契约取值 */}
               <div className="seg" role="group" aria-label="总结窗口">
-                {SUMMARY_WINDOWS.map((label, index) => (
+                {SUMMARY_WINDOWS.map((item) => (
                   <button
-                    key={label}
-                    className={`seg__item ${index === 1 ? 'seg__item--on' : ''}`}
+                    key={item.choice}
+                    className={`seg__item ${summary.state().window === item.choice ? 'seg__item--on' : ''}`}
                     type="button"
-                    disabled
+                    aria-pressed={summary.state().window === item.choice}
+                    disabled={!summaryReady}
+                    onClick={() => summary.select(item.choice)}
                   >
-                    {label}
+                    {item.label}
                   </button>
                 ))}
               </div>
-              <button className="btn btn--primary btn--block" type="button" disabled>
-                总结一下
-              </button>
-              <p className="sumbar__why" id="summary-why">
-                {summaryWhy(snapshot.top_state, lost, stalled !== null, snapshot.transcript.health)}
-              </p>
-              <button className="btn btn--ghost btn--block" type="button" disabled>
-                本场总结记录（还没有）
+              {/* 主按钮：录音中 / 告警态可用；跑起来时按钮位换成进行中那一句（不显示倒计时、
+                  不提前宣布失败）。其余各档按钮按不动，原因写在下面那一行 */}
+              {summary.state().phase === 'running' ? (
+                <p className="sumbar__note" id="summary-run">
+                  <span className="spinner" aria-hidden="true" />{' '}
+                  {summaryRunningNote(summary.state().window)}
+                </p>
+              ) : (
+                <button
+                  className="btn btn--primary btn--block"
+                  type="button"
+                  id="summary-btn"
+                  disabled={!summaryReady}
+                  onClick={() => void summary.run()}
+                >
+                  总结一下
+                </button>
+              )}
+              {summaryWhyText !== null && (
+                <p className="sumbar__why" id="summary-why">
+                  {summaryWhyText}
+                </p>
+              )}
+              {/* 本场总结记录：入口写着按过的次数，点开列每一次（时刻 + 窗口 + 那几条）。
+                  那一行在**还没取过服务那份**时先写「还没有」—— 这一刻手上确实一条都没有；
+                  取回来之后整行换成服务给的条目数。它是**本场**的，与结果面板两块内容各关各的 */}
+              <button
+                className="btn btn--ghost btn--block"
+                type="button"
+                id="summary-log-btn"
+                aria-expanded={summaryLogOpen}
+                onClick={() => setSummaryLogOpen((open) => !open)}
+              >
+                {summaryLogLabel(summary.logCount())}
               </button>
             </div>
           </div>
@@ -689,6 +874,69 @@ function LiveView(): ReactNode {
         </div>
       </section>
 
+      {/* 总结结果面板（设计章 2.3 的主位第 5 项）：**位置在每路健康之后、告警带之前**。
+          只有几条，关掉即消失、不落文件；记录仍在底部的本场总结记录里。
+          结果与失败共用一块面板：一次总结只会落在其中一档 */}
+      {summaryState.phase === 'done' && summaryState.result !== null && (
+        <section className="band band--quiet">
+          <SummaryCard title={summaryState.result.title} onClose={() => summary.close()}>
+            <SummarySections
+              sections={summaryState.result.sections}
+              emptyNote={summaryState.result.emptyNote}
+            />
+          </SummaryCard>
+        </section>
+      )}
+
+      {summaryFailureText !== null && (
+        <section className="band band--quiet">
+          <SummaryFailureCard view={summaryFailureText} onClose={() => summary.close()} />
+        </section>
+      )}
+
+      {/* 本场总结记录：入口在采集带右侧，展开的内容跟到这里（与结果面板同一处落位）。
+
+          **判据是两样取或**：手上有服务给的那一份（`logView`），**或者**有取不到时那句说明
+          （`logError`）。只看前一半的话，本场**第一次**展开、而那一次 `GET /api/summaries`
+          没取到时（网络错、服务忙、非 200），面板整块不出现 —— 控制层已经备好的那句说明
+          够不着，入口那一行还恒写着「还没有」，用户看到的是「按了没反应」。 */}
+      {summaryLogOpen && (logView !== null || logError !== null) && (
+        <section className="band band--quiet">
+          <SummaryCard
+            title={logView === null ? summaryLogLabel(null) : logView.title}
+            onClose={() => setSummaryLogOpen(false)}
+          >
+            {logError !== null && <p className="summary-card__item">{logError}</p>}
+            {logView !== null && logView.emptyNote !== null && (
+              <p className="summary-card__item">{logView.emptyNote}</p>
+            )}
+            {/* 每一次一条：`[<HH:MM>] 取的「<窗口档位>」` 起一小段，下面按
+                讲什么 / 讲到哪 / 丢掉什么 的次序列那几条（`1987cb20/phase3/task.md`
+                的「记录回看」那一节的排版；与设计稿把每条压成一句话的写法不一致，
+                这一处偏差记在交付报告里）。
+
+                外层 `.list` + 每条 `.list__row` 管**条目之间**的次序；每一条里面再套一层
+                `.list` 管**起头那一行与三小段之间**的次序（`.list__row` 自带 flex，
+                直接往里塞两行内容会把它们横着排成一行）。两层的类名都来自设计章 7.10，
+                一行内联样式、一个新造的类名都没有。 */}
+            {logView !== null && (
+              <div className="list" id="summary-log-list">
+                {logView.entries.map((entry) => (
+                  <div className="list__row" key={entry.key}>
+                    <div className="list">
+                      <p className="summary-card__sub">
+                        [{entry.time}] 取的「{entry.windowLabel}」
+                      </p>
+                      <SummarySections sections={entry.sections} emptyNote={entry.emptyNote} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </SummaryCard>
+        </section>
+      )}
+
       {/* 告警区：失联时整块收掉（两句话不得同屏）；采集已停那一条也不与致命横幅同屏 */}
       {!view.alertsHidden && (
         <section className="band band--alert" aria-label="告警">
@@ -708,7 +956,7 @@ function LiveView(): ReactNode {
                   type="button"
                   aria-pressed={view.critical.muted}
                   disabled={busy}
-                  onClick={() => void runAction('mute_session')}
+                  onClick={() => runActionQuietly('mute_session')}
                 >
                   {view.muteLabel}
                 </button>
@@ -723,7 +971,7 @@ function LiveView(): ReactNode {
                   className="btn btn--small btn--danger"
                   type="button"
                   disabled={busy}
-                  onClick={() => void runAction('stop')}
+                  onClick={() => runActionQuietly('stop')}
                 >
                   结束录音
                 </button>

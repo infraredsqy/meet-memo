@@ -16,7 +16,7 @@
 | `ui/` | 设计稿本体（`*.html` + `tokens.css` / `ui.css` + `shots/*.png`）。它是 `ui-design.md` 的渲染载体，不进构建、不被服务引用 | 看视觉效果时 |
 | `service.md` | **服务现状**：怎么起、起了之后有什么、配置键、log 在哪（含场次 log 的挂摘）、退出码五档、`Ctrl+C` 两阶段、收尾怎么跑与失败后的两条出路、测试怎么跑、还差什么 | 装起来用、或接手改服务时 |
 | `state.md` | **状态、场次与推送**：四态与迁移、收尾四步与共享预算、快照十键与取值域、`session.json` schema、心跳判据、告警判定、SSE 三通道与帧形状、dev 替身（采集 / 转写）怎么用 | 接这份数据、写前端或验收脚本时 |
-| `api.md` | **HTTP 面**：五个端点、动作信封、动作表与 `code` 表、`settings_update` 的键态两分、端口与本地防线 | 打这套接口时 |
+| `api.md` | **HTTP 面**：六个端点、动作信封、动作表与 `code` 表、`settings_update` 的键态两分、端口与本地防线 | 打这套接口时 |
 | `contract.md` | **双端契约**：快照十键的 schema、SSE 四事件与重连语义、动作信封与逐档 `detail`、心跳与客户端义务、定名未实现的保留登记；正文后接两章附录（fixtures 与掩码、复核手法）。每条都在 `contract/fixtures/` 有一个 golden 样本，跟代码行为漂移就红 | 写界面、写验收脚本，或改服务对外形状时 |
 | `backend-protocols.md` | 四个后端协议的成员与数据结构、解析入口、`skipped` / `failed` 的判据、采集与转写两个真实现的落点、两个会后钩子（`post.hook` / `minutes.hook`）与它们各自的开关、dev 替身（按 key 分流） | 往服务里插真后端时 |
 | `minutes.md` | **会后纪要生成**（`41465462`）：什么时候被谁拉起、吃什么输入、五个阶段各产出什么、怎么拉起 headless DSH 子会话、产物四条判据、四个配置键、三个手动子命令 | 想知道纪要怎么出来的、或手动跑一遍时 |
@@ -27,7 +27,7 @@
 | 路径 | 是什么 |
 |---|---|
 | `meeting/` | 服务本体（Python 包）：起停、端口与三道防线、配置、日志、四态状态机、场次目录与 `session.json`、告警判定、SSE 推送、六个动作、四个后端协议与两个替身 |
-| `meeting/service/` | 应用装配、五条路由的唯一注册点、`ServiceRuntime`（唯一状态权威）、收尾编排与共享预算、信号处理与关停接线、SSE 广播中心、`/debug` 自检页 |
+| `meeting/service/` | 应用装配、六条路由的唯一注册点、`ServiceRuntime`（唯一状态权威）、收尾编排与共享预算、信号处理与关停接线、SSE 广播中心、`/debug` 自检页 |
 | `meeting/backends/` | 协议与数据结构、`null` 替身、dev 替身（采集合成电平 + **转写合成行**，按 key 分流）、采集后端 `capture.py`（设备枚举与试开）、转写后端 `transcribe.py`（`9e5db89c` phase2：把 `meeting/asr/pipeline.py` 那条流水线包成协议实现，重依赖全在函数体内惰性 import）、会后钩子 `post.py`（`7c6952e5`：收尾第 4 步的落点，起一条 daemon 线程跑 `meeting/offline/runner.py`，**返回即算启动成功**，线程里的异常落进状态文件）、纪要钩子 `minutes.py`（`41465462` phase2：挂在离线那趟的尾巴上，起一条 daemon 线程跑 `meeting/minutes/runner.py`，同样返回即算启动成功）、后端解析入口 `registry.py` |
 | `meeting/capture/` | 采集层：设备模型与挑选策略（`devices.py`，纯逻辑，骨架搬自 V1）、真实适配层（`sources.py`，惰性 import `sounddevice` / `soundcard`，含两路持续采集源）、电平换算（`levels.py`，纯函数）、归档与转码（`archive.py`：无缓冲 PCM 写入器 + PCM→MP3）、会话引擎（`engine.py`：两路读侧 / 写侧 / 0.5 秒电平刻度） |
 | `meeting/asr/` | 实时转写的 **ASR 核心与流水线**（`9e5db89c`）：`guards.py` 是判定内核（token 级判环 `_LoopGuard`、墙钟超时 `_DeadlineStop`、文本级剥离 `_strip_repeat_loops` + `_loop_coverage`，**零重依赖**）、`glm.py` 是模型层（`GlmAsrTranscriber` 的惰性加载与 `transcribe_segment`、噪声预筛 `_is_noise_segment`、四层防护的挂载点、`_load_from_hub` 离线优先）、`pipeline.py` 是流水线层（游标尾读 `session_dir/meeting_audio_<source>.pcm` → VAD 切段 → **入队即盖采集时刻** → 单 worker 顺序识别 → 每路一个 `meeting_transcript_<source>.md` + 行出口；段队列无界、收尾预算按积压量自适应）。重依赖（torch / transformers / numpy / webrtcvad）一律在**函数体内**惰性 import：`import meeting.asr.glm` 一条都不拉（`tests/test_asr_glm.py` 在全新解释器里盯着这一条） |

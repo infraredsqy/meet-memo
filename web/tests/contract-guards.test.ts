@@ -22,6 +22,8 @@ import {
   sessionSchema,
   snapshotSchema,
   sseFrameSchema,
+  summarizeOkSchema,
+  summariesResponseSchema,
   urlSchema,
 } from '../src/contract';
 import { ACTION_FIXTURES, readFixture } from './fixtures';
@@ -341,12 +343,19 @@ describe('describeFailure 的收放按契约来（M2）', () => {
         { failed_steps: 'nope' },
         { known: 'start' },
         { failed_steps: [{ id: 'post' }] },
+        // 会中总结那两台新键（4.4 的两行）同样逐个咬：形状不对就拒
+        { health: 0 },
+        { missing: 'summary.base_url' },
+        { attempts: 1.5 },
       ],
       [
         {},
         { session_id: '<session-id>', dir: '<path>', elapsed_seconds: 0 },
         { key: 'mode', value: 'burst', legal: ['both', 'mic', 'loopback'] },
         { failed_steps: [{ id: 'post', error: '起不来' }] },
+        { health: 'stopped' },
+        { missing: ['summary.base_url', 'summary.api_key'] },
+        { elapsed_seconds: 25, attempts: 3 },
       ],
     );
   });
@@ -391,12 +400,11 @@ describe('describeFailure 的收放按契约来（M2）', () => {
     expect(actionErrorSchema.safeParse(envelope).success).toBe(false);
   });
 
-  it('12 份动作样本全部照旧过', () => {
+  it('十五份动作样本全部照旧过', () => {
     for (const name of ACTION_FIXTURES) {
       expect(actionFixtureSchema.safeParse(readFixture('actions', name)).success, name).toBe(true);
     }
-  });
-});
+  });});
 
 /**
  * M1：**漂移检测落在样本层**。
@@ -416,7 +424,7 @@ describe('detail 键集合与 4.4 表逐条相等（M1，样本层精确）', ()
     return { code: fixture.body.code, detail: fixture.body.detail as Record<string, unknown> };
   }
 
-  it('七个 code 各自对应的样本都在，code 表一个不多一个不少', () => {
+  it('九个 code 各自对应的样本都在，code 表一个不多一个不少', () => {
     const seen = new Set<string>();
     for (const name of ACTION_FIXTURES) {
       const fixture = actionFixtureSchema.parse(readFixture('actions', name));
@@ -426,13 +434,14 @@ describe('detail 键集合与 4.4 表逐条相等（M1，样本层精确）', ()
     expect([...seen].sort()).toEqual([...ERROR_CODES].sort());
   });
 
-  it('独档的四个 code：样本的 detail 键集合与 4.4 表精确相等', () => {
+  it('独档的六个 code：样本的 detail 键集合与 4.4 表精确相等', () => {
     const samples: Record<string, string> = {
       already_recording: 'fail-already-recording',
       draining: 'fail-draining',
       not_recording: 'fail-not-recording',
       persist_failed: 'fail-persist-failed',
       action_unavailable: 'fail-action-unavailable',
+      transcript_unavailable: 'fail-transcript-unavailable',
     };
     for (const [code, fixtureName] of Object.entries(samples)) {
       const { code: actualCode, detail } = failureOf(fixtureName);
@@ -485,8 +494,29 @@ describe('detail 键集合与 4.4 表逐条相等（M1，样本层精确）', ()
     ]);
   });
 
-  it('四个成功样本没有 detail 这把键（成功体是另一套形状）', () => {
-    for (const name of ['start-ok', 'stop-ok', 'mute-session-ok', 'settings-update-ok'] as const) {
+  it('summary_failed 两档：缺键那一档各落在 4.4 写的某一档上', () => {
+    const variants = ACTION_DETAIL_VARIANTS['summary_failed'] ?? [];
+    const { detail } = failureOf('fail-summary-failed-missing');
+    const keys = Object.keys(detail).sort();
+    const matched = variants.some(
+      (variant) => variant.slice().sort().join(',') === keys.join(','),
+    );
+    expect(matched, `summary_failed 样本的键 ${keys.join(',')} 不在 4.4 的两档里`).toBe(true);
+
+    // 两档的键并集就是 4.4 表里列出来的那三个（`elapsed_seconds` / `attempts` 那一档要一个
+    // 真等满预算的假端点，由 `tests/test_summary_action.py` 逐档实测，样本目录里没有它）。
+    const union = new Set(variants.flat());
+    expect([...union].sort()).toEqual(['attempts', 'elapsed_seconds', 'missing']);
+  });
+
+  it('五个成功样本没有 detail 这把键（成功体是另一套形状）', () => {
+    for (const name of [
+      'start-ok',
+      'stop-ok',
+      'mute-session-ok',
+      'settings-update-ok',
+      'summarize-ok',
+    ] as const) {
       const fixture = actionFixtureSchema.parse(readFixture('actions', name));
       expect(fixture.body.ok, name).toBe(true);
       expect(Object.hasOwn(fixture.body, 'detail'), name).toBe(false);
@@ -511,7 +541,7 @@ describe('detail 键集合与 4.4 表逐条相等（M1，样本层精确）', ()
  * （`reprobe` 落地时就漏在这里）。下面两条一条钉枚举、一条钉它**覆盖得住服务报的 `known`**。
  */
 describe('动作名清单与样本里的 known 对齐（看守）', () => {
-  it('`ACTION_NAMES` 逐字六个，`actionNameSchema` 就是这一份', () => {
+  it('`ACTION_NAMES` 逐字七个，`actionNameSchema` 就是这一份', () => {
     expect([...ACTION_NAMES]).toEqual([
       'start',
       'stop',
@@ -519,14 +549,15 @@ describe('动作名清单与样本里的 known 对齐（看守）', () => {
       'settings_update',
       'reprobe',
       'dev_inject',
+      'summarize',
     ]);
     expect(actionNameSchema.options).toEqual([...ACTION_NAMES]);
   });
 
-  it('六个名字全过 schema，清单外的名字（含保留登记里的 `summarize`）被拒', () => {
+  it('七个名字全过 schema，清单外的名字与大小写变体被拒', () => {
     expectVerdicts(
       actionNameSchema,
-      ['summarize', 'pause', 'resume', 'START', ''],
+      ['pause', 'resume', 'START', 'Summarize', ''],
       [...ACTION_NAMES],
     );
   });
@@ -537,7 +568,7 @@ describe('动作名清单与样本里的 known 对齐（看守）', () => {
     );
     if (unknown.body.ok) throw new Error('样本该是失败档');
     const known = unknown.body.detail.known ?? [];
-    // 服务报的六个名字逐个必须是本层认得的动作名（少一名当场红）。
+    // 服务报的七个名字逐个必须是本层认得的动作名（少一名当场红）。
     for (const name of known) {
       expect(actionNameSchema.safeParse(name).success, `known 里的 ${name}`).toBe(true);
     }
@@ -642,3 +673,126 @@ describe('levels 帧的结构不变量（M4）', () => {
     expect(sseFrameSchema.safeParse(frame).success).toBe(false);
   });
 });
+
+describe('会中总结那两套 schema 咬得住（S1）', () => {
+  /** 一份合法的成功体（照 `contract/fixtures/actions/summarize-ok.json` 的形状造）。 */
+  function okBody(over: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      ok: true,
+      revision: 2,
+      summary: {
+        window: '15m',
+        window_label: '15 分钟',
+        at: '2026-09-21T21:03:00+08:00',
+        elapsed_seconds: 9.4,
+        lines: 37,
+        what: ['在过排期'],
+        where: ['说到第三项'],
+        lost: ['有一处缺口'],
+        ...over,
+      },
+    };
+  }
+
+  /** 拿一份改过的 `summary` 子对象装出整份应答体。 */  function bodyWithSummary(summary: Record<string, unknown>): Record<string, unknown> {
+    return { ok: true, revision: 2, summary };
+  }
+
+  it('合法成功体照过，三个数组空着也合法（B15 的「空数组合法」）', () => {
+    expect(summarizeOkSchema.safeParse(okBody()).success).toBe(true);
+    expect(
+      summarizeOkSchema.safeParse(
+        okBody({ what: [], where: [], lost: [], lines: 0 }),
+      ).success,
+    ).toBe(true);
+  });
+
+  it('八格一格都不能少、多一格也拒（`.strict()`）', () => {
+    for (const key of [
+      'window',
+      'window_label',
+      'at',
+      'elapsed_seconds',
+      'lines',
+      'what',
+      'where',
+      'lost',
+    ]) {
+      const summary: Record<string, unknown> = {
+        ...(okBody()['summary'] as Record<string, unknown>),
+      };
+      delete summary[key];
+      expect(summarizeOkSchema.safeParse(bodyWithSummary(summary)).success, `少 ${key}`).toBe(
+        false,
+      );
+    }
+    expect(summarizeOkSchema.safeParse(okBody({ 契约外的键: 1 })).success).toBe(false);
+    // 顶层也收严：多一个键就红
+    expect(summarizeOkSchema.safeParse({ ...okBody(), extra: 1 }).success).toBe(false);
+    // `ok` 必须是字面量 true
+    expect(summarizeOkSchema.safeParse({ ...okBody(), ok: false }).success).toBe(false);
+  });
+
+  it('三小段的取值形状照咬：字符串数组，不是字符串', () => {
+    expect(summarizeOkSchema.safeParse(okBody({ what: '在过排期' })).success).toBe(false);
+    expect(summarizeOkSchema.safeParse(okBody({ where: [1, 2] })).success).toBe(false);
+    expect(summarizeOkSchema.safeParse(okBody({ lines: 3.5 })).success).toBe(false);
+    // 时刻那一格走 ISO 判据（真时间戳与 `<iso>` 两样放行，别的形状拒）
+    expect(summarizeOkSchema.safeParse(okBody({ at: '<iso>' })).success).toBe(true);
+    expect(summarizeOkSchema.safeParse(okBody({ at: 'not-a-timestamp' })).success).toBe(false);
+  });
+
+  it('本场记录那条：七格不多不少，多了 `lines` 就拒', () => {
+    const listing = {
+      session_id: '260921',
+      entries: [
+        {
+          window: '15m',
+          window_label: '15 分钟',
+          at: '2026-09-21T21:03:00+08:00',
+          elapsed_seconds: 9.4,
+          what: ['在过排期'],
+          where: ['说到第三项'],
+          lost: ['有一处缺口'],
+        },
+      ],
+    };
+    expect(summariesResponseSchema.safeParse(listing).success).toBe(true);
+    // 应答体那一份多一格 `lines` —— 记录这一份收的是七格，多一格就拒
+    const withLines = structuredClone(listing);
+    (withLines.entries[0] as Record<string, unknown>)['lines'] = 37;
+    expect(summariesResponseSchema.safeParse(withLines).success).toBe(false);
+    // 空记录那一档照过
+    expect(summariesResponseSchema.safeParse({ session_id: null, entries: [] }).success).toBe(true);
+  });
+
+  it('本场记录端点的 session_id 走目录名那一档：路径占位符进不来', () => {
+    const base = { session_id: '260921', entries: [] };
+    expect(summariesResponseSchema.safeParse(base).success).toBe(true);
+    expect(summariesResponseSchema.safeParse({ ...base, session_id: '<path>' }).success).toBe(false);
+    expect(summariesResponseSchema.safeParse({ ...base, session_id: '' }).success).toBe(false);
+  });
+});
+
+/**
+ * 会中总结这一轮**把那道快照硬门留在原处**（`1987cb20/phase3/task.md` 的边界第 3 条）。
+ *
+ * 结果走动作的应答体、记录走 `GET`，快照里一个 `summary` 键都没有 —— 这条断言在
+ * `contract.test.ts` 里（顶层恰好十键、不许多 `summary`），这里补的是**反向**那一半：
+ * 新加的两套 schema 都收不下十键快照，于是「结果误进了快照」这件事在两端都会红。
+ */
+describe('快照那道门不许撬（S2）', () => {
+  it('快照过不了总结那两套 schema：十键里没有 `summary`，也没有 `entries`', () => {
+    const snap = readFixture('snapshot', 'idle');
+    expect(summarizeOkSchema.safeParse(snap).success).toBe(false);
+    expect(summariesResponseSchema.safeParse(snap).success).toBe(false);
+  });
+
+  it('给快照强塞一个 `summary` 键，快照 schema 当场拒（`.strict()` 那道门还在）', () => {
+    const snap = readFixture('snapshot', 'idle') as Record<string, unknown>;
+    expect(snapshotSchema.safeParse(snap).success).toBe(true);
+    expect(snapshotSchema.safeParse({ ...snap, summary: null }).success).toBe(false);
+    expect(snapshotSchema.safeParse({ ...snap, summary: { window: '15m' } }).success).toBe(false);
+  });
+});
+

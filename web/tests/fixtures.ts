@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 export const FIXTURES_DIR = resolve(here, '..', '..', 'contract', 'fixtures');
 
-export type FixtureGroup = 'snapshot' | 'sse' | 'actions' | 'heartbeat';
+export type FixtureGroup = 'snapshot' | 'sse' | 'actions' | 'summaries' | 'heartbeat';
 
 /** 读一份样本的原文。 */
 export function readFixtureText(group: FixtureGroup, name: string): string {
@@ -58,12 +58,17 @@ export const SSE_FIXTURES = [
   'resync-snapshot',
 ] as const;
 
-/** 十二个动作样本：四个成功 + 七个失败 `code` 各一 + 未知动作档。 */
+/**
+ * 十五个动作样本：**五个成功**（四个通用成功体 + `settings_update` 那种带数组的 +
+ * 会中总结那种带 `summary` 的）与**十个失败**（九个 `code` 各一 + 未知动作名那一档，
+ * 其中 `summary_failed` 有两个样本：端点缺键那一档与预算用尽那一档）。
+ */
 export const ACTION_FIXTURES = [
   'start-ok',
   'stop-ok',
   'mute-session-ok',
   'settings-update-ok',
+  'summarize-ok',
   'fail-already-recording',
   'fail-draining',
   'fail-capture-unavailable',
@@ -72,7 +77,25 @@ export const ACTION_FIXTURES = [
   'fail-invalid-setting-unknown-action',
   'fail-persist-failed',
   'fail-action-unavailable',
+  'fail-transcript-unavailable',
+  'fail-summary-failed-missing',
 ] as const;
+
+/**
+ * 会中总结那四份相关联的样本：三份动作（成功体与两档失败）与一份本场记录。
+ *
+ * 记录那一份不在 `actions/` 里，它是 `GET /api/summaries` 的应答 —— 读它用
+ * `readFixture('summaries', 'after-one')`，`readFixtureText` / `listFixtures` 那两条
+ * 工具的 `FixtureGroup` 已经认得这个目录。
+ */
+export const SUMMARY_FIXTURES = [
+  'summarize-ok',
+  'fail-transcript-unavailable',
+  'fail-summary-failed-missing',
+] as const;
+
+/** 本场总结记录那一份样本的名字（`GET /api/summaries`）。 */
+export const SUMMARIES_FIXTURES = ['after-one'] as const;
 
 /** 两个心跳样本。 */
 export const HEARTBEAT_FIXTURES = ['idle', 'recording'] as const;

@@ -4,8 +4,11 @@ import {
 } from './api';
 import type { ErrorCode } from './contract';
 
+/** 失败信封的 `detail` 原文（一把开放袋子 —— 6.7：界面只认自己会画的那几把键）。 */
+export type FailureDetail = Record<string, unknown>;
+
 /**
- * 动作没成的那一档：**403 与失败信封分开画**（`docs/contract.md` 6.4）。
+ * 失败那一档的读法（`docs/contract.md` 6.4 与 6.7）。
  *
  * 这一支从 `App.tsx` 抽出来单独放（那两个文件都不带 JSX）：分档的口径属于「怎么读服务的
  * 应答」，与怎么把它画到页面上是两件事，而 `web/tsconfig.node.json` 那条线（测试走的那条）
@@ -18,13 +21,24 @@ import type { ErrorCode } from './contract';
  *   `code: 'invalid_setting'` 一起显示，那个 code 服务在这条路径上根本不会回，
  *   画出来是界面自己编的（复审抓到的那一格）。
  * - `envelope`：走到了端点，服务回了失败信封，`code` 与 `detail` 都按第 4 章读。
+ *
+ * **两样都留着**：`lines` 是摊平后给人看的（通用失败块直接用），`fields` 是 `detail`
+ * 原文（按 `code` + `detail` 里**有哪些键**分派画法的那几条要读它 —— 例如会中总结的
+ * 五档失败，见 `live/summary.ts`）。摊平是有损的（键名被拼进句子里了），所以分派不许
+ * 从 `lines` 上做字符串匹配（契约 6.7 明说：不按 `message` 做字符串匹配）。
  */
 export type ActionFailureView =
   | { kind: 'forbidden'; status: number; text: string }
-  | { kind: 'envelope'; code: ErrorCode; message: string; detail: string[] };
+  | {
+      kind: 'envelope';
+      code: ErrorCode;
+      message: string;
+      detail: string[];
+      fields: FailureDetail;
+    };
 
 /** 把动作失败的 `detail` 按「有哪个键就显示哪个键」摊平（第 6 章第 7 条）。 */
-export function describeDetail(detail: Record<string, unknown>): string[] {
+export function describeDetail(detail: FailureDetail): string[] {
   const lines: string[] = [];
   for (const [key, value] of Object.entries(detail)) {
     if (Array.isArray(value)) {
@@ -52,11 +66,13 @@ export function failureFrom(error: unknown): ActionFailureView {
     return { kind: 'forbidden', status: error.status, text: error.text };
   }
   if (error instanceof ActionFailedError) {
+    const fields = error.detail as FailureDetail;
     return {
       kind: 'envelope',
       code: error.code,
       message: error.message,
-      detail: describeDetail(error.detail as Record<string, unknown>),
+      detail: describeDetail(fields),
+      fields,
     };
   }
   return {
@@ -64,5 +80,6 @@ export function failureFrom(error: unknown): ActionFailureView {
     code: 'invalid_setting',
     message: error instanceof Error ? error.message : String(error),
     detail: [],
+    fields: {},
   };
 }

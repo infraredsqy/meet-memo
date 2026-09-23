@@ -13,4 +13,5 @@ export * from './enums';
 export * from './snapshot';
 export * from './sse';
 export * from './actions';
+export * from './summaries';
 export * from './heartbeat';

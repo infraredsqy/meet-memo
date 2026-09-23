@@ -5,9 +5,12 @@ import {
   ActionProtocolError,
   ContractParseError,
   REQUIRED_HEADERS,
+  SummariesProtocolError,
+  SummariesUnavailableError,
   clampHeartbeatInterval,
   createEventsClient,
   createHeartbeatClient,
+  fetchSummaries,
   judgeHeartbeat,
   lateHeartbeatText,
   postAction,
@@ -90,7 +93,37 @@ describe('postAction 的信封解析', () => {
     });
   });
 
-  it('七个失败样本都抛 ActionFailedError，带 code / message / detail', async () => {
+  it('summarize 成功体返 summary 那一格（八格逐键都在）', async () => {
+    const payload = readFixture('actions', 'summarize-ok') as { body: unknown };
+    const fetchImpl = vi.fn(async () => jsonResponse(200, payload.body)) as unknown as typeof fetch;
+
+    const result = await postAction('summarize', { window: '15m' }, { fetchImpl });
+
+    expect(result.kind).toBe('summarize');
+    if (result.kind !== 'summarize') throw new Error('该是 summarize 那一档');
+    expect(result.revision).toBe(2);
+    expect(Object.keys(result.summary).sort()).toEqual([
+      'at',
+      'elapsed_seconds',
+      'lines',
+      'lost',
+      'what',
+      'where',
+      'window',
+      'window_label',
+    ]);
+    expect(result.summary.window_label).toBe('15 分钟');
+    expect(result.summary.lines).toBe(12);
+
+    const [, init] = (fetchImpl as unknown as { mock: { calls: [string, RequestInit][] } }).mock
+      .calls[0] as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toEqual({
+      action: 'summarize',
+      args: { window: '15m' },
+    });
+  });
+
+  it('十个失败样本都抛 ActionFailedError，带 code / message / detail', async () => {
     const names = [
       'fail-already-recording',
       'fail-draining',
@@ -100,6 +133,8 @@ describe('postAction 的信封解析', () => {
       'fail-invalid-setting-unknown-action',
       'fail-persist-failed',
       'fail-action-unavailable',
+      'fail-transcript-unavailable',
+      'fail-summary-failed-missing',
     ] as const;
 
     for (const name of names) {
@@ -161,6 +196,76 @@ describe('postAction 的信封解析', () => {
 
     await expect(postAction('start', {}, { fetchImpl })).rejects.toBeInstanceOf(
       ActionProtocolError,
+    );
+  });
+});
+
+/**
+ * `GET /api/summaries`（契约 4.7）：本场总结记录。
+ *
+ * 它有两条与动作端点不一样的地方，各有一条用例钉住：**不带那两个必需头**（动作那三个
+ * 防线是给改状态的请求设的），以及**非 2xx 如实报**（契约说它任何状态下都 200，
+ * 因此非 2xx 是协议外的一档 —— 不许把取不到画成「这一场还没总结过」）。
+ */
+describe('fetchSummaries 的读法', () => {
+  it('取记录那一条：GET、不带必需头、应答体逐键交回来', async () => {
+    const payload = readFixture('summaries', 'after-one');
+    const fetchImpl = vi.fn(async () => jsonResponse(200, payload)) as unknown as typeof fetch;
+
+    const listing = await fetchSummaries({ fetchImpl });
+
+    expect(listing.session_id).toBe('<session-id>');
+    expect(listing.entries).toHaveLength(1);
+    expect(listing.entries[0]?.window_label).toBe('15 分钟');
+    expect(Object.hasOwn(listing.entries[0] ?? {}, 'lines')).toBe(false);
+
+    const [url, init] = (fetchImpl as unknown as { mock: { calls: [string, RequestInit][] } }).mock
+      .calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/summaries');
+    expect(init.method).toBe('GET');
+    // 动作端点那两个必需头不在这条路上
+    expect(init.headers).toBeUndefined();
+  });
+
+  it('空记录那一档：session_id 为 null、entries 空数组也照收', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse(200, { session_id: null, entries: [] }),
+    ) as unknown as typeof fetch;
+
+    const listing = await fetchSummaries({ fetchImpl });
+    expect(listing.session_id).toBeNull();
+    expect(listing.entries).toEqual([]);
+  });
+
+  it('形状不对抛 SummariesProtocolError（顶层多一个键就红）', async () => {
+    const payload = readFixture('summaries', 'after-one') as Record<string, unknown>;
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse(200, { ...payload, extra: 1 }),
+    ) as unknown as typeof fetch;
+
+    await expect(fetchSummaries({ fetchImpl })).rejects.toBeInstanceOf(SummariesProtocolError);
+  });
+
+  it('非 2xx 也抛 SummariesProtocolError：取不到不冒充空记录', async () => {
+    const fetchImpl = vi.fn(async () =>
+      fakeResponse(500, 'Not Found'),
+    ) as unknown as typeof fetch;
+
+    const error = await fetchSummaries({ fetchImpl }).then(
+      () => null,
+      (caught: unknown) => caught,
+    );
+    expect(error).toBeInstanceOf(SummariesProtocolError);
+    expect((error as SummariesProtocolError).status).toBe(500);
+  });
+
+  it('连接层失败抛 SummariesUnavailableError', async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new Error('连接断了');
+    }) as unknown as typeof fetch;
+
+    await expect(fetchSummaries({ fetchImpl })).rejects.toBeInstanceOf(
+      SummariesUnavailableError,
     );
   });
 });

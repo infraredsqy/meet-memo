@@ -38,10 +38,10 @@ export const DBFS_PLACEHOLDER = '<dbfs>';
 export const TOP_STATES = ['idle', 'recording', 'alert', 'ended'] as const;
 
 /**
- * 六个动作名，一个不多一个不少（`docs/contract.md` 4.3）。
+ * 七个动作名，一个不多一个不少（`docs/contract.md` 4.3）。
  *
- * 第 7 章那些**定名但还没实现**的动作不在其中（眼下只剩 `summarize` 一个例子）——
- * 它们在服务侧回 `invalid_setting`(400)，不在这份清单里。
+ * **次序就是服务回的次序**：`known` 数组（未知动作名那一档的 `detail`）逐个报的就是这一串，
+ * 末尾那一个 `summarize` 是 `1987cb20` phase2 落进来的（正文见 4.7）。
  */
 export const ACTION_NAMES = [
   'start',
@@ -50,9 +50,10 @@ export const ACTION_NAMES = [
   'settings_update',
   'reprobe',
   'dev_inject',
+  'summarize',
 ] as const;
 
-/** 失败信封的七个 `code`，一个不多一个不少（`docs/contract.md` 4.4）。 */
+/** 失败信封的九个 `code`，一个不多一个不少（`docs/contract.md` 4.4）。 */
 export const ERROR_CODES = [
   'already_recording',
   'draining',
@@ -61,6 +62,8 @@ export const ERROR_CODES = [
   'invalid_setting',
   'persist_failed',
   'action_unavailable',
+  'transcript_unavailable',
+  'summary_failed',
 ] as const;
 
 /** `code` → HTTP 状态码。同一个 `code` 的状态码是固定的（`docs/contract.md` 4.4）。 */
@@ -72,7 +75,20 @@ export const ERROR_CODE_STATUS: Readonly<Record<(typeof ERROR_CODES)[number], nu
   invalid_setting: 400,
   persist_failed: 500,
   action_unavailable: 404,
+  transcript_unavailable: 503,
+  summary_failed: 502,
 };
+
+/**
+ * `summarize` 的四个窗口档位，次序就是界面上那四个档位的次序（`docs/contract.md` 4.7）。
+ *
+ * 服务只认这四个**取值**；人话标签（`5 分钟` / `15 分钟` / `30 分钟` / `整场`）由服务在
+ * `window_label` 里给 —— 界面不自造一份映射（契约章 6 第 1 条：界面不造派生数据）。
+ */
+export const SUMMARY_WINDOW_CHOICES = ['5m', '15m', '30m', 'full'] as const;
+
+/** 缺省档（`summary.default_window` 的默认值，`docs/contract.md` 4.6）。 */
+export const SUMMARY_DEFAULT_WINDOW = '15m';
 
 /** `health` 七取值（`docs/contract.md` 第 2 章）。 */
 export const SOURCE_HEALTHS = [

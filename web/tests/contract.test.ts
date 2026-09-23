@@ -4,10 +4,12 @@ import {
   HEARTBEAT_FIXTURES,
   SNAPSHOT_FIXTURES,
   SSE_FIXTURES,
+  SUMMARIES_FIXTURES,
   listFixtures,
   readFixture,
 } from './fixtures';
 import {
+  ACTION_NAMES,
   ENVELOPE_BAR_COUNT,
   ERROR_CODES,
   ERROR_CODE_STATUS,
@@ -16,6 +18,7 @@ import {
   resyncSnapshotSchema,
   snapshotSchema,
   sseFrameSchema,
+  summariesResponseSchema,
   type Snapshot,
 } from '../src/contract';
 
@@ -278,11 +281,11 @@ describe('动作样本', () => {
     expect(fixture.status).toBeGreaterThanOrEqual(200);
   });
 
-  it('十二个样本一个不少', () => {
+  it('十五个样本一个不少', () => {
     expect(listFixtures('actions')).toEqual([...ACTION_FIXTURES].sort());
   });
 
-  it('成功体是 {ok, revision}；settings_update 那档多两个数组且没有 message', () => {
+  it('成功体是 {ok, revision}；settings_update 与 summarize 各多带自己那几格', () => {
     for (const name of ['start-ok', 'stop-ok', 'mute-session-ok'] as const) {
       const fixture = actionFixtureSchema.parse(readFixture('actions', name));
       expect(fixture.status, name).toBe(200);
@@ -300,11 +303,43 @@ describe('动作样本', () => {
     expect(settings.body).not.toHaveProperty('message');
   });
 
-  it('七个 code 各有一个失败样本，status 与 code 表逐条对上', () => {
+  it('summarize 成功体 = 通用信封 + 一个 summary 键，summary 恰好八格且三小段是数组', () => {
+    const fixture = actionFixtureSchema.parse(readFixture('actions', 'summarize-ok'));
+    expect(fixture.status).toBe(200);
+    expect(fixture.action).toBe('summarize');
+    expect(fixture.args).toEqual({ window: '15m' });
+    expect(Object.keys(fixture.body).sort()).toEqual(['ok', 'revision', 'summary']);
+    if (fixture.body.ok !== true) throw new Error('样本该是成功档');
+    expect(Object.hasOwn(fixture.body, 'summary')).toBe(true);
+    const summary = (fixture.body as { summary: Record<string, unknown> }).summary;
+    // 应答体这一份**八格**（比 GET /api/summaries 的记录条目多一格 lines）
+    expect(Object.keys(summary).sort()).toEqual([
+      'at',
+      'elapsed_seconds',
+      'lines',
+      'lost',
+      'what',
+      'where',
+      'window',
+      'window_label',
+    ]);
+    expect(summary['window']).toBe('15m');
+    expect(summary['window_label']).toBe('15 分钟');
+    expect(summary['lines']).toBe(12);
+    for (const section of ['what', 'where', 'lost'] as const) {
+      expect(Array.isArray(summary[section]), section).toBe(true);
+      expect((summary[section] as unknown[]).length, section).toBeGreaterThan(0);
+    }
+  });
+
+  it('九个 code 各有一个失败样本，status 与 code 表逐条对上', () => {
     const seen = new Map<string, number>();
     for (const name of ACTION_FIXTURES) {
       const fixture = actionFixtureSchema.parse(readFixture('actions', name));
       if (fixture.body.ok) continue;
+      // 9 个 `code` 各有一个样本，其中 `summary_failed` 那一档（盘面上目前只有缺键那一份）
+      const previous = seen.get(fixture.body.code);
+      if (previous !== undefined) expect(fixture.status, name).toBe(previous);
       seen.set(fixture.body.code, fixture.status);
     }
     for (const code of ERROR_CODES) {
@@ -360,7 +395,7 @@ describe('动作样本', () => {
     }
   });
 
-  it('invalid_setting 两档：{key, value, legal} 与 {action, known}', () => {
+  it('invalid_setting 四档：{key, value, legal} 与 {action, known} 两个样本各落一档', () => {
     const value = actionFixtureSchema.parse(readFixture('actions', 'fail-invalid-setting'));
     if (value.body.ok) throw new Error('样本该是失败档');
     expect(value.body.detail.key).toBe('mode');
@@ -372,22 +407,99 @@ describe('动作样本', () => {
     );
     if (unknown.body.ok) throw new Error('样本该是失败档');
     expect(unknown.body.detail.action).toBe('definitely_not_an_action');
-    expect(unknown.body.detail.known).toEqual([
-      'start',
-      'stop',
-      'mute_session',
-      'settings_update',
-      'reprobe',
-      'dev_inject',
-    ]);
-    // 保留登记里没有落地的那一个动作名不在 known 里。
-    expect(unknown.body.detail.known).not.toContain('summarize');
+    // 会中总结那一个已经落地，`known` 数组里就有它（次序与服务回的一致）
+    expect(unknown.body.detail.known).toEqual([...ACTION_NAMES]);
+    expect(unknown.body.detail.known).toContain('summarize');
+  });
+
+  it('transcript_unavailable 档：detail 恰好 {health}', () => {
+    const fixture = actionFixtureSchema.parse(
+      readFixture('actions', 'fail-transcript-unavailable'),
+    );
+    expect(fixture.status).toBe(503);
+    expect(fixture.action).toBe('summarize');
+    if (fixture.body.ok) throw new Error('样本该是失败档');
+    expect(fixture.body.code).toBe('transcript_unavailable');
+    expect(fixture.body.detail).toEqual({ health: 'stopped' });
+  });
+
+  it('summary_failed 缺键档：detail 恰好 {missing}，点名的键是那一串配置键', () => {
+    const fixture = actionFixtureSchema.parse(
+      readFixture('actions', 'fail-summary-failed-missing'),
+    );
+    expect(fixture.status).toBe(502);
+    if (fixture.body.ok) throw new Error('样本该是失败档');
+    expect(fixture.body.code).toBe('summary_failed');
+    expect(Object.keys(fixture.body.detail)).toEqual(['missing']);
+    expect(fixture.body.detail.missing).toEqual(['summary.base_url', 'summary.api_key']);
   });
 
   it('persist_failed 档：detail 只有 error 一键', () => {
     const fixture = actionFixtureSchema.parse(readFixture('actions', 'fail-persist-failed'));
     if (fixture.body.ok) throw new Error('样本该是失败档');
     expect(Object.keys(fixture.body.detail)).toEqual(['error']);
+  });
+});
+
+describe('本场总结记录样本', () => {
+  it.each(SUMMARIES_FIXTURES)('summaries/%s.json 过 summariesResponseSchema', (name) => {
+    const listing = summariesResponseSchema.parse(readFixture('summaries', name));
+    expect(listing.entries.length).toBeGreaterThan(0);
+  });
+
+  it('一个样本一个不少：目录里没有多余的本场记录文件', () => {
+    expect(listFixtures('summaries')).toEqual([...SUMMARIES_FIXTURES].sort());
+  });
+
+  it('记录那一条**七格**：比应答体里那份少一格 `lines`', () => {
+    const listing = summariesResponseSchema.parse(readFixture('summaries', 'after-one'));
+    expect(listing.session_id).toBe('<session-id>');
+    const entry = listing.entries[0];
+    expect(entry).toBeDefined();
+    expect(Object.keys(entry ?? {}).sort()).toEqual([
+      'at',
+      'elapsed_seconds',
+      'lost',
+      'what',
+      'where',
+      'window',
+      'window_label',
+    ]);
+    expect(Object.hasOwn(entry ?? {}, 'lines')).toBe(false);
+    expect(entry?.window).toBe('15m');
+    expect(entry?.window_label).toBe('15 分钟');
+  });
+
+  it('时刻与三小段逐字来自服务：掩码只把时间换成 <iso>，正文一个字符没动', () => {
+    const listing = summariesResponseSchema.parse(readFixture('summaries', 'after-one'));
+    const entry = listing.entries[0];
+    expect(entry?.at).toBe('<iso>');
+    expect(entry?.what).toEqual(['在过下周的排期']);
+    expect(entry?.where).toEqual(['说到第三项']);
+    expect(entry?.lost).toEqual(['有一处识别失败的缺口']);
+  });
+
+  it('本场记录与动作成功体的三小段是同一份内容的两种形状', () => {
+    const listing = summariesResponseSchema.parse(readFixture('summaries', 'after-one'));
+    const action = actionFixtureSchema.parse(readFixture('actions', 'summarize-ok'));
+    if (action.body.ok !== true) throw new Error('样本该是成功档');
+    const summary = (action.body as { summary: Record<string, unknown> }).summary;
+    const entry = listing.entries[0] as unknown as Record<string, unknown>;
+    for (const key of ['window', 'window_label', 'at', 'elapsed_seconds', 'what', 'where', 'lost']) {
+      expect(entry[key], key).toEqual(summary[key]);
+    }
+    expect(summary['lines']).toBe(12);
+    expect(Object.hasOwn(entry, 'lines')).toBe(false);
+  });
+
+  it('其余键一个不多一个不少：顶层两键、session_id 走 <session-id> 那一档', () => {
+    const listing = summariesResponseSchema.parse(readFixture('summaries', 'after-one'));
+    expect(Object.keys(listing).sort()).toEqual(['entries', 'session_id']);
+    // 目录名占位符与路径占位符是两档：串了就是漂
+    const wrong = { ...listing, session_id: '<path>' };
+    expect(summariesResponseSchema.safeParse(wrong).success).toBe(false);
+    // 一次都没按过那一档：session_id 为 null、entries 空
+    expect(summariesResponseSchema.safeParse({ session_id: null, entries: [] }).success).toBe(true);
   });
 });
 

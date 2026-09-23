@@ -2,11 +2,13 @@ import {
   actionBodySchema,
   actionOkSchema,
   settingsUpdateOkSchema,
+  summarizeOkSchema,
   type ActionArgs,
   type ActionDetail,
   type ActionOk,
   type ErrorCode,
   type SettingsUpdateOk,
+  type SummarizeOk,
 } from '../contract';
 
 /**
@@ -72,10 +74,14 @@ export class ActionProtocolError extends Error {
   }
 }
 
-/** 动作结果：成功给 `revision`（`settings_update` 另给两个数组），失败按 `code` 分派。 */
+/**
+ * 动作结果：成功给 `revision`（`settings_update` 另给两个数组、`summarize` 另给一个
+ * `summary` 子对象），失败按 `code` 分派。
+ */
 export type ActionResult =
   | ({ kind: 'ok' } & ActionOk)
-  | ({ kind: 'settings_update' } & SettingsUpdateOk);
+  | ({ kind: 'settings_update' } & SettingsUpdateOk)
+  | ({ kind: 'summarize' } & SummarizeOk);
 
 export interface PostActionOptions {
   /** 覆盖 fetch（测试注入用）。 */
@@ -99,7 +105,13 @@ function parseEnvelope(status: number, text: string): ActionResult {
 
   const body = parsed.data;
   if (body.ok) {
-    // `settings_update` 的成功体多两个数组、没有 `message`，先认它。
+    // 两份「多几个键」的成功体先认：`summarize` 多一个 `summary`、`settings_update`
+    // 多两个数组。三条分支各自的 schema 都是 `.strict()`，因此认错顺序也不会误收
+    // （带 `summary` 的体过不了另两条，反之亦然）。
+    const summary = summarizeOkSchema.safeParse(body);
+    if (summary.success) {
+      return { kind: 'summarize', ...summary.data };
+    }
     const settings = settingsUpdateOkSchema.safeParse(body);
     if (settings.success) {
       return { kind: 'settings_update', ...settings.data };
@@ -112,7 +124,8 @@ function parseEnvelope(status: number, text: string): ActionResult {
 
 /**
  * 打一个动作。成功返 `{kind:'ok', ok, revision}`（`settings_update` 另带
- * `applied` / `pending_restart`），失败抛 `ActionFailedError`（带 `code` / `message` / `detail`）。
+ * `applied` / `pending_restart`，`summarize` 另带 `summary`），失败抛
+ * `ActionFailedError`（带 `code` / `message` / `detail`）。
  */
 export async function postAction(
   name: string,
