@@ -59,7 +59,7 @@ npm test             # vitest run（等价于 npx vitest run）
 | `src/App.tsx` | 会中主视图的组件树：外壳、两路通道、告警区、收尾区、实时转写、总结入口（只落位置与禁用态） |
 | `src/styles/tokens.css` | **逐字节拷贝** `docs/ui/tokens.css`（除文件头那段注释）。设计 token 的唯一定义处是 `docs/ui/tokens.css`，这一份是它进构建的那一份 |
 | `src/styles/live.css` | 从 `docs/ui/ui.css` 抽出的会中视图样式（抽取口径见下） |
-| `tests/` | vitest 用例：契约层三份（拿 golden 样本过 schema、验 schema 咬得住、验动作信封与心跳三态），会中视图逻辑六份 `live-*.test.ts`，失败分档一份 |
+| `tests/` | vitest 用例（`npm test`，10 个文件 241 个用例）：契约层三份（拿 golden 样本过 schema、验 schema 咬得住、验动作信封与心跳三态），失败分档一份（`app-failure.test.ts`），会中视图逻辑**七份** `live-*.test.ts`（`live-format` / `live-status` / `live-alarm` / `live-heartbeat` / `live-transcript` / `live-sound`）+ 用例自己的真值快照构造器 `live-fixtures.ts` |
 
 ### `src/live/` 里各管什么
 
