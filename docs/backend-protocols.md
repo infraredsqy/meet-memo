@@ -1,12 +1,12 @@
 # meeting · 后端协议
 
-> 这份文档写服务与后端之间的接缝：三个协议的成员、数据结构、缺省值，以及后端怎么被找到、怎么被注入。
+> 这份文档写服务与后端之间的接缝：四个协议的成员、数据结构、缺省值，以及后端怎么被找到、怎么被注入。
 >
-> 现状：**协议本身已经定死，三个位置现在都有实现。** `capture.backend` 的默认值 `auto` 解析到真采集后端（`meeting.backends.capture:CaptureBackend`，真探测、真起两路、真落盘与真转码）；`transcriber.backend` 的默认值 `auto` 解析到真转写后端（`meeting.backends.transcribe:TranscriberBackend`，尾读归档 → VAD 切段 → 单 worker 顺序识别 → 每路一份会中临时稿 + 行出口）；`post.hook` 的默认值 `auto` 解析到 `meeting.backends.post:PostProcessHook`（起一条后台线程跑会后离线转写，返回即算启动成功），收尾第 4 步 `post` 因此从 `skipped` 翻成 `done`。**只剩 `post.hook = null` 那一档是缺席**（第 4 步记 `skipped`）；`meeting post` 还是桩，实现归 `65dd3e4c`。会后那条链自己的四个开关是 `post.engine` / `post.model` / `post.dtype` / `post.chunk_seconds`，见第 3 章末。另有一个只给开发与测试用的 dev 替身（默认关闭，**按 key 分流**：`capture.backend = dev` 落采集替身、`transcriber.backend = dev` 落转写替身）。
+> 现状：**协议本身已经定死，四个位置现在都有实现。** `capture.backend` 的默认值 `auto` 解析到真采集后端（`meeting.backends.capture:CaptureBackend`，真探测、真起两路、真落盘与真转码）；`transcriber.backend` 的默认值 `auto` 解析到真转写后端（`meeting.backends.transcribe:TranscriberBackend`，尾读归档 → VAD 切段 → 单 worker 顺序识别 → 每路一份会中临时稿 + 行出口）；`post.hook` 的默认值 `auto` 解析到 `meeting.backends.post:PostProcessHook`（起一条后台线程跑会后离线转写，返回即算启动成功），收尾第 4 步 `post` 因此从 `skipped` 翻成 `done`；`minutes.hook` 的默认值 `auto` 解析到 `meeting.backends.minutes:MinutesHook`（离线那一趟的尾巴上再起一条后台线程跑会后纪要生成，同样返回即算启动成功）。**只剩 `post.hook = null` 与 `minutes.hook = null` 这两档是缺席**（前者第 4 步记 `skipped`，后者离线跑完不产生纪要）；`meeting post` 还是桩，实现归 `65dd3e4c`。会后那条链自己的四个开关是 `post.engine` / `post.model` / `post.dtype` / `post.chunk_seconds`（见第 3 章末），会后纪要那一层的四个开关是 `minutes.hook` / `minutes.chunk_lines` / `minutes.max_segments` / `minutes.timeout_seconds`（见第 3 章末那一节）。另有一个只给开发与测试用的 dev 替身（默认关闭，**按 key 分流**：`capture.backend = dev` 落采集替身、`transcriber.backend = dev` 落转写替身）。
 >
 > 协议与数据结构住在 `meeting/backends/base.py`（**只放协议与数据结构**，实现全在下游自己的模块里），替身住在 `meeting/backends/null.py` 与 `meeting/backends/dev.py`，解析的唯一入口是 `meeting/backends/registry.py`。
 
-## 1. 三个协议
+## 1. 四个协议
 
 ### `CaptureBackend` —— 采集
 
@@ -78,6 +78,21 @@
 - `torch` / `transformers` / `av` 都在函数体内 import，`import meeting.backends.post` 保持轻量，`meeting web` 的启动链不被拖慢；
 - 它**不带 `finalize` / `transcode`**：那两项是采集后端的能力，这两个键上的闸门不看它。
 
+### `MinutesHook` —— 会后纪要钩子
+
+| 成员 | 语义 |
+|---|---|
+| `launch(session_dir)` | 离线那一趟的尾巴调它，**返回即算启动成功**（不等它跑完）。`minutes.hook = null` 那一档不调它 |
+
+真钩子住在 `meeting/backends/minutes.py`（`41465462` 已落地，`minutes.hook` 的默认值 `auto` 解析到它）。形状与 `PostProcessHook` 同一条：
+
+- `launch(session_dir)` 起一条 daemon 线程（线程名 `minutes-final`）跑 `meeting.minutes.runner.run(session_dir)`，随即返回 —— 它跑多久都不占收尾预算，也不占离线那一趟的墙钟；
+- 线程里的异常落进场次目录的 `meeting_minutes_status.json`（补成 `failed` 并写上原因），**不外传**；`session_dir` 是空值时当场抛错；
+- `meeting_offline_status.json` 与离线的三份产物，这条线程一个字节都不碰；
+- **重依赖在函数体内 import**：模块顶层只有标准库，`import meeting.backends.minutes` 保持轻量。
+
+它调用的那一层做什么、产物有哪几份、怎么手动跑，见 `docs/minutes.md`。
+
 ## 2. 缺省值：缺席时是什么样
 
 后端没接进来时，服务不假装有它。`meeting/backends/null.py` 给两个替身：
@@ -91,26 +106,29 @@
 
 转写这一档现在有两层：**默认取值 `auto`** 解析到真转写后端（`meeting.backends.transcribe:TranscriberBackend`，见第 1 章那一节）；`transcriber.backend = null`（或解析失败回退）才是**缺席**那一档 —— `NullTranscriberBackend` 恒 `health = normal`、`backlog_depth() = 0`、`segment_timeout() = 20.0`，收尾预算的输入因此取 `0` 段 / `20.0` 秒这两个缺省值，转写这一侧一行都不产。**缺席档的 `normal` 与真实现空闲态的 `stopped` 各说各的事**：`normal` 说的是「这个构建里没有转写这件事」，`stopped` 说的是「有转写、这一档没在跑」（真实现没起过场次时报的就是它）。
 
-`null` 替身**不长**合成电平或故障注入那类测试逻辑 —— 那是开发替身（`backends/dev.py`）的事。会后钩子那一档的缺席占位是 `registry.py` 的 `_AbsentPostHook`（`launch()` 抛错，而缺席那一档根本不会被调用：`has_implementation = false` 直接记 `skipped`）。
+`null` 替身**不长**合成电平或故障注入那类测试逻辑 —— 那是开发替身（`backends/dev.py`）的事。两个会后钩子的缺席占位各有一个：`registry.py` 的 `_AbsentPostHook`（`post.hook = null`）与 `_AbsentMinutesHook`（`minutes.hook = null`），两者的 `launch()` 都抛错，而缺席那一档根本不会被调用（调用方先问 `has_implementation`，是 `false` 就安静跳过，`post` 那一档记 `skipped`）。
 
 ## 3. 后端怎么被找到
 
-`meeting/backends/registry.py` 是**解析的唯一入口**。三个解析函数：
+`meeting/backends/registry.py` 是**解析的唯一入口**。四个解析函数：
 
 | 函数 | 解析谁 | 约定路径（`auto` 按它找） |
 |---|---|---|
 | `resolve_capture_backend()` | `capture.backend` | `meeting.backends.capture:CaptureBackend` |
 | `resolve_transcriber_backend()` | `transcriber.backend` | `meeting.backends.transcribe:TranscriberBackend` |
 | `resolve_post_hook()` | `post.hook` | `meeting.backends.post:PostProcessHook` |
+| `resolve_minutes_hook()` | `minutes.hook` | `meeting.backends.minutes:MinutesHook` |
 
 取值口径：
 
 | 取值 | 含义 |
 |---|---|
 | `auto`（默认） | 按上面的约定路径找 |
-| `null` | 直接用 `null` 替身 |
-| `dev` | 用开发替身，**按 key 分流**：`capture.backend` 落 `meeting.backends.dev:DevCaptureBackend`、`transcriber.backend` 落 `meeting.backends.dev:DevTranscriberBackend`。这条分流只认采集与转写两个键：`post.hook = dev` 会落到采集替身上，那个对象没有 `launch()`，收尾第 4 步如实记 `failed`；要关掉整条会后链就写 `post.hook = null` |
+| `null` | 采集这一档用 `null` 替身；两个钩子没有替身可用，这一档就是**缺席** |
+| `dev` | 用开发替身，**按 key 分流**：`capture.backend` 落 `meeting.backends.dev:DevCaptureBackend`、`transcriber.backend` 落 `meeting.backends.dev:DevTranscriberBackend`。这条分流只认采集与转写两个键：`post.hook = dev` 或 `minutes.hook = dev` 都会落到采集替身上，那个对象没有 `launch()`，离线那一趟的尾巴如实记失败；要关掉整条会后链就写 `post.hook = null`，只关掉纪要那一层就写 `minutes.hook = null` |
 | `module:Class` | 显式指定 |
+
+`minutes.hook` 那一格多一层：**配置里写 JSON 的 `null` 也在缺席档**（不是「回退 `auto`」），它在 `resolve_minutes_hook()` 里提前返回，落 `has_implementation = false`、`selector = "null"`。写字符串 `"null"` 或不写这个键，走的仍是上面那张表。
 
 取到的是**类就无参实例化**（后端构造函数不许有必填参数，运行期依赖一律走 `bind()`）。导入失败、找不到、取到的对象不可调用、无参实例化失败 → **回退替身 + 一条 warning**，服务不会因为后端缺席或写坏而起不来。
 
@@ -140,6 +158,19 @@
 
 这四格之外，会后这条链还有一道**不带配置键的闸**：数字静音门（判据、留痕与四档终态的区分见 `docs/state.md` 第 3 章的「没声的那几段」）。它没有开关 —— 峰值够不着半格的那一段一律不送引擎，**单趟跑与分块跑都过这道闸**（归档 PCM 上按字节扫那一段、别的容器用解好的波形，判不了就现解一次）。跳过的那几段记在状态文件的 `silent` / `silent_spans`、对照表的 `audio.silent_spans` 与转写第一行那条注释上；**门判不了**那几段时（音频解不开、要的那一段读不全）照常送引擎，同时把「没判成」记在状态文件与对照表的 `gate`（`applied: false` + `unjudged_spans`）以及逐块那一行的 `gate: "unjudged"` 上 —— 一次没门可用的运行因此在产物里与一次健康的运行分得开。逐块那一行另带一个**结论词** `reason`（`digital_silence` / `engine_error` / `no_segments` / `zero_span_segments` / `transcribed` / `gate_unjudged`）与 `gate_method`（门凭什么判的），下游按它们读「这一段为什么没有字」与「这一段有没有人判过」，不必从整场那几个字段反推。`gate_method` 的取值是 **`pcm_bytes`**（在归档 PCM 上按字节扫）、**`waveform`**（在已经解好的波形上切片判）、**`decode_at_plan`**（量长度那一步就没解开，结论落「判不了」）与 **`decode_now`**（门现解一次音频文件，只对直接调用 `measure_span()` 的调用方存在，产品路径到不了它），另加一个 **`unjudged`**（这一段门没做成判断，与逐块 `gate` 那一格同名的那个词）。逐路 `audio.gate.method` 与状态文件 `artifacts.<source>.gate.method` 只由**判过的块**构成（判过的块按各自那把尺子拼起来，多把写成 `a/b`），一块都没判成、或这一路没有可判的音频时它是 `null`；逐块那一行的 `gate_method` 记的是这一块**原本打算用**的那把尺子，`gate` 为 `unjudged` 的块同样带着它（解不开那一档因此读得到 `decode_at_plan`），「没判成」这件事由 `gate` 与 `gate_detail` 说。**单趟跑的 MP3 记的是 `waveform`**：`_plan_for_source()` 为了量长度已经解出整份波形，门切片用掉的就是那一段，门口不再现解第二遍。
 
+### 会后纪要那一层的四个开关
+
+`minutes.hook` 管这一层在不在（`auto` 落 `meeting.backends.minutes:MinutesHook`，`null` 是缺席：离线跑完不产生纪要），另外三个键管它跑起来什么样，都在启动时读一次（非热读，改了要重启）：
+
+| 键 | 默认值 | 谁在读、怎么读 |
+|---|---|---|
+| `minutes.hook` | `auto` | `meeting/backends/registry.py` 的 `resolve_minutes_hook()`（离线那一趟的尾巴调它）。取值口径与 `post.hook` 同形，另加「配置里写 JSON `null` 也落缺席档」这一条 |
+| `minutes.chunk_lines` | `100` | `meeting/minutes/runner.py` 的 `chunk_lines_of()` → `chunk.chunk_session()`，合法范围 `10–1000`（与 `chunk.MIN_CHUNK_LINES` / `MAX_CHUNK_LINES` 同值） |
+| `minutes.max_segments` | `8` | `runner.py` 的 `max_segments_of()` → 契约校验与提示词渲染各用一次，合法范围 `1–20`（默认值与 `contract.DEFAULT_MAX_SEGMENTS` 同值） |
+| `minutes.timeout_seconds` | `14400` | `runner.py` 的 `_timeout_seconds()` → 启动器那一次子进程的墙钟上限，合法范围 `60–86400` |
+
+**`minutes.hook` 是 `config.py` 里唯一一个「`null` 是取值、原样留着」的可空键**（`NULL_SENTINEL_KEYS`）：配置里写 `null` 就是「关掉这一步」，归一成空串或默认值都会把这件事吃掉，因此它不进两个设备键那一档（`NULLABLE_KEYS`）。两档合起来是 `ALL_NULLABLE_KEYS`。
+
 ## 4. 注入与构造规则
 
 - **类就无参实例化**：后端构造函数不许有必填参数，运行期依赖一律走 `bind()`。
@@ -162,5 +193,6 @@
 - 配置键与默认值：`docs/service.md` 第 4 章
 - 服务侧现状与不可用清单：`docs/service.md` 第 8 章
 - 四态、快照、收尾四步、dev 替身怎么用：`docs/state.md`
+- 会后纪要那一层吃什么、经哪几步、怎么手动跑：`docs/minutes.md`
 - V1 里可搬的转写退化防护逻辑与参数标定：`docs/legacy-assets.md`（1.A / 1.B）
 - 索引：`docs/spec.md`

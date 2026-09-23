@@ -78,8 +78,11 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 `run_prompt.md`、`minutes-run.log`）。这一层跑砸了不影响离线那三份产物。
 不想要它自动跑就把 `minutes.hook` 写成 `null`（改完要重启）；每块行数、分段上限与
 一次运行的墙钟上限分别由 `minutes.chunk_lines` / `minutes.max_segments` /
-`minutes.timeout_seconds` 定。这一趟是 headless 的一锤子买卖：`dsh --profile headless` 的
+`minutes.timeout_seconds` 定（四个键都收在 `settings_update` 的 `pending_restart` 那一档里）。
+这一趟是 headless 的一锤子买卖：`dsh --profile headless` 的
 回合结束进程就退出，因此产物校验（纪要存在、带附录、附录里真有数据行）不过就算这一趟失败。
+它吃什么、经哪几步出一份纪要、怎么手动跑一遍（`python -m meeting.minutes chunk|prompt|check`），
+见 `docs/minutes.md`。
 
 ---
 
@@ -114,7 +117,7 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 `settings_update` 写盘成功那一刻快照里的 `settings.alarm_sound` 就换过去了。
 
 其余键（`web.*` / `output.root` / `log.*` / `alert.*` / `heartbeat.*` /
-`capture.*` / `transcriber.*` / `post.*`）**改完要重启**。这份「其余键」清单以
+`capture.*` / `transcriber.*` / `post.*` / `minutes.*`）**改完要重启**。这份「其余键」清单以
 `meeting/config.py` 的键全集为准。
 
 **环境变量一律在启动时求值**，改了不会热生效。本服务的环境变量一共五个：

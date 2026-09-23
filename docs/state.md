@@ -266,6 +266,29 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 
 **每一块都没跑成的那一路落 `failed`**：那一路的转写只剩那一条注释行、对照表是一份空表，终态与原因写在对照表的 `state` / `error` 两格上。整场的终态看两路：有一路跑成就是 `done`（失败那一路的原因进状态文件与报告），两路都失败才落 `failed`。**整段一次跑**的失败不落产物（没有「哪几块没成」可说），失败原因只在状态文件与报告里；没声那一档走的是另一条线（上面「没声的那几段」那一节），它连整段一次跑都照落产物。
 
+### 会后纪要生成
+
+离线那一趟把三份产物与 `meeting_offline_status.json` 的终态都落完之后，`minutes.hook` 那一层接着跑一次纪要生成（`41465462` 已落地）：`meeting/offline/runner.py` 的 `run_session()` 在**最后**通知一次 `meeting/backends/minutes.py` 的 `MinutesHook`（起一条 daemon 线程，返回即算启动成功，它跑多久都不占收尾预算）。这一趟的产物分两处：
+
+| 文件 | 内容 | 读者 |
+|---|---|---|
+| `meeting_final.md`（**场次目录根**） | 纪要正文 + `## 说话人附录`（附录里逐行写人名、把握与依据，猜不出的单列一节） | 人 |
+| `meeting_minutes_status.json` | 状态文件：`running` / `done` / `failed`，外加 `mode` / `branch` / `started_at` / `finished_at` / `error` / `artifacts` / `dsh` | 下游程序 |
+| `working/inputs.json` | 输入清单：这一场有哪几条转写、每条几行、走的是哪一档 | 程序 + 人 |
+| `working/<source>/chunks/chunk_NN.md` + `working/<source>/00_index.md` | 按行切出来的块（默认 100 行一块）与行号区间表（`total_lines` / `chunk_size` / `chunk_count` 与每块的闭区间） | DSH 子会话 |
+| `working/segment-*.md`、`working/segmentation.json` | 逐段总结与分段方案（子会话产出，一份方案覆盖一到两条输入、每条段带 `source`） | DSH 子会话 |
+| `working/run_prompt.md`、`working/minutes-run.log` | 那一次运行的提示词正文与子进程的 stdout / stderr | 排查现场 |
+
+- **起线程就返回，不占收尾预算**：它炸了不带走进度更早的产物，`meeting_offline_status.json` 与那三份离线产物一个字节都不改（`try/except BaseException` 兜住，只记主 log 一条）。
+- **`branch` 记实际走的那一条**：`auto` / `web` / `headless` 三种取值本轮都落 headless 子进程，配置里写 `web` 而实际走了 headless 时这一格记 `headless`。web 分支本轮没有实现（V1 那套在 DSH 0.1.5-rc.2 上已失效），归下游 `65dd3e4c`。
+- **状态文件拉起 DSH 之前先落一份 `running`**（`finished_at` 是空串）：一次生成最长可达四小时，读方据此分得出「没跑」与「正在跑」；终局那一趟覆盖它，进程被杀时钩子把它补成 `failed`，这一格不会永远停在 `running`。
+- **再入闸那一趟不写状态文件**：环境里有 `MEETING_MINUTES_CHILD=1`（这一趟是 DSH 子会话自己）时 `runner.run()` 当场返回 `skipped`，盘上那份状态文件归父进程那一趟所有。
+- **读方对不认识的 `schema_version`、缺 `state`、`state` 不在三档里一律拒收**，不猜；写盘与离线那一份同档：原子替换。
+- **输入四档**：两条都在（`both`）/ 只有会中临时稿（`live_only`）/ 只有会后权威稿（`offline_only`）都照常出纪要；两个来源一条都没有（`none`）那一档**不启动 DSH**、状态记 `failed` + 原因。附录只写有依据的话：某一路缺了带聚类编号的那份稿时，如实写「这一路分不出个人」，不为任何人名给出推断。
+- **产物四条判据**：纪要文件非空、写着 `## 说话人附录`、写着 `### 猜不出的`、附录那一节里有一张真有数据行的表 —— 缺一条这一趟就是 `failed`，退出码 0 不算数。
+
+那一层吃什么、经哪几步出一份纪要、怎么手动跑一遍，见 `docs/minutes.md`。
+
 ### 重启自洽
 
 服务启动时扫输出根，取**最新的一场**，判据只有一条：`state ∈ {recording, draining}` **或** `interrupted: true`。
@@ -381,6 +404,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 - **双端契约（端点口径、快照 schema、SSE 帧形状、动作信封与 `code`/`detail` 表）：`docs/contract.md`**
 - HTTP 面（端点、动作信封、`code` 表）：`docs/api.md`
 - 怎么起服务、配置、日志、退出码、跑测试：`docs/service.md`
+- 会后纪要那一层怎么跑、产物四条判据、三个手动子命令：`docs/minutes.md`
 - 后端怎么被找到、怎么插进来：`docs/backend-protocols.md`
 - 界面怎么画这四态：`docs/ui-design.md`
 - 前端工程怎么跑、怎么构建：`web/README.md`

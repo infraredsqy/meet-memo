@@ -152,6 +152,10 @@ $env:MEETING_CAPTURE="dev"; $env:MEETING_NO_BROWSER="1"; meeting web
 | `post.model` | `OpenMOSS-Team/MOSS-Transcribe-Diarize` | 会后离线那一层（离线引擎加载哪个模型，HF 仓库 id 或本地快照路径） |
 | `post.dtype` | `bfloat16` | 会后离线那一层（引擎精度档位，认得的名字见 `docs/backend-protocols.md` 第 3 章） |
 | `post.chunk_seconds` | `450`（合法范围 `0–86400`） | 会后离线那一层（每块音频的长度上限秒数，`0` = 关掉分块、整段一次跑；默认值理由见 `docs/backend-protocols.md` 第 3 章） |
+| `minutes.hook` | `auto` | 会后纪要那一层（选取纪要钩子；`auto` 解析到 `meeting.backends.minutes:MinutesHook`，配置里写 JSON `null` = 离线跑完不产生纪要） |
+| `minutes.chunk_lines` | `100`（合法范围 `10–1000`） | 会后纪要那一层（每块行数，切块与行号区间表都用它） |
+| `minutes.max_segments` | `8`（合法范围 `1–20`） | 会后纪要那一层（每条 source 的分段上限，契约校验与提示词都用它） |
+| `minutes.timeout_seconds` | `14400`（合法范围 `60–86400`） | 会后纪要那一层（一次纪要生成的墙钟上限，默认四小时） |
 | `asr.max_segment_seconds` | `10` | 热读（每段重新读），进快照 `settings.asr` |
 | `asr.timeout_seconds` | `20` | 热读；必须大于 `asr.max_segment_seconds` |
 | `asr.max_new_tokens` | `400` | 热读 |
@@ -248,7 +252,7 @@ python -m pytest -q -m slow         # 慢档：只跑那九个文件
 python -m pytest tests/test_state_machine.py tests/test_api_actions.py -q   # 只跑某几个文件
 ```
 
-`tests/` 下现在有 **41 个测试文件、732 个用例**（本机实测：`python -m pytest -q` → `732 passed in 119.55s`；快档 `python -m pytest -q -m "not slow"` → `551 passed, 181 deselected in 40.59s`）。这一版比上一版多 22 条，来自会中监控界面那个节点的服务侧接线与它的返工轮：新增 `tests/test_transcript_hints.py` 11 条（提示级的接线、广播语义、两条清除路径，以及「提示级只在录音 / 告警态成立」），`tests/test_alerts.py` 补 3 条（上限回收记账、新一场清记账、静音期间过一遍首发标记条目），`tests/test_api_actions.py` 补首发帧与开关当场生效的判据。文件数与用例数的口径写在 `docs/spec.md` 的代码现状表里。不需要先 `pip install`，也不需要可编辑安装。
+`tests/` 下现在有 **49 个测试文件、975 个用例**（本机实测：`python -m pytest -q` → `975 passed in 124.06s`）。这一版比上一版多 8 个文件、243 条，全部来自会后纪要那一层（`41465462` phase2）：`tests/test_minutes_chunk.py` 23 条、`tests/test_minutes_contract.py` 60 条、`tests/test_minutes_evidence.py` 7 条（那几条认 `.work/` 里的证据脚本，脚本不在盘上时跳过）、`tests/test_minutes_launch.py` 41 条、`tests/test_minutes_lines.py` 11 条、`tests/test_minutes_prompt.py` 61 条、`tests/test_minutes_registry.py` 11 条、`tests/test_minutes_runner.py` 29 条。同一轮里 `tests/test_api_actions.py` 与 `tests/test_offline_runner.py` 只改了内部记账（三分表从 27 键长到 31 键、离线那一趟的缺省配置补上 `minutes.hook = null`），条数不变。文件数与用例数的口径写在 `docs/spec.md` 的代码现状表里。不需要先 `pip install`，也不需要可编辑安装。
 
 | 文件 | 用例数 | 验什么 |
 |---|---|---|
@@ -257,7 +261,7 @@ python -m pytest tests/test_state_machine.py tests/test_api_actions.py -q   # �
 | `tests/test_static.py` | 19 | `/` 的产物与说明页两条分支、**目录存在性按每请求判定**（同一个应用实例里「缺失 → 建出 → 又删掉」三步走完、中间不重启）、`/debug`、`/api/*` 的 `no-store`、Host 校验 `403`、动作头校验 `403`、完整版快照的键集与非空 `service.version`、`revision` 每次状态变更 +1、心跳六字段、空闲态盘上不留任何场次产物 |
 | `tests/test_contract_fixtures.py` | 8 | 与 `contract/fixtures/` 的漂移比对：重走真实服务路径采集 25 个样本逐文件比对（默认模式）、掩码结构断言（顶层十键 / 十二键、两路次序、包络长度 15、`levels` 的 `ts is None` 与 `bar == envelope[-1]`、心跳六键、四帧 `revision` 自洽）、`--regen-contract` 的再生成与幂等 |
 | `tests/test_logging_setup.py` | 17 | 服务级 log 位置与格式、bootstrap 重建、按两个配置键轮转、幂等、主 log 不可写与配置损坏 → 退出码 `3`、扫未收尾场次只报最新一场（那行 `WARNING` 照旧；改写现场的断言归下面的重启用例） |
-| `tests/test_api_actions.py` | 30 | 六个动作的成功与拒绝路径、`mode` 取值域、R17 的两个 409、`capture_unavailable`、`settings_update` 的两分（6 个热读键 / 21 个要重启的键）与写盘拓扑与 `persist_failed`、`alarm.sound` 当场生效、`muted` 的首发与重算、逐动作 × 逐态可用性、`dev_inject` 的三档可用性、信封与 `code` 集合 |
+| `tests/test_api_actions.py` | 30 | 六个动作的成功与拒绝路径、`mode` 取值域、R17 的两个 409、`capture_unavailable`、`settings_update` 的两分（6 个热读键 / 25 个要重启的键）与写盘拓扑与 `persist_failed`、`alarm.sound` 当场生效、`muted` 的首发与重算、逐动作 × 逐态可用性、`dev_inject` 的三档可用性、信封与 `code` 集合 |
 | `tests/test_state_machine.py` | 20 | 四态取值域与全部合法迁移、非法迁移抛错且不涨 `revision`、三条铁律、`elapsed_seconds` 走秒与冻结、15 柱 × 2 秒包络、收尾闭环两个分支（成功档与失败停留档）、取消路径、探针越界取值回退 |
 | `tests/test_alerts.py` | 26 | 逐帧累计（用帧时间戳）、连续性判据、抖动不来回告警、抑制窗口与「恢复后算新事件」、**首发那一帧的 `muted` 是 `false`**（且此后同一条不被重新放行、**本场静音期间过一遍标记条目仍是 `true`**）、`muted` 的重算、提示级的合并键与上限 3（**被挤掉的键从记账里回收**）、**两条对称的清除路径**、**新一场开场把提示级两份记账一起清**、阈值只从配置读 |
 | `tests/test_dev_backend.py` | 15 | dev 替身的确定性与 100ms 节拍、三档故障的语义与到点恢复、重复注入替换前一次、`finalize()` 只记账、非 dev 后端回 404 |
@@ -291,10 +295,18 @@ python -m pytest tests/test_state_machine.py tests/test_api_actions.py -q   # �
 | `tests/test_offline_artifacts.py` | 45 | 四份产物的字段契约：每路一份权威转写与对照表、运行报告、状态文件，字段名与行格式逐条钉住 |
 | `tests/test_offline_runner.py` | 55 | 整条链的编排：逐路取归档、数字静音门（单趟与分块两条路）、分块秒数、产物落盘与状态文件终态 |
 | `tests/test_post_hook.py` | 14 | 会后钩子：`auto` 解析到 `PostProcessHook`、`launch()` 立即返回（daemon 线程）、缺席档记 `skipped`、空场次目录抛 `ValueError`、能力表三项皆假 |
+| `tests/test_minutes_lines.py` | 11 | 两种行形一起吃（无标签的会中稿、带 `**S01**` 的会后稿、带秒的时间戳）、标题行 / 空行 / 注释行返回 `None`、说话人标签为空时落 `None`、识别失败占位符不被当成说话人、`count_lines()` 的空行口径 |
+| `tests/test_minutes_chunk.py` | 23 | 按行切块与区间表：块文件里只有原始行（不加头）、`chunk_NN.md` 的两位数编号、闭区间与 `lines` 三者自洽、重跑先清本源旧块、只动 `chunks/` 里 `chunk_*.md` 这一族、`chunk_lines` 取值域、按名字找两条转写、逐 source 判档与两路合并后的公共档位 |
+| `tests/test_minutes_contract.py` | 60 | 分段方案的契约校验：必填与可选字段的类型、连续性按 source 各判一遍（跨 source 不判）、段 id 重复、末段与真实行数对齐、`total_lines` 两种合法形状与各自的拒收档、`max_segments`、三种能分辨的读盘错误，以及**在全新解释器里 `import meeting.minutes` 一条重依赖都不拉** |
+| `tests/test_minutes_prompt.py` | 61 | 提示词渲染：五处占位符缺一处就抛错、`{{PHASE_BODY}}` 可省（两块标记就地替换正文）、对不上号的占位符、路径一律正斜杠且相对场次目录、清单的人话与 JSON 两读、逐 source 的档位说明段、模板缺席与空清单不渲染 |
+| `tests/test_minutes_launch.py` | 41 | 启动器与产物四条判据：argv 只带短指针（正文落 `working/run_prompt.md`）、子进程环境那三格、`CREATE_NO_WINDOW`、四档失败的名字与消息、日志头三行、附录判据（表头看宽度不看第一格的字面值、只认附录那一节里的行） |
+| `tests/test_minutes_evidence.py` | 7 | 那一次实测的证据脚本（`.work/nav/nodes/41465462-…/phase2/evidence/run_evidence.py`）**自己写 `evidence.log`**（stdout 全文、UTF-8）：证据目录与 `MINUTES_EVIDENCE_DIR` 的优先级、空值退默认、脚本缺席时带着路径与补救办法跳过、拒绝多余参数。脚本不在盘上（`.work` 被清理）时这几条**跳过**，跑不到不是红的 |
+| `tests/test_minutes_runner.py` | 29 | 一次运行的编排：再入闸当场返回 `skipped` 且不写状态文件、拉起之前先落 `running`、一条输入都没有时记 `failed` 且不启动 DSH、切块与渲染失败各记 `failed`、成功档覆盖成 `done`、超时与退出码非 0 的转发（启动器全程是假实现，一条都不真调系统上的 `dsh`） |
+| `tests/test_minutes_registry.py` | 11 | `resolve_minutes_hook()`：`auto` 落 `MinutesHook`、配置里写 JSON `null` 落缺席档（不退回 `auto`）、写字符串 `"null"` 同解、`module:Class` 显式取值、解析失败回退替身且 `has_implementation = false` |
 | `tests/test_capture_devices.py` | 33 | 设备模型与挑选策略（纯逻辑、注入假端点表）：有波形 / 全零 / 开不了三档、`CABLE Output` 抓取型端点挡拦（含 WDM-KS 的 `VB-Audio Point` 写法）、host API 排序、MME 截断名的前缀兜底与**精确名优先**、收尾两档收敛（一条都没打开 → `probe_failed`）、没配名字时种子取**系统默认输入端点**（跟着 `is_default` 走）、loopback 三级（两个子串判据逐字照 V1 的 `in`） |
 | `tests/v1/test_repeat_filter.py` | 10 | V1 那套重复循环过滤的回归（`tests/v1/` 是**整份副本**，`fixtures_real_loops.py` 逐字照抄、本文件只改 import）：两条真实故障行（周期 7 与 5）必须被砍到 <60 字符且只留一组、循环之前的前导正文保留、周期上限调回 4 就立刻红、正常行与合法口语重复一行都不许动、token 级判环与「判环后把 EOS 抬到最高分」 |
 
-除这些，`tests/` 下还有**测试支持**（不被 `pytest` 收集）：`tests/_helpers.py`（真服务子进程与假浏览器等工具）、`tests/_service.py`（真服务子进程驱动件 + SSE 读帧与等待助手）、`tests/_drain_fakes.py`（收尾与关停用例共用的假后端 / 假钩子，与工厂辅助一起挂进子进程）、`tests/_capture_faulty.py`（端到端专用的「问题采集后端」挂件：真采集后端 + 假端点表 + 内容带块号的假源，旋钮走环境变量，经配置键 `capture.backend = "tests._capture_faulty:FaultyCaptureBackend"` 挂进进程内真运行时）、`tests/_contract.py`（`contract/fixtures/` 的采集、掩码与落盘比对；它按需写出一个假转写后端，经 `PYTHONPATH` + `transcriber.backend` 的 `module:Class` 挂进子进程）、`tests/__init__.py`（`tests/` 的包标记，跨文件取用走包路径 import）、`tests/conftest.py`（**只放 fixture**，其中**两道** autouse 的兜底：一道把 `webbrowser.open` 换成只记录不开窗的假替身，另一道 `_no_real_audio_capture` 把真采集入口打成「一碰就炸」的桩 —— `sounddevice.InputStream` / `rec` / `check_input_settings` / `soundcard.get_microphone`，异常类 `RealCaptureForbidden` 不继承 `Exception` 因此不会被生产代码的 `except Exception` 吞掉，只读枚举不禁；另注册 `--regen-contract` 开关）、`tests/_fake_webbrowser/`（替掉标准库 `webbrowser` 的假模块）、`tests/v1/`（V1 那套回归的整份副本：`fixtures_real_loops.py` 逐字照抄，`test_repeat_filter.py` 只改 import，那两条真实故障行因此不依赖会议目录就能复现）。
+除这些，`tests/` 下还有**测试支持**（不被 `pytest` 收集）：`tests/_helpers.py`（真服务子进程与假浏览器等工具）、`tests/_service.py`（真服务子进程驱动件 + SSE 读帧与等待助手）、`tests/_drain_fakes.py`（收尾与关停用例共用的假后端 / 假钩子，与工厂辅助一起挂进子进程）、`tests/_capture_faulty.py`（端到端专用的「问题采集后端」挂件：真采集后端 + 假端点表 + 内容带块号的假源，旋钮走环境变量，经配置键 `capture.backend = "tests._capture_faulty:FaultyCaptureBackend"` 挂进进程内真运行时）、`tests/_contract.py`（`contract/fixtures/` 的采集、掩码与落盘比对；它按需写出一个假转写后端，经 `PYTHONPATH` + `transcriber.backend` 的 `module:Class` 挂进子进程）、`tests/__init__.py`（`tests/` 的包标记，跨文件取用走包路径 import）、`tests/conftest.py`（**只放 fixture**，其中**三道** autouse 的兜底：一道把 `webbrowser.open` 换成只记录不开窗的假替身，一道 `_no_real_audio_capture` 把真采集入口打成「一碰就炸」的桩 —— `sounddevice.InputStream` / `rec` / `check_input_settings` / `soundcard.get_microphone`，异常类 `RealCaptureForbidden` 不继承 `Exception` 因此不会被生产代码的 `except Exception` 吞掉，只读枚举不禁；第三道 `_no_real_minutes_session` 把 `MEETING_MINUTES_CHILD=1` 立起来，让离线链收尾处那次 `minutes.hook` 通知当场走再入闸 —— 本机 PATH 上真的有 `dsh`，不立这一格，每一场跑完整条离线链的用例都会真拉起一个 headless 子会话去跑五阶段；另注册 `--regen-contract` 开关）、`tests/_fake_webbrowser/`（替掉标准库 `webbrowser` 的假模块）、`tests/v1/`（V1 那套回归的整份副本：`fixtures_real_loops.py` 逐字照抄，`test_repeat_filter.py` 只改 import，那两条真实故障行因此不依赖会议目录就能复现）。
 
 **契约 samples 的重生成开关**：`python -m pytest tests/test_contract_fixtures.py --regen-contract -q` 重写 `contract/fixtures/`，不给开关就是逐文件比对（改了服务行为就重跑它并复核差异）。规则与出处见 `contract/README.md`。
 
@@ -321,7 +333,7 @@ addopts = "--strict-markers"
 任何用例，以退出码 **5（no tests collected）** 收场，不会被读成绿。
 
 **一条已知的残余**（本机 pytest 9.0.3 实测）：`-m "not sloww"` 这种**否定式**拼错会让
-pytest 把「sloww」当成一个谁都不带的标记，表达式于是恒真、710 条全被选上 —— 结果是悄悄跑了
+pytest 把「sloww」当成一个谁都不带的标记，表达式于是恒真、975 条全被选上 —— 结果是悄悄跑了
 全量（慢，但不假绿）。正向拼错由退出码 5 兜住，否定式拼错由这道 `--strict-markers` 兜不住。
 
 **归位判据**（一条用例满足任一条就进慢档）：
@@ -334,7 +346,7 @@ pytest 把「sloww」当成一个谁都不带的标记，表达式于是恒真�
 **只能落在文件粒度**：`tests/conftest.py` 那道看门（`CASE_WALL_CLOCK_LIMIT_SECONDS = 5.0`）管的是
 **逐条用例**的 `setup + call + teardown` 之和压在 5 秒之内，最慢的一条也才
 3.40 秒（`tests/test_drain.py::test_all_log_event_categories_findable_before_end_marker`），
-「慢」来自文件层面的真子进程与真墙钟等待。十个慢档文件各自在文件头加一行
+「慢」来自文件层面的真子进程与真墙钟等待。九个慢档文件各自在文件头加一行
 `pytestmark = pytest.mark.slow`：
 
 | 慢档文件 | 单文件实测 | 慢在哪一档判据 |
@@ -350,13 +362,13 @@ pytest 把「sloww」当成一个谁都不带的标记，表达式于是恒真�
 | `tests/test_capture_e2e.py` | 4.86 s | ① 真运行时 + `ffprobe` + 10 分钟合成 PCM |
 | `tests/test_transcript_hints.py` | 1.84 s | ② 进程内真运行时（那条端到端用例等 0.5 秒节拍） |
 
-**三条命令与实测耗时**（本机，`732` 条用例那一版）：
+**三条命令与实测耗时**（本机，`975` 条用例那一版）：
 
 | 命令 | 用例 | 实测 |
 |---|---|---|
-| `python -m pytest -q -m "not slow"` | **551 passed, 181 deselected** | **40.59 s**（墙钟 41.22 s） |
-| `python -m pytest -q -m slow` | **181 passed, 551 deselected** | **79.39 s**（墙钟 80.04 s） |
-| `python -m pytest -q` | **732 passed** | **119.55 s**（墙钟 120.20 s） |
+| `python -m pytest -q -m "not slow"` | **794 passed, 181 deselected** | **45.07 s** |
+| `python -m pytest -q -m slow` | **181 passed, 794 deselected** | **79.39 s**（墙钟 80.04 s，`732` 条那一版测的） |
+| `python -m pytest -q` | **975 passed** | **124.06 s** |
 
 **不加 `-m` 时跑全量**，这一点是有意的：新写的用例默认落在快档，只有被显式标 `slow` 才跳过。
 漏跑的风险因此压在「新写的慢用例拖慢快档」这一侧，而不在「忘了标记 → 慢用例从没跑过」那一侧。
@@ -371,7 +383,7 @@ pytest 把「sloww」当成一个谁都不带的标记，表达式于是恒真�
 
 ## 8. 现在能做什么 / 还接不上的部分
 
-**能**：起停、跑完启动序列、交 `/`（产物或说明页）、**接通了的 `/debug` 自检页**、`/api/state` 的完整快照、`/api/events` 的三通道 SSE、`/api/heartbeat` 的真值、`POST /api/actions` 的六个动作、四态与全部迁移、场次目录与原子写 `session.json`、`stop` 的四步收尾跑到终态（含自适应预算、超时如实上报、失败后两条出路）、`Ctrl+C` 的两阶段语义与五档退出码、重启自洽闭环、场次 log 的挂上与摘下、告警判定与静音、`settings_update` 的原子写、**设备枚举与试开（`devices.mic` / `devices.loopback` 两个键位与 `reprobe` 动作）**、**真实双路采集与归档**（`capture.backend` 默认值 `auto`：两路各自独立读写、边采边落盘 16k / 单声道 / int16 裸 PCM、每 0.5 秒一帧 dBFS 电平事实、收尾 `finalize()` 停流落盘 + `transcode()` 出 64k MP3）、**真实转写与会中临时稿**（`transcriber.backend` 默认值 `auto`：两路各一本 `meeting_transcript_<source>.md`、一行 `[HH:MM] 正文`）、**会后离线转写与说话人聚类**（`post.hook` 默认值 `auto` 在收尾第 4 步拉起：两路各一份 `meeting_offline_transcript_<source>.md` 与 `meeting_offline_speakers_<source>.json`，外加一份运行报告与一份状态文件，都落进场次目录）、dev 替身（采集合成电平与三档故障注入 / 转写合成行，按 key 分流）、仓库根的简版 `README.md`、**契约看守**（`python -m pytest tests/test_contract_fixtures.py -q` 比对 `contract/fixtures/` 的 25 个 golden 样本，`--regen-contract` 重新生成；同一批样本在 `web/tests/` 里由 `npx vitest run` 再验一遍类型层）。
+**能**：起停、跑完启动序列、交 `/`（产物或说明页）、**接通了的 `/debug` 自检页**、`/api/state` 的完整快照、`/api/events` 的三通道 SSE、`/api/heartbeat` 的真值、`POST /api/actions` 的六个动作、四态与全部迁移、场次目录与原子写 `session.json`、`stop` 的四步收尾跑到终态（含自适应预算、超时如实上报、失败后两条出路）、`Ctrl+C` 的两阶段语义与五档退出码、重启自洽闭环、场次 log 的挂上与摘下、告警判定与静音、`settings_update` 的原子写、**设备枚举与试开（`devices.mic` / `devices.loopback` 两个键位与 `reprobe` 动作）**、**真实双路采集与归档**（`capture.backend` 默认值 `auto`：两路各自独立读写、边采边落盘 16k / 单声道 / int16 裸 PCM、每 0.5 秒一帧 dBFS 电平事实、收尾 `finalize()` 停流落盘 + `transcode()` 出 64k MP3）、**真实转写与会中临时稿**（`transcriber.backend` 默认值 `auto`：两路各一本 `meeting_transcript_<source>.md`、一行 `[HH:MM] 正文`）、**会后离线转写与说话人聚类**（`post.hook` 默认值 `auto` 在收尾第 4 步拉起：两路各一份 `meeting_offline_transcript_<source>.md` 与 `meeting_offline_speakers_<source>.json`，外加一份运行报告与一份状态文件，都落进场次目录）、**会后纪要生成**（`minutes.hook` 默认值 `auto` 挂在离线那一趟的尾巴上：拉起一个 headless DSH 子会话按五个阶段出一份 `meeting_final.md`，正文之外带说话人附录）、dev 替身（采集合成电平与三档故障注入 / 转写合成行，按 key 分流）、仓库根的简版 `README.md`、**契约看守**（`python -m pytest tests/test_contract_fixtures.py -q` 比对 `contract/fixtures/` 的 25 个 golden 样本，`--regen-contract` 重新生成；同一批样本在 `web/tests/` 里由 `npx vitest run` 再验一遍类型层）。
 
 **下面三条是已经接通的细节；其余按「能力还没进来」理解，服务本身照常跑**：
 
@@ -383,6 +395,8 @@ pytest 把「sloww」当成一个谁都不带的标记，表达式于是恒真�
   - **实时率**：本机 10 秒段单段耗时中位 **0.58 秒**、RTF 中位 **0.058×**（这一档是 10 秒段的口径；V1 记录的 `0.39×` 出自**生产路径探针** —— 整场重放、10 秒段正常识别 3.1–4.2 秒，两个数口径不同，不能直接相减）。
   - **时间戳**：把 530 秒素材按 1× 真实时间轴喂进整条流水线，**53 行全部配对**，偏差中位 **0.0 分钟**、最大 **1.0 分钟**；压力档（积压峰值 29–30 段、排队延迟最大 80 秒）偏差仍是中位 0.0 / 最大 1.0 —— **滞后不随积压增长**。
 - **会后钩子已经接通**（`7c6952e5`）：`post.hook` 的默认值 `auto` 解析到 `meeting.backends.post:PostProcessHook`，它的 `launch(session_dir)` 起一条 daemon 线程跑 `meeting.offline.runner.run_session(session_dir)` 后立即返回 —— **收尾第 4 步 `post` 因此记 `done`**（启动即算完成，不等它跑完；它跑多久都不占收尾预算）。线程里的异常落进场次目录的 `meeting_offline_status.json`，不回收尾流程；`post.hook = null` 那一档仍是缺席记 `skipped`。产物（每路一份权威转写与对照表、一份运行报告、一份状态文件）见 `docs/state.md` 第 3 章。收尾第 2 步的闸门只看**采集侧**（`meeting/service/runtime.py` 的 `_drain_transcode()` 看 `capture_resolution` 与 `capture_capabilities["transcode"]`）：transcode 是采集后端的能力，转写后端在不在场与它无关 —— 真采集那一场两份 MP3 在收尾里自动出现，`null` / `dev` 替身那一场这一格记 `skipped`。
+- **会后纪要钩子也已经接通**（`41465462`）：`minutes.hook` 的默认值 `auto` 解析到 `meeting.backends.minutes:MinutesHook`，离线那一趟（`run_session()`）把三份产物与状态文件的终态都落完之后，在**最后**通知它一次 —— 它同样起一条 daemon 线程、返回即算启动成功，因此离线那一趟不等它跑完，它跑多久都不占预算。这一层炸了不带走进度更早的产物（`meeting_offline_status.json` 与那三份离线产物一个字节都不改，只记主 log 一条）；`minutes.hook = null` 与环境里的 `MEETING_MINUTES_CHILD=1`（DSH 子会话自己）两档都安静跳过。产物是场次目录根的 `meeting_final.md`（纪要正文 + 说话人附录）与 `meeting_minutes_status.json`（`running` / `done` / `failed` + 档位与实际走的启动分支），中间产物在 `working/` 下。**收尾四步没有增加第五步**：这一层挂在离线那条链的尾巴上，收尾第 4 步的语义仍是「会后钩子启动成功」。它吃什么、经哪几步出一份纪要、产物四条判据与三个手动子命令（`python -m meeting.minutes check` / `chunk` / `prompt`）见 `docs/minutes.md`。
+- **纪要这一层的 `web` 分支本轮没有实现**：`minutes.hook` 的 `auto` / `web` / `headless` 三种取值都落 headless 子进程（V1 那套 web 路径在 DSH 0.1.5-rc.2 上已经失效：`workspace.list` 这个一元方法不存在、信封 payload 要包一层 `args`、`/api` 只认 HMAC 签名的 Cookie），状态文件的 `branch` 一格因此记**实际走的**那一条；要动它归下游节点 `65dd3e4c`。
 - **端口被占时那句文案里的「已录多久」**：占用者是本服务时，括号里眼下是**字面写死的「当前空闲」**（`meeting/service/app.py` 的端口探测那一处还没取用会话时长这个值）。`README.md` 与 `docs/api.md` 都照这个现状写。
 - **真机真开一场会**：设备枚举与真实电平只有真开一场才见分晓，这一条是**手工验收**，四条端到端脚本与它无关。自动化边界归下游 `46ae4a08`。
 - **`meeting post`**：只有桩（打印「会后流程还没接入（65dd3e4c）」、退出码 `1`）。它同时是收尾失败后的出路之一，实现归 `65dd3e4c`。
@@ -397,6 +411,7 @@ pytest 把「sloww」当成一个谁都不带的标记，表达式于是恒真�
 
 - 需求锚：`docs/requirements.md`（R1 / R2 / R5 / R15 / R16 / R17）
 - 状态、场次与推送：`docs/state.md`
+- 会后纪要生成那一层：`docs/minutes.md`
 - HTTP 面（端点、动作、`code` 表）：`docs/api.md`
 - 界面：`docs/ui-design.md`（四态与迁移、告警分级、心跳判据）
 - V1 迁移边界：`docs/legacy-assets.md`（B11 配置契约、D4 日志三处必改、D6 键间规则、C10 导入顺序）

@@ -351,12 +351,12 @@ X-Meeting-Service: 1
 {"ok": true, "revision": 3, "applied": ["asr.timeout_seconds"], "pending_restart": []}
 ```
 
-**合法键名是逐条列出的 27 个**（不按前缀归组、没有前缀白名单）。表外的任何键名一律 `invalid_setting`(400) 且 `detail = {key, value, legal}`。
+**合法键名是逐条列出的 31 个**（不按前缀归组、没有前缀白名单）。表外的任何键名一律 `invalid_setting`(400) 且 `detail = {key, value, legal}`。
 
 | 归类 | 键（个数） | 为什么 |
 |---|---|---|
 | `applied` | `alarm.sound` / `asr.max_segment_seconds` / `asr.timeout_seconds` / `asr.max_new_tokens` / `asr.repeat_max_unit` / `asr.repeat_min_coverage`（**6 个**） | 这六个是**热读键**，写盘成功就立刻生效。`alarm.sound` 收在这一档，于是勾选出声开关**当场**改运行期行为 |
-| `pending_restart` | `web.port` / `web.dist_dir` / `output.root` / `log.level` / `log.dir` / `log.max_bytes` / `log.backup_count` / `alert.silence_dbfs` / `alert.silence_seconds` / `alert.recover_seconds` / `alert.alarm_suppress_seconds` / `heartbeat.interval_seconds` / `capture.backend` / `transcriber.backend` / `post.hook` / `post.engine` / `post.model` / `post.dtype` / `post.chunk_seconds` / `devices.mic` / `devices.loopback`（**21 个**） | 这些值在**启动时读一次**，写盘成功但要重启才生效 |
+| `pending_restart` | `web.port` / `web.dist_dir` / `output.root` / `log.level` / `log.dir` / `log.max_bytes` / `log.backup_count` / `alert.silence_dbfs` / `alert.silence_seconds` / `alert.recover_seconds` / `alert.alarm_suppress_seconds` / `heartbeat.interval_seconds` / `capture.backend` / `transcriber.backend` / `post.hook` / `post.engine` / `post.model` / `post.dtype` / `post.chunk_seconds` / `minutes.hook` / `minutes.chunk_lines` / `minutes.max_segments` / `minutes.timeout_seconds` / `devices.mic` / `devices.loopback`（**25 个**） | 这些值在**启动时读一次**，写盘成功但要重启才生效 |
 
 两个数组里也是同一套点号键名，次序**照本次请求里的键逐条走**。
 
