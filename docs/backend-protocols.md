@@ -49,6 +49,7 @@
 | `start(mode, session_dir)` / `stop()` | 起停转写。起步失败**不阻塞录音**（转写坏了可以重跑） |
 | `health()` | `normal` / `behind` / `stopped`，直接进快照的 `transcript.health` |
 | `backlog_depth()` / `segment_timeout()` | 积压段数与单段超时（秒），供收尾预算与提示级用；数值本身只进 log 与 `/debug` |
+| `release_gpu()` | **可选成员**：把会中模型移出显存。调用方（收尾第 4 步）用**防御式取法**（`getattr(..., None)` + 可调用才调），替身后端省掉这一格照样跑得通 —— 这条宽松是有意留的 |
 
 行事实是 `TranscriptLine`：`ts` / `source` / `text` / `kind`（`line` 或 `gap`）。
 
@@ -60,7 +61,8 @@
 - `start(mode, session_dir)` 起 `meeting/asr/pipeline.py` 那条流水线：两路各一条读线程**游标尾读** `session_dir/meeting_audio_<source>.pcm`（只看新字节、不碰采集层的对象、不要求采集给它开旁路出口）、VAD 按 16k / 单声道 / int16 切段（帧长 30ms、静默 2.0 秒出段、单段硬上限 `asr.max_segment_seconds`）、段**入队时就盖上采集时刻**、**一个** worker 顺序消费两路的段（显存只有一份）。**起步失败不阻塞录音**：异常收成一条 error 日志、`health()` 落 `stopped`，采集照跑；
 - `stop()` 关读线程、把 VAD 手上的尾段送进队列，再在**收尾预算**内把队列里剩下的段尽量做完（预算按积压量自适应，公式见 `docs/state.md` 第 1 章）；
 - `health()` 三取值：已经 `stop()` 过、worker 没起来 / 已经停了、模型加载或识别出事 → `stopped`；积压段数压过 `BACKLOG_BEHIND_THRESHOLD`（20 段）→ `behind`；读线程出事、这一段再也不会长出新段也报 `behind`；其余情况 `normal`。**没起过场次时报 `stopped`** —— 快照空闲态那一格就是从它读来的真值；
-- `backlog_depth()` 是段队列里还没处理的段数（队列**无界**，不做 busy-drop），`segment_timeout()` 是配置里的 `asr.timeout_seconds`（默认 `20.0`）。
+- `backlog_depth()` 是段队列里还没处理的段数（队列**无界**，不做 busy-drop），`segment_timeout()` 是配置里的 `asr.timeout_seconds`（默认 `20.0`）；
+- `release_gpu()` 由收尾第 4 步在**会后离线链加载 MOSSTD 之前**调一次（就是钩子的 `launch()` 之前那一刻），耗时算在 `post` 这一步的记账里。语义四条：**没加载过就 no-op**（一条日志都不写）、**幂等**、等在飞推理有 **5 秒上界**（后端自己的在飞计数 + `Condition`，事件驱动；到点照旧丢引用并记一条 warning）、**丢引用之后**才尽力清一次缓存。它抛错不拖垮整场 —— 调用方如实记一条 log，会后流程照常拉起。这一处交接的来由与本机数字见 `docs/asr-backends.md`。
 
 每一段落一份产物：`session_dir/meeting_transcript_<source>.md`，一行 `[HH:MM] 正文`（分钟级时间戳取**采集时刻**，追加写、逐行 flush）。识别失败的段落照落一行，正文是**占位符**（`[[识别失败: 超时 20s]]` 这一形状：双层方括号、裸文本、不带时间戳、不含 `**`）；真后端产出的 `kind` 一律是 `line`，失败段落也是 `line`，靠正文认出来。文件位置、行格式与占位符的几档见 `docs/state.md` 第 3 章，SSE 侧那一行见 `docs/contract.md` 第 3.3 节。
 
@@ -158,6 +160,8 @@
 
 这四格之外，会后这条链还有一道**不带配置键的闸**：数字静音门（判据、留痕与四档终态的区分见 `docs/state.md` 第 3 章的「没声的那几段」）。它没有开关 —— 峰值够不着半格的那一段一律不送引擎，**单趟跑与分块跑都过这道闸**（归档 PCM 上按字节扫那一段、别的容器用解好的波形，判不了就现解一次）。跳过的那几段记在状态文件的 `silent` / `silent_spans`、对照表的 `audio.silent_spans` 与转写第一行那条注释上；**门判不了**那几段时（音频解不开、要的那一段读不全）照常送引擎，同时把「没判成」记在状态文件与对照表的 `gate`（`applied: false` + `unjudged_spans`）以及逐块那一行的 `gate: "unjudged"` 上 —— 一次没门可用的运行因此在产物里与一次健康的运行分得开。逐块那一行另带一个**结论词** `reason`（`digital_silence` / `engine_error` / `no_segments` / `zero_span_segments` / `transcribed` / `gate_unjudged`）与 `gate_method`（门凭什么判的），下游按它们读「这一段为什么没有字」与「这一段有没有人判过」，不必从整场那几个字段反推。`gate_method` 的取值是 **`pcm_bytes`**（在归档 PCM 上按字节扫）、**`waveform`**（在已经解好的波形上切片判）、**`decode_at_plan`**（量长度那一步就没解开，结论落「判不了」）与 **`decode_now`**（门现解一次音频文件，只对直接调用 `measure_span()` 的调用方存在，产品路径到不了它），另加一个 **`unjudged`**（这一段门没做成判断，与逐块 `gate` 那一格同名的那个词）。逐路 `audio.gate.method` 与状态文件 `artifacts.<source>.gate.method` 只由**判过的块**构成（判过的块按各自那把尺子拼起来，多把写成 `a/b`），一块都没判成、或这一路没有可判的音频时它是 `null`；逐块那一行的 `gate_method` 记的是这一块**原本打算用**的那把尺子，`gate` 为 `unjudged` 的块同样带着它（解不开那一档因此读得到 `decode_at_plan`），「没判成」这件事由 `gate` 与 `gate_detail` 说。**单趟跑的 MP3 记的是 `waveform`**：`_plan_for_source()` 为了量长度已经解出整份波形，门切片用掉的就是那一段，门口不再现解第二遍。
 
+`post.dtype` 与 `post.chunk_seconds` 这两格的取值依据（模型自带的那份精度、官方 helper 在 CUDA 上的选择、块长标度曲线与越界判据）写在 `docs/asr-backends.md`，连同那台 3060 6GB 机器上还没量过的几项。
+
 ### 会后纪要那一层的四个开关
 
 `minutes.hook` 管这一层在不在（`auto` 落 `meeting.backends.minutes:MinutesHook`，`null` 是缺席：离线跑完不产生纪要），另外三个键管它跑起来什么样，都在启动时读一次（非热读，改了要重启）：
@@ -194,5 +198,6 @@
 - 服务侧现状与不可用清单：`docs/service.md` 第 8 章
 - 四态、快照、收尾四步、dev 替身怎么用：`docs/state.md`
 - 会后纪要那一层吃什么、经哪几步、怎么手动跑：`docs/minutes.md`
+- 会中与会后两套模型的选型、四个 `post.*` 键的取值依据与本机实测：`docs/asr-backends.md`
 - V1 里可搬的转写退化防护逻辑与参数标定：`docs/legacy-assets.md`（1.A / 1.B）
 - 索引：`docs/spec.md`

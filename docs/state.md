@@ -188,7 +188,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 
 ### 会后离线产物
 
-收尾第 4 步把会后离线那一套拉起来之后（`7c6952e5` 已落地），一场会在场次目录里多出四类文件（转写与对照表按路各落一份，两路的场次一共六份）。写盘与字段契约在 `meeting/offline/artifacts.py`：
+收尾第 4 步把会后离线那一套拉起来之后（`7c6952e5` 已落地），一场会在场次目录里多出四类文件（转写与对照表按路各落一份，两路的场次一共六份）。写盘与字段契约在 `meeting/offline/artifacts.py`。这一层用哪个模型、按什么块长切、精度档与显存读数的来由，见 `docs/asr-backends.md`：
 
 | 文件 | 内容 | 读者 |
 |---|---|---|
@@ -407,6 +407,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 - 会后纪要那一层怎么跑、产物四条判据、三个手动子命令：`docs/minutes.md`
 - 会中总结那一层（窗口怎么切、模型输出契约、七个配置键、动作与记录端点）：`docs/summary.md`
 - 后端怎么被找到、怎么插进来：`docs/backend-protocols.md`
+- 会中与会后两套模型的选型、四个 `post.*` 键的取值依据与本机实测：`docs/asr-backends.md`
 - 界面怎么画这四态：`docs/ui-design.md`
 - 前端工程怎么跑、怎么构建：`web/README.md`
 - 契约的可机读基准（29 个 golden 样本与掩码规则）：`contract/README.md`

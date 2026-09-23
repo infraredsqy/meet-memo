@@ -174,7 +174,7 @@ $env:MEETING_CAPTURE="dev"; $env:MEETING_NO_BROWSER="1"; meeting web
 
 两个前缀说的两件事：`alert.*` 是**判定阈值**（静默多久算告警、多久算恢复、多久内不重复出声）；`alarm.*` 只管出声。两个「心跳」也不许串线：`heartbeat.interval_seconds` 是**界面**发心跳的周期，服务侧的采集帧心跳窗口是 `max(2.0s, 3 × frame_interval)`。
 
-`asr.*` 五个默认值沿用 V1 实测值（`docs/legacy-assets.md` 的 B1）；`alarm.sound` 的默认值是 `true`（缺省出声）。
+`asr.*` 五个默认值沿用 V1 实测值（`docs/legacy-assets.md` 的 B1）；`alarm.sound` 的默认值是 `true`（缺省出声）。四个 `post.*` 键为什么取这些值（块长标度曲线、实时率、精度档的对照情况），见 `docs/asr-backends.md`。
 
 ### 环境变量
 
@@ -264,7 +264,7 @@ python -m pytest -q -m slow         # 慢档：只跑那十一个文件
 python -m pytest tests/test_state_machine.py tests/test_api_actions.py -q   # 只跑某几个文件
 ```
 
-`tests/` 下现在有 **57 个测试文件、1133 个用例**（本机实测：`python -m pytest --collect-only -q` → `1133 tests collected`；`python -m pytest -q` → `1133 passed in 133.89s`。口径是**pytest 会去收用例的文件数**：`tests/_helpers.py` / `tests/_service.py` / `tests/_drain_fakes.py` / `tests/_capture_faulty.py` / `tests/_contract.py` 那几个测试支持模块不算，`tests/v1/test_repeat_filter.py` 算一个）。这一版比下面那张表上一版的 49 行（合计 976 条）多 8 个文件、157 条：六个 `tests/test_summary_*.py` 111 条（会中总结内核那一层，`1987cb20` phase1 —— `test_summary_client.py` 19 条、`test_summary_parse.py` 19 条、`test_summary_prompt.py` 12 条、`test_summary_runner.py` 23 条、`test_summary_settings.py` 21 条、`test_summary_window.py` 17 条）、`tests/test_summary_action.py` 31 条与 `tests/test_summary_buffer.py` 12 条（服务接线那一层，`1987cb20` phase2，含修复轮补的两条：四档之外的 `window` 取值一律 400、以及出口兜底那条自证），外加 `tests/test_minutes_contract.py` 60 → 63 条（会后纪要契约那几条跟上这一层）。文件数与用例数的口径写在 `docs/spec.md` 的代码现状表里。不需要先 `pip install`，也不需要可编辑安装。
+`tests/` 下现在有 **58 个测试文件、1147 个用例**（本机实测：`python -m pytest --collect-only -q` → `1147 tests collected`；`python -m pytest -q` → `1147 passed in 133.96s`。口径是**pytest 会去收用例的文件数**：`tests/_helpers.py` / `tests/_service.py` / `tests/_drain_fakes.py` / `tests/_capture_faulty.py` / `tests/_contract.py` 那几个测试支持模块不算，`tests/v1/test_repeat_filter.py` 算一个）。这一版比下面那张表上一版的 49 行（合计 976 条）多 8 个文件、157 条：六个 `tests/test_summary_*.py` 111 条（会中总结内核那一层，`1987cb20` phase1 —— `test_summary_client.py` 19 条、`test_summary_parse.py` 19 条、`test_summary_prompt.py` 12 条、`test_summary_runner.py` 23 条、`test_summary_settings.py` 21 条、`test_summary_window.py` 17 条）、`tests/test_summary_action.py` 31 条与 `tests/test_summary_buffer.py` 12 条（服务接线那一层，`1987cb20` phase2，含修复轮补的两条：四档之外的 `window` 取值一律 400、以及出口兜底那条自证），外加 `tests/test_minutes_contract.py` 60 → 63 条（会后纪要契约那几条跟上这一层）。文件数与用例数的口径写在 `docs/spec.md` 的代码现状表里。不需要先 `pip install`，也不需要可编辑安装。
 
 | 文件 | 用例数 | 验什么 |
 |---|---|---|
@@ -299,6 +299,7 @@ python -m pytest tests/test_state_machine.py tests/test_api_actions.py -q   # �
 | `tests/test_asr_glm.py` | 20 | `meeting/asr/glm.py` 与 `guards.py` 的契约（全程注入假模型，一条都不加载真模型）：四层防护真的挂上了（`no_repeat_ngram_size=8` / `logits_processor=[_LoopGuard]` / `stopping_criteria=StoppingCriteriaList([_DeadlineStop])` 逐条断言）、降级记忆（首次 `TypeError` 去掉该参数重跑一次，开关已是 `False` 时异常照抛）、噪声预筛命中即 `ok=True, reason="noise"` 并省掉那一次生成、**超时与判环都不落部分文本**、拿 V1 那条真实坏行当模型输出喂进去断言砍到 <60 字符、参数一律从 `config.json` 读出、**`import meeting.asr.glm` 在一个全新解释器里一条重依赖都不拉** |
 | `tests/test_asr_pipeline.py` | 17 | 实时转写流水线（进程内、无真模型、无真声卡）：每一行的时间戳落在「那段音频写进归档的墙钟窗口」之内、两路各一个 `meeting_transcript_<source>.md` 且每行匹配 `^\[\d{2}:\d{2}\] `、段队列无界（`maxsize == 0`）且源码里没有 busy-drop、三档占位符的形状（**不含 `**`**）、噪声段连占位符都不写、收尾预算 `30 + n × (timeout + 5)`（下限 30 / 封顶 300）与预算耗完时的如实记账 |
 | `tests/test_transcriber_backend.py` | 20 | 转写后端的协议实现与**解耦证明**：六个成员齐、模块顶层不 import 重依赖、`auto` 落到真实现（`has_implementation is True`）、`dev` 按 key 分流、三态与两个计数，以及把模型换成「睡很久」与「会抛错」两条之后 —— **采集归档的字节数照涨**、随后到来的行时间戳仍贴近采集时刻、`/api/heartbeat` 仍应答 |
+| `tests/test_transcriber_release.py` | 11 | 会中模型**让出显存**的四条语义（没加载过就 no-op、幂等、有界等待到点放手、释放后才 `empty_cache()`）与收尾接线的顺序：释放排在 `launch()` 之前用**列表顺序**断言、替身后端走防御式取法是 no-op、释放抛异常时 `post` 仍落 `done`；无 `slow` 标记，单文件实测 0.30 s |
 | `tests/test_transcript_hints.py` | 11 | 提示级接线落在 `_refresh_transcript_snapshot()` 上且**每次都调判定器**（时长跟着刷）、键集合变化提交一次而时长刷新不推 `revision`、上限挤掉也算变化、health 回 `normal` 与积压回落两条清除路径、0.5 秒节拍自己把提示带进快照、**空闲与结束档 `alerts.hints` 恒为空数组**（离开录音 / 告警态就清、下一场从零） |
 | `tests/test_summary_window.py` | 17 | 会中总结的缓冲与窗口切片：`seq` / 副本 / 上限 / 清空 / 多线程、按时间戳切且同一 `ts` 的一批整批同进同出、`full` 收全部、锚点取末行 `ts`、装配文本与来源标签 |
 | `tests/test_summary_prompt.py` | 12 | 两条消息的形状、七条硬规则逐条在 system 里、三条固定标签在 user 里、缺口那一句怎么讲、窗口有边界的说法、重试追加提示 |
@@ -353,7 +354,7 @@ addopts = "--strict-markers"
 任何用例，以退出码 **5（no tests collected）** 收场，不会被读成绿。
 
 **一条已知的残余**（本机 pytest 9.0.3 实测）：`-m "not sloww"` 这种**否定式**拼错会让
-pytest 把「sloww」当成一个谁都不带的标记，表达式于是恒真、1133 条全被选上 —— 结果是悄悄跑了
+pytest 把「sloww」当成一个谁都不带的标记，表达式于是恒真、1147 条全被选上 —— 结果是悄悄跑了
 全量（慢，但不假绿）。正向拼错由退出码 5 兜住，否定式拼错由这道 `--strict-markers` 兜不住。
 
 **归位判据**（一条用例满足任一条就进慢档）：
@@ -367,7 +368,7 @@ pytest 把「sloww」当成一个谁都不带的标记，表达式于是恒真�
 **逐条用例**的 `setup + call + teardown` 之和压在 5 秒之内，最慢的一条也才
 3.40 秒（`tests/test_drain.py::test_all_log_event_categories_findable_before_end_marker`），
 「慢」来自文件层面的真子进程与真墙钟等待。**慢档一共十一个文件**，各自在文件头加一行
-`pytestmark = pytest.mark.slow`（判据是 `Select-String -Path tests\*.py -Pattern 'pytestmark = pytest\.mark\.slow'`，实测 11 个；`-m "not slow"` 与 `-m slow` 两条收集口径分别是 `909/1133` 与 `224/1133`，加得起来）：
+`pytestmark = pytest.mark.slow`（判据是 `Select-String -Path tests\*.py -Pattern 'pytestmark = pytest\.mark\.slow'`，实测 11 个；`-m "not slow"` 与 `-m slow` 两条收集口径分别是 `923/1147` 与 `224/1147`，加得起来）：
 
 | 慢档文件 | 单文件实测 | 慢在哪一档判据 |
 |---|---|---|
@@ -387,20 +388,20 @@ pytest 把「sloww」当成一个谁都不带的标记，表达式于是恒真�
 
 上表那些单文件读数是各自单独跑一次量的（含解释器冷启动与真应用启动的固定开销），**不随某个文件被挪进挪出慢档而变**；改完代码之后要刷新哪几个数，就按同一口径单跑一遍那个文件。
 
-**三条命令与实测耗时**（本机，`1133` 条用例那一版）：
+**三条命令与实测耗时**（本机，`1147` 条用例那一版）：
 
 | 命令 | 用例 | 实测 |
 |---|---|---|
-| `python -m pytest -q -m "not slow"` | **909 passed, 224 deselected** | **46.33 s** |
-| `python -m pytest -q -m slow` | **224 passed, 909 deselected** | **88.93 s** |
-| `python -m pytest -q` | **1133 passed** | **133.89 s** |
+| `python -m pytest -q -m "not slow"` | **923 passed, 224 deselected** | **46.33 s** |
+| `python -m pytest -q -m slow` | **224 passed, 923 deselected** | **88.93 s** |
+| `python -m pytest -q` | **1147 passed** | **133.96 s** |
 
 **不加 `-m` 时跑全量**，这一点是有意的：新写的用例默认落在快档，只有被显式标 `slow` 才跳过。
 漏跑的风险因此压在「新写的慢用例拖慢快档」这一侧，而不在「忘了标记 → 慢用例从没跑过」那一侧。
 快档 40 秒里包含了全部承重的离线契约用例：`test_offline_artifacts.py`（45 条）、
 `test_offline_engine.py`（29 条）、`test_offline_runner.py`（55 条）、`test_offline_segment.py`
 （23 条）、`test_offline_speakers.py`（12 条）、`test_offline_audio.py`（4 条）、
-`test_post_hook.py`（14 条）合计 182 条，在共享运行里约 1.9 秒；`test_contract_fixtures.py`
+`test_post_hook.py`（17 条）合计 193 条，在共享运行里约 1.9 秒；`test_contract_fixtures.py`
 的 29 个 golden 样本漂移比对也在快档。
 
 **将来某个快档文件里出现一条真子进程用例**：那一条单独加 `@pytest.mark.slow` 即可，不必把
@@ -443,4 +444,5 @@ pytest 把「sloww」当成一个谁都不带的标记，表达式于是恒真�
 - 界面：`docs/ui-design.md`（四态与迁移、告警分级、心跳判据）
 - V1 迁移边界：`docs/legacy-assets.md`（B11 配置契约、D4 日志三处必改、D6 键间规则、C10 导入顺序）
 - 后端协议：`docs/backend-protocols.md`
+- 会中与会后两套模型的选型、四个 `post.*` 键的取值依据与本机实测：`docs/asr-backends.md`
 - 索引：`docs/spec.md`

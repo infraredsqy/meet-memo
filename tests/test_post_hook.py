@@ -544,8 +544,11 @@ def _post_wiring(tmp_path: Path, monkeypatch, *, events: list[str], transcriber_
     )
     runtime._resolve_backends()
     runtime.start_session()
-    # **替身后端要挂在 `start_session()` 之后**：那一步自己会把三个后端重新解析一遍
-    # （`_resolve_backends()`），挂在它前面会被覆盖回真后端。
+    # **替身后端要挂在 `start_session()` 之后**：这一串装配是按真实顺序走的 —— `_resolve_backends()`
+    # 在这里由用例自己调（`runtime.py` 里它的唯一生产调用点在 `startup()` 那条 lifespan 路径上，
+    # `start_session()` 里没有它），随后 `start_session()` 会把解析出来的**真**转写后端一路带下去
+    # （`start()` 与 `_refresh_transcript_snapshot()` 都落在它身上）。替身只提供了 `release_gpu()`
+    # 这一格，因此挂在 `start_session()` 之后，那时的会话已经开好、场次目录也在了。
     if transcriber_backend is not None:
         runtime.transcriber_backend = transcriber_backend
     begin_drain(runtime.snapshot, reason="user")
