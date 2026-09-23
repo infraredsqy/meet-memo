@@ -79,7 +79,11 @@ test = [
 # `meeting.asr` 是 `9e5db89c` phase1 建的转写核心，漏了它 `transcriber.backend = auto`
 # 在装好的包里会解析失败；`meeting.offline` 是 `7c6952e5` 建的会后离线层，
 # 漏了它 `post.hook = auto`（约定路径 `meeting.backends.post:PostProcessHook`）
-# 在装好的包里会解析不到 `meeting.offline.runner`）。
+# 在装好的包里会解析不到 `meeting.offline.runner`；`meeting.minutes` 是 `41465462`
+# 建的会后纪要层，漏了它 `minutes.hook = auto`（约定路径
+# `meeting.backends.minutes:MinutesHook`）在装好的包里会解析不到、
+# `python -m meeting.minutes` 那三个手动子命令（`check` / `chunk` / `prompt`）
+# 也会找不到模块）。
 packages = [
     "meeting",
     "meeting.service",
@@ -87,6 +91,7 @@ packages = [
     "meeting.capture",
     "meeting.asr",
     "meeting.offline",
+    "meeting.minutes",
 ]
 
 [tool.setuptools.package-data]
