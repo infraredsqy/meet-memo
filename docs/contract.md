@@ -380,7 +380,7 @@ X-Meeting-Service: 1
 - **`pending_restart` 的键在主 log 里点名**：本次改动里有这一档的键时，落一行「… 归 pending_restart，仍取启动时的生效值（改了要重启才生效）」并列出这些键名；热读键不进那一行（它们已经在上面生效了）。
 - **热读键生效之后 `revision` 会 `+1`**（服务侧重取一次生效值视图并提交）；全是 `pending_restart` 的改动**只写盘、不提交**，因此 `revision` 不动 —— 界面别拿 `revision` 当「设置改没改成功」的判据，看 `ok` 与两个数组。
 
-**这一档的 fixtures**：`contract/fixtures/actions/{start-ok,stop-ok,mute-session-ok,settings-update-ok,summarize-ok}.json` 与**十个** `fail-*.json`（九个 `code` 各一 + 未知动作名那一档；`summary_failed` 有两个样本，逐档 `detail` 见表）。
+**这一档的 fixtures**：`contract/fixtures/actions/{start-ok,stop-ok,mute-session-ok,settings-update-ok,summarize-ok}.json` 与**十个** `fail-*.json`（九个 `code` 各一 + 未知动作名那一档）。`summary_failed` 在**盘上只有缺键那一份**样本（`fail-summary-failed-missing.json`），它另一档 `{elapsed_seconds, attempts}` 需要「一个每次都慢过预算的假端点」，只由 `tests/test_summary_action.py` 逐档实测，没有采成样本（逐档 `detail` 见表）。
 
 ### 4.7 会中总结：`summarize` 与 `GET /api/summaries`
 
@@ -504,7 +504,7 @@ X-Meeting-Service: 1
 4. **动作带两个必需头**：`POST /api/actions` 必须带 `Content-Type: application/json` **且** `X-Meeting-Service: 1`，缺任一条服务回 403 且**不带失败信封**（它没走到端点）。界面的 403 处理要与第 4.2 节的失败块分开。
 5. **心跳按配置周期轮询**：默认 10 秒、可配 1–60 秒（`settings.heartbeat_interval_seconds`）。判定用应答里的 `server_time` 作基准；失联按 5 章的处置做（冻结 + 压灰 + 横幅）。
 6. **不自己造派生数据**：包络（`envelope`）与 `bar` 由服务算好推过来，界面**不许自己造**；告警的 `muted` 由服务判定，界面**不算任何抑制窗口**、只按布尔值决定响不响。
-7. **按 `code` 分派失败画法、按 `detail` 有哪个键显示哪个键**：七个 `code` 固定、`detail` 的档位（尤其是 `capture_unavailable` 三档与 `invalid_setting` 四档）以第 4.4 节为准，**不按 `message` 做字符串匹配**。
+7. **按 `code` 分派失败画法、按 `detail` 有哪个键显示哪个键**：九个 `code` 固定、`detail` 的档位（尤其是 `capture_unavailable` 三档与 `invalid_setting` 四档）以第 4.4 节为准，**不按 `message` 做字符串匹配**。
 8. **决定响不响的时候，持久化开关与本条告警的 `muted` 一起读。** 这两个字段各管一件事，缺一条读法就会读错：
 
    | 字段 | 谁写的 | 管什么 |

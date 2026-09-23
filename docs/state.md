@@ -405,8 +405,9 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 - HTTP 面（端点、动作信封、`code` 表）：`docs/api.md`
 - 怎么起服务、配置、日志、退出码、跑测试：`docs/service.md`
 - 会后纪要那一层怎么跑、产物四条判据、三个手动子命令：`docs/minutes.md`
+- 会中总结那一层（窗口怎么切、模型输出契约、七个配置键、动作与记录端点）：`docs/summary.md`
 - 后端怎么被找到、怎么插进来：`docs/backend-protocols.md`
 - 界面怎么画这四态：`docs/ui-design.md`
 - 前端工程怎么跑、怎么构建：`web/README.md`
-- 契约的可机读基准（25 个 golden 样本与掩码规则）：`contract/README.md`
+- 契约的可机读基准（29 个 golden 样本与掩码规则）：`contract/README.md`
 - 索引：`docs/spec.md`

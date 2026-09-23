@@ -8,8 +8,11 @@
 PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcriber.backend` 同样取 `auto`，解析到真转写后端：
 它从盘上的归档尾读、按静默切段、单 worker 顺序识别，把两路各写一本会中临时稿
 （`meeting_transcript_mic.md` / `meeting_transcript_loopback.md`，行形如 `[HH:MM] 正文`），
-同一批行也经 SSE 的 `transcript` 通道推给界面 —— 它是**临时稿**，会后那份重建。**会后流程还没接**，
-`meeting post` 还是桩。界面在 `web/`，构建产物由服务自己发出去。
+同一批行也经 SSE 的 `transcript` 通道推给界面 —— 它是**临时稿**，会后那份重建。
+**会中总结已经接通**（跟丢时按一下，十到十五秒拿回「刚才在讲什么 / 讲到哪儿了 / 丢掉了什么」）；
+会后那一头，收尾第 4 步拉起的离线转写与纪要生成也已经跑起来了，
+只剩 `meeting post` 这个手动入口还是桩。
+界面在 `web/`，构建产物由服务自己发出去。
 
 ---
 
@@ -84,6 +87,14 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 它吃什么、经哪几步出一份纪要、怎么手动跑一遍（`python -m meeting.minutes chunk|prompt|check`），
 见 `docs/minutes.md`。
 
+**会中总结**：跟丢了的时候按页面上的「总结一下」，十到十五秒拿回三小段 ——
+刚才在讲什么 / 讲到哪儿了 / 丢掉了什么。范围由人挑四档（最近 5 / 15 / 30 分钟、整场，缺省 15 分钟），
+读的是**内存里那份实时临时稿**（不读盘、也不动快照），结果是一过性的：关掉即消失、不落文件。
+本场按过的、成功产出的那几次可以从 `GET /api/summaries` 取回来回看（记录只活在内存里，
+新的一场 `start` 清空）。模型端点由七个 `summary.*` 键配（改完要重启），
+密钥那一格可以走环境变量 `MEETING_SUMMARY_API_KEY`；没配齐就当场说清缺哪几个键。
+这一层怎么切窗口、提示词与模型输出是什么形状、超时与重试的预算落在哪，见 `docs/summary.md`。
+
 ---
 
 ## 2. log 在哪
@@ -117,12 +128,13 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 `settings_update` 写盘成功那一刻快照里的 `settings.alarm_sound` 就换过去了。
 
 其余键（`web.*` / `output.root` / `log.*` / `alert.*` / `heartbeat.*` /
-`capture.*` / `transcriber.*` / `post.*` / `minutes.*`）**改完要重启**。这份「其余键」清单以
+`capture.*` / `transcriber.*` / `post.*` / `minutes.*` / `summary.*`）**改完要重启**。这份「其余键」清单以
 `meeting/config.py` 的键全集为准。
 
 **环境变量一律在启动时求值**，改了不会热生效。本服务的环境变量一共五个：
 `MEETING_PORT` / `MEETING_OUT_ROOT` / `MEETING_LOG_DIR` / `MEETING_CAPTURE` /
-`MEETING_NO_BROWSER`。
+`MEETING_NO_BROWSER`；另有 `MEETING_SUMMARY_API_KEY` 单独映射会中总结那一格的密钥
+（它不改变哪几个键生效，只是给 `summary.api_key` 供一个不进配置文件的来源）。
 
 ---
 
@@ -195,12 +207,23 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
     python -m pytest -q                 # 全量：提交前、或改了核心代码之后
 
 **三档怎么选**：改文案、纯函数、离线产物这类用例走快档（40 秒上下）；动了模型调用、采集、
-转写、服务运行时的代码，跑慢档那九个文件；拿不准就跑全量（两分钟左右，不加 `-m` 时默认就是
+转写、服务运行时的代码，跑慢档那十一个文件；拿不准就跑全量（两分钟左右，不加 `-m` 时默认就是
 它）。慢档比快档慢在真子进程与真墙钟等待上，跳过它不等于跳过覆盖率 —— 但**被测代码落在慢档
-文件里时必须跑全量**。归位判据（一条用例什么时候算慢）与九个文件的清单在
+文件里时必须跑全量**。归位判据（一条用例什么时候算慢）与十一个文件的清单在
 `docs/service.md` 第 7 章「快慢分档」，标记 `slow` 注册在 `pyproject.toml` 的
 `[tool.pytest.ini_options]`（带 `--strict-markers`：代码里 `pytest.mark.xxx` 用到的标记名
 必须先在 `markers` 里注册，没注册就当场报 unknown mark）。
+
+### 6.1 测试与验证纪律
+
+**打模型端点花的是机主的 token，跟跑代码只耗电是两回事。** 所以：
+
+- `tests/` 里的用例一律**注入假件**，一条真实模型端点请求都不发；出口另有一道 autouse 兜底
+  （`tests/conftest.py` 的 `_no_real_model_call`：本机回环放行，其余一律拦下）。
+- 真实端点、真实会议素材的验证写成**一次性的 `.work` 脚本**，跑一次、把证据封存在那里，
+  **不进 `tests/`**。会中总结那一层的那份脚本与四档证据在
+  `.work/nav/nodes/1987cb20-…/phase1/`，会花钱的两档收在显式开关后面、默认拒跑。
+- `tests/` 要**便宜且确定**：单条用例 ≤5 秒、单个测试文件 ≤10 秒，等真墙钟的那几条走慢档。
 
 ---
 
@@ -232,10 +255,10 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 自检：
 
     cd web
-    npm test           # vitest run，10 个文件 241 个用例
+    npm test           # vitest run，12 个文件 327 个用例
     npm run typecheck  # 两条 tsc --noEmit -p，各查各的 project
 
-`npm run build` 里已经含 `npm run typecheck`，所以构建过一次就不必再单独跑；只改类型不看产物时跑 `typecheck` 更快。契约正文在 `docs/contract.md`，可机读基准（25 个 golden 样本与掩码规则）在 `contract/`，前端工程的五个脚本（`dev` / `typecheck` / `build` / `preview` / `test`）与其余说明在 `web/README.md`。
+`npm run build` 里已经含 `npm run typecheck`，所以构建过一次就不必再单独跑；只改类型不看产物时跑 `typecheck` 更快。契约正文在 `docs/contract.md`，可机读基准（29 个 golden 样本与掩码规则）在 `contract/`，前端工程的五个脚本（`dev` / `typecheck` / `build` / `preview` / `test`）与其余说明在 `web/README.md`。
 
 ---
 
