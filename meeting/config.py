@@ -146,6 +146,20 @@ DEFAULT_VALUES: dict[str, Any] = {
     "asr.max_new_tokens": 400,
     "asr.repeat_max_unit": 40,
     "asr.repeat_min_coverage": 0.5,
+    # 会后纪要生成这一层的四个开关（`41465462` phase2 定名，与 `post.*` 同形：
+    # 「接口留在这里，值归选型节点」）：
+    #   - `minutes.hook`：会后是否自动跑纪要生成。`auto` = 跑（跟离线那条链的尾巴走）；
+    #     `null` = 不自动跑（手动 `meeting post` 那条路另算）；与 `post.hook` 同一套取值口径。
+    #   - `minutes.chunk_lines`：每块行数。默认 100 与 V1 那套切块口径一致（`00_index.md` 的
+    #     `chunk_size`），取值域与 `chunk.MIN_CHUNK_LINES` / `MAX_CHUNK_LINES` 逐字相同。
+    #   - `minutes.max_segments`：每条 source 的分段上限（契约校验与提示词都用它）；
+    #     取值域与 `contract.DEFAULT_MAX_SEGMENTS` 那一档一致。
+    #   - `minutes.timeout_seconds`：一次纪要生成的墙钟上限。默认四小时 —— R8 的「会后时间
+    #     宽裕换质量」意味着这一趟可以挂到第二天早上，但它仍然要有一个上限。
+    "minutes.hook": "auto",
+    "minutes.chunk_lines": 100,
+    "minutes.max_segments": 8,
+    "minutes.timeout_seconds": 14400,
 }
 
 #: 后端选取键的取值口径（§3.11 / 冻结项 6）
@@ -175,6 +189,12 @@ INT_LIMITS: dict[str, tuple[int, int]] = {
     # 上界取一天：比这更长的会议按段归档本来就是另一件事。
     # 默认值取 450 的理由写在上面 `DEFAULT_VALUES` 里那一格上面。
     "post.chunk_seconds": (0, 86400),
+    # 会后纪要这一层的三个整数键（`41465462` phase2）：取值域与 `meeting/minutes/` 里
+    # 那几个常量逐字相同（`chunk.MIN_CHUNK_LINES` / `MAX_CHUNK_LINES`、
+    # `contract.DEFAULT_MAX_SEGMENTS` 那一档、一次运行的墙钟上限）。
+    "minutes.chunk_lines": (10, 1000),
+    "minutes.max_segments": (1, 20),
+    "minutes.timeout_seconds": (60, 86400),
 }
 
 #: 浮点范围
@@ -197,6 +217,10 @@ STRING_LIMITS: dict[str, tuple[str, ...] | None] = {
     "capture.backend": BACKEND_SELECTORS,
     "transcriber.backend": BACKEND_SELECTORS,
     "post.hook": BACKEND_SELECTORS,
+    # 会后纪要的钩子（`41465462` phase2）：与 `post.hook` 同一套取值口径
+    # （`auto` / `null` / `dev` / `module:Class`）。它是**可空键**（见 `NULLABLE_KEYS`）：
+    # 配置文件里写 JSON 的 `null` 就是「不自动跑」，与写字符串 `"null"` 同解。
+    "minutes.hook": BACKEND_SELECTORS,
     # 会后离线这一层（`7c6952e5`）：
     #   - `post.engine` 与三个后端选择键同形（`auto` / `null` / `module:Class`）；
     #   - `post.model` 收 HF 仓库 id 或本地快照绝对路径（`None` = 任意非空字符串）；
@@ -213,6 +237,15 @@ STRING_LIMITS: dict[str, tuple[str, ...] | None] = {
 #: 没配时是 `null`，配置文件里也写 `null`；`validate_value()` 把空字符串与纯空白串一并归一成
 #: `None`，省得「空串」与「没配」在快照里长出两种形状）
 NULLABLE_KEYS: tuple[str, ...] = ("devices.mic", "devices.loopback")
+
+#: 「`null` 是**一个取值**、原样留着」的可空键（`41465462` phase2 加的 `minutes.hook`）：
+#: 配置文件里写 JSON 的 `null` 就是「不自动跑会后纪要」，它与两个设备键的「没配」不同 ——
+#: 那一档要**原样收下 `None`**（归一成空串或默认值都会把「关掉」这件事吃掉），
+#: 解析层（`registry.resolve_minutes_hook()`）看到它是 `None` 就落缺席档。
+NULL_SENTINEL_KEYS: tuple[str, ...] = ("minutes.hook",)
+
+#: 全部可写 `null` 的键（设备名那一档 + 上面那一个取值档）
+ALL_NULLABLE_KEYS: tuple[str, ...] = (*NULLABLE_KEYS, *NULL_SENTINEL_KEYS)
 
 #: 环境变量映射（方案明确列出的五个，一个不多一个不少）
 ENV_KEYS: dict[str, str] = {
@@ -461,6 +494,8 @@ def _legal_text(key: str) -> str:
         )
         if key in NULLABLE_KEYS:
             return f"{text}，或 null（null = 没配，按默认策略挑）"
+        if key in NULL_SENTINEL_KEYS:
+            return f"{text}，或 null（null = 显式关掉这一步）"
         return text
     if key == "alarm.sound":
         return "布尔值 true / false"
@@ -489,6 +524,20 @@ def validate_value(key: str, value: Any) -> Any:
             raise ConfigValueError(key, value, _legal_text(key), "收到的不是字符串")
         text = value.strip()
         return text or None
+
+    if key in NULL_SENTINEL_KEYS:
+        # `null` 在这里是一个**取值**（关掉这一步）：原样收下 `None`，与两个设备键的「没配」
+        # 各走各的一支 —— 归一成空串会让「关掉」这件事在读方那边消失。
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ConfigValueError(key, value, _legal_text(key), "收到的不是字符串或 null")
+        if not value.strip():
+            raise ConfigValueError(key, value, _legal_text(key), "空字符串不合法（要关掉就写 null）")
+        allowed = STRING_LIMITS[key]
+        if allowed is not None and value not in allowed and ":" not in value:
+            raise ConfigValueError(key, value, _legal_text(key), "取值不在允许集合里")
+        return value
 
     if key in INT_LIMITS:
         # bool 是 int 的子类，别让 True 混成 1

@@ -243,6 +243,29 @@ def _no_real_audio_capture(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str
     yield blocked
 
 
+#: 会后纪要那一层的再入闸标记：测试进程里缺省立着它（见下面的 autouse 夹具）
+MINUTES_CHILD_FLAG = "MEETING_MINUTES_CHILD"
+
+
+@pytest.fixture(autouse=True)
+def _no_real_minutes_session(monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
+    """**autouse 兜底**：把会后纪要那一层的再入闸标记立起来，测试进程绝不拉起真 DSH。
+
+    理由与上面两个兜底同一条：本机 PATH 上真的有 `dsh`
+    （`C:\\Users\\<user>\\AppData\\Roaming\\npm\\dsh.cmd`）。生产路径上离线的尾巴会调
+    `minutes.hook`，而 `minutes.hook = auto` 那一档会**真的**起一个 headless DSH 子会话去跑
+    五阶段 —— 那是一次真模型调用、几十分钟的墙钟、还占着显卡，而绝大多数用例只想知道
+    离线那三份产物长什么样。
+
+    立起这一格之后 `meeting.minutes.runner.run()` **最前面**的再入闸当场返回 `skipped`，
+    一个子进程都不会起（这道闸就落在产品代码里，测试进程借它把真会话挡住）。
+    要验钩子本身的用例显式去掉它（`monkeypatch.delenv("MEETING_MINUTES_CHILD")`）并注入假启动器，
+    `tests/test_minutes_runner.py` 走的就是那一档。
+    """
+    monkeypatch.setenv(MINUTES_CHILD_FLAG, "1")
+    yield MINUTES_CHILD_FLAG
+
+
 # ---------------------------------------------------------------------------
 # 五个夹具
 # ---------------------------------------------------------------------------

@@ -167,6 +167,17 @@ float32 的整段波形会被 `int()` 截成一串 0 —— 一串真有声的�
 的函数体内，要么在 `MossOfflineEngine.transcribe()` 里。`import meeting.offline.runner`
 因此只拉标准库与包内模块（由 `tests/test_post_hook.py` 在全新解释器里盯着）。
 
+## 尾巴上的会后纪要钩子（`minutes.hook`）
+
+`run_session()` 把三份产物与状态文件的终态都落完之后，**最后**通知一次会后纪要那一层
+（`_announce_minutes()`，`41465462` phase2 加的挂点）：
+
+  - 顺序不能反（纪要的输入就是这条离线转写，先出纪要就永远只有降级档）；
+  - 这一层炸了**不影响离线那三份产物、也不改 `meeting_offline_status.json`**（全程
+    `try/except BaseException` 兜住，只记 log）；
+  - `minutes.hook = null` 与环境里的 `MEETING_MINUTES_CHILD=1` 两档都安静跳过；
+  - 它自己的账记在**另一份**状态文件 `meeting_minutes_status.json` 里（那一份归纪要那一层写）。
+
 音频时长的换算只有一处口径：PCM = 字节数 / 2 / 16000（16k 单声道 int16），
 MP3 = 解码后样本数 / 16000（`decode_audio()` 给出的就是 16k 单声道波形）。
 """
@@ -299,6 +310,11 @@ GATE_METHOD_DECODE_NOW = "decode_now"
 
 #: 分块时临时 wav 住在场次目录下的这个子目录里，跑完一块不留
 CHUNK_DIR_NAME = "_offline_chunks"
+
+#: 会后纪要那一层的状态文件名（`meeting/minutes/status.py` 的 `STATUS_NAME` 同值）。
+#: 这里只留一个字符串常量、**不 import 那个包**：离线这条链不该因为多一个钩子就把
+#: `meeting.minutes` 整包拉进自己的 import 图（那一包的模块归钩子自己去 import）。
+MINUTES_STATUS_NAME = "meeting_minutes_status.json"
 
 
 def chunk_label(index: int, label: str) -> str:
@@ -1100,6 +1116,11 @@ def run_session(
 
     **没声跳过的那几段不影响终态**：`state` 照样 `done`、`partial` 照样 `false`，
     跳过的区间进摘要与状态文件的 `silent` / `silent_spans`（见模块头「数字静音门」）。
+
+    **尾巴上还会通知一次会后纪要那一层**（`minutes.hook`，`41465462` phase2 的挂点）：
+    三份产物与状态文件的终态都落完之后调一次，晚了不行（纪要的输入就是这条离线转写）、
+    早了也不行（状态文件的终态还没写）。这一层炸了只记 log：离线那三份产物与
+    `meeting_offline_status.json` 一个字节都不动（见 `_announce_minutes()`）。
     """
     directory = Path(session_dir) if session_dir else None
     if directory is None or not str(directory):
@@ -1227,12 +1248,66 @@ def run_session(
         "report": report_path.name,
         "status": status_path.name,
         "transcripts": per_source,
+        "minutes": _announce_minutes(directory),
     }
     _log.info(
         "会后离线转写结束：%s（%s，%d 路，%.2fs）",
         session_id, state, len(sources), total_wall,
     )
     return summary
+
+
+def _announce_minutes(session_dir: Path | str) -> dict[str, Any]:
+    """三份离线产物与状态文件都落定之后，通知一次会后纪要那一层（`minutes.hook`）。
+
+    **顺序不能反**：离线这条转写就是纪要那一层的输入，先出纪要就永远只有降级档
+    （spec「自动跑挂在哪一步」）。调用点因此落在 `run_session()` 的**最后**：状态文件的
+    终态已经写完了，纪要这一层读到的东西才是齐的。
+
+    三条边界，一条都不许放宽：
+
+      - 这一层炸了**不许影响离线那三份产物**，也不许改 `meeting_offline_status.json`
+        —— 整段用 `try/except BaseException` 兜住，只在 logger 上记一条；
+      - `minutes.hook = null`（配置里写 JSON `null`）→ 解析成缺席档 → **安静跳过**；
+      - 环境里有 `MEETING_MINUTES_CHILD=1`（这一趟是 DSH 子会话自己）→ 同样安静跳过
+        （再入闸还有一道在 `meeting.minutes.runner.run()` 的最前面，这里早一步省掉一次解析）。
+
+    返回值只进 `run_session()` 的摘要（`{"hook": …, "announced": …, "status": …}`），
+    **不写进任何产物**：这一格的读者是调用方与用例，界面与下游读的是
+    `meeting_minutes_status.json`（它归纪要那一层自己写）。
+    """
+    import os as _os
+
+    if str(_os.environ.get("MEETING_MINUTES_CHILD", "")).strip() == "1":
+        return {"hook": "skipped", "announced": False, "reason": "子会话（MEETING_MINUTES_CHILD=1）"}
+    try:
+        from meeting.backends.registry import resolve_minutes_hook
+
+        resolution = resolve_minutes_hook()
+        if not resolution.has_implementation:
+            _log.info("会后纪要未启用（minutes.hook = %s）：这一场不产生纪要", resolution.selector)
+            return {
+                "hook": "absent",
+                "announced": False,
+                "selector": resolution.selector,
+                "reason": "minutes.hook 缺席（自动跑已关掉）",
+            }
+        minutes_status_path = Path(session_dir) / MINUTES_STATUS_NAME
+        resolution.implementation.launch(str(session_dir))
+        # **返回即算启动成功**（与收尾第 4 步同一条契约）：后台那条线程跑成什么样，
+        # 由 `meeting_minutes_status.json` 回答。
+        return {
+            "hook": "launched",
+            "announced": True,
+            "selector": resolution.selector,
+            "status": MINUTES_STATUS_NAME,
+            "status_path": str(minutes_status_path),
+        }
+    except BaseException:  # 纪要这一层炸了绝不带走离线产物，也不改离线状态文件
+        _log.exception(
+            "会后纪要那一层没能拉起来（离线产物与状态文件照旧）：%s", session_dir
+        )
+        return {"hook": "failed", "announced": False, "reason": "纪要钩子抛出异常（详见主 log）"}
 
 
 def _run_one_source(

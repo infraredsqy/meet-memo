@@ -79,7 +79,7 @@ class FakeEngine:
 
 
 class FakeConfig:
-    """最小的一份配置：只有会后那四个键（`runner` 只读它们）。"""
+    """最小的一份配置：只有会后那几个键（`runner` 只读它们）。"""
 
     def __init__(self, **values) -> None:
         self.values = {
@@ -88,6 +88,10 @@ class FakeConfig:
             "post.dtype": "bfloat16",
             # 缺省与 `config.DEFAULT_VALUES` 同值：用例的 3 秒音频一块装得下，走单趟
             "post.chunk_seconds": 450,
+            # 会后纪要那一层的钩子：测试层收成缺席档（`minutes.hook = null`）——
+            # 本机 PATH 上真的有 `dsh`，`auto` 会让每一场跑完离线链的用例都真的拉起一个
+            # headless 子会话去跑五阶段。要验钩子的用例自己传 `minutes.hook` 覆盖它。
+            "minutes.hook": "null",
         }
         self.values.update(values)
 

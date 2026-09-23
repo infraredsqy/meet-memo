@@ -54,14 +54,16 @@ APPLIED_KEYS = {
     "asr.repeat_max_unit",
     "asr.repeat_min_coverage",
 }
-#: 三分表：其余 21 键（两个设备键位、`web.*` / `log.*` / `alert.*`、五个后端选择键
-#: 与会后离线那四个 `post.*`）。三分表总共 27 个键 = `DEFAULT_VALUES` 的键全集。
+#: 三分表：其余 25 键（两个设备键位、`web.*` / `log.*` / `alert.*`、五个后端选择键、
+#: 会后离线那四个 `post.*` 与会后纪要那四个 `minutes.*`）。三分表总共 31 个键
+#: = `DEFAULT_VALUES` 的键全集。
 PENDING_KEYS = {
     "web.port", "web.dist_dir", "output.root", "log.level", "log.dir",
     "log.max_bytes", "log.backup_count", "alert.silence_dbfs", "alert.silence_seconds",
     "alert.recover_seconds", "alert.alarm_suppress_seconds",
     "heartbeat.interval_seconds", "capture.backend", "transcriber.backend", "post.hook",
     "post.engine", "post.model", "post.dtype", "post.chunk_seconds",
+    "minutes.hook", "minutes.chunk_lines", "minutes.max_segments", "minutes.timeout_seconds",
     "devices.mic", "devices.loopback",
 }
 
@@ -446,7 +448,7 @@ def test_settings_update_splits_applied_and_pending_restart(tmp_path):
 
 
 def test_settings_key_groups_cover_the_whole_table(tmp_path):
-    """两个数组的键名与配置层的三分表逐键一致（27 个键一个不多、一个不少）。"""
+    """两个数组的键名与配置层的三分表逐键一致（31 个键一个不多、一个不少）。"""
     with live(tmp_path) as (client, _runtime, _home, _out):
         response = post(
             client,
@@ -462,10 +464,10 @@ def test_settings_key_groups_cover_the_whole_table(tmp_path):
         assert APPLIED_KEYS | PENDING_KEYS == set(config_module.SETTING_KEY_GROUPS)
         assert set(config_module.APPLIED_SETTING_KEYS) == APPLIED_KEYS
         assert set(config_module.PENDING_RESTART_SETTING_KEYS) == PENDING_KEYS
-        # 计数逐条钉住：6 + 21 = 27（三分表 = `DEFAULT_VALUES` 的键全集）
+        # 计数逐条钉住：6 + 25 = 31（三分表 = `DEFAULT_VALUES` 的键全集）
         assert len(APPLIED_KEYS) == 6
-        assert len(PENDING_KEYS) == 21
-        assert len(config_module.SETTING_KEY_GROUPS) == 27 == len(config_module.DEFAULT_VALUES)
+        assert len(PENDING_KEYS) == 25
+        assert len(config_module.SETTING_KEY_GROUPS) == 31 == len(config_module.DEFAULT_VALUES)
         # 两个数组按定义就是这一档的补集关系（不是两张各自维护的名单）
         assert set(config_module.APPLIED_SETTING_KEYS) == set(config_module.HOT_KEYS)
         assert set(config_module.PENDING_RESTART_SETTING_KEYS) == (

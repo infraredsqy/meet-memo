@@ -299,10 +299,21 @@ DEFAULT_CAPTURE_BACKEND = "dev"
 #: **要验真实现的用例显式传 `post.hook = "auto"`**（`tests/test_post_hook.py` 走的就是这一档）。
 DEFAULT_POST_HOOK = "null"
 
+#: **纪要钩子在测试层的共用缺省**：`null`（缺席档）。
+#:
+#: 与 `DEFAULT_POST_HOOK` 同一个理由，而且这一档更要紧：本机 PATH 上真的有 `dsh`
+#: （`C:\Users\<user>\AppData\Roaming\npm\dsh.cmd`），产品缺省 `auto` 会让每一场跑完整条离线链的
+#: 用例都**真的拉起一个 headless DSH 子会话**去跑五阶段（那是一次真模型调用，几十分钟的
+#: 墙钟、还占着显卡），而用例只想知道离线那三份产物长什么样。
+#: 要验钩子本身的用例显式给 `minutes.hook = "auto"` 并注入假启动器
+#: （`tests/test_minutes_runner.py` 走的就是那一档）。
+DEFAULT_MINUTES_HOOK = "null"
+
 #: 测试层补缺省的键 → 值（只补缺，不覆盖用例自己写的值）
 DEFAULT_BACKEND_VALUES: dict[str, str] = {
     "capture.backend": DEFAULT_CAPTURE_BACKEND,
     "post.hook": DEFAULT_POST_HOOK,
+    "minutes.hook": DEFAULT_MINUTES_HOOK,
 }
 
 

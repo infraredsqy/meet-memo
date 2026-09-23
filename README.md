@@ -70,6 +70,17 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 改完要重启才生效。**配置是「你的意图」，快照 `sources[*].device_name` 是「实际落到的那个
 设备」** —— 配了却没命中时不会报错，只按回退顺序挑一条并在主 log 留一行 `WARNING`。
 
+**会后纪要**：离线转写那一趟跑完（三份产物 + `meeting_offline_status.json` 落到终态）之后，
+`minutes.hook` 那一层会自动接着跑一次纪要生成 —— 产物是**场次目录根**的 `meeting_final.md`
+（纪要正文 + 说话人附录，附录里写清每个人名的依据与把握，猜不出的单列一节），
+状态在 `meeting_minutes_status.json`（`running` / `done` / `failed` + 原因 + 档位 + 启动分支），
+中间产物与那一次运行的 stdout / stderr 在 `working/` 下（`inputs.json`、`<source>/chunks/`、
+`run_prompt.md`、`minutes-run.log`）。这一层跑砸了不影响离线那三份产物。
+不想要它自动跑就把 `minutes.hook` 写成 `null`（改完要重启）；每块行数、分段上限与
+一次运行的墙钟上限分别由 `minutes.chunk_lines` / `minutes.max_segments` /
+`minutes.timeout_seconds` 定。这一趟是 headless 的一锤子买卖：`dsh --profile headless` 的
+回合结束进程就退出，因此产物校验（纪要存在、带附录、附录里真有数据行）不过就算这一趟失败。
+
 ---
 
 ## 2. log 在哪

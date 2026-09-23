@@ -1,13 +1,15 @@
 """后端解析的唯一入口（phase2 §3.4）。
 
-三个解析函数的**名字在本 Phase 正式定死**（跨 Phase 契约冻结项，phase3 照这三个名字调用）：
+四个解析函数的**名字在本 Phase 正式定死**（跨 Phase 契约冻结项，phase3 照这四个名字调用）：
 
   - `resolve_capture_backend()` —— `capture.backend`（约定路径
     `meeting.backends.capture:CaptureBackend`）；
   - `resolve_transcriber_backend()` —— `transcriber.backend`（约定路径
     `meeting.backends.transcribe:TranscriberBackend`）；
   - `resolve_post_hook()` —— `post.hook`（约定路径
-    `meeting.backends.post:PostProcessHook`）。
+    `meeting.backends.post:PostProcessHook`）；
+  - `resolve_minutes_hook()` —— `minutes.hook`（约定路径
+    `meeting.backends.minutes:MinutesHook`；`41465462` phase2 加的第四个，形状与前三个同）。
 
 取值口径照 phase1 在 `config.py` / `base.py` 里已定死的那一套，**不改口径**：
 `auto`（默认，按约定路径找）/ `null` / `dev` / `module:Class` 显式写法；取到的是类就
@@ -45,6 +47,8 @@ DEFAULT_PATHS: dict[str, str] = {
     "capture.backend": "meeting.backends.capture:CaptureBackend",
     "transcriber.backend": "meeting.backends.transcribe:TranscriberBackend",
     "post.hook": "meeting.backends.post:PostProcessHook",
+    # 会后纪要那一格（`41465462` phase2）：挂在离线链的尾巴上，`auto` 按这条路径找
+    "minutes.hook": "meeting.backends.minutes:MinutesHook",
 }
 
 #: 显式取值 `dev` 指向的采集替身（只给开发与测试用，非产品路径）
@@ -83,6 +87,12 @@ class BackendResolution:
 
 
 def _selector(key: str, explicit: str | None) -> str:
+    """这一格的取值字符串（**永远交回一个字符串**，交不出 `None`）。
+
+    显式传进来的那一个优先；没传就看配置：配置里不是非空字符串（JSON `null` 归一出来的
+    `None`、空串、别的类型）一律当 `auto`。`minutes.hook` 那一格是例外——配置级 `null`
+    在 `resolve_minutes_hook()` 里**提前返回缺席档**，因此走不到这里（见那个函数）。
+    """
     if explicit is not None:
         return explicit
     raw = config_module.get(key)
@@ -92,6 +102,11 @@ def _selector(key: str, explicit: str | None) -> str:
 
 
 def _target_for(key: str, selector: str) -> str | None:
+    """取值字符串 → 要导入的 `module:Class`（`null` 交回 `None`，缺席那一档不走这儿）。
+
+    `selector` 只可能是 `_selector()` 交回的那一个字符串，**不会是 `None`**：配置级
+    `null` 既会被 `_selector()` 归一成 `auto`，也会被 `resolve_minutes_hook()` 提前拦下。
+    """
     if selector == "auto":
         return DEFAULT_PATHS[key]
     if selector == "null":
@@ -230,11 +245,53 @@ def resolve_post_hook(explicit: str | None = None) -> BackendResolution:
     )
 
 
+def resolve_minutes_hook(explicit: str | None = None) -> BackendResolution:
+    """`minutes.hook` → 会后纪要钩子；**缺席（`null`）→ 离线那一条链不产生纪要**。
+
+    与 `resolve_post_hook()` 同一个形状与同一条口径：显式 `null`（字符串）与**配置里写成
+    JSON `null`**（校验层归一成 `None`）都落缺席档，`has_implementation = false`。
+    `has_implementation` 只由解析结果回答，调用阶段的异常写进 `run_ok`。
+
+    **配置级 `null` 靠下面这段提前返回生效**（不是靠 `_target_for()` 认出 `None`）：
+    配置里写 JSON `null` 时 `_selector()` 会把它归一成 `auto`，这里在归一之前先看一眼原始值，
+    因此「关掉自动跑」这个配置一个字都不会落空。显式传进来的取值照旧走 `_resolve()`。
+    """
+    if explicit is None:
+        raw = config_module.get("minutes.hook")
+        if raw is None:
+            # `minutes.hook = null`：配置里写的是 JSON 的 null（不是字符串 "null"）。
+            # 这一档要落缺席类，不能退回 `auto`（否则「关掉自动跑」这个配置一个字都不生效）。
+            return BackendResolution(
+                key="minutes.hook",
+                selector="null",
+                target=None,
+                implementation=_AbsentMinutesHook(),
+                has_implementation=False,
+                detail="配置里是 null（缺席：离线跑完不产生纪要）",
+            )
+    return _resolve(
+        "minutes.hook",
+        null_class=_AbsentMinutesHook,
+        explicit=explicit,
+        absent_is_missing=False,
+    )
+
+
 class _AbsentPostHook:
     """会后钩子缺席时的占位：`launch()` 抛错（**它不会被执行**——缺席记 `skipped`）。"""
 
     def launch(self, session_dir: str) -> None:  # pragma: no cover - 缺席档不调用
         raise NotImplementedError("会后钩子缺席（缺席记 skipped，不记 failed）")
+
+
+class _AbsentMinutesHook:
+    """纪要钩子缺席时的占位（`minutes.hook = null`）：`launch()` 抛错，**不会被调用**。
+
+    离线那条链在调它之前就问过 `has_implementation`：缺席时安静跳过，一个字节都不写。
+    """
+
+    def launch(self, session_dir: str) -> None:  # pragma: no cover - 缺席档不调用
+        raise NotImplementedError("纪要钩子缺席（minutes.hook = null，离线跑完不产生纪要）")
 
 
 def capabilities_of(implementation: Any) -> dict[str, bool]:
@@ -261,6 +318,7 @@ __all__ = [
     "BackendResolution",
     "capabilities_of",
     "resolve_capture_backend",
+    "resolve_minutes_hook",
     "resolve_post_hook",
     "resolve_transcriber_backend",
 ]

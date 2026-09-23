@@ -90,6 +90,12 @@ def test_default_values_match_the_frozen_table(tmp_path, monkeypatch):
         "asr.max_new_tokens": 400,
         "asr.repeat_max_unit": 40,
         "asr.repeat_min_coverage": 0.5,
+        # 会后纪要这一层的四个开关（`41465462` phase2 定名）：钩子默认 `auto`（跟着离线
+        # 那一趟的尾巴跑）、每块 100 行、每条 source 最多 8 段、一次运行最多四小时
+        "minutes.hook": "auto",
+        "minutes.chunk_lines": 100,
+        "minutes.max_segments": 8,
+        "minutes.timeout_seconds": 14400,
     }
     assert loaded.as_dict() == expected
     # 全部来源都是「默认」
