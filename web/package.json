@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "meeting 界面（壳页）。只消费服务推送的副本，不持有权威状态。",
+  "description": "meeting 界面（会中主视图）。只消费服务推送的副本，不持有权威状态。",
   "engines": {
     "node": ">=20"
   },

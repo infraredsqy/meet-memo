@@ -127,7 +127,13 @@ export function createHeartbeatClient(
   const schedule = (): void => {
     if (stopped) return;
     timer = setTimeout(() => {
-      void tick().then(onTick);
+      // 这一句不能少：`tick()` 是**一次性**的，排下一次是这里的活儿。
+      // 少了它整套轮询只发一次请求 —— 「多久没收到应答」就永远停在第一跳那一刻，
+      // 迟到与失联两档永远不会出现（真机上表现为：第一跳正常之后界面再无动静）。
+      void tick().then((result) => {
+        onTick(result);
+        schedule();
+      });
     }, interval * 1000);
   };
 

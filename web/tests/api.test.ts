@@ -376,6 +376,40 @@ describe('心跳轮询', () => {
     }
   });
 
+  it('start 之后**一跳接一跳**地轮询（每跳排下一次；这一格丢过：整套轮询只发一次请求）', async () => {
+    vi.useFakeTimers();
+    try {
+      const ticks: unknown[] = [];
+      const fetchImpl = vi.fn(async () =>
+        jsonResponse(200, {
+          service: 'meeting',
+          server_time: new Date().toISOString(),
+          revision: 1,
+          top_state: 'idle',
+          recording_alive: null,
+          seconds_since_last_tick: null,
+        }),
+      ) as unknown as typeof fetch;
+
+      const client = createHeartbeatClient((tick) => ticks.push(tick), { fetchImpl });
+      client.setIntervalFromSnapshot(1); // 周期 1 秒，省得推 60 秒的假时钟
+      client.start();
+
+      // 连着走过三个周期：每一个周期都该发一次请求、给一次回调。
+      for (let i = 1; i <= 3; i += 1) {
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(fetchImpl).toHaveBeenCalledTimes(i);
+        expect(ticks).toHaveLength(i);
+      }
+
+      client.stop();
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(fetchImpl).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('start / stop 管住轮询（用假定时器，不起真定时器）', () => {
     vi.useFakeTimers();
     try {
