@@ -8,6 +8,16 @@
 
   - `launch(session_dir)` **返回即算启动成功**：活儿交给一条 **daemon 线程**，
     调用方（离线那一层的尾巴）不等它跑完；
+  - **返回之前先把「这一层在飞」落到盘上**：那一版 `meeting_minutes_status.json`
+    （`state = "running"`）由 `meeting/minutes/status.py::mark_running()` 同步写，
+    于是「同一场会不会被拉起两个子会话」这件事在**跨进程**下也读得出来 —— 后到的那一趟
+    读到这一版就按现成的 `running` 拒跑档收场（`--force` 是出路）。落点选在这里的理由：
+    拉起这个动作只有这一个出口（`meeting/offline/runner.py::_announce_minutes()` 与
+    「离线段已是终态、只补纪要」那一支都经它），而线程体那一版 `running` 落在
+    `launch()` 返回**之后**，等它写下来再判就晚了；
+  - 盘上已经停着一版 `running` 时，`launch()` 当场抛 `AlreadyRunningError`：
+    这一趟不起线程、不拉子会话；带 `force=True`（`meeting post <目录> --force` 那一趟）
+    时照常放行 —— `--force` 是 `running` 那一档给出的出路；
   - 线程里的任何异常都落进 `meeting_minutes_status.json`，
     **不许把异常抛回收尾流程** —— 纪要这一层炸了不许影响离线那三份产物；
   - **重依赖在函数体内 import**：本模块顶层只有标准库，`import meeting.backends.minutes`
@@ -24,6 +34,12 @@ import logging
 import threading
 from datetime import datetime
 
+#: 「这一层已经在飞」那一档（`meeting/minutes/status.py` 定义，本模块原样转出）：
+#: `launch()` 读到盘上停着一版 `running` 时抛它，调用方据此按拒跑档收场。
+#: 转出它是为了让调用方**不必**自己去 import `meeting.minutes.status`（那一包是重的那一头，
+#: `meeting/offline/runner.py` 的惰性纪律一个字不动）。
+from meeting.minutes.status import AlreadyRunningError  # noqa: F401  (转出给调用方)
+
 _log = logging.getLogger("meeting.backends.minutes")
 
 #: 后台线程的名字（出现在线程转储与 log 里，一眼能认出是哪一条）
@@ -33,6 +49,9 @@ THREAD_NAME = "minutes-final"
 STATE_RUNNING = "running"
 STATE_DONE = "done"
 STATE_FAILED = "failed"
+
+#: `minutes.hook` 的缺省取值（与 `meeting/minutes/runner.py::DEFAULT_HOOK` 同一格同值）
+DEFAULT_HOOK = "auto"
 
 #: 再入闸的环境变量名（子会话里看到它就不再拉起 DSH）
 CHILD_FLAG = "MEETING_MINUTES_CHILD"
@@ -45,16 +64,33 @@ class MinutesHook:
     （缺席档，那是另一个档位的事）。
     """
 
-    def launch(self, session_dir: str) -> None:
+    def launch(self, session_dir: str, *, force: bool = False) -> None:
         """离线那一层的尾巴调它，**返回即算启动成功**（不等它跑完）。
 
-        `session_dir` 是这一场的场次目录。起一条 daemon 线程跑
+        `session_dir` 是这一场的场次目录。**起线程之前先把「这一层在飞」同步写到盘上**
+        （`meeting/minutes/status.py::mark_running()`：那一版 `state = "running"` 在本方法
+        返回之前就已经落定），随后起一条 daemon 线程跑
         `meeting.minutes.runner.run(session_dir)`，随即返回。
+
+        那一版落盘是**跨进程**看得见的：会后自动跑的那一趟住在服务进程里，用户随后手敲的
+        `meeting post` 是另一个进程 —— 后者读到这一版就按现成的 `running` 拒跑档收场
+        （`meeting/cli.py` 的 `_layer_is_running()` 与 `meeting/offline/runner.py` 的
+        `_minutes_gate()` 判据原样在场），同一场因此挂不上两个子会话。
+
+        盘上已经停着一版 `running`（另一趟正在飞：它自己那一版就是在这里落的）时，
+        这一趟**当场抛 `AlreadyRunningError`**：没有线程、没有子会话被拉起来。`mark_running()`
+        里的 claim 锁把「读现状 + 写 running」裹成一段原子操作，两趟几乎同时进来时只有一个
+        拿得到锁，另一趟读到在飞的那一版。
+
+        `force = True`（`meeting post <目录> --force` 那一趟）**跳过那条在飞判据**：
+        `--force` 的既有语义就是无视现状重跑，它是 `running` 那一档给出的出路，这一格
+        因此照常放行（不是堵死它）。
         """
         target = str(session_dir or "")
         if not target:
             # 没有场次目录就没有落点：如实报错（调用方那一层用 try/except 兜住，只记日志）
             raise ValueError("launch() 需要场次目录（收到空值）")
+        self._mark_running(target, force=force)
         thread = threading.Thread(
             target=self._run,
             args=(target,),
@@ -62,6 +98,23 @@ class MinutesHook:
             daemon=True,
         )
         thread.start()
+
+    def _mark_running(self, session_dir: str, *, force: bool = False) -> None:
+        """把「这一层在飞」写到盘上（**函数体内 import**：本模块顶层只有标准库）。
+
+        `branch` 取 `minutes.hook` 的生效取值映射出来的那一条（与线程体那一版同一个求法，
+        因此两版只差 `mode` / `artifacts` / `dsh` 那几格的真值）；已经有一版 `running`
+        在盘上、而这一趟又没带 `--force` 时，`mark_running()` 抛 `AlreadyRunningError`，
+        这里**原样上抛**：拒绝这一趟就是它的语义，调用方据此按拒跑档收场。
+        """
+        from meeting.minutes import launch as launch_module
+        from meeting.minutes import status as status_module
+
+        status_module.mark_running(
+            session_dir,
+            branch=launch_module.resolve_branch(minutes_hook_selector()),
+            force=force,
+        )
 
     # -- 线程体 -------------------------------------------------------------
 
@@ -110,11 +163,30 @@ def _now_iso() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
+def minutes_hook_selector() -> str:
+    """`minutes.hook` 的生效取值（`auto` / `null` / `dev` / `module:Class`）。
+
+    `meeting.config` 在**函数体内** import：本模块顶层的惰性纪律一个字不动
+    （`import meeting.backends.minutes` 仍然只拉标准库）。配置层抽风时退回缺省档 ——
+    这一格只喂「实际走的启动分支」那一个读数，值不对不该挡住拉起。
+    """
+    try:
+        from meeting import config as config_module
+
+        value = config_module.get("minutes.hook")
+    except Exception:  # pragma: no cover - 配置层还没起来时走缺省档
+        return DEFAULT_HOOK
+    return DEFAULT_HOOK if value is None else str(value)
+
+
 __all__ = [
+    "AlreadyRunningError",
     "CHILD_FLAG",
+    "DEFAULT_HOOK",
     "STATE_DONE",
     "STATE_FAILED",
     "STATE_RUNNING",
     "THREAD_NAME",
     "MinutesHook",
+    "minutes_hook_selector",
 ]

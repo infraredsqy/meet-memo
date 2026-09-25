@@ -23,6 +23,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -509,6 +510,89 @@ def test_the_hook_needs_a_session_dir() -> None:
     """场次目录是空值时当场抛（没有落点就装作启动过，盘上会留一版永远 running）。"""
     with pytest.raises(ValueError):
         minutes_backend.MinutesHook().launch("")
+
+
+def test_the_hook_claims_the_run_in_flight_before_it_returns(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """**「在飞」在 `launch()` 返回之前就落到盘上**（同一场不再被拉起第二个子会话的落点）。
+
+    线程体被钉住不动（它永远不落终态），于是这一条量的正是「`launch()` 交回那一刻盘上已经
+    是 `running`」这件事 —— 落点停在起线程之后时，这一格读到的是「还没有这份文件」。
+    """
+    session = _session(tmp_path)
+    entered = threading.Event()
+    gate = threading.Event()
+
+    def blocked(session_dir):
+        entered.set()
+        gate.wait(CONVERGE_TIMEOUT_SECONDS)
+
+    monkeypatch.setattr(runner_module, "run", blocked)
+
+    minutes_backend.MinutesHook().launch(str(session))
+
+    written = status_module.read_status(session / STATUS_NAME)
+    assert written["state"] == STATE_RUNNING, written
+    assert written["finished_at"] == "", "还在跑的那一版收尾时刻该空着"
+    assert written["session_id"] == session.name
+    assert entered.wait(CONVERGE_TIMEOUT_SECONDS), "后台那一条线程该已经跑起来了"
+    gate.set()
+
+
+def test_a_second_launch_on_the_same_session_is_refused(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """同一场再来一次拉起：**拒跑**（没有第二条线程、没有第二个子会话）。
+
+    盘上已经停着一版 `running`（另一趟正在飞）时，`launch()` 当场抛 `AlreadyRunningError`，
+    第一趟那一版账一个字节都不被覆盖。
+    """
+    session = _session(tmp_path)
+    arms: list[str] = []
+    monkeypatch.setattr(runner_module, "run", lambda session_dir: arms.append(str(session_dir)))
+    hook = minutes_backend.MinutesHook()
+
+    hook.launch(str(session))
+    before = (session / STATUS_NAME).read_text(encoding="utf-8")
+
+    with pytest.raises(minutes_backend.AlreadyRunningError):
+        hook.launch(str(session))
+
+    helpers.wait_until(lambda: arms, what="第一趟的后台线程真的跑起来过")
+    assert arms == [str(session)], arms
+    assert (session / STATUS_NAME).read_text(encoding="utf-8") == before
+
+
+def test_force_launches_again_on_the_same_session(tmp_path: Path, monkeypatch) -> None:
+    """`--force` 那一趟照常重跑：在飞那条判据在 `force=True` 时跳过（它的既有语义）。"""
+    session = _session(tmp_path)
+    seen: list[tuple[str, bool]] = []
+    monkeypatch.setattr(
+        runner_module,
+        "run",
+        lambda session_dir, **kwargs: seen.append((str(session_dir), bool(kwargs))),
+    )
+    hook = minutes_backend.MinutesHook()
+
+    hook.launch(str(session))
+    hook.launch(str(session), force=True)
+
+    helpers.wait_until(lambda: len(seen) == 2, what="两趟都被拉起来了")
+    assert [item[0] for item in seen] == [str(session), str(session)]
+
+
+def test_the_claim_lock_does_not_stay_on_disk(tmp_path: Path, monkeypatch) -> None:
+    """那只 claim 锁是**瞬态**的：拉起之后场次目录里没有多出来的锁文件。"""
+    session = _session(tmp_path)
+    monkeypatch.setattr(runner_module, "run", lambda session_dir: None)
+
+    minutes_backend.MinutesHook().launch(str(session))
+
+    lock = status_module.lock_path(session)
+    assert not lock.exists(), f"claim 锁该写完那一版 running 就删掉：{lock}"
+    assert (session / STATUS_NAME).is_file()
+    assert lock.name not in {item.name for item in session.iterdir()}
 
 
 def test_the_absent_hook_never_writes_anything(tmp_path: Path) -> None:

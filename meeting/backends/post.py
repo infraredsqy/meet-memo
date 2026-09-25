@@ -8,6 +8,9 @@
 
   - `launch(session_dir)` **返回即算启动成功**：活儿交给一条 **daemon 线程**，
     调用方（收尾第 4 步）不等它跑完；
+  - 线程里跑的是 `meeting.cli.run_post()` —— **与 `meeting post` 同一段编排**
+    （`65dd3e4c` phase1 把「跑会后一套」收成一条两条入口共用的函数：音频归档补齐 →
+    离线那一趟 → 等纪要终态 → 汇总），因此两条入口的语义不会分叉；
   - 线程里的任何异常都落进 `meeting_offline_status.json` 的 `error`，
     **不许把异常抛回收尾流程** —— 收尾那一步记 `done`（启动成功），跑不跑得成
     由状态文件回答；
@@ -69,14 +72,19 @@ class PostProcessHook:
     def _run(self, session_dir: str) -> None:
         """线程体：跑完整条会后链；**任何异常都落进状态文件，绝不外传**。
 
-        `run_session()` 自己会把状态文件从 `running` 落到终态。它整个抛出来时
-        （进程被杀、磁盘写不进去这类），这里把状态文件补成 `failed` 并写上原因，
-        那一格于是不会永远停在 `running`。
+        `meeting.cli.run_post()` 就是「跑会后一套」那一段共用的编排（`meeting post` 与
+        本钩子两条入口走的是同一份实现），它自己会把离线状态文件从 `running` 落到终态
+        （离线段归 `meeting.offline.runner.run_session()`）。它整个抛出来时（进程被杀、
+        磁盘写不进去这类），这里把状态文件补成 `failed` 并写上原因，那一格于是不会永远
+        停在 `running`。
+
+        `run_post` 在**函数体内 import**：本模块顶层的惰性纪律一个字不动
+        （`import meeting.backends.post` 仍然一条重依赖都不拉）。
         """
         try:
-            from meeting.offline.runner import run_session
+            from meeting.cli import run_post
 
-            run_session(session_dir)
+            run_post(session_dir)
         except BaseException as exc:  # 后台线程的异常没有别的落点，兜到底
             _log.exception("会后离线转写失败：%s", session_dir)
             self._mark_failed(session_dir, exc)

@@ -5,7 +5,6 @@
   - **只监听 127.0.0.1**（两条独立断言：主 log 绑定行的 `getsockname` host、枚举出的非回环地址被拒）；
   - 两种占用情形的文案与**退出码 `EXIT_REJECTED`**；探针 **1 秒总超时**（另断一条 ≤ 5 秒墙钟）；
   - **用法错误 → `EXIT_REJECTED`**（无参数 / 未定义动作词）；
-  - **`meeting post` → `EXIT_FAILURE`**；
   - **空闲态 `CTRL_BREAK_EVENT` → `EXIT_OK`** + `收到 SIGBREAK，进入关停` + 信号自检通过两行 log；
   - `install_shutdown_signal_handlers()` 后 `getsignal(SIGINT) is getsignal(SIGBREAK)`（用后复原）；
   - **`meeting` 命令面的最小验证**（`[project.scripts]` + 可调用对象 `is` 同一个入口）；
@@ -429,17 +428,6 @@ def test_undefined_action_word_exits_rejected(tmp_path):
     combined = result.stdout + result.stderr
     assert "用法" in combined
     assert "serve" in combined
-
-
-def test_post_is_a_registered_stub(tmp_path):
-    """`meeting post` → 打印「会后流程还没接入（65dd3e4c）」+ `EXIT_FAILURE`。"""
-    home = tmp_path / "home"
-    home.mkdir()
-
-    result = helpers.run_cli(home, action="post")
-
-    assert result.returncode == EXIT_FAILURE
-    assert "会后流程还没接入（65dd3e4c）" in (result.stdout + result.stderr)
 
 
 def test_exit_code_constants_match_the_frozen_table():
