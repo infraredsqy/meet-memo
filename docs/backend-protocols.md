@@ -2,7 +2,7 @@
 
 > 这份文档写服务与后端之间的接缝：四个协议的成员、数据结构、缺省值，以及后端怎么被找到、怎么被注入。
 >
-> 现状：**协议本身已经定死，四个位置现在都有实现。** `capture.backend` 的默认值 `auto` 解析到真采集后端（`meeting.backends.capture:CaptureBackend`，真探测、真起两路、真落盘与真转码）；`transcriber.backend` 的默认值 `auto` 解析到真转写后端（`meeting.backends.transcribe:TranscriberBackend`，尾读归档 → VAD 切段 → 单 worker 顺序识别 → 每路一份会中临时稿 + 行出口）；`post.hook` 的默认值 `auto` 解析到 `meeting.backends.post:PostProcessHook`（起一条后台线程跑会后离线转写，返回即算启动成功），收尾第 4 步 `post` 因此从 `skipped` 翻成 `done`；`minutes.hook` 的默认值 `auto` 解析到 `meeting.backends.minutes:MinutesHook`（离线那一趟的尾巴上再起一条后台线程跑会后纪要生成，同样返回即算启动成功）。**只剩 `post.hook = null` 与 `minutes.hook = null` 这两档是缺席**（前者第 4 步记 `skipped`，后者离线跑完不产生纪要）；`meeting post` 还是桩，实现归 `65dd3e4c`。会后那条链自己的四个开关是 `post.engine` / `post.model` / `post.dtype` / `post.chunk_seconds`（见第 3 章末），会后纪要那一层的四个开关是 `minutes.hook` / `minutes.chunk_lines` / `minutes.max_segments` / `minutes.timeout_seconds`（见第 3 章末那一节）。另有一个只给开发与测试用的 dev 替身（默认关闭，**按 key 分流**：`capture.backend = dev` 落采集替身、`transcriber.backend = dev` 落转写替身）。
+> 现状：**协议本身已经定死，四个位置现在都有实现。** `capture.backend` 的默认值 `auto` 解析到真采集后端（`meeting.backends.capture:CaptureBackend`，真探测、真起两路、真落盘与真转码）；`transcriber.backend` 的默认值 `auto` 解析到真转写后端（`meeting.backends.transcribe:TranscriberBackend`，尾读归档 → VAD 切段 → 单 worker 顺序识别 → 每路一份会中临时稿 + 行出口）；`post.hook` 的默认值 `auto` 解析到 `meeting.backends.post:PostProcessHook`（起一条后台线程跑会后离线转写，返回即算启动成功），收尾第 4 步 `post` 因此从 `skipped` 翻成 `done`；`minutes.hook` 的默认值 `auto` 解析到 `meeting.backends.minutes:MinutesHook`（离线那一趟的尾巴上再起一条后台线程跑会后纪要生成，同样返回即算启动成功）。**只剩 `post.hook = null` 与 `minutes.hook = null` 这两档是缺席**（前者第 4 步记 `skipped`，后者离线跑完不产生纪要）。`meeting post` 已经接通（`65dd3e4c`）：它是**手动那条入口**，与开会结束时自动跑的那一遍走**同一段编排**（`meeting/cli.py` 的 `run_post()`），两处因此不会分叉。会后那条链自己的四个开关是 `post.engine` / `post.model` / `post.dtype` / `post.chunk_seconds`（见第 3 章末），会后纪要那一层的四个开关是 `minutes.hook` / `minutes.chunk_lines` / `minutes.max_segments` / `minutes.timeout_seconds`（见第 3 章末那一节）。另有一个只给开发与测试用的 dev 替身（默认关闭，**按 key 分流**：`capture.backend = dev` 落采集替身、`transcriber.backend = dev` 落转写替身）。
 >
 > 协议与数据结构住在 `meeting/backends/base.py`（**只放协议与数据结构**，实现全在下游自己的模块里），替身住在 `meeting/backends/null.py` 与 `meeting/backends/dev.py`，解析的唯一入口是 `meeting/backends/registry.py`。
 
@@ -84,11 +84,12 @@
 
 | 成员 | 语义 |
 |---|---|
-| `launch(session_dir)` | 离线那一趟的尾巴调它，**返回即算启动成功**（不等它跑完）。`minutes.hook = null` 那一档不调它 |
+| `launch(session_dir)` | 离线那一趟的尾巴调它，**返回即算启动成功**（不等它跑完）。`minutes.hook = null` 那一档不调它。真实现另收一格 `force`（`meeting post --force` 那一趟）：盘上已经停着一版 `running` 时**建线程之前**就抛 `AlreadyRunningError`（当场拒跑），带 `force` 时放行 |
 
 真钩子住在 `meeting/backends/minutes.py`（`41465462` 已落地，`minutes.hook` 的默认值 `auto` 解析到它）。形状与 `PostProcessHook` 同一条：
 
 - `launch(session_dir)` 起一条 daemon 线程（线程名 `minutes-final`）跑 `meeting.minutes.runner.run(session_dir)`，随即返回 —— 它跑多久都不占收尾预算，也不占离线那一趟的墙钟；
+- **返回之前先把「这一层在飞」落到盘上**：`meeting/minutes/status.py` 的 `mark_running()` 同步写一版 `state = "running"` 的 `meeting_minutes_status.json`，盘上已经停着一版 `running` 时抛 `AlreadyRunningError`（带 `force=True` 时放行）—— 「同一场被拉起两个子会话」这件事因此在**跨进程**下也读得出来（用户随后手敲的 `meeting post` 是另一个进程），判据与那把瞬态 `meeting_minutes_status.lock` 见 `docs/minutes.md` 第 1.1 节；
 - 线程里的异常落进场次目录的 `meeting_minutes_status.json`（补成 `failed` 并写上原因），**不外传**；`session_dir` 是空值时当场抛错；
 - `meeting_offline_status.json` 与离线的三份产物，这条线程一个字节都不碰；
 - **重依赖在函数体内 import**：模块顶层只有标准库，`import meeting.backends.minutes` 保持轻量。

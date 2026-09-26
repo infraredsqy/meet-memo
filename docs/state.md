@@ -274,14 +274,15 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 |---|---|---|
 | `meeting_final.md`（**场次目录根**） | 纪要正文 + `## 说话人附录`（附录里逐行写人名、把握与依据，猜不出的单列一节） | 人 |
 | `meeting_minutes_status.json` | 状态文件：`running` / `done` / `failed`，外加 `mode` / `branch` / `started_at` / `finished_at` / `error` / `artifacts` / `dsh` | 下游程序 |
+| `meeting_minutes_status.lock` | **瞬态**的 claim 锁：只盖住「读一遍现状 + 写一版 `running`」那一小段，写完就删掉。**它不是产物**（进程被强杀时可能留一份残锁，下一趟按有界等待兜住）；上面那张产物清单里因此没有它的位置 | 拉起方自己 |
 | `working/inputs.json` | 输入清单：这一场有哪几条转写、每条几行、走的是哪一档 | 程序 + 人 |
 | `working/<source>/chunks/chunk_NN.md` + `working/<source>/00_index.md` | 按行切出来的块（默认 100 行一块）与行号区间表（`total_lines` / `chunk_size` / `chunk_count` 与每块的闭区间） | DSH 子会话 |
 | `working/segment-*.md`、`working/segmentation.json` | 逐段总结与分段方案（子会话产出，一份方案覆盖一到两条输入、每条段带 `source`） | DSH 子会话 |
 | `working/run_prompt.md`、`working/minutes-run.log` | 那一次运行的提示词正文与子进程的 stdout / stderr | 排查现场 |
 
 - **起线程就返回，不占收尾预算**：它炸了不带走进度更早的产物，`meeting_offline_status.json` 与那三份离线产物一个字节都不改（`try/except BaseException` 兜住，只记主 log 一条）。
-- **`branch` 记实际走的那一条**：`auto` / `web` / `headless` 三种取值本轮都落 headless 子进程，配置里写 `web` 而实际走了 headless 时这一格记 `headless`。web 分支本轮没有实现（V1 那套在 DSH 0.1.5-rc.2 上已失效），归下游 `65dd3e4c`。
-- **状态文件拉起 DSH 之前先落一份 `running`**（`finished_at` 是空串）：一次生成最长可达四小时，读方据此分得出「没跑」与「正在跑」；终局那一趟覆盖它，进程被杀时钩子把它补成 `failed`，这一格不会永远停在 `running`。
+- **`branch` 记实际走的那一条**：`auto` / `web` / `headless` 三种取值本轮都落 headless 子进程，配置里写 `web` 而实际走了 headless 时这一格记 `headless`。web 分支没有实现（V1 那套在 DSH 0.1.5-rc.2 上已失效），是明确不做的一项。
+- **状态文件拉起 DSH 之前先落一份 `running`**（`finished_at` 是空串）：这一版由拉起方在建线程**之前**同步落（`meeting/minutes/status.py` 的 `mark_running()`），终局那一趟覆盖它，进程被杀时钩子把它补成 `failed`，这一格不会永远停在 `running`。盘上已经停着一版 `running` 时，`launch()` 当场抛 `AlreadyRunningError`、不拉起第二个子会话（`--force` 是出路）；那一版落盘用一把 **claim 锁**（瞬态文件 `meeting_minutes_status.lock`）把「读现状 + 写 running」裹成跨进程原子的一段，**锁不在产物清单里**，见 `docs/minutes.md` 第 1.1 节。
 - **再入闸那一趟不写状态文件**：环境里有 `MEETING_MINUTES_CHILD=1`（这一趟是 DSH 子会话自己）时 `runner.run()` 当场返回 `skipped`，盘上那份状态文件归父进程那一趟所有。
 - **读方对不认识的 `schema_version`、缺 `state`、`state` 不在三档里一律拒收**，不猜；写盘与离线那一份同档：原子替换。
 - **输入四档**：两条都在（`both`）/ 只有会中临时稿（`live_only`）/ 只有会后权威稿（`offline_only`）都照常出纪要；两个来源一条都没有（`none`）那一档**不启动 DSH**、状态记 `failed` + 原因。附录只写有依据的话：某一路缺了带聚类编号的那份稿时，如实写「这一路分不出个人」，不为任何人名给出推断。

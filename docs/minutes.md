@@ -14,7 +14,7 @@
 
 | 步 | 做什么 | 落什么 |
 |---|---|---|
-| 0 | 再入闸 → 先落一份 `state: "running"` 的状态 | `meeting_minutes_status.json` |
+| 0 | 再入闸 → 先落一份 `state: "running"` 的状态 | `meeting_minutes_status.json`（拉起方在**建线程之前**先落一版，见 1.1） |
 | 1 | 找两条转写、判档位 | `working/inputs.json` |
 | 2 | 按行切块 | `working/<source>/chunks/chunk_NN.md` + `working/<source>/00_index.md` |
 | 3 | 渲染编排提示词 → 拉起 `dsh --profile headless` | `working/run_prompt.md`、`working/minutes-run.log` |
@@ -23,6 +23,19 @@
 **先落 `running` 再拉起 DSH**：一次生成最长 `minutes.timeout_seconds` 秒（默认 14400），这期间读方（`meeting post`、界面）要分得出「这一场还没跑」与「这一场正在跑」。进程被杀时钩子把那一份补成 `failed`，状态不会永远停在 `running`。
 
 **再入闸放在 `run()` 的最前面**：环境里有 `MEETING_MINUTES_CHILD=1`（启动器给子进程加的那一格）说明这一趟是 DSH 子会话自己，它当场返回 `skipped`、**不写状态文件** —— 子会话的场次目录里那份状态文件归父进程那一趟所有。提示词里另有一道嘱咐（「不要再拉起任何会后流程」），两道闸各管一头。
+
+### 1.1 在飞标记：同一场挂不上两个子会话
+
+拉起这一层的地方有两处 —— 离线那一趟的尾巴（`_announce_minutes()`），以及 `meeting post` 在「离线段已是终态、只补纪要」时自己经同一个拉起点补上那一层。两处都可能被用户敲的 `meeting post` 与开会结束时自动跑的那一遍**同时**走到，因此「这一场已经在飞」这件事必须有盘上的落点：
+
+- `MinutesHook.launch()` 在**建线程之前**同步调一次 `meeting/minutes/status.py` 的 `mark_running()`：方法返回时盘上的 `meeting_minutes_status.json` 已经读得出 `state = "running"`，那一趟起线程的动作在它**之后**；
+- `mark_running()` 把「读一遍现状 + 写一版 `running`」这段用一把 `O_CREAT | O_EXCL` 的 **claim 锁**（场次目录根的瞬态文件 `meeting_minutes_status.lock`）裹住，跨进程只有一个进得来：拿不到锁就等 `0.05` 秒再读一遍（最多三次），读到 `running` 就抛 `AlreadyRunningError`、**不覆盖另一趟的账**；
+- `AlreadyRunningError` 一路交回调用方：`meeting post` 据此按现成的 `running` 拒跑档收场（退出码 `2`、点名状态文件、给出 `--force`），那一趟**没有起线程、没有拉起子会话**；
+- `--force` 是**唯一**的出路：`launch(..., force=True)` 跳过在飞判据，这一趟把那一版 `running` 原子覆盖成自己的（「无视现状重跑」那条语义由此一路走到拉起这一步）；
+- 上一趟崩在半路时那枚锁会留在盘上，`mark_running()` 的三次有界等待走完之后照常往下拉起 —— 「上一趟崩了」这条出路必须留着；
+- 锁是**瞬态**文件：写完那一版 `running` 就删掉，它**不在产物清单里**（`docs/state.md` 第 3 章那张表里也没有它的名字）。
+
+**拉起 ≠ 落定**：`launch()` 返回只说明这一层被拉起来了，终态要等那条线程或 headless 子进程写。因此 `meeting post` 拉起成功之后**等这一层落终态**才报结论，上界取现成的 `minutes.timeout_seconds`，判据是「盘上那份状态与**拉起之前**的基线不同、并且已经是终态」——上一趟留在盘上的终态不算这一趟的账；到上界还没落定就如实报 `timeout`（既不谎报成功，也不写成 `failed`）。
 
 ## 2. 输入
 
@@ -70,7 +83,7 @@
 
 `branch` 这一格记**实际走的那一条**：`auto` / `web` / `headless` 三种取值本轮都落 headless，配置里写 `web` 而实际走了 headless 时，状态文件里记的是 `headless`。
 
-**本轮没有实现 web 分支**：V1 用的那套 web 路径在 DSH 0.1.5-rc.2 上已经失效（`workspace.list` 这个一元方法不存在、信封 payload 要包一层 `args`、`/api` 只认 HMAC 签名的 Cookie，密钥在 `%DSH_HOME%\.credentials.yaml`）。走它就得照抄一份会随版本漂的私有鉴权协议，归下游节点 `65dd3e4c`。
+**web 分支本轮没有实现**：V1 用的那套 web 路径在 DSH 0.1.5-rc.2 上已经失效（`workspace.list` 这个一元方法不存在、信封 payload 要包一层 `args`、`/api` 只认 HMAC 签名的 Cookie，密钥在 `%DSH_HOME%\.credentials.yaml`）。走它就得照抄一份会随版本漂的私有鉴权协议，因此它是**明确不做**的一项：`meeting post` 只调用这一层，不改它的启动方式。
 
 ## 5. 产物校验：四条判据
 
