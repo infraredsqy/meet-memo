@@ -1224,6 +1224,89 @@ def test_an_absent_minutes_layer_is_not_a_failure() -> None:
     assert cli_module._minutes_exit_code({"hook": "finished", "state": "failed"}) == EXIT_FAILURE
 
 
+def test_a_child_session_skip_on_the_product_path_is_a_quiet_skip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**产品路径撞上再入闸 = 安静跳过**：档位与「注入假启动器的那一档」逐字同格。
+
+    走到 `_launch_minutes_on_the_product_path()` 兜底分支的现场是「离线段已是终态、纪要段
+    没到终态」，而这一趟是 DSH 子会话自己（`MEETING_MINUTES_CHILD=1`）：`_announce_minutes()`
+    交回 `hook = "skipped"`（**交回值逐字照 `meeting/offline/runner.py` 那一档抄的**）。
+
+    这一格此前掉进兜底里：`hook` 报成 `finished`、`state` 报成 `failed`、退出码
+    `EXIT_FAILURE`，还把再入闸的理由当失败原因念出来 —— 同一件事在注入那一档却是
+    `skipped` / `EXIT_OK`。现在两条路对齐：**除 `launcher` 之外逐格相同**，
+    **不记失败**，而 `launcher` 那一格照旧写 `product`（这一趟走的是产品路径）。
+
+    判据落在**同一份交回值**的两条出口上：兜底分支直接交回的那一份，与
+    `_minutes_from_launcher()` 处理同一份交回值的那一份 —— 两边因此必须逐格相等。
+    """
+    child_skip = {
+        "hook": "skipped",
+        "announced": False,
+        "reason": "子会话（MEETING_MINUTES_CHILD=1）",
+    }
+    monkeypatch.setattr(
+        offline_runner, "_announce_minutes", lambda *a, **k: dict(child_skip)
+    )
+    session = synth_session(tmp_path / "250919")
+
+    product = cli_module._launch_minutes_on_the_product_path(
+        session,
+        force=False,
+        deadline=None,
+        baseline=cli_module._minutes_baseline(session),
+    )
+    injected = cli_module._minutes_from_launcher(
+        session, dict(child_skip), baseline=cli_module._minutes_baseline(session)
+    )
+
+    assert product["hook"] == "skipped", product
+    assert product["state"] is None, product
+    assert {
+        key: value for key, value in product.items() if key != "launcher"
+    } == {
+        key: value for key, value in injected.items() if key != "launcher"
+    }, (product, injected)
+    assert product["launcher"] == "product", "这一趟走的是产品路径"
+    assert cli_module._minutes_exit_code(product) == EXIT_OK, "安静跳过不记失败"
+    assert cli_module._minutes_exit_code(product) == cli_module._minutes_exit_code(injected)
+
+
+def test_an_absent_minutes_layer_on_the_product_path_still_reports_a_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`minutes.hook` 已配、解析却交回「没有实现」那一档**照旧如实记失败**。
+
+    这是「安静跳过」那条新分支的边界：它对再入闸那一档生效，而 `absent` 说的是另一件事
+    （配置里写着要跑、解析结果里一个实现都没有）—— 现成的用例
+    （`tests/test_post_idempotency.py::test_the_product_path_still_reports_a_launch_that_fails`
+    的 `no-implementation` 一格）把它钉在 `EXIT_FAILURE` 上，这一格因此一个字不动。
+    """
+    monkeypatch.setattr(
+        offline_runner,
+        "_announce_minutes",
+        lambda *a, **k: {
+            "hook": "absent",
+            "announced": False,
+            "selector": "null",
+            "reason": "minutes.hook 缺席（自动跑已关掉）",
+        },
+    )
+    session = synth_session(tmp_path / "250919")
+
+    outcome = cli_module._launch_minutes_on_the_product_path(
+        session,
+        force=False,
+        deadline=None,
+        baseline=cli_module._minutes_baseline(session),
+    )
+
+    assert outcome["hook"] == "finished", outcome
+    assert outcome["state"] == "failed", outcome
+    assert cli_module._minutes_exit_code(outcome) == EXIT_FAILURE
+
+
 def test_the_wait_upper_bound_comes_from_the_minutes_wall_clock_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

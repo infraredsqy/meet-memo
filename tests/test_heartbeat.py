@@ -26,7 +26,6 @@ import textwrap
 import time
 from pathlib import Path
 
-import pytest
 
 from tests import _helpers as helpers
 from meeting.backends.base import SourceFacts, SourceLost

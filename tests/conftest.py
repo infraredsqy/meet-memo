@@ -4,11 +4,15 @@
 本文件里那道 5 秒看门是分档能落在**文件粒度**上的前提：没有任何一条用例能超过 5 秒，所以
 「慢」来自文件层面的真子进程与真墙钟等待，标记因此加在文件头（`pytestmark = pytest.mark.slow`）。
 
-本文件装两样东西：下面的**七个夹具**与**四个 autouse 安全兜底**（`_no_real_browser` /
-`_no_real_audio_capture` / `_no_real_minutes_session` / `_no_real_model_call`），以及两条
-pytest hook（`pytest_addoption` 注册 `--regen-contract`；耗时看门那两个 hook 在文末）。**hook 不属于夹具语义**，它们在这里的
-唯一理由是 pytest 只认 conftest / 插件里的 `pytest_addoption`（写进测试模块会被静默忽略），
-详见下文各自那一段。**本文件里没有一条用例**。
+本文件装两样东西：下面的**九个夹具**与**六道 autouse 安全兜底**（`_no_real_browser` /
+`_no_real_audio_capture` / `_no_real_minutes_session` / `_no_real_model_call`，第五道
+**PATH 守卫** —— 会话级的 `_no_real_dsh_on_path` 与用例级的 `_no_real_dsh_launch` 两条夹具
+合起来构成它，见下文那一节；第六道 **真家目录守卫** —— 会话级的
+`_no_writes_to_the_real_home` 与用例级的 `_no_writes_to_the_real_home_case` 合起来构成它，
+见下文那一节），以及 pytest hook（`pytest_addoption` 注册 `--regen-contract`；耗时看门那两个
+hook 在文末；`pytest_sessionfinish` 是 PATH 守卫与真家目录守卫的收场复查）。**hook 不属于
+夹具语义**，它们在这里的唯一理由是 pytest 只认 conftest / 插件里的 `pytest_addoption`
+（写进测试模块会被静默忽略），详见下文各自那一段。**本文件里没有一条用例**。
 
 七个夹具由 phase2 定义并冻结、phase3 只复用，不得重定义同名 fixture：
 
@@ -92,11 +96,40 @@ pytest **父进程**里 `meeting.service.app.webbrowser` 就是**标准库那个
 自证用 `tests/test_summary_action.py::test_a_missing_injection_is_blocked_at_the_egress_guard`：
 那一条**故意不注入** `runtime.summary_client`（配置里就是真地址），断言夹具的记账清单里
 恰好一笔、就是那个地址，而这一趟总结回的是带着兜底名字的 502 —— 它**没有出门**。
+
+## DSH 子会话兜底（安全要求，autouse，第五道）
+
+第四类保护的落点是**真会起一个 headless DSH 子会话**的那一步：
+`meeting/minutes/launch.py::launch_headless()` 按 `shutil.which("dsh")` 解析可执行文件并
+`subprocess.run` 它 —— 本机 PATH 上那件 `dsh` 是 npm 全局装的真件
+（`C:\\Users\\<user>\\AppData\\Roaming\\npm\\dsh.cmd`），起来就是一次真模型回合、真花钱。
+
+`_no_real_minutes_session` 那道再入闸挡的是**产品代码里那条**路（`runner.run()` 最前面的
+再入闸）；它挡不住「用例把再入闸摘掉、又忘了注入假启动器」这一档，而这一档**已经真实发生过**
+（`tests/test_cli_post_config.py` 早期版本把假启动器挂在一个不存在的名字上，
+`raising=False` 现造死属性 → 那层「一碰就抛」的网落空 → 65 个真子会话、243 个真模型回合）。
+**一道不依赖任何单条用例是否记得装替身的网必须落在夹具这一层**，这就是本道守卫：
+
+  - `_no_real_dsh_on_path`（会话级）：在临时目录里写一件假的 `dsh.cmd`（只往账本追加一行
+    「时刻 + 全部 argv + 当前工作目录」，然后**以非 0 退出、什么都不执行**），把那个目录
+    **前置**到测试进程 `os.environ["PATH"]` 最前面 —— `shutil.which("dsh")` 从此命中的是它，
+    漏网的用例再也起不来真会话；收场时还原 `PATH` 并删掉临时目录。这道守卫只写文件 + 改
+    `os.environ`（不起任何进程、不用 `Start-Process`）；
+  - `_no_real_dsh_launch`（用例级）：每条用例开始时记下账本行数，结束时**新增了就当场判红**，
+    话术里带着被叫起的 argv 与 cwd；用例收场之后才落进账本的那一笔由下一条用例的开工复查
+    与 `pytest_sessionfinish` 兜住，**不存在「安静地跑过去」这一档**。
+
+要走到「找可执行文件」那一步**并故意让 PATH 上那件假 `dsh` 被叫起**的用例，显式请
+`allow_real_dsh_resolution` 那道 opt-out 夹具（名字写清「这条用例故意允许走到可执行文件
+解析」）；**没有别的关掉账本断言的办法**。
 """
 
 from __future__ import annotations
 
+import hashlib
 import os
+import shutil
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterator
@@ -286,6 +319,388 @@ def _no_real_minutes_session(monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
 
 
 # ---------------------------------------------------------------------------
+# 安全兜底：PATH 上那件 `dsh` 被换成假件（**第五道**：绝不真起 headless 子会话）
+#
+# 这一道与上面四道同一族，但要挡住的事故更贵：真的起一个 headless DSH 子会话 = 一次真模型
+# 回合（本节点实测过 65 个子会话 / 243 个模型回合）。**它不依赖任何单条用例是否记得装替身**：
+# 会话级把假 `dsh` 前置到 PATH 最前面，用例级拿账本把漏网当场判红。
+# ---------------------------------------------------------------------------
+
+#: 假 `dsh` 的落点与账本名（都在会话级的临时目录里；那个目录被前置到 `PATH` 最前面）
+DSH_GUARD_SHIM_NAME = "dsh.cmd"
+DSH_GUARD_LEDGER_NAME = "dsh-calls.log"
+
+#: 假 `dsh` 的退出码（非 0：产品代码照 `FAILURE_EXIT_CODE` 那一档如实记失败）
+DSH_GUARD_EXIT_CODE = 97
+
+#: 收场复查之前最多等产品那条「纪要生成」daemon 线程多久（秒）：**上界只是保险**
+#: （假 `dsh` 什么都不做、当场退非 0，那条线程正常在百毫秒级收工）
+DSH_GUARD_THREAD_WAIT_SECONDS = 2.0
+
+#: 假 `dsh` 的全文：**只用 cmd 内建**，把「时刻 + 全部 argv + 当前工作目录」追加进账本，
+#: 然后以非 0 退出 —— **什么都不执行**（不 import、不起进程、不碰网络、不写产物）。
+_FAKE_DSH_SOURCE = (
+    "@echo off\r\n"
+    '>> "{ledger}" echo %DATE% %TIME% argv=%* cwd=%CD%\r\n'
+    "exit /b {exit_code}\r\n"
+)
+
+#: 账本断言的话术（用例看到它就是「这一趟在叫 PATH 上那件假 `dsh`」）
+DSH_GUARD_VIOLATION_MESSAGE = (
+    "假 `dsh` 被调用了：测试进程去叫了 `PATH` 上那件 `dsh`（`tests/conftest.py` 装的假件，"
+    "什么都没执行、当场退非 0）。真子会话因此起不来、一分钱都花不出去，但这条用例要么该注入"
+    "假启动器（`which=` / `executable=` / `launcher=`，或者把真拉起点整个换掉），"
+    "要么就是泄漏了真纪要链。"
+)
+
+
+@dataclass
+class DshGuard:
+    """这道 PATH 守卫的读数：假 `dsh` 的落点、账本、以及被换下来的那一段 `PATH`。"""
+
+    root: Path
+    ledger: Path
+    shim: Path
+    previous_path: str
+    #: 已经被某条用例「认领」过的账本行数（迟到的那些靠它认出来）
+    claimed: int = 0
+    #: 上一次认领的用例（迟到的那一笔属于它）
+    claimed_by: str = ""
+
+    def lines(self) -> list[str]:
+        """账本里现有的行（一行 = 假 `dsh` 被叫起一次）。"""
+        if not self.ledger.is_file():
+            return []
+        text = _decode_ledger(self.ledger.read_bytes())
+        return [line for line in text.splitlines() if line.strip()]
+
+    def unreported(self) -> list[str]:
+        """已经落进账本、但还没有任何一条用例认领过的那些行。"""
+        return self.lines()[self.claimed :]
+
+
+#: 会话级那道守卫的读数（`pytest_sessionfinish` 收场复查时读它）
+_ACTIVE_DSH_GUARD: DshGuard | None = None
+
+
+def _decode_ledger(raw: bytes) -> str:
+    """账本的字节 → 文本（`cmd` 的 `echo` 按当前代码页写：UTF-8 与本地代码页都认）。"""
+    for encoding in ("utf-8", "gbk", "latin-1"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:  # pragma: no cover - 换下一个编码再来
+            continue
+    return raw.decode("utf-8", errors="replace")  # pragma: no cover - latin-1 之后到不了
+
+
+def _dsh_guard_violation(guard: DshGuard, lines: list[str], *, when: str) -> str:
+    """账本断言的话术：谁被叫起、argv 与 cwd 是什么、这条用例该做什么。"""
+    return (
+        f"{DSH_GUARD_VIOLATION_MESSAGE}\n"
+        f"账本：{guard.ledger}（新增 {len(lines)} 笔；归属用例 {when}）\n"
+        + "\n".join(f"  {line}" for line in lines)
+    )
+
+
+def _allows_real_dsh_resolution(request: pytest.FixtureRequest) -> bool:
+    """这条用例是不是显式请了那道 opt-out 夹具（`allow_real_dsh_resolution`）。"""
+    return "allow_real_dsh_resolution" in request.fixturenames
+
+
+def _wait_for_the_minutes_thread() -> None:
+    """等产品那条「起线程就返回」的 daemon 线程收工（**join，不轮询、不空转**）。
+
+    为什么必须有这一步：真拉起点住在一条 daemon 线程上（`meeting/backends/minutes.py` 的
+    `MinutesHook.launch()` 起完线程就返回），子进程因此可能**晚于**用例收场才落账 —— 不等的
+    话，一次真漏网会写在账本上却没人读（用例级的复查已经读完了）。线程名取产品那个常量
+    （`meeting.backends.minutes.THREAD_NAME`）；**那条线程不存在时这一步零成本**（只扫一遍
+    当前线程表）。上界见 `DSH_GUARD_THREAD_WAIT_SECONDS`。
+    """
+    import threading
+
+    try:
+        from meeting.backends import minutes as minutes_backend
+
+        thread_name = str(minutes_backend.THREAD_NAME)
+    except Exception:  # pragma: no cover - 产品那边改名/导入不了时退回既有名字
+        thread_name = "minutes-final"
+    for thread in list(threading.enumerate()):
+        if thread.name == thread_name and thread.is_alive():
+            thread.join(DSH_GUARD_THREAD_WAIT_SECONDS)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _no_real_dsh_on_path() -> Iterator[DshGuard]:
+    """**autouse 兜底（会话级）**：把一件假的 `dsh` 前置到测试进程 `PATH` 的最前面。
+
+    为什么：`meeting/minutes/launch.py::launch_headless()` 是按「找可执行文件」这条路去起
+    headless DSH 的（`shutil.which("dsh")`），而本机 PATH 上真的有 npm 装的那件真 `dsh`。
+    `_no_real_minutes_session` 那道再入闸只挡产品代码里那条路，**挡不住「用例摘掉再入闸、
+    又忘了注入假启动器」**这一档 —— 那一档本节点已经真实发生过（65 个真子会话 / 243 个真
+    模型回合）。因此这里造一件假的 `dsh.cmd`（内容见 `_FAKE_DSH_SOURCE`：往账本追加一行
+    「时刻 + 全部 argv + 当前工作目录」，然后以非 0 退出、**什么都不执行**），把它所在目录
+    前置到 `os.environ["PATH"]` 最前面：漏网的用例命中的是这件假件，**花钱这件事变成不可能**。
+
+    只写文件 + 改 `os.environ`（不起任何进程、不用 `Start-Process`）；收场时把 `PATH` 原样
+    放回并删掉那个临时目录。
+    """
+    global _ACTIVE_DSH_GUARD
+
+    root = Path(tempfile.mkdtemp(prefix="pytest-dsh-guard-"))
+    ledger = root / DSH_GUARD_LEDGER_NAME
+    shim = root / DSH_GUARD_SHIM_NAME
+    shim.write_text(
+        _FAKE_DSH_SOURCE.format(ledger=ledger, exit_code=DSH_GUARD_EXIT_CODE),
+        encoding="ascii",
+    )
+    previous_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = (
+        os.pathsep.join([str(root), previous_path]) if previous_path else str(root)
+    )
+    guard = DshGuard(
+        root=root, ledger=ledger, shim=shim, previous_path=previous_path
+    )
+    _ACTIVE_DSH_GUARD = guard
+    try:
+        yield guard
+    finally:
+        _ACTIVE_DSH_GUARD = None
+        os.environ["PATH"] = previous_path
+        shutil.rmtree(root, ignore_errors=True)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_dsh_launch(
+    request: pytest.FixtureRequest, _no_real_dsh_on_path: DshGuard
+) -> Iterator[DshGuard]:
+    """**autouse 兜底（用例级）**：这条用例里假 `dsh` 一次都不许被叫起，叫了就当场判红。
+
+    两个读数一起看：
+
+      - **开工复查**：账本上还有没有被认领的笔数？有 —— 说明上一轮**用例收场之后**才落进来
+        （真拉起点住在一条 daemon 线程上：`MinutesHook.launch()` 起线程就返回，子进程可能晚
+        于那条用例的收场落账）。这一笔也当场判红，话术里点名它属于哪一条用例；
+      - **收场复查**：先把产品那条「纪要生成」daemon 线程 join 掉（`_wait_for_the_minutes_thread()`：
+        真拉起点起完线程就返回，不 join 就会读到一个还没落账的账本），再比这条用例开工到收场
+        之间新增的行 = 这一趟漏到 PATH 上那件假 `dsh` 上了 —— `pytest.fail` 把这条用例判红，
+        消息里逐笔列出 argv 与 cwd。
+
+    `pytest_sessionfinish` 另有一道收场复查（最后一条用例收场之后落进来的那一笔也跑不掉）。
+    要**故意**走到「可执行文件解析」并让那件假 `dsh` 被叫起的用例，显式请
+    `allow_real_dsh_resolution` 那道 opt-out 夹具。
+    """
+    guard = _no_real_dsh_on_path
+    allowed = _allows_real_dsh_resolution(request)
+    late = guard.unreported()
+    before = len(guard.lines())
+    guard.claimed = before
+    if late and not allowed:
+        pytest.fail(_dsh_guard_violation(guard, late, when=guard.claimed_by))
+    guard.claimed_by = request.node.nodeid
+
+    yield guard
+
+    _wait_for_the_minutes_thread()
+    lines = guard.lines()
+    guard.claimed = len(lines)
+    added = lines[before:]
+    if added and not allowed:
+        pytest.fail(_dsh_guard_violation(guard, added, when=request.node.nodeid))
+
+
+@pytest.fixture()
+def allow_real_dsh_resolution() -> Iterator[None]:
+    """**显式 opt-out**：这一条用例**故意允许**走到「找可执行文件」那一步。
+
+    请了它，账本断言就不把「PATH 上那件假 `dsh` 被叫起」算在这条用例头上 —— 那道**结构性**
+    守卫一个字都不动（`PATH` 上的假件照旧在岗，真会话照旧起不来），放开的只是「这一条用例
+    的账本判红」。只有**真的**要验「可执行文件解析 / 拉起动作」这一层、且没法靠自己注入
+    `which=` / `executable=` / `launcher=` 的用例才该请它。
+
+    **当前全仓 0 处引用（如实记一笔，别读成「有人靠它放行过」）**：现有的用例都能靠注入
+    `which=` / `executable=` / `launcher=` 或把真拉起点整个换掉来验自己那一格，因此这道
+    opt-out 至今没有主。它是**备着**的：那道守卫的判红口径要留一个显式的、写明理由的出口
+    （否则将来真需要验解析那一层的用例只能去改守卫本身）；留着它不构成放行 —— 谁请了它，
+    谁的名字就出现在那条用例的源码里，审计一眼可见。
+    """
+    yield None
+
+
+# ---------------------------------------------------------------------------
+# 安全兜底：测试不许写机主真实家目录（**第六道**：`~/.config/meeting/**`）
+#
+# 与上面五道同一族的**结构性**守卫：会话开工记录机主真实家目录下 `~/.config/meeting/` 的
+# 文件集合与逐个 sha256，用例级与 `pytest_sessionfinish` 两级复查 —— 被创建 / 被改动就把
+# 结果判红，并打印是哪条路径、从什么变成了什么。它挡的是「用例没重定向家目录，于是把
+# 配置或日志写进了机主家目录」这一档（`65dd3e4c` phase3 的 `post()` 接配置层之后就真实发生过：
+# 一条不做隔离的用例读了机主那份 `config.json`，把 `minutes.hook = "null"` 设成模块级生效
+# 配置且不还，24 条用例因此被串档打红）。
+# ---------------------------------------------------------------------------
+
+#: 真家目录守卫的话术（用例看到它就是「这一趟在动机主家目录」）
+REAL_HOME_GUARD_VIOLATION_MESSAGE = (
+    "测试写进了机主真实家目录（`~/.config/meeting/**`）：测试一律靠**重定向家目录**隔离"
+    "（`HOME` / `USERPROFILE` 两项都指向本用例的临时家目录 —— `_isolated_home` 夹具已经做了"
+    "这一步），不许读也不许写机主的那一份。下面是被创建 / 被改动的路径与前后读数。"
+)
+
+
+def _real_home_config_dir() -> Path:
+    """会话开工那一刻的「机主真实家目录下的配置目录」（按当时的环境变量算，只算一次）。"""
+    from meeting import config as config_module
+
+    return Path(config_module.config_path()).parent
+
+
+def _real_home_snapshot(config_dir: Path) -> dict[str, str]:
+    """`config_dir` 的文件集合与逐个内容 sha256（相对路径 -> 读数）。"""
+    if not config_dir.is_dir():
+        return {"<配置目录>": "不存在"}
+    snapshot: dict[str, str] = {}
+    for path in sorted(config_dir.rglob("*")):
+        relative = path.relative_to(config_dir).as_posix()
+        if path.is_dir():
+            snapshot[relative + "/"] = "目录"
+            continue
+        try:
+            snapshot[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError:  # pragma: no cover - 读不动时如实记一笔，不掩盖
+            snapshot[relative] = "<读不动>"
+    return snapshot
+
+
+def _real_home_diff(
+    before: dict[str, str], after: dict[str, str], config_dir: Path | None = None
+) -> list[str]:
+    """两份快照的差异（一条路径一行）。
+
+    行里除了「开工读数 -> 收工读数」，还给得出**收工时那份文件的内容**（`config_dir` 给定时；
+    截到 `REAL_HOME_GUARD_CONTENT_CHARS` 个字符）—— 只有两个哈希的话，谁都得再去机主家目录
+    翻一遍才知道被改成了什么，而这一眼就该看得出。
+    """
+    lines: list[str] = []
+    for key in sorted(set(before) | set(after)):
+        was = before.get(key, "<不存在>")
+        now = after.get(key, "<不存在>")
+        if was == now:
+            continue
+        detail = ""
+        if config_dir is not None and not key.endswith("/") and now not in ("<不存在>", "<读不动>"):
+            content = _real_home_content(config_dir, key)
+            if content:
+                detail = f"，收工内容={content!r}"
+        lines.append(f"  {key}: {was} -> {now}{detail}")
+    return lines
+
+
+#: 判红时最多把多少字符的文件内容带进消息里（够看清「改成了什么」，又不撑爆终端）
+REAL_HOME_GUARD_CONTENT_CHARS = 200
+
+
+def _real_home_content(config_dir: Path, relative: str) -> str:
+    """收工时那份文件的内容（读不动就交回空串：消息里不出现这一格）。"""
+    try:
+        raw = (config_dir / relative).read_text(encoding="utf-8", errors="replace")
+    except OSError:  # pragma: no cover - 读不动时只留哈希
+        return ""
+    return raw.strip().replace("\r\n", " ").replace("\n", " ")[:REAL_HOME_GUARD_CONTENT_CHARS]
+
+
+@dataclass
+class RealHomeGuard:
+    """这道守卫的读数：机主真实家目录下那个配置目录的落点与开工快照。"""
+
+    config_dir: Path
+    before: dict[str, str]
+
+    def changed(self) -> list[str]:
+        """开工到此刻的差异（空列表 = 一个字节都没动）。"""
+        snapshot = _real_home_snapshot(self.config_dir)
+        return _real_home_diff(self.before, snapshot, self.config_dir)
+
+
+def _real_home_violation(guard: RealHomeGuard, lines: list[str], *, when: str) -> str:
+    """判红的话术：机主那一份在哪、改成了什么、归属哪条用例。"""
+    return (
+        f"{REAL_HOME_GUARD_VIOLATION_MESSAGE}\n"
+        f"机主家目录下的配置目录：{guard.config_dir}（归属用例 {when}）\n"
+        + "\n".join(lines)
+    )
+
+
+#: 会话级那道守卫的读数（`pytest_sessionfinish` 收场复查时读它）
+_ACTIVE_REAL_HOME_GUARD: RealHomeGuard | None = None
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _no_writes_to_the_real_home() -> Iterator[RealHomeGuard]:
+    """**autouse 兜底（会话级）**：开工记下机主真实家目录下配置目录的快照，收工复查。
+
+    只读不写（`rglob` + `sha256`），不起任何进程、不改任何环境变量。快照在**第一条用例
+    开工之前**取，因此本会话里任何一处写进去的字节都会被认出来。收场复查在
+    `pytest_sessionfinish` 里（那时所有用例都已收场），另有用例级的
+    `_no_writes_to_the_real_home_case` 把责任落到具体那条用例上。
+    """
+    global _ACTIVE_REAL_HOME_GUARD
+
+    config_dir = _real_home_config_dir()
+    guard = RealHomeGuard(config_dir=config_dir, before=_real_home_snapshot(config_dir))
+    _ACTIVE_REAL_HOME_GUARD = guard
+    try:
+        yield guard
+    finally:
+        _ACTIVE_REAL_HOME_GUARD = None
+
+
+@pytest.fixture(autouse=True)
+def _no_writes_to_the_real_home_case(
+    request: pytest.FixtureRequest, _no_writes_to_the_real_home: RealHomeGuard
+) -> Iterator[RealHomeGuard]:
+    """**autouse 兜底（用例级）**：这一条用例收工时，机主那一份动过就当场判红。
+
+    与 `_no_real_dsh_launch` 同一形状：读数落在「开工快照 vs 此刻快照」上，判红的消息里
+    逐条列出被创建 / 被改动的路径与前后内容哈希，因此下一眼就知道该去哪条用例里加隔离。
+    """
+    guard = _no_writes_to_the_real_home
+    yield guard
+    changed = guard.changed()
+    if changed:
+        pytest.fail(_real_home_violation(guard, changed, when=request.node.nodeid))
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """收场复查两本账：假 `dsh` 的账本，以及机主真实家目录下那份配置。
+
+    PATH 守卫这一半兜的是「漏网那一笔落在最后一条用例收场之后」那一档：用例级的复查已经
+    没有下一条用例可挂了，只有会话收场这一步还在。真家目录守卫这一半兜的是同一件事
+    （最后一条用例收场之后才写进去的那一笔也算）。
+    """
+    reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+
+    def report(message: str) -> None:
+        if reporter is not None:
+            reporter.write_line(message, red=True)
+        else:  # pragma: no cover - 没有终端上报器时至少留一行
+            print(message)
+
+    guard = _ACTIVE_DSH_GUARD
+    if guard is not None:
+        leftovers = guard.unreported()
+        if leftovers:
+            session.exitstatus = pytest.ExitCode.TESTS_FAILED
+            report(_dsh_guard_violation(guard, leftovers, when="（用例收场之后才落进账本）"))
+
+    home_guard = _ACTIVE_REAL_HOME_GUARD
+    if home_guard is not None:
+        changed = home_guard.changed()
+        if changed:
+            session.exitstatus = pytest.ExitCode.TESTS_FAILED
+            report(_real_home_violation(home_guard, changed, when="（会话收场复查）"))
+
+    _drop_pending_isolated_homes()
+
+
+# ---------------------------------------------------------------------------
 # 安全兜底：绝不许向真实模型端点发请求（会中总结那条 HTTP 出口）
 # ---------------------------------------------------------------------------
 
@@ -430,6 +845,91 @@ def isolated_config_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path
     monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.setenv("MEETING_LOG_DIR", str(log_dir))
     return config_dir
+
+
+@pytest.fixture(autouse=True)
+def _isolated_home(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+    """**autouse**：每一条用例的 `HOME` / `USERPROFILE` 都指到本用例自己的临时家目录。
+
+    为什么必须**每一条用例**都做（而不是只给「自己写了隔离」的用例做）：`65dd3e4c` phase3
+    给 `meeting post` 的入口加了一步配置前奏（`post()` → `config_module.load()` +
+    `set_current()`），于是**任何**在进程内走真入口的用例都会去读 `~/.config/meeting/config.json`
+    —— 没做隔离的那些读的是**机主真实那一份**，机主的取值（例如 `minutes.hook = "null"`）
+    因此进了测试进程的生效配置。这一步是结构性的：不管哪条用例（现在写的、以后加的）走真
+    入口，读到的都是它自己的临时家目录，机主那一份连读都读不到。
+
+    **落点不放在 `tmp_path` 下面**（`tempfile.mkdtemp()` 单开一个，收场删掉）：`tmp_path` 下
+    那个 `home` 名字是各用例自己用的（`(tmp_path / "home").mkdir()` 这种写法在本仓有 20 多处，
+    它们都假定它还不存在），预建它会把那些用例撞成 `FileExistsError`。用例自己把 `HOME` 指到
+    别的临时目录（`isolated_config_dir` / `meeting_env` / `app_client` 与
+    `test_state_machine.py` 那一族）照旧以它自己的为准：`monkeypatch` 后设的覆盖先设的。
+
+    **故意不往这个家目录里写 `config.json`**：产品缺省（`minutes.hook = "auto"` 等）与
+    「没读过配置」在进程内是同一件事（`config.get()` 无生效配置时退回 `DEFAULT_VALUES`），
+    写一份测试层缺省进去反而会把「入口有没有真的读配置」这一类断言搅浑
+    （`tests/test_cli_post_config.py` 的用例自己写它要的那一份）。
+    """
+    home = Path(tempfile.mkdtemp(prefix="pytest-isolated-home-"))
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    try:
+        yield home
+    finally:
+        _drop_isolated_home(home)
+
+
+#: 收场时再删一次的隔离家目录（Windows 上服务级日志的句柄还开着时**当场删不掉**：
+#: `post()` 那一趟会把 `<家目录>/.config/meeting/logs/meeting.log` 打开，用例收场时
+#: 文件仍被占用，`shutil.rmtree` 会以 `PermissionError` 收场）。于是这里先记下来，
+#: 会话收场（`pytest_sessionfinish`）关掉那些句柄之后再删一遍。
+_PENDING_ISOLATED_HOMES: list[Path] = []
+
+
+def _drop_isolated_home(home: Path) -> None:
+    """删掉一个隔离家目录；删不掉（句柄还占着）就记进待删清单，会话收场再删一次。"""
+    shutil.rmtree(home, ignore_errors=True)
+    if home.exists() and home not in _PENDING_ISOLATED_HOMES:
+        _PENDING_ISOLATED_HOMES.append(home)
+
+
+def _drop_pending_isolated_homes() -> None:
+    """会话收场：先关掉还开着的服务级日志句柄（文件锁随之释放），再把待删的删干净。
+
+    只在本会话真的留下过删不掉的家目录时才动手，且吞掉一切异常 —— 收场清理失败不该
+    改变这一趟的测试结论（真正要看的是上面两本账）。
+    """
+    if not _PENDING_ISOLATED_HOMES:
+        return
+    try:
+        from meeting import logging_setup
+
+        logging_setup.reset_for_tests()
+    except Exception:  # pragma: no cover - 日志层抽风时照旧尽力删
+        pass
+    for home in list(_PENDING_ISOLATED_HOMES):
+        shutil.rmtree(home, ignore_errors=True)
+        if not home.exists():
+            _PENDING_ISOLATED_HOMES.remove(home)
+
+
+@pytest.fixture(autouse=True)
+def _restore_effective_config() -> Iterator[None]:
+    """**autouse**：用例收场时把模块级生效配置（`config_module.set_current()`）原样放回。
+
+    与 `_isolated_home` 配对：家目录隔离挡住「读到机主那一份」，这一条挡住「读到之后不还」。
+    `post()` 的配置前奏会把 `config.set_current(loaded)` 设成模块级的，而**它是进程级全局**：
+    用例不还原，它的取值就跟着后面每一条用例走（实测后果是 `minutes.hook = "null"` 串档，
+    24 条用例倒在 `resolve_branch()` 上）。这里在**每一条用例**开工时记下当时的生效配置、
+    收场时放回，任何一条用例的现场因此都渗不出去。
+
+    `app_client()` / `dev_runtime` 这些夹具自己也会还原（那一层不动），本夹具是**兜底**那
+    一层：谁忘了还原都跑不掉。
+    """
+    from meeting import config as config_module
+
+    previous = config_module.current()
+    yield
+    config_module.set_current(previous)
 
 
 @pytest.fixture()

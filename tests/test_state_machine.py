@@ -30,7 +30,6 @@ import pytest
 
 from tests import _helpers as helpers
 from meeting import config as config_module
-from meeting.backends.base import LevelFrame
 from meeting.config import ConfigValueError
 from meeting.service import app as service_app
 from meeting.state import (

@@ -36,7 +36,7 @@ import pytest
 from tests import _helpers as helpers
 from tests._service import ServiceProcess
 from meeting import cli as cli_module
-from meeting.cli import EXIT_FAILURE, EXIT_OK, EXIT_REJECTED
+from meeting.cli import EXIT_OK, EXIT_REJECTED
 from meeting.service import app as service_app
 
 #: 慢档标记：`pytest.mark.slow` 的归位判据与实测数据见 `docs/service.md` 第 7 章。

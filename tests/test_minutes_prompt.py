@@ -27,7 +27,6 @@ phase2（`41465462`）往这个文件里追加了两批：
 
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 
@@ -109,13 +108,6 @@ def _input(source: str = "loopback", **overrides) -> PromptInput:
 def _per_source(*pairs: tuple[str, str]) -> tuple[tuple[str, str], ...]:
     """`mode_note_text()` 收的那一 shape：`(("mic", "both"), …)`。"""
     return tuple(pairs)
-
-
-def _session_dir(tmp_path: Path, name: str) -> Path:
-    """一个空的场次目录（点名的两个来源由调用方自己摆）。"""
-    session = tmp_path / name
-    session.mkdir(parents=True, exist_ok=True)
-    return session
 
 
 def _write_session(tmp_path: Path, *, live: bool = True, offline: bool = True) -> Path:

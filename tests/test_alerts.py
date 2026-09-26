@@ -34,7 +34,6 @@ from meeting.alerts import (
     muted_at,
 )
 from meeting import config as config_module
-from meeting.state import Alert
 
 #: 用例里显式调小的阈值（**只写在用例里，不改代码默认值**）
 TEST_SILENCE_SECONDS = 3.0

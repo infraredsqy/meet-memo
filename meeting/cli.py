@@ -205,11 +205,69 @@ def _parse_post_args(argv: Sequence[str]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _load_config_or_exit() -> config_module.Config:
+    """**`meeting post` 这一条入口的配置前奏**：读配置 → 值级校验 → 生效，交回生效配置。
+
+    与 `web()` 第 ② 步同一套口径（`config_module.load()` + 同一个出口的档位与同一套终端
+    说法）：配置损坏 → `EXIT_STARTUP_UNMET`；取值非法 → `EXIT_REJECTED`。两个出口都
+    `sys.exit(<常量>)`，**异常一律在本函数里接住**，不冒到解释器那里变成解释器默认码。
+
+    **为什么这条路必须有这一段**：`run_post()` 这一趟里的每一个取值都经
+    `config_module.get(...)` 现读 —— 离线段按 `post.engine` / `post.model` / `post.dtype` /
+    `post.chunk_seconds` 造引擎与分块，纪要段按 `minutes.hook` 决定**要不要真拉起
+    headless 子会话**、按 `minutes.timeout_seconds` 定等待的上界。这一层没读进来的话
+    它们全部退回 `DEFAULT_VALUES`：用户显式写的 `minutes.hook = null`（明确不要会后纪要）
+    会被当成缺省的 `auto` 照旧拉起子会话（**那是真花钱的一步**），显式写的
+    `post.engine = <替身>` 也会被当成 `auto` 造出真离线引擎。
+    `web()` 有这一段，`post()` 此前没有 —— 这就是这条入口不生效的那一格。
+
+    **读取时机**：在幂等闸与花钱之前。配置本身就决定「这一趟要不要花钱」，
+    判早了会按默认值误判（该跳过的层被拉起来、或该跑的层被当成已关掉）。
+
+    失败档与 `web()` 同源：`ConfigCorruptError` →「启动前提不成立」（`EXIT_STARTUP_UNMET`）、
+    `ConfigValueError` →「配置值非法」（`EXIT_REJECTED`），终端一律打 `f"{说法}：{exc}"`。
+
+    **交回生效配置**（`config_module.Config`）供调用方走 `web()` 第 ③ 步那一格
+    （按生效 `log.*` 重建服务级日志，见 `post()`）。
+    """
+    try:
+        loaded = config_module.load()
+    except config_module.ConfigCorruptError as exc:
+        print(f"启动前提不成立：{exc}", file=sys.stderr, flush=True)
+        try:
+            _log().error("启动前提不成立：%s -> EXIT_STARTUP_UNMET", exc)
+        except Exception:  # pragma: no cover - 日志尚未初始化时只打印终端
+            pass
+        sys.exit(EXIT_STARTUP_UNMET)
+    except config_module.ConfigValueError as exc:
+        print(f"配置值非法：{exc}", file=sys.stderr, flush=True)
+        try:
+            _log().error("配置值非法：%s -> EXIT_REJECTED", exc)
+        except Exception:  # pragma: no cover - 同上
+            pass
+        sys.exit(EXIT_REJECTED)
+
+    config_module.set_current(loaded)
+    try:
+        _log().info(
+            "配置来源：%s；生效值清单：\n%s",
+            loaded.config_path(),
+            config_module.format_applied(loaded),
+        )
+    except Exception:  # pragma: no cover - 同上
+        pass
+    return loaded
+
+
 def post(argv: Sequence[str] | None = None) -> None:
     """`meeting post <场次目录> [--force]` —— 只跑会后那一套，跑完就退。
 
-    三件事，按顺序：解析参数（用法错 → 用法说明 + `EXIT_REJECTED`）→ 调 `run_post()`
-    → 打终端输出并按摘要里的 `exit_code` 挑 `sys.exit(<常量>)`。
+    五件事，按顺序：解析参数（用法错 → 用法说明 + `EXIT_REJECTED`）→ **读配置并生效**
+    （与 `web()` 同源那一套：损坏 `EXIT_STARTUP_UNMET`、取值非法 `EXIT_REJECTED`，
+    见 `_load_config_or_exit()`）→ **按生效配置重建服务级日志**（`log.dir` / `log.level` /
+    `log.max_bytes` / `log.backup_count` 四格，`web()` 第 ③ 步那一格；主 log 不可写 →
+    `EXIT_STARTUP_UNMET`）→ 调 `run_post()` → 打终端输出并按摘要里的 `exit_code`
+    挑 `sys.exit(<常量>)`。
 
     **每个出口都 `sys.exit(<常量>)`，`sys.exit()` 之前一律 `sys.stdout.flush()`**：
     退出码走 §3.4 那五档现成常量，输出不 flush 的话管道里读不到（用例也没法断言）。
@@ -224,6 +282,46 @@ def post(argv: Sequence[str] | None = None) -> None:
         print("退出原因与退出码：用法错误（post 的参数） -> EXIT_REJECTED", file=sys.stderr, flush=True)
         sys.stdout.flush()
         sys.exit(EXIT_REJECTED)
+
+    # **配置层在幂等闸与花钱之前读进来**（§3.5 第 1 条那一段的 ① ② 两步，与 `web()` 同源）：
+    # 这一趟里每一个取值都从它现读，没有它 `minutes.hook` / `post.engine` 这些用户配置
+    # 一个字都不生效。bootstrap 日志照 `web()` 第 ① 步那一套（默认日志目录 + 默认轮转参数）。
+    try:
+        logging_setup.setup_service_logging(config_module.default_log_dir())
+    except OSError as exc:
+        print(
+            f"注意：默认日志目录不可写（{exc}），bootstrap 阶段只有终端可写",
+            file=sys.stderr,
+            flush=True,
+        )
+    loaded = _load_config_or_exit()
+
+    # **③ 按生效配置重建服务级日志**（`web()` 第 ③ 步那一格，同一个口径）：`log.dir` 是这一
+    # 条路上被读进来却曾经一次都没被用的那一个键 —— 不重建的话用户配的落点不生效、日志照旧
+    # 落在默认目录。`log.level` / `log.max_bytes` / `log.backup_count` 三格同一处一起生效。
+    log_dir = loaded.get("log.dir")
+    try:
+        logging_setup.setup_service_logging(
+            log_dir,
+            level=loaded.get("log.level"),
+            max_bytes=loaded.get("log.max_bytes"),
+            backup_count=loaded.get("log.backup_count"),
+        )
+    except OSError as exc:
+        # 主 log 不可写 → 拒绝启动（与 `web()` 第 ④ 步同一句话、同一个退出码）
+        print(
+            f"启动前提不成立：主 log 不可写：{log_dir}（{type(exc).__name__}: {exc}）",
+            file=sys.stderr,
+            flush=True,
+        )
+        try:
+            _log().error(
+                "启动前提不成立：主 log 不可写：%s（%s: %s） -> EXIT_STARTUP_UNMET",
+                log_dir, type(exc).__name__, exc,
+            )
+        except Exception:  # pragma: no cover - 同上
+            pass
+        sys.exit(EXIT_STARTUP_UNMET)
 
     try:
         _log().info(
@@ -645,6 +743,26 @@ def _minutes_step_outcome(
     )
 
 
+def _quiet_skip_announce(outcome: dict[str, Any]) -> dict[str, Any]:
+    """把「安静跳过」那一档的交回值整成 `_minutes_from_launcher()` 认的形状。
+
+    只取该函数用得到的那几格（`hook` / `announced` / `reason`）再加一格 `launcher`：
+    `_minutes_from_launcher()` 的缺省把 `launcher` 写成 `"injected"`，而这一趟走的是
+    **产品路径**（`_announce_minutes()` 自己按 `minutes.hook` 解析），这一格因此明写
+    `product` —— 摘要里那一格说的是「这一层的结论是谁拉起来的那一档给的」，产品路径的
+    安静跳过不该顶着注入那一档的名字。
+
+    `announced` 明写成 `False`：「这一趟没有再拉起子会话」正是这一档在说的话。
+    """
+    hook = str(outcome.get("hook") or "")
+    return {
+        "hook": hook,
+        "announced": False,
+        "launcher": "product",
+        "reason": outcome.get("reason"),
+    }
+
+
 def _launch_minutes_on_the_product_path(
     directory: Path,
     *,
@@ -675,10 +793,13 @@ def _launch_minutes_on_the_product_path(
     `minutes.timeout_seconds`，事件驱动轮询、落定即返回），等到的终态再由
     `_settled_minutes_outcome()` **如实映射**成这一层的结论与退出码。
 
-    拉起点整个缺席 / 被再入闸拦下 / 解析不出实现（`absent` / `skipped` / `failed`）时**不等**：
-    这一趟什么都没被拉起来，没有终态会来。这几档照旧按**盘上那一刻的两半判据**出结论
-    （状态文件 `done` **且** `meeting_final.md` 过得了那四条判据才算补上了），其余如实记失败 ——
-    纪要缺席、拉起点抛错这两档因此不再谎报 `EXIT_OK`。
+    拉起点整个缺席 / 被再入闸拦下 / 解析不出实现时**不等**：这一趟什么都没被拉起来，
+    没有终态会来。**再入闸那一档（`skipped`）安静跳过** —— 走 `_minutes_from_launcher()`
+    那一个出口，除 `launcher` 之外逐格与「注入假启动器的那一档」相同、不记失败（退出码按
+    现成的 `_minutes_exit_code()` 走成功档），也不把再入闸的理由念成这一层的失败原因
+    （`_quiet_skip_announce()`）。**缺席与解析不出实现这两档照旧按盘上那一刻的两半判据
+    出结论**（状态文件 `done` **且** `meeting_final.md` 过得了那四条判据才算补上了），
+    其余如实记失败。
 
     `baseline` 缺省（直接调本函数的读者）时**现取一份**（此刻的现场就是「拉起之前」）：
     产品路径那一趟由 `run_post()` 在离线那一段之前取好一路传下来，等待的判据因此三条路径同源。
@@ -711,6 +832,28 @@ def _launch_minutes_on_the_product_path(
         # 结论与「进门前就撞上 `running`」那一档同格，摘要据此取 `EXIT_REJECTED`。
         return _minutes_from_launcher(
             directory, outcome, baseline=baseline, deadline=deadline
+        )
+
+    if str(outcome.get("hook") or "") == "skipped":
+        # **这一趟安静跳过**（`skipped` = 子会话里的再入闸拦下）：这一层没有被拉起来，
+        # 也没有任何终态会来。结论走**注入那一档同一个出口**（`_minutes_from_launcher()`），
+        # 于是「除 `launcher` 之外逐格相同」：`hook` / `state` / `skipped` / `announced` /
+        # 那几条路径与等待秒数全与注入那一档一致，只有 `launcher` 那一格仍写 `product`
+        # （这一趟走的是产品路径）—— 档位因此两条路对齐：**安静跳过不记失败**，退出码按
+        # 现成的 `_minutes_exit_code()` 走成功档，不把再入闸的理由（「这一趟是 DSH 子会话
+        # 自己」）念成这一层的失败原因。
+        # 此前这一档掉进下面那段兜底里：`hook` 报成 `finished`、`state` 报成 `failed`、
+        # 这一趟按 `EXIT_FAILURE` 收场，与注入那一档的 `skipped` / `EXIT_OK` 不对称。
+        #
+        # **`absent` 那一档不走这里**（`minutes.hook` 已配、解析却交回「没有实现」）：
+        # 它与「配置里明确关掉这一层」是两件事，现成的用例把它钉在失败档上
+        # （`tests/test_post_idempotency.py::test_the_product_path_still_reports_a_launch_that_fails`
+        # 的 `no-implementation` 一格）。这一处只对齐再入闸那一档。
+        return _minutes_from_launcher(
+            directory,
+            _quiet_skip_announce(outcome),
+            baseline=baseline,
+            deadline=deadline,
         )
 
     if _minutes_layer_done(directory):
@@ -1284,15 +1427,23 @@ def _minutes_from_launcher(
     「闸拦下时读到的这一版」来。
 
     `announce` 缺席（离线那一趟没走到尾钩）时交回 `None` 那一档，由摘要按缺结论报。
+
+    摘要里 `launcher` 那一格说的是「这一层的结论是谁拉起来的那一档给的」：`announce` 自己
+    带了这一格时**原样留着**（产品路径的安静跳过那一档由 `_quiet_skip_announce()` 明写
+    `product`），没带才按缺省的 `injected` 算。
     """
     outcome = announce if isinstance(announce, dict) else None
     status_path = directory / offline_runner.MINUTES_STATUS_NAME
     final_path = directory / MINUTES_FINAL_NAME
+    missing = object()
+    provided_launcher = outcome.get("launcher", missing) if outcome else missing
     result: dict[str, Any] = {
         "hook": "injected",
         "state": None,
         "reason": None,
-        "launcher": "injected",
+        "launcher": (
+            "injected" if provided_launcher is missing else str(provided_launcher)
+        ),
         "status_path": str(status_path),
         "final": str(final_path) if final_path.is_file() else None,
         "waited_seconds": 0.0,

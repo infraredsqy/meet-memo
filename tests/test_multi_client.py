@@ -20,7 +20,7 @@ import time
 import pytest
 
 from tests import _helpers as helpers
-from tests._service import SseClient, parse_sse_frame
+from tests._service import SseClient
 
 #: 用例的显式等待上限（秒）
 MULTI_TIMEOUT_SECONDS = 15.0

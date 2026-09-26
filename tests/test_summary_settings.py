@@ -22,7 +22,6 @@ from meeting.summary.settings import (
     API_KEY_KEY,
     BASE_URL_KEY,
     DEFAULT_WINDOW,
-    EXTRA_BODY_KEY,
     MODEL_KEY,
     SETTING_KEYS,
     SummarySettings,

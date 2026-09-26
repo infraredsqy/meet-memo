@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
 
 import pytest
 
@@ -26,9 +25,7 @@ from meeting.backends.base import LevelFrame
 from meeting.backends.dev import (
     DEV_FAULT_DEFAULT_SECONDS,
     DEV_FAULT_KINDS,
-    DEV_FRAME_INTERVAL_SECONDS,
     DEV_LEVEL_SEED,
-    DEV_SILENCE_DBFS,
     DevCaptureBackend,
 )
 
@@ -40,8 +37,6 @@ DEV_WAIT_TIMEOUT_SECONDS = 10.0
 #: 故障窗口的长度（够观测「到点生效」与「到点恢复」；
 #: 唤醒用例里还要盖住「累计到阈值 → 起告警」这一段，所以取 3 秒）
 DEV_FAULT_WINDOW_SECONDS = 3.0
-#: 唤醒用例里静默要持续到起告警，窗口得比「静默阈值 + 恢复阈值」长
-DEV_ALERT_WINDOW_SECONDS = 30.0
 #: 停帧窗口：比帧时钟的 2.0 秒窗口长，才观测得到「HTTP 通着但录音停了」
 DEV_STALL_WINDOW_SECONDS = 3.0
 #: `lost` 的窗口：取得比恢复阈值 + 帧时钟窗口都长，才观测得到「窗口内这一路整段是断的」。

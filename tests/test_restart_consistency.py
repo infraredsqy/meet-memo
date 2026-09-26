@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import json
-import time
 from pathlib import Path
 
 import pytest
@@ -26,10 +25,6 @@ from tests import _helpers as helpers
 
 #: 显式等待上限（秒）
 RESTART_POLL_TIMEOUT_SECONDS = 20.0
-#: 轮询间隔
-RESTART_POLL_INTERVAL_SECONDS = 0.05
-
-NOTICE_TEMPLATE = "服务重启过。上一场的收尾没走完，音频在 {dir}，日志在 {log}。"
 
 
 # ---------------------------------------------------------------------------

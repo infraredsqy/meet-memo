@@ -401,16 +401,6 @@ def _service_log_text(env: Any) -> str:
     return helpers.read_text(env.log_dir / "meeting.log")
 
 
-def _session_log_text(session: dict[str, Any]) -> str:
-    return helpers.read_text(Path(session["dir"]) / "meeting.log")
-
-
-def _non_empty_text(path: Path) -> str | None:
-    """读到非空文本就返回它（文件刚建好、还没落进第一行时返回 `None`）。"""
-    text = helpers.read_text(path)
-    return text if text.strip() else None
-
-
 def _log_with_all(path: Path, needles: list[str]) -> str | None:
     """等到日志文件里这些片段全都出现，再把整份文本给出来。
 
@@ -1670,13 +1660,6 @@ def _inprocess_config(
         **overrides,
     }
     return Config(applied=applied, sources={key: "默认" for key in applied}, path="")
-
-
-def _session_dir_names(out_root: Path) -> list[Path]:
-    """输出根下的场次目录（按名字排序）。"""
-    if not out_root.is_dir():
-        return []
-    return sorted(item for item in out_root.iterdir() if item.is_dir())
 
 
 def test_log_step_lands_failed_when_the_session_log_write_reports_a_problem(

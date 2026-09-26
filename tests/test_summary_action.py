@@ -375,14 +375,38 @@ def test_the_window_keeps_only_the_rows_inside_it(tmp_path):
     """窗口真的按时间切：铺 40 分钟的行，`5m` 只收最近 5 分钟那几行。"""
     with live(tmp_path) as (client, runtime, transcriber, stub):
         start_recording(client)
-        feed(runtime, transcriber, lines_for(41, span_seconds=2400, step=60.0))
+        rows = lines_for(41, span_seconds=2400, step=60.0)
+        feed(runtime, transcriber, rows)
         response = post(client, "summarize", {"window": "5m"})
         assert response.status_code == 200, response.text
         summary = response.json()["summary"]
         # 40 分钟里每步 60 秒，窗口 300 秒 → 末行 + 前 5 行 = 6 行
         assert summary["lines"] == 6
         text = stub.messages[-1]["content"]
-        assert "[0" in text, "渲染出来的窗口文本带着行首时间戳"
+        # 行首时间戳那一半**照生产代码同一处渲染算出来**（`window.render_window()`：取那一行
+        # 自己的 `ts`，走 `datetime.fromtimestamp(...).strftime("%H:%M:%S")`）—— 期望值因此与
+        # 本地墙钟走到哪个小时无关（早先断的是首字符 `"[0"`，那条只在本地 00–09 点成立）。
+        import re
+
+        from meeting.summary import window as window_module
+
+        last = rows[-1]
+        rendered_last = window_module.render_window(
+            [
+                window_module.BufferedLine(
+                    seq=len(rows) - 1, ts=last.ts, source=last.source, text=last.text
+                )
+            ]
+        )
+        assert rendered_last in text, (
+            f"窗口文本里该有末行那一条（带着它自己的 `[HH:MM:SS]` 时间戳）：{rendered_last!r}"
+        )
+        # 每一条窗口行都带一个**读得出来**的行首时间戳（形状由生产代码那一处定），
+        # 行数也与摘要报的 `lines` 对得上
+        stamped = [line for line in text.splitlines() if line.startswith("[")]
+        assert len(stamped) == summary["lines"], (summary["lines"], stamped)
+        for line in stamped:
+            assert re.fullmatch(r"\[\d{2}:\d{2}:\d{2}\] .+ · (本地|远端)", line), line
         assert "第 34 行内容" not in text, "窗口外的那一行一个字都不该进消息"
         assert "第 40 行内容" in text
 

@@ -53,7 +53,7 @@ from meeting.minutes.status import (
 )
 
 from tests import _helpers as helpers
-from tests.test_minutes_launch import GOOD_FINAL, write_fake_dsh
+from tests.test_minutes_launch import GOOD_FINAL
 
 #: 后台线程收敛的轮询上限（事件驱动地等，等到了就立刻回）
 CONVERGE_TIMEOUT_SECONDS = 10.0

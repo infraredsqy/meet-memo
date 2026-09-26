@@ -28,7 +28,7 @@ from meeting.capture import sources as sources_module
 from meeting.capture.devices import DeviceEndpoint, OpenAttempt
 from meeting.session import archive_name
 from tests.test_api_actions import live, post, snapshot_of, wait_until
-from tests.test_capture_engine import CHUNK_BYTES, FakeCaptureSource, block
+from tests.test_capture_engine import CHUNK_BYTES, FakeCaptureSource
 
 #: 假端点表（形状照本机实测：同名端点在不同 host API 下并存）
 FAKE_MIC = DeviceEndpoint("假-麦克风 (Focusrite)", "MME", "input", index=1, is_default=True)
