@@ -279,5 +279,5 @@ sub agent 才是读原始数据、写总结内容的执行者。每个 sub agent
 - **不要去找绝对路径**：这份提示词里给模型看的路径一律相对场次目录（`working/…` 与
   `meeting_final.md`），没有一处要你拼 `C:/…` 那样的写法——照上面写的走就是对的。
 
-注意：本次运行是一次性 headless 会话，你的回合结束后进程即退出，不会有后续唤醒——所有 sub agent 必须同步等待完成，绝不在后台任务未完成时结束回合；全部 segment 汇总并写出 meeting_final.md 后才算完成。
+注意：无论这一次跑在哪一种会话里（一次性的 headless 子进程，还是 DSH GUI 里那条会话），都要**同步等所有 sub agent 交回**再进下一阶段——绝不把活挂在后台就结束回合；全部 segment 汇总并写出 meeting_final.md 后才算完成。
 <!-- PHASE_BODY:END -->

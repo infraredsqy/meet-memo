@@ -17,8 +17,8 @@
 | 0 | 再入闸 → 先落一份 `state: "running"` 的状态 | `meeting_minutes_status.json`（拉起方在**建线程之前**先落一版，见 1.1） |
 | 1 | 找两条转写、判档位 | `working/inputs.json` |
 | 2 | 按行切块 | `working/<source>/chunks/chunk_NN.md` + `working/<source>/00_index.md` |
-| 3 | 渲染编排提示词 → 拉起 `dsh --profile headless` | `working/run_prompt.md`、`working/minutes-run.log` |
-| 4 | 校验产物 → 覆盖成终态 | `meeting_minutes_status.json` |
+| 3 | 渲染编排提示词 → **探一次 DSH web 服务端**：在跑就把这一场交付给它（终态 `delivered`），没在跑就拉起 `dsh --profile headless`（终态 `done` / `failed`） | `working/run_prompt.md`、`working/minutes-run.log` |
+| 4 | 覆盖成终态（headless 那一趟先按四条判据校验产物，过了才记 `done`；web 分支交付成功即记 `delivered`，不跑那四条） | `meeting_minutes_status.json` |
 
 **先落 `running` 再拉起 DSH**：一次生成最长 `minutes.timeout_seconds` 秒（默认 14400），这期间读方（`meeting post`、界面）要分得出「这一场还没跑」与「这一场正在跑」。进程被杀时钩子把那一份补成 `failed`，状态不会永远停在 `running`。
 
@@ -74,6 +74,33 @@
 
 ## 4. 拉起子会话
 
+拉起之前**先探一次 DSH web 服务端**（`meeting/minutes/dsh_web.py` 的 `probe()`，地址取配置键 `minutes.dsh_url`），由这一步定这一趟走哪条分支。探针先做一次 TCP（端口没人应答就到此为止），再发一次**只读、无参数**的 RPC（`session/modelCatalog`）确认协议与鉴权，交回 `(在跑吗, 说明)`；**说明是给用户看的实话**，三档分得开：端口没人听、签不出 cookie、只读探针没通过。在跑 → **web 分支**（交付），没在跑 → **headless 分支**（本进程自己起子进程）。探针自己炸了（读不到凭据、端口上跑着别的程序）也按「没在跑」算，落回现成的 headless 分支，理由进主 log。
+
+`branch` 那一格记**实际走的那一条**（`web` / `headless`）：配置里写 `web` 而那一台没在跑时，状态文件里记的是 `headless`。
+
+### web 分支：交付给 DSH web 服务端
+
+`dsh_web.handoff(session_dir, prompt_text=…, url=…, timeout=…)` 走 DSH 的 `/api`，三步**次序固定**：
+
+1. `workspace/create{path=<场次目录>}` —— 幂等：同一个目录交回既有的那个工作区；
+2. `session/create{workspaceId}` —— **只带 `workspaceId`，不带 `cwd`**；
+3. `session/prompt{requestId, sessionId, mode: "queue", content: [{type: "text", text: <提示词全文>}]}`。
+
+- **为什么必须先建工作区**：`dsh --profile headless` 建的会话**不带工作区归属**（它直接 `agents.create({meta: {cwd}})`，压根不碰 DSH 的 workspace registry），在 GUI 里落在「未分组」；而 `session/create` **只给 `cwd` 也不进工作区分组**。要让这一场出现在场次目录对应的那个工作区里，只有「先 `workspace/create`、再只带 `workspaceId` 建会话」这一条路。
+- **交付语义：投递 accepted 即算交付完成**。这一层**不等** DSH 那边把纪要写完、**也不校验产物**（产物校验是 headless 那条路的事：那是本进程自己起的子进程，等得起）；**停不停 DSH 是用户的事**，超出这一层的边界。跑成什么样，在 DSH GUI 的那条会话里看得见。
+- **两份盘上的记录**：`working/run_prompt.md`（发出去的提示词全文）与 `working/minutes-run.log`（三步 RPC 的账：头几行说清这一趟怎么交付的、成没成，后面逐段是三步的请求与应答摘要 —— 这条路没有子进程的 stdout / stderr 可落）。两份都是状态文件 `artifacts` 里声明的那两格。
+- **五个失败档各有各的名字**（`HandoffResult.failure`）：`credentials`（签不出 browser-session cookie：读不到凭据、那条记录不在、密钥长度不对）、`workspace_failed`、`session_failed`、`prompt_failed`、`timeout`（交付预算用完：`runner` 递下来的那一格被夹在 `1–60` 秒之间 —— `minutes.timeout_seconds` 是给**生成**用的预算，拿它当一次 HTTP 交付的上限等于没上限）。连不上服务端那一档不在这张表里：那种情况走不到交付这一步（`probe()` 已经把「没在跑」判在前面，于是落回 headless 分支）。中间任何一步失败都**如实记 `failed`，不偷偷改走 headless** —— 交付失败要看得见；成功那一档的状态记 `delivered`（见 `docs/state.md` 第 3 章）。
+- **权限不由这一层说了算**：headless 那条路靠子进程环境里那格 `DSH_PERMISSION_MODE=danger-full-access`；走 `/api` 建的会话**权限取 DSH 服务端自己的设置**，本层给不了。DSH 那边若落在 `approval=ask`，无人值守的纪要会卡在等审批 —— 这是走 web 分支要认下的一件事。
+- **鉴权**：`/api` 只认 HMAC 签名的 browser-session cookie，没有它一律 401。这一层用 `~/.dsh/.credentials.yaml` 里 `client-connection/browser-session` 那条记录里的**持久签名密钥**自签一枚（有效期 30 天，与 dsh 默认一致，跨重启有效），不依赖任何一次性进程态。
+
+三样协议细节按 **DSH 0.1.5-rc.2 实测**校准，缺任何一个都只会看到 401 / 404：
+
+1. **端点写斜杠形式**（`workspace/create` 这类）：点号写法回 not found，而且 `workspace.list` 这个一元方法**根本不存在** —— 工作区清单走 `workspace/follow` 那条流，因此存活探针用的是只读、无参数的 `session/modelCatalog`；
+2. **信封是 `{type, rpcId, method, payload: {args: <参数名>: {…}}}`**：少一层 `args` 回 `arguments-invalid`；参数名逐端点不同，取自端点描述符的 `wire` 字段，这三个端点都叫 `request`；
+3. **没有 Cookie 一律 401**。
+
+### headless 分支：本进程自己起子进程
+
 `meeting/minutes/launch.py` 拉起一个 headless DSH 子进程：`shutil.which("dsh")` 解析真实路径（Windows 上 npm 全局安装只生成 `.cmd` / `.ps1` shim，传裸名会 `WinError 2`），argv 是 `[exe, "--profile", "headless", <短指针>]`，`cwd` 是场次目录。
 
 - **argv 里只放一段短指针**（「请读 `working/run_prompt.md` 并完整执行其中的流程」），提示词正文写进 `working/run_prompt.md`。`cmd.exe` 会在第一个换行处截断多行参数，正文走 argv 是把整份提示词赌在命令行解析上。
@@ -81,13 +108,11 @@
 - **stdout / stderr 落 `working/minutes-run.log`**，头三行是命令、cwd、退出码与耗时，失败原因也写在头里。
 - **四档失败各有各的名字**（`launch.py` 的 `LaunchResult.failure`）：`executable_missing`（解析不到可执行文件）、`exit_code`（退出码非 0）、`artifact_missing`（退出码 0 但产物没落盘 / 不合判据）、`timeout`（超时按失败处理，错误里写清超时秒数与提示词路径）。**不能只看退出码** —— V1 遇到过「进程正常退出但纪要不落盘」，退出码 0 只是必要条件。
 
-`branch` 这一格记**实际走的那一条**：`auto` / `web` / `headless` 三种取值本轮都落 headless，配置里写 `web` 而实际走了 headless 时，状态文件里记的是 `headless`。
-
-**web 分支本轮没有实现**：V1 用的那套 web 路径在 DSH 0.1.5-rc.2 上已经失效（`workspace.list` 这个一元方法不存在、信封 payload 要包一层 `args`、`/api` 只认 HMAC 签名的 Cookie，密钥在 `%DSH_HOME%\.credentials.yaml`）。走它就得照抄一份会随版本漂的私有鉴权协议，因此它是**明确不做**的一项：`meeting post` 只调用这一层，不改它的启动方式。
-
 ## 5. 产物校验：四条判据
 
 子进程退出码为 0 之后，`launch.py` 的 `check_final_artifact()` 还要逐条核这四条，缺任何一条都算这一趟失败（`artifact_missing`）：
+
+> **这四条是 headless 分支的收尾校验**：只有「本进程自己起的子进程退出」那一档才跑（那说明纪要真的在盘上）。web 分支交付即完事 —— 投递 accepted 就记 `delivered`，这四条一条都不跑，产物在 DSH GUI 那条会话里看得见。
 
 1. 场次目录根的 `meeting_final.md` 在、去空白之后非空；
 2. 文件里有 `## 说话人附录`；
@@ -98,7 +123,7 @@
 
 ## 6. 配置
 
-四个键在启动时读一次（非热读，改了要重启），归 `pending_restart`：
+五个键在启动时读一次（非热读，改了要重启），归 `pending_restart`：
 
 | 键 | 默认值 | 合法范围 | 谁在用 |
 |---|---|---|---|
@@ -106,6 +131,7 @@
 | `minutes.chunk_lines` | `100` | 整数 `10–1000` | 每块行数（与 V1 那套切块口径同值） |
 | `minutes.max_segments` | `8` | 整数 `1–20` | 每条 source 的分段上限，契约校验与提示词都用它 |
 | `minutes.timeout_seconds` | `14400` | 整数 `60–86400` | 一次生成的墙钟上限（默认四小时：会后时间宽裕换质量，但它仍然要有一个上限） |
+| `minutes.dsh_url` | `http://127.0.0.1:3080` | 任意非空字符串 | 拉起之前探的那台 DSH web 服务端的地址（与 `summary.base_url` 同一条口径：本层不校验 URL 形状，探不通就落回 headless 分支）。默认值就是 `dsh web` 的默认监听地址 |
 
 `minutes.hook` 是一个**可空键**，而且 `null` 在它身上是一个**取值**：配置文件里写 JSON 的 `null` 就是「关掉自动跑」，解析层看到它直接落缺席档，不会退回 `auto`。（写字符串 `"null"` 同解；空字符串不合法。）这一档与两个设备键的「没配」各走各的一支。
 

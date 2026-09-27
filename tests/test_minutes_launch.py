@@ -43,10 +43,10 @@ from meeting.minutes.launch import (
     PROMPT_POINTER,
     UNKNOWN_HEADING,
     check_final_artifact,
+    configured_branch,
     find_executable,
     launch_headless,
     render_command,
-    resolve_branch,
 )
 from meeting.minutes.prompt import DEFAULT_TEMPLATE
 
@@ -525,13 +525,18 @@ def test_the_child_env_has_the_three_explicit_values() -> None:
     assert env["PATH"] == "x", "父进程的环境要原样带过去"
 
 
-def test_every_branch_lands_on_headless() -> None:
-    """`auto` / `web` / `headless` 三种取值本轮都落 headless（spec 的三条实测理由）。"""
+def test_configured_branch_keeps_the_configured_word() -> None:
+    """`configured_branch()` 只校验取值域、**原样交回**配置里那个词。
+
+    它给的是「拉起方建线程之前落的那一版 `running`」用的那一格：那一刻还没探 DSH web
+    服务端在不在跑，因此那一版记的就是配置里写的词；`runner` 探完之后落的下一版才记
+    实际走的那一条（`web` / `headless`）。
+    """
     for configured in ("auto", "web", "headless", None):
-        assert resolve_branch(configured) == "headless"
+        assert configured_branch(configured) == (configured or "auto")
 
     with pytest.raises(launch_module.LaunchError, match="启动分支"):
-        resolve_branch("gui")
+        configured_branch("gui")
 
 
 def test_find_executable_reports_what_which_found() -> None:

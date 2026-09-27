@@ -4,11 +4,12 @@
 本文件里那道 5 秒看门是分档能落在**文件粒度**上的前提：没有任何一条用例能超过 5 秒，所以
 「慢」来自文件层面的真子进程与真墙钟等待，标记因此加在文件头（`pytestmark = pytest.mark.slow`）。
 
-本文件装两样东西：下面的**九个夹具**与**六道 autouse 安全兜底**（`_no_real_browser` /
+本文件装两样东西：下面的**九个夹具**与**七道 autouse 安全兜底**（`_no_real_browser` /
 `_no_real_audio_capture` / `_no_real_minutes_session` / `_no_real_model_call`，第五道
 **PATH 守卫** —— 会话级的 `_no_real_dsh_on_path` 与用例级的 `_no_real_dsh_launch` 两条夹具
 合起来构成它，见下文那一节；第六道 **真家目录守卫** —— 会话级的
 `_no_writes_to_the_real_home` 与用例级的 `_no_writes_to_the_real_home_case` 合起来构成它，
+见下文那一节；第七道 **真实 DSH web 服务端守卫** —— `_no_real_dsh_web_call`，
 见下文那一节），以及 pytest hook（`pytest_addoption` 注册 `--regen-contract`；耗时看门那两个
 hook 在文末；`pytest_sessionfinish` 是 PATH 守卫与真家目录守卫的收场复查）。**hook 不属于
 夹具语义**，它们在这里的唯一理由是 pytest 只认 conftest / 插件里的 `pytest_addoption`
@@ -800,6 +801,74 @@ def _no_real_model_call(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
 
 
 # ---------------------------------------------------------------------------
+# 安全兜底：会后纪要的 web 分支只许打假端点（**第七道**：绝不真往机主那台 DSH 上交接）
+# ---------------------------------------------------------------------------
+
+
+#: 真实 DSH web 服务端的缺省端口（`meeting/minutes/dsh_web.py::DEFAULT_DSH_URL` 的那一格）。
+#:
+#: **回环在这一次不能当放行判据**：真实那台服务就跑在本机回环上（`127.0.0.1:3080`），而用例的
+#: 假端点起在回环的**临时端口**上 —— 判据因此是「回环 **且** 端口不是这一个」。
+REAL_DSH_WEB_PORT = 3080
+
+#: 被拦下时那句话（点名「这是测试兜底拦的」，与真实模型调用那道同一个口径）
+REAL_DSH_WEB_CALL_FORBIDDEN_MESSAGE = "这是测试兜底拦下的真实 DSH web 调用"
+
+
+class RealDshWebCallForbidden(RuntimeError):
+    """**看门抛的异常**：会后纪要的 web 分支要往真实的 DSH web 服务端发请求时当场抛出。
+
+    **拦下之后这一趟照常往下走**：`runner._probe_web()` 把探针抛出的异常按「DSH web 没在跑」
+    处理，那些忘了注入 `probe` 的用例于是落回现成的 headless 分支（它们本来就是那么写的形态）。
+    """
+
+
+def _url_port(url: str) -> int | None:
+    """URL 里的端口（畸形 URL 或没写端口时交回 `None`）。"""
+    import urllib.parse
+
+    try:
+        return urllib.parse.urlsplit(str(url)).port
+    except ValueError:  # pragma: no cover - 畸形 URL 一律按「不是假端点」处理
+        return None
+
+
+@pytest.fixture(autouse=True)
+def _no_real_dsh_web_call(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
+    """**autouse 兜底**：会后纪要的 web 分支只许打「回环上的假端点」，真实那台当场拦下。
+
+    打桩落在 `meeting/minutes/dsh_web.py` **唯一**的 HTTP 出口 `_post_json()` 上：包装函数先按
+    目标地址判 —— 回环**且**端口不是 `REAL_DSH_WEB_PORT` 的原样交给真实现（用例起在临时端口上的
+    假端点因此照常工作）；其余记一笔进返回值并抛 `RealDshWebCallForbidden`。
+
+    为什么必须有这一道：`minutes.dsh_url` 的缺省值就是**真实地址**（`http://127.0.0.1:3080`），
+    而 `runner.run()` 在拉起之前**一定会探一次**、探到在跑就会**真的交接**。少了这道网，
+    一条忘了注入假件的用例会在机主开着 DSH GUI 时往那台服务上建真工作区、真会话、发真提示词
+    —— 那是真花钱、也真在用户的 GUI 里落东西。返回值是被拦下的地址清单，用例要断言
+    「拦的是哪一个」时读它。
+
+    **拦下之后按「DSH web 没在跑」算**（探针捕获异常 → 交回 False → 走 headless 分支）：
+    这正是那些没打算验 web 分支的用例要的形态，它们一行都不用改。
+    """
+    from meeting.minutes import dsh_web
+
+    blocked: list[str] = []
+    real_post = dsh_web._post_json
+
+    def guarded(url: str, method: str, payload: bytes, cookie: str, timeout: float) -> Any:
+        target = str(url)
+        if is_local_endpoint(target) and _url_port(target) != REAL_DSH_WEB_PORT:
+            return real_post(url, method, payload, cookie, timeout)
+        blocked.append(target)
+        raise RealDshWebCallForbidden(
+            f"{REAL_DSH_WEB_CALL_FORBIDDEN_MESSAGE}（被拦下的请求：{target}）"
+        )
+
+    monkeypatch.setattr(dsh_web, "_post_json", guarded)
+    yield blocked
+
+
+# ---------------------------------------------------------------------------
 # 五个夹具
 # ---------------------------------------------------------------------------
 
@@ -919,7 +988,7 @@ def _restore_effective_config() -> Iterator[None]:
     与 `_isolated_home` 配对：家目录隔离挡住「读到机主那一份」，这一条挡住「读到之后不还」。
     `post()` 的配置前奏会把 `config.set_current(loaded)` 设成模块级的，而**它是进程级全局**：
     用例不还原，它的取值就跟着后面每一条用例走（实测后果是 `minutes.hook = "null"` 串档，
-    24 条用例倒在 `resolve_branch()` 上）。这里在**每一条用例**开工时记下当时的生效配置、
+    24 条用例倒在 `configured_branch()` 上）。这里在**每一条用例**开工时记下当时的生效配置、
     收场时放回，任何一条用例的现场因此都渗不出去。
 
     `app_client()` / `dev_runtime` 这些夹具自己也会还原（那一层不动），本夹具是**兜底**那

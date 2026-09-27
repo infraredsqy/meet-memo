@@ -80,14 +80,19 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 **会后纪要**：离线转写那一趟跑完（三份产物 + `meeting_offline_status.json` 落到终态）之后，
 `minutes.hook` 那一层会自动接着跑一次纪要生成 —— 产物是**场次目录根**的 `meeting_final.md`
 （纪要正文 + 说话人附录，附录里写清每个人名的依据与把握，猜不出的单列一节），
-状态在 `meeting_minutes_status.json`（`running` / `done` / `failed` + 原因 + 档位 + 启动分支），
-中间产物与那一次运行的 stdout / stderr 在 `working/` 下（`inputs.json`、`<source>/chunks/`、
+状态在 `meeting_minutes_status.json`（`running` / `done` / `failed` / `delivered` + 原因 + 档位 +
+实际走的启动分支），中间产物与那一次运行的账在 `working/` 下（`inputs.json`、`<source>/chunks/`、
 `run_prompt.md`、`minutes-run.log`）。这一层跑砸了不影响离线那三份产物。
-不想要它自动跑就把 `minutes.hook` 写成 `null`（改完要重启）；每块行数、分段上限与
-一次运行的墙钟上限分别由 `minutes.chunk_lines` / `minutes.max_segments` /
-`minutes.timeout_seconds` 定（四个键都收在 `settings_update` 的 `pending_restart` 那一档里）。
-这一趟是 headless 的一锤子买卖：`dsh --profile headless` 的
-回合结束进程就退出，因此产物校验（纪要存在、带附录、附录里真有数据行）不过就算这一趟失败。
+不想要它自动跑就把 `minutes.hook` 写成 `null`（改完要重启）；每块行数、分段上限、
+一次运行的墙钟上限与那一台 `dsh web` 服务端的地址分别由 `minutes.chunk_lines` /
+`minutes.max_segments` / `minutes.timeout_seconds` / `minutes.dsh_url` 定
+（五个键都收在 `settings_update` 的 `pending_restart` 那一档里）。
+拉起之前先探一次 `minutes.dsh_url`（默认 `http://127.0.0.1:3080`，就是 `dsh web` 的默认地址）：
+**在跑**就把这一场交付给它 —— 经 `/api` 在场次目录对应的那个工作区里建会话、把提示词全文送进去，
+**投递成功即算交付完成**，状态记 `delivered`，后面的活不归这一层管（它不等 DSH 那边写完、
+也不校验产物；产物在 DSH 界面的那条会话里看得见）；**没在跑**才落回 headless 那一趟 ——
+`dsh --profile headless` 的回合结束进程就退出，那一趟会等子进程退出、再按四条判据校验产物
+（纪要存在、带附录、附录里真有数据行），验不过就记 `failed`，验过了才是 `done`。
 它吃什么、经哪几步出一份纪要、怎么手动跑一遍（`python -m meeting.minutes chunk|prompt|check`），
 见 `docs/minutes.md`。
 
@@ -174,6 +179,9 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 | `2` | 端口被占（已有 meeting 服务 / 别的程序占着）；用法错误；配置值非法 |
 | `3` | 启动前提不成立（`config.json` 损坏、主 log 不可写） |
 | `130` | **收尾中途第二次 `Ctrl+C`**：立即中止，盘上 `interrupted: true`、**绝不写 `done`** |
+
+纪要那一层落在 `failed` 才算 `1`；落在 **`delivered`**（已经交付给 DSH web 服务端）按成功算 ——
+交付这一步做成了，后面的活不归这一层管。
 
 `Ctrl+C` 的两阶段语义：第一次收尾（与 `stop` 同一条路径，页面看得见「收尾中」），
 收尾落定后关停；第二次立即中止（先落盘、再 `cancel()` 收尾协程）。

@@ -158,10 +158,16 @@ DEFAULT_VALUES: dict[str, Any] = {
     #     取值域与 `contract.DEFAULT_MAX_SEGMENTS` 那一档一致。
     #   - `minutes.timeout_seconds`：一次纪要生成的墙钟上限。默认四小时 —— R8 的「会后时间
     #     宽裕换质量」意味着这一趟可以挂到第二天早上，但它仍然要有一个上限。
+    #   - `minutes.dsh_url`：DSH **web 服务端**的地址（不是 `dsh` 可执行文件那一头）。
+    #     它在跑时这一场走「交付」那条路：经 `/api` 在**场次目录对应的那个工作区**里建会话、
+    #     送入提示词全文，终态记 `delivered`（投递 accepted 即算交付完成）；没在跑才落回
+    #     本进程自己起的 headless 子进程（等它退出并按四条判据校验产物）。默认值就是
+    #     `dsh web` 的默认监听地址。
     "minutes.hook": "auto",
     "minutes.chunk_lines": 100,
     "minutes.max_segments": 8,
     "minutes.timeout_seconds": 14400,
+    "minutes.dsh_url": "http://127.0.0.1:3080",
     # 会中总结这一层的七个键（`1987cb20` phase1 定名，与 `post.*` / `minutes.*` 同形：
     # 「接口留在这里，值归选型节点」）。四件套 + 预算三件套：
     #   - `summary.base_url` / `summary.model`：端点地址与模型名。默认值取本机验收时
@@ -252,6 +258,10 @@ STRING_LIMITS: dict[str, tuple[str, ...] | None] = {
     # （`auto` / `null` / `dev` / `module:Class`）。它是**可空键**（见 `NULLABLE_KEYS`）：
     # 配置文件里写 JSON 的 `null` 就是「不自动跑」，与写字符串 `"null"` 同解。
     "minutes.hook": BACKEND_SELECTORS,
+    # 会后纪要那一层的 web 分支（`41465462` 的后续增量）：DSH web 服务端的地址。
+    # 任意非空字符串（与 `summary.base_url` 同一条口径：本层不校验 URL 形状，
+    # 探针探不通就落回 headless 分支，不留半条路）。
+    "minutes.dsh_url": None,
     # 会后离线这一层（`7c6952e5`）：
     #   - `post.engine` 与三个后端选择键同形（`auto` / `null` / `module:Class`）；
     #   - `post.model` 收 HF 仓库 id 或本地快照绝对路径（`None` = 任意非空字符串）；

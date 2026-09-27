@@ -273,20 +273,22 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 | 文件 | 内容 | 读者 |
 |---|---|---|
 | `meeting_final.md`（**场次目录根**） | 纪要正文 + `## 说话人附录`（附录里逐行写人名、把握与依据，猜不出的单列一节） | 人 |
-| `meeting_minutes_status.json` | 状态文件：`running` / `done` / `failed`，外加 `mode` / `branch` / `started_at` / `finished_at` / `error` / `artifacts` / `dsh` | 下游程序 |
+| `meeting_minutes_status.json` | 状态文件：`running` / `done` / `failed` / `delivered`，外加 `mode` / `branch` / `started_at` / `finished_at` / `error` / `artifacts` / `dsh` | 下游程序 |
 | `meeting_minutes_status.lock` | **瞬态**的 claim 锁：只盖住「读一遍现状 + 写一版 `running`」那一小段，写完就删掉。**它不是产物**（进程被强杀时可能留一份残锁，下一趟按有界等待兜住）；上面那张产物清单里因此没有它的位置 | 拉起方自己 |
 | `working/inputs.json` | 输入清单：这一场有哪几条转写、每条几行、走的是哪一档 | 程序 + 人 |
 | `working/<source>/chunks/chunk_NN.md` + `working/<source>/00_index.md` | 按行切出来的块（默认 100 行一块）与行号区间表（`total_lines` / `chunk_size` / `chunk_count` 与每块的闭区间） | DSH 子会话 |
 | `working/segment-*.md`、`working/segmentation.json` | 逐段总结与分段方案（子会话产出，一份方案覆盖一到两条输入、每条段带 `source`） | DSH 子会话 |
-| `working/run_prompt.md`、`working/minutes-run.log` | 那一次运行的提示词正文与子进程的 stdout / stderr | 排查现场 |
+| `working/run_prompt.md`、`working/minutes-run.log` | 那一次运行的提示词正文，以及这一趟留下的账：headless 那一趟是子进程的 stdout / stderr，web 那一趟是三步 RPC 的请求与应答摘要 | 排查现场 |
 
 - **起线程就返回，不占收尾预算**：它炸了不带走进度更早的产物，`meeting_offline_status.json` 与那三份离线产物一个字节都不改（`try/except BaseException` 兜住，只记主 log 一条）。
-- **`branch` 记实际走的那一条**：`auto` / `web` / `headless` 三种取值本轮都落 headless 子进程，配置里写 `web` 而实际走了 headless 时这一格记 `headless`。web 分支没有实现（V1 那套在 DSH 0.1.5-rc.2 上已失效），是明确不做的一项。
-- **状态文件拉起 DSH 之前先落一份 `running`**（`finished_at` 是空串）：这一版由拉起方在建线程**之前**同步落（`meeting/minutes/status.py` 的 `mark_running()`），终局那一趟覆盖它，进程被杀时钩子把它补成 `failed`，这一格不会永远停在 `running`。盘上已经停着一版 `running` 时，`launch()` 当场抛 `AlreadyRunningError`、不拉起第二个子会话（`--force` 是出路）；那一版落盘用一把 **claim 锁**（瞬态文件 `meeting_minutes_status.lock`）把「读现状 + 写 running」裹成跨进程原子的一段，**锁不在产物清单里**，见 `docs/minutes.md` 第 1.1 节。
+- **两条分支：探一次 DSH web 服务端，在跑就交付、没在跑才自己起子进程**。拉起之前先探 `minutes.dsh_url` 指的那台（`meeting/minutes/dsh_web.py` 的 `probe()`：先 TCP，再发一次只读、无参数的 RPC 确认协议与鉴权）：**在跑**走 web 分支，把这一场经 `/api` 交付给 DSH web 服务端（三步：`workspace/create` → `session/create`（只带 `workspaceId`）→ `session/prompt` 送提示词全文），**投递 accepted 即算交付完成**，终态记 **`delivered`**；**没在跑**才落回现成的 headless 分支（`launch.launch_headless()`：等子进程退出 + 四条判据校验产物，终态 `done` / `failed`）。走哪一条由探针当场答，**`minutes.hook` 里写 `web` 或 `headless` 都改不了它** —— 配置里那个词只是记在「在飞」那一版上（见下一格）。
+- **`branch` 记实际走的那一条，但「在飞」那一版是例外**：终局那一版记 `web`（交付给 DSH web 服务端）或 `headless`（本进程自己起的子进程）；**拉起方在建线程之前落的那一版 `running` 记的是配置里写的那个词**（`launch.configured_branch()` 校验取值域后原样交回 `auto` / `web` / `headless`）—— 那一刻还没探，配置里写 `web` 而那一台没在跑时，读终局那一版才看得到实际落的是 `headless`。
+- **`delivered` 与 `done` 的分工**：`done` 是「纪要认真校验过、产物在盘上」（headless 那一趟走的四条判据）；`delivered` 是「投递成功了，产物还没（或者不会）经这一层校验」—— 这一层**不等** DSH 那边把纪要写完、也不校验产物，**停不停 DSH 是用户的事**。读方按**产物**判「这一场补不补跑」（`meeting_final.md` 过四条判据就是已完成，终态落在 `done` 与 `delivered` 哪一档都算），按 `delivered` / `running` 判「这一场已经交付过、别再拉起第二个会话」（`meeting post` 的重复拉起闸把这两档并列，`--force` 是重新交付的出路）。
+- **状态文件拉起 DSH 之前先落一份 `running`**（`finished_at` 是空串）：这一版由拉起方在建线程**之前**同步落（`meeting/minutes/status.py` 的 `mark_running()`），终局那一趟覆盖它，进程被杀时钩子把它补成 `failed`，这一格不会永远停在 `running`。盘上已经停着一版 `running` 时，`launch()` 当场抛 `AlreadyRunningError`、不拉起第二个子会话（`--force` 是出路）—— 这一版里的 `branch` 记的是**配置里写的那个词**（那一刻还没探 DSH web 服务端），实际走的那一条由终局那一版覆盖；那一版落盘用一把 **claim 锁**（瞬态文件 `meeting_minutes_status.lock`）把「读现状 + 写 running」裹成跨进程原子的一段，**锁不在产物清单里**，见 `docs/minutes.md` 第 1.1 节。
 - **再入闸那一趟不写状态文件**：环境里有 `MEETING_MINUTES_CHILD=1`（这一趟是 DSH 子会话自己）时 `runner.run()` 当场返回 `skipped`，盘上那份状态文件归父进程那一趟所有。
-- **读方对不认识的 `schema_version`、缺 `state`、`state` 不在三档里一律拒收**，不猜；写盘与离线那一份同档：原子替换。
+- **读方对不认识的 `schema_version`、缺 `state`、`state` 不在四档里一律拒收**，不猜；写盘与离线那一份同档：原子替换。（再入闸那一趟的 `skipped` 只出现在返回值里，它不落盘，读方那四档因此一个字不动。）
 - **输入四档**：两条都在（`both`）/ 只有会中临时稿（`live_only`）/ 只有会后权威稿（`offline_only`）都照常出纪要；两个来源一条都没有（`none`）那一档**不启动 DSH**、状态记 `failed` + 原因。附录只写有依据的话：某一路缺了带聚类编号的那份稿时，如实写「这一路分不出个人」，不为任何人名给出推断。
-- **产物四条判据**：纪要文件非空、写着 `## 说话人附录`、写着 `### 猜不出的`、附录那一节里有一张真有数据行的表 —— 缺一条这一趟就是 `failed`，退出码 0 不算数。
+- **产物四条判据只归 headless 那一趟**：纪要文件非空、写着 `## 说话人附录`、写着 `### 猜不出的`、附录那一节里有一张真有数据行的表 —— 缺一条这一趟就是 `failed`，退出码 0 不算数（见 `docs/minutes.md` 第 5 节）。web 分支交付即完事，这四条一条都不跑，终态记 `delivered`。
 
 那一层吃什么、经哪几步出一份纪要、怎么手动跑一遍，见 `docs/minutes.md`。
 

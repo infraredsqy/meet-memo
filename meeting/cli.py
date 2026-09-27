@@ -100,6 +100,12 @@ LAYER_UNKNOWN = "unknown"
 #: 两层共用的「上一趟还在跑 / 崩在半路」那一档（`meeting post` 默认拒跑的那一档）
 LAYER_RUNNING = "running"
 
+#: 纪要那一层独有的**第四档**：已交付 DSH web 服务端生成、产物还没落。
+#:
+#: 它既不是 `running`（本进程没有线程在跑）也不是 `done`（产物还没经四条判据），因此
+#: 单独给一个词：读方按它判「这一场已经交付过、别再拉起第二个会话」，按产物判「完成没有」。
+LAYER_DELIVERED = "delivered"
+
 #: 纪要那一层的产物名（场次目录根）：终态状态文件与纪要本体
 MINUTES_FINAL_NAME = "meeting_final.md"
 
@@ -582,12 +588,19 @@ def run_post(
     minutes_baseline = _minutes_baseline(directory)
     offline_running = _layer_is_running(offline_status, ("state",))
     minutes_running = _layer_is_running(minutes_status, ("state",))
-    if not force and (offline_running or minutes_running):
+    # **已经交付过**（web 分支的终态 `delivered`、产物还没落）：这一趟也不拉起第二个会话 ——
+    # 再拉一趟只会让同一场生成两遍。它与 `running` 那一档的区别是「上一趟还在不在跑」：
+    # 交付那条路的语义是「投递即完事」，这一层不去猜 DSH 那边写没写完。
+    minutes_delivered = _minutes_is_delivered(minutes_status)
+    if not force and (offline_running or minutes_running or minutes_delivered):
         result["offline"] = _skipped_offline_outcome(
             directory, offline_status, running=offline_running
         )
         result["minutes"] = _skipped_minutes_outcome(
-            directory, minutes_status, running=minutes_running
+            directory,
+            minutes_status,
+            running=minutes_running,
+            delivered=minutes_delivered,
         )
         result["artifacts"] = _artifact_paths(directory)
         # 退出码**不在这里定**：`_summarize_run()` 按两层的结论与归档那一层一起判
@@ -900,6 +913,9 @@ def _settled_minutes_outcome(
 
       - `done` 且产物过判据 → 这一层这一趟真的跑完并交出了产物（成功档）；
       - `done` 而产物没过那四条判据 → 这一层没交出纪要，如实记失败（**两半判据缺一不可**）；
+      - `delivered` → **已交付 DSH web 服务端生成**：这一层的活到此为止，产物还没（或者
+        不会）经这一层的四条判据校验 —— 交付那条路的语义就是「投递即完事」，因此这一档
+        **不按失败算、也不等产物**（产物在 DSH GUI 那条会话里看得见）；
       - `failed` / 状态文件读不动 → 照它自己那一档如实记（`hook` / `state` / `reason` 原样带上）；
       - 到上界还没落定 → `timeout` 那一档：如实报「还没跑完」，不谎报成功、也不写成 `failed`。
 
@@ -908,7 +924,17 @@ def _settled_minutes_outcome(
     """
     waited = _wait_for_settled_minutes(directory, baseline=baseline, deadline=deadline)
     row = dict(waited)
-    if str(row.get("state") or "") == LAYER_DONE and not _minutes_layer_done(directory):
+    state = str(row.get("state") or "")
+    if state == LAYER_DELIVERED:
+        row.update(
+            hook=LAYER_DELIVERED,
+            state=LAYER_DELIVERED,
+            reason=(
+                "已交付 DSH web 服务端生成（meeting_final.md 还没落盘）：这一层的活到此为止，"
+                "产物在 DSH GUI 那条会话里看得见"
+            ),
+        )
+    elif state == LAYER_DONE and not _minutes_layer_done(directory):
         row.update(
             hook="finished",
             state=LAYER_FAILED,
@@ -966,19 +992,37 @@ def _skipped_offline_outcome(
 
 
 def _skipped_minutes_outcome(
-    directory: Path, status: dict[str, Any], *, running: bool
+    directory: Path, status: dict[str, Any], *, running: bool, delivered: bool = False
 ) -> dict[str, Any]:
-    """纪要段这一趟不跑时的结论（`running` 拒跑那一档用）。"""
+    """纪要段这一趟不跑时的结论（`running` 拒跑那一档与「已交付、不重复拉起」那一档共用）。"""
     final_path = directory / MINUTES_FINAL_NAME
+    if running:
+        hook, reason = LAYER_RUNNING, _running_reason(directory, status)
+    elif delivered:
+        hook, reason = LAYER_DELIVERED, _delivered_reason(directory, status)
+    else:
+        hook, reason = LAYER_ABSENT, None
     return {
-        "hook": LAYER_RUNNING if running else LAYER_ABSENT,
+        "hook": hook,
         "state": status.get("state"),
-        "reason": _running_reason(directory, status) if running else None,
+        "reason": reason,
         "status_path": str(directory / offline_runner.MINUTES_STATUS_NAME),
         "final": str(final_path) if final_path.is_file() else None,
         "waited_seconds": 0.0,
         "skipped": True,
     }
+
+
+def _delivered_reason(directory: Path, status: dict[str, Any]) -> str:
+    """「已交付、这一趟不重复拉起」那一档的提示：点名会话与出路（`--force`）。"""
+    dsh = status.get("dsh")
+    session_id = str(dsh.get("session_id") or "") if isinstance(dsh, dict) else ""
+    where = f"（DSH 会话 {session_id}）" if session_id else ""
+    return (
+        f"{offline_runner.MINUTES_STATUS_NAME} 停在 {LAYER_DELIVERED}：这一场已经交付 "
+        f"DSH web 服务端生成{where}，而 {MINUTES_FINAL_NAME} 还没落盘 —— "
+        "这一趟不再拉起第二个会话；要重新交付加 --force"
+    )
 
 
 def _finished_offline_outcome(directory: Path, status: dict[str, Any]) -> dict[str, Any]:
@@ -1003,11 +1047,15 @@ def _finished_offline_outcome(directory: Path, status: dict[str, Any]) -> dict[s
 
 
 def _finished_minutes_outcome(directory: Path, status: dict[str, Any]) -> dict[str, Any]:
-    """「无待办」那一档里纪要段的结论（终态 `done` + 产物过判据，不拉起子会话）。"""
+    """「无待办」那一档里纪要段的结论（产物过判据，不拉起子会话）。
+
+    `state` 那一格**照盘上那一份如实报**：产物过判据可能是 `done`（headless 那一趟校验过），
+    也可能是 `delivered`（web 分支交付过、DSH 那边写完了）—— 这里不替它改词。
+    """
     final_path = directory / MINUTES_FINAL_NAME
     return {
         "hook": "already_done",
-        "state": "done",
+        "state": str(status.get("state") or LAYER_DONE),
         "reason": "纪要已是终态且 meeting_final.md 过得了那四条判据，不再拉起子会话",
         "status_path": str(directory / offline_runner.MINUTES_STATUS_NAME),
         "final": str(final_path) if final_path.is_file() else None,
@@ -1027,6 +1075,17 @@ def _running_reason(directory: Path, status: dict[str, Any]) -> str:
 def _layer_is_running(status: dict[str, Any], keys: tuple[str, ...]) -> bool:
     """这一层的状态文件是不是停在 `running`（上一趟还在跑 / 崩在半路留在那一档）。"""
     return any(str(status.get(key) or "") == LAYER_RUNNING for key in keys)
+
+
+def _minutes_is_delivered(status: dict[str, Any]) -> bool:
+    """纪要这一层是不是**已经交付给 DSH web 服务端**（终态 `delivered`）。
+
+    web 分支的语义是「投递 accepted 即算交付完成」：交付那一版状态就此留在盘上，
+    产物由 DSH 那边写。这一档因此既不算「正在跑」（没有本进程的线程在跑），也不算
+    「已完成」（产物还没经这一层的四条判据）—— 它是**第三种**「不必再拉起」的情形：
+    已经交付过，重复拉起只会让同一场生成两遍（`--force` 是重新交付的出路）。
+    """
+    return str(status.get("state") or "") == LAYER_DELIVERED
 
 
 def _missing_names(directory: Path, names: Iterable[str]) -> list[str]:
@@ -1078,13 +1137,19 @@ def _minutes_status(directory: Path) -> dict[str, Any]:
 
 
 def _minutes_layer_done(directory: Path, status: dict[str, Any] | None = None) -> bool:
-    """纪要段是不是**已经完成**：状态文件 `done` **且** `meeting_final.md` 过四条判据。
+    """纪要段是不是**已经完成**：`meeting_final.md` 过得了那四条判据。
+
+    **判据只看产物，不看状态那一格**：`done`（headless 那一趟校验过）与 `delivered`
+    （web 分支交付过、DSH 那边写完了）两种终态都可能对应「产物已经在盘上」，因此
+    「这一场要不要补跑」由这四条判据回答。状态那一格管的是另外两件事：`running`
+    （上一趟还在跑，拒跑）与 `delivered` 而产物还没落（已经交付过，不重复拉起）。
 
     产物那四条判据**复用现成的**（`minutes/launch.py::check_final_artifact()`，函数体内
     import），不在这里重写一份。
     """
     document = _minutes_status(directory) if status is None else status
-    if str(document.get("state") or "") != LAYER_DONE:
+    if str(document.get("state") or "") in (LAYER_RUNNING, LAYER_FAILED):
+        # 停在 running / failed 的那一份谈不上「完成」（`failed` 那一档要让它再试）
         return False
     try:
         from meeting.minutes.launch import check_final_artifact
@@ -1481,10 +1546,23 @@ def _minutes_from_launcher(
     if hook == "already_done":
         result.update(
             hook=hook,
-            state="done",
+            # `state` 照盘上那一份如实报（`done` 或 `delivered` 都可能落进这一档）
+            state=str(_minutes_status(directory).get("state") or LAYER_DONE),
             announced=False,
             reason=outcome.get("reason") or result["reason"],
         )
+    elif hook == LAYER_DELIVERED:
+        # **这一场已经交付过**（盘上那一版状态停在 `delivered`、产物还没落）：
+        # `_minutes_gate()` 据此没有拉起第二个会话。结论与「进门前就撞上 delivered」
+        # 那一档同格（`_skipped_minutes_outcome()`：`hook = delivered`）。
+        result.update(
+            _skipped_minutes_outcome(
+                directory, _minutes_status(directory), running=False, delivered=True
+            )
+        )
+        result["launcher"] = "product"
+        result["announced"] = False
+        result["reason"] = outcome.get("reason") or result.get("reason")
     elif hook == LAYER_RUNNING:
         # **这一场已经在飞了**（`minutes.status.mark_running()` 的 claim 读到盘上那一版
         # `running`）：`launch()` 当场拒了这一次拉起，这一趟没有起线程、没有拉起子会话。
@@ -1754,13 +1832,16 @@ def _minutes_exit_code(minutes: dict[str, Any]) -> int:
     """纪要那一层值不值得让这一趟以 `EXIT_FAILURE` 收场。
 
     「这一场本来就没打算出纪要」（`minutes.hook` 缺席）与「子会话闸拦下了」（`skipped`）
-    两档都按成功算；等超时、状态文件读不动、以及真实的 `failed` 三档如实记失败。
+    两档都按成功算；**「已交付 DSH web 服务端」（`delivered`）也按成功算** —— 交付这一步
+    做成了，后面的活不归这一层管；等超时、状态文件读不动、以及真实的 `failed` 三档如实记失败。
     """
     hook = minutes.get("hook")
     state = minutes.get("state")
     if hook == "already_done":
         return EXIT_OK
     if hook in ("absent", "skipped"):
+        return EXIT_OK
+    if hook == LAYER_DELIVERED or state == LAYER_DELIVERED:
         return EXIT_OK
     if hook in ("unreadable", "timeout"):
         return EXIT_FAILURE

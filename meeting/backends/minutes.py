@@ -103,16 +103,18 @@ class MinutesHook:
         """把「这一层在飞」写到盘上（**函数体内 import**：本模块顶层只有标准库）。
 
         `branch` 取 `minutes.hook` 的生效取值映射出来的那一条（与线程体那一版同一个求法，
-        因此两版只差 `mode` / `artifacts` / `dsh` 那几格的真值）；已经有一版 `running`
-        在盘上、而这一趟又没带 `--force` 时，`mark_running()` 抛 `AlreadyRunningError`，
-        这里**原样上抛**：拒绝这一趟就是它的语义，调用方据此按拒跑档收场。
+        因此两版只差 `mode` / `artifacts` / `dsh` 那几格的真值）：**那一刻还没探 DSH web
+        服务端在不在跑**，因此这一版记的是配置里写的那个词，`runner` 探完之后落的下一版
+        才记实际走的 `web` / `headless`。已经有一版 `running` 在盘上、而这一趟又没带
+        `--force` 时，`mark_running()` 抛 `AlreadyRunningError`，这里**原样上抛**：
+        拒绝这一趟就是它的语义，调用方据此按拒跑档收场。
         """
         from meeting.minutes import launch as launch_module
         from meeting.minutes import status as status_module
 
         status_module.mark_running(
             session_dir,
-            branch=launch_module.resolve_branch(minutes_hook_selector()),
+            branch=launch_module.configured_branch(minutes_hook_selector()),
             force=force,
         )
 

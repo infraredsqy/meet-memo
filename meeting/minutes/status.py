@@ -8,15 +8,21 @@
 
   - 顶层必填 `schema_version` / `session_id` / `state` / `mode` / `branch`；
   - 写盘**原子替换**（半份状态文件比晚一点落地坏得多：界面随时可能在读它）；
-  - 读方对**不认识的 `schema_version`**、缺 `state`、`state` 不在三档里一律拒收，**不猜**。
+  - 读方对**不认识的 `schema_version`**、缺 `state`、`state` 不在四档里一律拒收，**不猜**。
 
-三档状态与 `meeting/backends/post.py` 的 `STATE_RUNNING` / `STATE_DONE` / `STATE_FAILED`
+四档状态与 `meeting/backends/post.py` 的 `STATE_RUNNING` / `STATE_DONE` / `STATE_FAILED`
 **同名同义**：一份纪要的生成是一次「跑起来 → 跑完 / 跑砸」的活，与后端的账目对齐，
-下游（`meeting post` 与界面）因此只有一套词要认。
+下游（`meeting post` 与界面）因此只有一套词要认。第四档 `delivered` 是 web 分支那一档：
+**这一场已经交付给 DSH web 服务端去生成，后面的活不归这一层管**（用户停不停 DSH 是用户的事）
+—— 它与 `done` 的区别正在这里：`done` 说的是「纪要认真校验过、产物在盘上」，`delivered`
+说的是「投递成功了，产物还没（或者不会）经这一层校验」。读方按产物判「这一场要不要补跑」，
+按 `delivered` / `running` 判「这一场是不是已经交付过、别再拉起第二个会话」。
 
-`branch` 记的是**实际走的那一条**启动分支（不是配置里写的那个词）：`auto` / `web` 本轮都落
-headless 子进程，配置里写 `web` 而实际走了 headless 时，这一格记 `headless` —— 读状态文件的人
-据此知道这一趟到底是怎么拉起来的。
+`branch` 记的是**实际走的那一条**启动分支（不是配置里写的那个词）：走 headless 子进程时记
+`headless`，经 DSH web 服务端交付时记 `web` —— 读状态文件的人据此知道这一趟到底是怎么
+拉起来的。**在飞那一版**（`mark_running()` 落的 `running`）是个例外：那一刻还没探 DSH web
+服务端在不在，因此那一份记的是**配置里写的那个词**（`launch.configured_branch()`），
+由 `runner` 探完之后的下一版覆盖成实际的这一条。
 """
 
 from __future__ import annotations
@@ -63,20 +69,26 @@ LOCK_WAIT_SECONDS = 0.05
 #: 拉起之前那一版 `running` 里 `mode` 的取值（输入档位此刻还不知道，用现成的 `none` 档）。
 #:
 #: 状态文件里 `mode` 那一格由 `build_status()` 收下（`runner` 随后那一版会按真实输入覆盖它），
-#: 读方（`parse_status_document()`）判的是四格必填与三档取值，因此这一版照样读得回来。
+#: 读方（`parse_status_document()`）判的是四格必填与四档取值，因此这一版照样读得回来。
 MODE_UNKNOWN = MODE_NONE
 
-#: 状态只有三档（与 `meeting/backends/post.py` 的三个常量同名同义）
+#: 状态四档（前三档与 `meeting/backends/post.py` 的三个常量同名同义）
 STATE_RUNNING = "running"
 STATE_DONE = "done"
 STATE_FAILED = "failed"
-STATES: tuple[str, ...] = (STATE_RUNNING, STATE_DONE, STATE_FAILED)
+#: 第四档：**已交付 DSH web 服务端生成**（web 分支的终态）。
+#:
+#: 「投递 accepted 即算交付完成」是这一档的语义：这一层不等 DSH 那边把纪要写完，
+#: 因此**产物校验不在这条路上**。读方按产物判「要不要补跑」，按这一档判「已经交付过、
+#: 别再拉起第二个会话」（`meeting post` 的重复拉起闸）。
+STATE_DELIVERED = "delivered"
+STATES: tuple[str, ...] = (STATE_RUNNING, STATE_DONE, STATE_FAILED, STATE_DELIVERED)
 
 #: 再入闸那一档：子会话（`MEETING_MINUTES_CHILD=1`）里不再拉起 DSH，这一趟记 `skipped`
-#: （**不在三档里**：它既没有跑起来，也不算失败）。
+#: （**不在四档里**：它既没有跑起来，也不算失败）。
 #:
 #: 这一档**只出现在返回值里**：子会话不去覆盖父进程那一趟的状态文件，因此
-#: `write_status()` / `read_status()` 仍然只认上面那三档。
+#: `write_status()` / `read_status()` 仍然只认上面那四档。
 STATE_SKIPPED = "skipped"
 
 #: 启动分支：配置里的三个词（`auto` / `headless` / `web`）与实际走的两条
@@ -131,8 +143,8 @@ def build_status(
     `branch` 是**实际走的**启动分支；`dsh` 那一格记子进程的账
     （`executable` / `exit_code` / `seconds`），没拉起子进程时是空对象。
 
-    `state` 收三档之外还收 `skipped`：再入闸那一趟（子会话里）**只在返回值里**记这一档，
-    它不落盘，因此读方那三档一个字不动。
+    `state` 收四档之外还收 `skipped`：再入闸那一趟（子会话里）**只在返回值里**记这一档，
+    它不落盘，因此读方那四档一个字不动。
     """
     if state not in (*STATES, STATE_SKIPPED):
         raise StatusError(f"状态只认 {(*STATES, STATE_SKIPPED)}，收到 {state!r}")
@@ -264,7 +276,7 @@ def mark_running(
     这一趟把那一版 `running` 原子覆盖成自己的（`finished_at` 仍是空串，读方看到的还是
     「正在跑」，只是账换成了这一趟的）。
 
-    写出去的形状走现成的 `build_status()` / `write_status()`：三档取值域、四个必填字段、
+    写出去的形状走现成的 `build_status()` / `write_status()`：四档取值域、四个必填字段、
     原子替换一个字都不动，这一版与 `runner` 线程体随后落的那一版**同形**，因此线程体那一版
     是原子覆盖（幂等：谁来写都读到同一份形态）。`finished_at` 明写成空串（`runner.py` 里
     「先落 `running` 再拉起 DSH」那一段同一条口径），读方据此分得出「正在跑」。
@@ -358,6 +370,7 @@ __all__ = [
     "SCHEMA_VERSION",
     "STATES",
     "STATUS_NAME",
+    "STATE_DELIVERED",
     "STATE_DONE",
     "STATE_FAILED",
     "STATE_RUNNING",

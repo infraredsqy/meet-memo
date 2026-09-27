@@ -611,16 +611,22 @@ def test_the_real_template_carries_the_two_fixed_sections_verbatim() -> None:
     assert "\n\n### 猜不出的\n" in tail
 
 
-def test_the_real_template_keeps_the_headless_waiting_sentence_verbatim() -> None:
-    """同步等待那一句逐字在（headless 一次性语义的解法，一字不改）。"""
+def test_the_real_template_keeps_the_synchronous_waiting_rule_verbatim() -> None:
+    """同步等待那一条纪律逐字在，而且它**不绑分支**。
+
+    早先这一句写的是「本次运行是一次性 headless 会话…不会有后续唤醒」——web 分支（交付给
+    DSH web 服务端那条会话）里那句话不成立，因此改成与分支无关的写法：无论跑在一次性
+    headless 子进程里，还是 DSH GUI 里那条会话里，都要同步等所有 sub agent 交回。
+    """
     text = DEFAULT_TEMPLATE.read_text(encoding="utf-8")
     sentence = (
-        "注意：本次运行是一次性 headless 会话，你的回合结束后进程即退出，不会有后续唤醒"
-        "——所有 sub agent 必须同步等待完成，绝不在后台任务未完成时结束回合；"
+        "注意：无论这一次跑在哪一种会话里（一次性的 headless 子进程，还是 DSH GUI 里那条会话），"
+        "都要**同步等所有 sub agent 交回**再进下一阶段——绝不把活挂在后台就结束回合；"
         "全部 segment 汇总并写出 meeting_final.md 后才算完成。"
     )
 
     assert sentence in text
+    assert "你的回合结束后进程即退出" not in text, "headless 那个因果不许再写死在模板里"
 
 
 def test_the_real_template_writes_down_the_reconciliation_rule() -> None:
@@ -1002,10 +1008,11 @@ def test_the_real_template_phase_two_self_check_is_a_text_checklist() -> None:
 def test_the_rendered_prompt_keeps_the_fixed_text_and_the_waiting_sentence(
     tmp_path: Path,
 ) -> None:
-    """渲染出来的提示词里，产物校验要认的两段固定文字与「同步等待」那一句**逐字仍在**。
+    """渲染出来的提示词里，产物校验要认的两段固定文字与「同步等待」那一条纪律**逐字仍在**。
 
-    这两处是产物校验与已有用例的判据，修复轮一个字都不许动——这一条贴着**渲染产物**复查
-    （模型拿到的就是它），模板源码上的逐字断言留在第七节。
+    这两处是产物校验与已有用例的判据——这一条贴着**渲染产物**复查（模型拿到的就是它），
+    模板源码上的逐字断言留在第七节。「同步等待」那一条现在写成与分支无关的纪律
+    （headless 子进程与 DSH GUI 会话两条都要同步等），因此这里也逐字钉住那一版。
     """
     text = render_session_prompt(_write_mixed_session(tmp_path))
     skeleton = "\n".join(
@@ -1020,8 +1027,8 @@ def test_the_rendered_prompt_keeps_the_fixed_text_and_the_waiting_sentence(
         line[2:] if line.startswith("> ") else line.lstrip(">") for line in text.splitlines()
     )
     waiting = (
-        "注意：本次运行是一次性 headless 会话，你的回合结束后进程即退出，不会有后续唤醒"
-        "——所有 sub agent 必须同步等待完成，绝不在后台任务未完成时结束回合；"
+        "注意：无论这一次跑在哪一种会话里（一次性的 headless 子进程，还是 DSH GUI 里那条会话），"
+        "都要**同步等所有 sub agent 交回**再进下一阶段——绝不把活挂在后台就结束回合；"
         "全部 segment 汇总并写出 meeting_final.md 后才算完成。"
     )
 

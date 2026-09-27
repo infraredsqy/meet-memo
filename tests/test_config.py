@@ -90,12 +90,14 @@ def test_default_values_match_the_frozen_table(tmp_path, monkeypatch):
         "asr.max_new_tokens": 400,
         "asr.repeat_max_unit": 40,
         "asr.repeat_min_coverage": 0.5,
-        # 会后纪要这一层的四个开关（`41465462` phase2 定名）：钩子默认 `auto`（跟着离线
-        # 那一趟的尾巴跑）、每块 100 行、每条 source 最多 8 段、一次运行最多四小时
+        # 会后纪要这一层的五个开关（`41465462` phase2 定名 + web 分支那一个）：钩子默认
+        # `auto`（跟着离线那一趟的尾巴跑）、每块 100 行、每条 source 最多 8 段、一次运行最多
+        # 四小时、DSH web 服务端取 `dsh web` 的默认监听地址
         "minutes.hook": "auto",
         "minutes.chunk_lines": 100,
         "minutes.max_segments": 8,
         "minutes.timeout_seconds": 14400,
+        "minutes.dsh_url": "http://127.0.0.1:3080",
         # 会中总结这一层的七个键（`1987cb20` phase1 定名）：端点四件套 + 预算三件套。
         # 密钥那一格默认 `None`（没配）—— 它是**可空键**，与两个设备键同一档。
         "summary.base_url": "https://api.deepseek.com/v1",

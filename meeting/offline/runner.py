@@ -1445,23 +1445,27 @@ def _minutes_gate(
     status_reader: Any = None,
     artifact_checker: Any = None,
 ) -> dict[str, Any] | None:
-    """纪要**起跑之前**那道闸：已经跑完且产物过判据时交回 `already_done`，否则交回 `None`。
+    """纪要**起跑之前**那道闸：已经跑完且产物过判据时交回 `already_done`，
+    已经交付过而产物还没落时交回 `delivered`，其余交回 `None`（放行给启动器）。
 
-    两条判据**缺一不可**（「已完成则跳过」的两半，少了任何一半都会漏）：
+    判据**以产物为准**（`meeting_final.md` 过得了现成的四条判据
+    `minutes/launch.py::check_final_artifact()`），再按状态文件那一格分三种情形：
 
-      1. `meeting_minutes_status.json` 在场、读得回来、`state == "done"` —— 纪要那一层
-         自己写的终态。文件不在场 / 读不动 / 停在 `running` / 落 `failed` 一律按「没跑完」
-         放行给启动器（`failed` 那一档尤其不能跳过：那一趟没交出纪要，得让它再试）；
-      2. `meeting_final.md` 过得了现成的四条判据（`minutes/launch.py::check_final_artifact()`
-         逐条报出来的问题为空元组）—— 终态是 `done` 却缺产物、或产物是个空壳时，
-         这一趟照样按「缺什么补什么」重新拉一次。
+      1. 产物**过判据** → `already_done`：这一场真的完成了（终态是 `done` 还是 `delivered`
+         都算 —— `delivered` 那一档说的是「已交付」，产物落了就说明 DSH 那边写完了）；
+      2. 产物**还没落**、状态是 `delivered` → 交回 `delivered`：这一场**已经交付过** DSH web
+         服务端，它可能正在写。交付那条路的语义是「投递即完事」，这一层不去猜它写没写完；
+         但**再拉起第二个会话只会让同一场生成两遍**，因此这一档不重复拉起、如实报出去；
+      3. 其余（产物没过判据、或停在 `running` / `failed` / 压根没有状态文件）→ `None`：
+         放行给启动器，按「缺什么补什么」重新拉一次（`failed` 那一档尤其不能跳过：
+         那一趟没交出纪要，得让它再试）。
 
-    `force = True` 时**两条判据都不做**、直接交回 `None`（放行）：`--force` 的语义就是
+    `force = True` 时**上面几条都不做**、直接交回 `None`（放行）：`--force` 的语义就是
     「无视这一层的终态、重跑」（`--force` 是本轮唯一会再次花钱的开关）。
 
     判据的实现**都借现成的**：状态文件走纪要那一层自己的读方
     `minutes.status.read_status()`（逐字段校验：`session_id` / `state` / `started_at` 缺一
-    即拒收、`state` 必须在三档里、`artifacts` 必须是对象），产物校验调现成的
+    即拒收、`state` 必须在四档里、`artifacts` 必须是对象），产物校验调现成的
     `check_final_artifact()`（**两处都是函数体内 import**，本模块顶层的惰性纪律一个字不动：
     `import meeting.offline.runner` 仍然不拉 `meeting.minutes` 那一包）。
     本函数**只读盘**：不改纪要那一层任何文件，也不碰状态文件的字段与取值域。
@@ -1485,7 +1489,11 @@ def _minutes_gate(
     except Exception:  # pragma: no cover - 读不动就按「没跑完」放行，交给启动器
         _log.warning("会后纪要状态文件读不动，照常拉起：%s", status_path, exc_info=True)
         return None
-    if not isinstance(document, dict) or str(document.get("state") or "") != "done":
+    if not isinstance(document, dict):
+        return None
+    state = str(document.get("state") or "")
+    if state in ("running", "failed", ""):
+        # 没跑完 / 跑砸了 / 状态文件里那一格读不出来：放行给启动器（现状口径一个字没动）
         return None
 
     try:
@@ -1493,18 +1501,35 @@ def _minutes_gate(
     except Exception:  # pragma: no cover - 判据本身出错时同样按「没跑完」放行
         _log.warning("会后纪要产物判据跑不动，照常拉起：%s", directory, exc_info=True)
         return None
-    if missing:
-        return None
 
-    return {
-        "hook": "already_done",
-        "announced": False,
-        "state": "done",
-        "status": MINUTES_STATUS_NAME,
-        "status_path": str(status_path),
-        "final": str(directory / MINUTES_FINAL_NAME),
-        "reason": "纪要已是终态且 meeting_final.md 过得了那四条判据，不再拉起子会话",
-    }
+    if not missing:
+        return {
+            "hook": "already_done",
+            "announced": False,
+            "state": state or "done",
+            "status": MINUTES_STATUS_NAME,
+            "status_path": str(status_path),
+            "final": str(directory / MINUTES_FINAL_NAME),
+            "reason": "纪要已是终态且 meeting_final.md 过得了那四条判据，不再拉起子会话",
+        }
+
+    if state == "delivered":
+        # 已经交付过 DSH web 服务端，产物还没落：**不重复拉起**（再拉一趟会让同一场生成两遍）
+        _log.info("会后纪要已交付 DSH web 服务端（产物还没落），这一趟不再拉起：%s", session_dir)
+        return {
+            "hook": "delivered",
+            "announced": False,
+            "state": "delivered",
+            "status": MINUTES_STATUS_NAME,
+            "status_path": str(status_path),
+            "final": None,
+            "reason": (
+                "这一场已经交付 DSH web 服务端生成（meeting_final.md 还没落盘）："
+                "这一趟不再拉起第二个会话；要重新交付加 --force"
+            ),
+        }
+
+    return None
 
 
 def _read_minutes_status(path: Path) -> dict[str, Any]:

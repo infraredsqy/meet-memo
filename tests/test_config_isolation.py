@@ -13,7 +13,7 @@
     于是跟着后面每一条用例走；
   - 产品路径上 `meeting/backends/minutes.py::_mark_running()` 读的是
     `minutes_hook_selector()`（`config.get("minutes.hook")`，**无视用例对
-    `registry.resolve_minutes_hook` 的打桩**），于是 `launch_module.resolve_branch("null")`
+    `registry.resolve_minutes_hook` 的打桩**），于是 `launch_module.configured_branch("null")`
     当场抛 `LaunchError`：24 条用例（`test_minutes_runner.py` 18、
     `test_post_idempotency.py` 4、`test_minutes_evidence.py` 2）被串档打红。
 

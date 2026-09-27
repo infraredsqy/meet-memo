@@ -358,14 +358,14 @@ X-Meeting-Service: 1
 {"ok": true, "revision": 3, "applied": ["asr.timeout_seconds"], "pending_restart": []}
 ```
 
-**合法键名是逐条列出的 38 个**（不按前缀归组、没有前缀白名单）。表外的任何键名一律 `invalid_setting`(400) 且 `detail = {key, value, legal}`。
+**合法键名是逐条列出的 39 个**（不按前缀归组、没有前缀白名单）。表外的任何键名一律 `invalid_setting`(400) 且 `detail = {key, value, legal}`。
 
 | 归类 | 键（个数） | 为什么 |
 |---|---|---|
 | `applied` | `alarm.sound` / `asr.max_segment_seconds` / `asr.timeout_seconds` / `asr.max_new_tokens` / `asr.repeat_max_unit` / `asr.repeat_min_coverage`（**6 个**） | 这六个是**热读键**，写盘成功就立刻生效。`alarm.sound` 收在这一档，于是勾选出声开关**当场**改运行期行为 |
-| `pending_restart` | `web.port` / `web.dist_dir` / `output.root` / `log.level` / `log.dir` / `log.max_bytes` / `log.backup_count` / `alert.silence_dbfs` / `alert.silence_seconds` / `alert.recover_seconds` / `alert.alarm_suppress_seconds` / `heartbeat.interval_seconds` / `capture.backend` / `transcriber.backend` / `post.hook` / `post.engine` / `post.model` / `post.dtype` / `post.chunk_seconds` / `minutes.hook` / `minutes.chunk_lines` / `minutes.max_segments` / `minutes.timeout_seconds` / `summary.base_url` / `summary.api_key` / `summary.model` / `summary.extra_body_json` / `summary.deadline_seconds` / `summary.max_attempts` / `summary.default_window` / `devices.mic` / `devices.loopback`（**32 个**） | 这些值在**启动时读一次**，写盘成功但要重启才生效 |
+| `pending_restart` | `web.port` / `web.dist_dir` / `output.root` / `log.level` / `log.dir` / `log.max_bytes` / `log.backup_count` / `alert.silence_dbfs` / `alert.silence_seconds` / `alert.recover_seconds` / `alert.alarm_suppress_seconds` / `heartbeat.interval_seconds` / `capture.backend` / `transcriber.backend` / `post.hook` / `post.engine` / `post.model` / `post.dtype` / `post.chunk_seconds` / `minutes.hook` / `minutes.chunk_lines` / `minutes.max_segments` / `minutes.timeout_seconds` / `minutes.dsh_url` / `summary.base_url` / `summary.api_key` / `summary.model` / `summary.extra_body_json` / `summary.deadline_seconds` / `summary.max_attempts` / `summary.default_window` / `devices.mic` / `devices.loopback`（**33 个**） | 这些值在**启动时读一次**，写盘成功但要重启才生效 |
 
-六个热读键都在 `asr.*` 与 `alarm.sound` 这一档，其余 **32 个**全归 `pending_restart` —— 两者合起来正好是 `meeting/config.py` 的 `DEFAULT_VALUES` 键全集（**38 个**），判定由 `SETTING_KEY_GROUPS` 一处给出（守卫用例 `tests/test_api_actions.py::test_settings_key_groups_cover_the_whole_table` 逐条钉住 `6 + 32 = 38`）。
+六个热读键都在 `asr.*` 与 `alarm.sound` 这一档，其余 **33 个**全归 `pending_restart` —— 两者合起来正好是 `meeting/config.py` 的 `DEFAULT_VALUES` 键全集（**39 个**），判定由 `SETTING_KEY_GROUPS` 一处给出（守卫用例 `tests/test_api_actions.py::test_settings_key_groups_cover_the_whole_table` 逐条钉住 `6 + 33 = 39`）。
 
 **会中总结那七个 `summary.*` 键**（`1987cb20` phase1 加进来的）也归 `pending_restart`：`summary.base_url` / `summary.model` / `summary.extra_body_json` / `summary.default_window` 收字符串（`default_window` 只认 `5m` / `15m` / `30m` / `full` 四档），`summary.api_key` 是**可空键**（`null` = 没配，与两个设备键位同形），`summary.deadline_seconds` 收 `1.0`–`3600.0` 秒、`summary.max_attempts` 收 `1`–`10`。键名与取值范围的判据在 `meeting/config.py`，用法见第 4.7 节。
 

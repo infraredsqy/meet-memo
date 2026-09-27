@@ -2,10 +2,24 @@
 
 一次 `run(session_dir)` 走完这些事：
 
-    再入闸（子会话里不再拉起 DSH）→ 落一份 `state="running"` 的状态（读方据此分得出
-    「没跑」与「正在跑」）→ 找输入 → 写 `working/inputs.json` → 分块
-    → 渲染提示词写 `working/run_prompt.md` → 拉起 headless DSH → 校验产物
-    → 把 `meeting_minutes_status.json` 覆盖成 `done` / `failed` → 把那份状态交回调用方
+    再入闸（子会话里不再拉起 DSH）→ **探一次 DSH web 服务端**（在跑就走交付那条路）
+    → 落一份 `state="running"` 的状态（读方据此分得出「没跑」与「正在跑」）→ 找输入
+    → 写 `working/inputs.json` → 分块 → 渲染提示词写 `working/run_prompt.md`
+    → 拉起 DSH → 把 `meeting_minutes_status.json` 覆盖成终态 → 把那份状态交回调用方
+
+## 两条分支：交付 / headless
+
+`minutes.dsh_url` 指的那台 DSH web 服务端**在跑**时走**交付**：`dsh_web.handoff()` 经 `/api`
+在**场次目录对应的那个工作区**里建会话并送入提示词全文，投递 accepted 即算交付完成，
+终态记 `delivered` —— 这一层不等 DSH 那边把纪要写完、也不校验产物（**停不停 DSH 是用户的事**）。
+服务端**没在跑**时才落回本进程自己起的 headless 子进程（`launch.launch_headless()`：等它退出
+并按四条判据校验产物，终态 `done` / `failed`）。
+
+两条分支的差别就在「这一层能不能等」上：headless 那个子进程是本进程起的，等得起、也该等；
+交付给 DSH 服务端那一趟跑多久不归这一层管，产物在 DSH GUI 那条会话里看得见。
+
+`branch` 那一格因此记**实际走的**那一条（`web` / `headless`）；拉起方在建线程之前落的那一版
+`running` 记的是配置里写的词（那一刻还没探），这一版覆盖它。
 
 ## 先落 `running` 再拉起 DSH
 
@@ -29,15 +43,16 @@
 它再做一遍分块、再拉起一个 DSH，就是无限套娃。闸落在**配置解析层**（本函数的第一件事），
 不靠提示词里的嘱咐 —— 提示词那道闸防的是模型顺着 `prompts/` 自己摸到入口，两道闸各管一头。
 
-这一档**不写状态文件**、返回一份 `state = "skipped"` 的状态（`skipped` 不在三档里：
+这一档**不写状态文件**、返回一份 `state = "skipped"` 的状态（`skipped` 不在四档里：
 它既没有跑起来，也不算失败），原因写在那份返回值里。选这一条而不是「写一份 skipped 状态」
 的理由：子会话的场次目录里那份状态文件归**父进程那一趟**所有，子会话去覆盖它会让
 「这一趟跑成什么样」这件事在盘上被后写的子进程擦掉。
 
 ## 注入点
 
-`launcher` 与 `executable` 都是接缝：用例塞一个假启动器（或一个假可执行文件），
-产品路径上走 `launch.launch_headless` 与 `shutil.which("dsh")`。**测试里绝不真调系统上的 dsh**。
+`launcher` / `executable` 与 `probe` / `handoff` 都是接缝：用例塞假启动器（或一个假可执行文件、
+一台假的 DSH web 端点），产品路径上走 `launch.launch_headless`、`dsh_web.probe` 与
+`dsh_web.handoff`。**测试里绝不真调系统上的 dsh、也绝不真连真实的 3080**。
 """
 
 from __future__ import annotations
@@ -49,6 +64,7 @@ from pathlib import Path
 from typing import Any
 
 from meeting import config as config_module
+from meeting.minutes import dsh_web as dsh_web_module
 from meeting.minutes import launch as launch_module
 from meeting.minutes import status as status_module
 from meeting.minutes.chunk import DEFAULT_CHUNK_LINES, chunk_session, discover_inputs, mode_for
@@ -125,11 +141,16 @@ def run(
     executable: str | None = None,
     which: Any = None,
     environ: Mapping[str, str] | None = None,
+    probe: Callable[..., Any] | None = None,
+    handoff: Callable[..., Any] | None = None,
 ) -> dict[str, Any]:
     """对一场会跑一次纪要生成，返回状态 dict（与 `meeting_minutes_status.json` 同形）。
 
-    `launcher` 是启动器的注入点（默认 `launch.launch_headless`）；`executable` 直接给定
-    「要拉起哪个可执行文件」（用例塞假的那个），不给就按 `shutil.which("dsh")` 解析。
+    `launcher` 是 headless 启动器的注入点（默认 `launch.launch_headless`）；`executable` 直接
+    给定「要拉起哪个可执行文件」（用例塞假的那个），不给就按 `shutil.which("dsh")` 解析。
+    `probe` / `handoff` 是 web 分支的两个注入点（默认 `dsh_web.probe` / `dsh_web.handoff`）：
+    探针交回 `(在跑吗, 说明)`，交付那一步交回一个带 `ok` / `error` / `as_dict()` 的对象
+    （`dsh_web.HandoffResult` 那个形状）。
 
     `config` 是可选的那一份配置对象（`meeting.config.Config`），缺省读进程当前生效值。
     """
@@ -141,7 +162,9 @@ def run(
     env = os.environ if environ is None else environ
     session_id = directory.name
     started_at = status_module.now_iso()
-    branch = launch_module.resolve_branch(_config_value("minutes.hook", config, DEFAULT_HOOK))
+    configured = launch_module.configured_branch(
+        _config_value("minutes.hook", config, DEFAULT_HOOK)
+    )
 
     # 再入闸：子会话里不再拉起 DSH，也不写状态文件（见模块头）
     if str(env.get(launch_module.ENV_CHILD_FLAG, "")).strip() == "1":
@@ -150,7 +173,7 @@ def run(
                 session_id=session_id,
                 state=status_module.STATE_SKIPPED,
                 mode=MODE_NONE,
-                branch=branch,
+                branch=configured,
                 started_at=started_at,
                 finished_at=started_at,
                 error=(
@@ -161,6 +184,19 @@ def run(
             "session_dir": str(directory),
             "status": status_module.STATUS_NAME,
         }
+
+    # **探一次 DSH web 服务端**：在跑就把这一场交付给它，不在跑才是本进程自己起 headless
+    # 子进程。`branch` 因此在这一步之后才是实际走的那一条（拉起方建线程之前落的那一版
+    # `running` 记的是配置里写的词，下面那一版覆盖它）。
+    dsh_url = str(_config_value("minutes.dsh_url", config, dsh_web_module.DEFAULT_DSH_URL))
+    probe_dsh = dsh_web_module.probe if probe is None else probe
+    deliver = dsh_web_module.handoff if handoff is None else handoff
+    web_alive, web_detail = _probe_web(probe_dsh, dsh_url)
+    branch = status_module.BRANCH_WEB if web_alive else status_module.BRANCH_HEADLESS
+    if web_alive:
+        _log.info("会后纪要走 web 分支：交付给 DSH web 服务端 %s", dsh_url)
+    else:
+        _log.info("会后纪要走 headless 分支（DSH web 不可用：%s）", web_detail)
 
     chunk_lines = _config_value("minutes.chunk_lines", config, DEFAULT_CHUNK_LINES)
     max_segments = _config_value("minutes.max_segments", config, DEFAULT_MAX_SEGMENTS)
@@ -229,7 +265,31 @@ def run(
         _log.error("会后纪要：%s", message)
         return settle(status_module.STATE_FAILED, error=message, mode=mode)
 
-    # 四、拉起 DSH 子进程（启动器自己写 working/run_prompt.md 并校验产物）
+    # 四、交付给 DSH web 服务端（在跑），或者拉起 headless 子进程（不在跑）
+    stem = _chunk_summary(chunks)
+    if web_alive:
+        # **投递 accepted 即算交付完成**：这一层不等 DSH 那边把纪要写完，也不校验产物
+        #（产物校验是 headless 那条路的事 —— 那是本进程自己起的子进程，等得起）。
+        delivered = deliver(directory, prompt_text=prompt_text, url=dsh_url, timeout=timeout)
+        if not getattr(delivered, "ok", False):
+            message = str(getattr(delivered, "error", "") or "交付这一步报告失败")
+            _log.error("会后纪要交付失败：%s", message)
+            return settle(
+                status_module.STATE_FAILED,
+                error=message,
+                result=delivered,
+                mode=mode,
+                with_dsh=True,
+            ) | {"chunks": stem}
+        return settle(
+            status_module.STATE_DELIVERED,
+            error=None,
+            result=delivered,
+            mode=mode,
+            with_dsh=True,
+        ) | {"chunks": stem}
+
+    # 五、拉起 headless 子进程（启动器自己写 working/run_prompt.md 并校验产物）
     result = spawn(
         directory,
         prompt_text=prompt_text,
@@ -243,10 +303,9 @@ def run(
         _log.error("会后纪要：%s", message)
         return settle(
             status_module.STATE_FAILED, error=message, result=result, mode=mode, with_dsh=True
-        )
+        ) | {"chunks": stem}
 
-    # 五、终态（产物校验已经在启动器里过了：走到这里说明四条判据都成立）
-    stem = _chunk_summary(chunks)
+    # 六、终态（产物校验已经在启动器里过了：走到这里说明四条判据都成立）
     return settle(
         status_module.STATE_DONE,
         error=None,
@@ -254,6 +313,24 @@ def run(
         mode=mode,
         with_dsh=True,
     ) | {"chunks": stem}
+
+
+def _probe_web(probe_fn: Callable[..., Any], url: str) -> tuple[bool, str]:
+    """探一次 DSH web 服务端，交回 `(在跑吗, 说明)`。
+
+    探针自己炸了（读不到凭据、端点上跑着别的程序）**也按「没在跑」算**：这一层要的是
+    「能不能走交付那条路」，探不动就是不能走 —— 落回现成的 headless 分支，并把原因
+    记进 log（说明里那几句是给用户排查用的，不许把「鉴权失败」写成「DSH 没在跑」）。
+    """
+    try:
+        outcome = probe_fn(url)
+    except Exception as exc:  # 探针的异常不该带走这一趟
+        return False, f"探针抛出异常：{type(exc).__name__}: {exc}"
+    try:
+        alive, detail = outcome
+    except (TypeError, ValueError):
+        return bool(outcome), ""
+    return bool(alive), str(detail or "")
 
 
 def _chunk_summary(chunks: Mapping[str, Any]) -> dict[str, Any]:

@@ -54,9 +54,9 @@ APPLIED_KEYS = {
     "asr.repeat_max_unit",
     "asr.repeat_min_coverage",
 }
-#: 三分表：其余 32 键（两个设备键位、`web.*` / `log.*` / `alert.*`、五个后端选择键、
-#: 会后离线那四个 `post.*`、会后纪要那四个 `minutes.*`，以及会中总结那七个 `summary.*`）。
-#: 三分表总共 38 个键 = `DEFAULT_VALUES` 的键全集。
+#: 三分表：其余 33 键（两个设备键位、`web.*` / `log.*` / `alert.*`、五个后端选择键、
+#: 会后离线那四个 `post.*`、会后纪要那五个 `minutes.*`，以及会中总结那七个 `summary.*`）。
+#: 三分表总共 39 个键 = `DEFAULT_VALUES` 的键全集。
 PENDING_KEYS = {
     "web.port", "web.dist_dir", "output.root", "log.level", "log.dir",
     "log.max_bytes", "log.backup_count", "alert.silence_dbfs", "alert.silence_seconds",
@@ -64,6 +64,7 @@ PENDING_KEYS = {
     "heartbeat.interval_seconds", "capture.backend", "transcriber.backend", "post.hook",
     "post.engine", "post.model", "post.dtype", "post.chunk_seconds",
     "minutes.hook", "minutes.chunk_lines", "minutes.max_segments", "minutes.timeout_seconds",
+    "minutes.dsh_url",
     "summary.base_url", "summary.api_key", "summary.model", "summary.extra_body_json",
     "summary.deadline_seconds", "summary.max_attempts", "summary.default_window",
     "devices.mic", "devices.loopback",
@@ -453,7 +454,7 @@ def test_settings_update_splits_applied_and_pending_restart(tmp_path):
 
 
 def test_settings_key_groups_cover_the_whole_table(tmp_path):
-    """两个数组的键名与配置层的三分表逐键一致（38 个键一个不多、一个不少）。"""
+    """两个数组的键名与配置层的三分表逐键一致（39 个键一个不多、一个不少）。"""
     with live(tmp_path) as (client, _runtime, _home, _out):
         response = post(
             client,
@@ -469,10 +470,10 @@ def test_settings_key_groups_cover_the_whole_table(tmp_path):
         assert APPLIED_KEYS | PENDING_KEYS == set(config_module.SETTING_KEY_GROUPS)
         assert set(config_module.APPLIED_SETTING_KEYS) == APPLIED_KEYS
         assert set(config_module.PENDING_RESTART_SETTING_KEYS) == PENDING_KEYS
-        # 计数逐条钉住：6 + 32 = 38（三分表 = `DEFAULT_VALUES` 的键全集）
+        # 计数逐条钉住：6 + 33 = 39（三分表 = `DEFAULT_VALUES` 的键全集）
         assert len(APPLIED_KEYS) == 6
-        assert len(PENDING_KEYS) == 32
-        assert len(config_module.SETTING_KEY_GROUPS) == 38 == len(config_module.DEFAULT_VALUES)
+        assert len(PENDING_KEYS) == 33
+        assert len(config_module.SETTING_KEY_GROUPS) == 39 == len(config_module.DEFAULT_VALUES)
         # 两个数组按定义就是这一档的补集关系（不是两张各自维护的名单）
         assert set(config_module.APPLIED_SETTING_KEYS) == set(config_module.HOT_KEYS)
         assert set(config_module.PENDING_RESTART_SETTING_KEYS) == (

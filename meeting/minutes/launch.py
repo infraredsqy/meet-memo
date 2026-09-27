@@ -2,13 +2,17 @@
 
 一件事：**把一个 DSH headless 子进程拉起来，然后校验它到底交没交出纪要**。
 
-## 为什么只有 headless 一条分支
+## 这一条分支只管 headless
 
-spec 已经实测定案：本轮 `auto` / `web` **都落 headless 子进程**。V1 的 web 分支在 DSH
-0.1.5-rc.2 上已经失效（`workspace.list` 这个一元方法不存在；信封 payload 要包一层 `args`；
-鉴权只认签名 Cookie），走它就得照抄 DSH 的内部鉴权算法 —— 那是个会随版本漂的私有协议，
-留给专门做命令行入口的节点。状态文件里 `branch` 那一格因此记**实际走的**这一条（`headless`），
-不记配置里写的那个词。
+本模块**只**管 headless 子进程这一条路：`subprocess.run` 等它退出、再按四条判据校验产物，
+四档失败各记各的名字。`auto` 那一档现在由 `runner` 决定走哪条分支 —— 探到 DSH web 服务端
+在跑就走**交付**那条路（`meeting/minutes/dsh_web.py`：`workspace/create` → `session/create`
+→ `session/prompt`，投递 accepted 即算交付完成，终态记 `delivered`），探不到才落到这里。
+
+两件事因此各归各位：**这一层能等的只有自己起的那个子进程**；交给 DSH 服务端那一趟跑多久
+不归这一层管（用户停不停 DSH 是用户的事）。V1 那套 web 路径（`workspace.list` + 点号端点 +
+不带鉴权 Cookie）在 DSH 0.1.5-rc.2 上全失效了，能用的那一套实测口径写在 `dsh_web.py` 的
+模块头。状态文件里 `branch` 那一格记**实际走的**那一条（`headless` 或 `web`）。
 
 ## 三条硬口径
 
@@ -144,16 +148,18 @@ class LaunchResult:
         }
 
 
-def resolve_branch(configured: str | None) -> str:
-    """配置里的取值 → **实际要走的**分支。
+def configured_branch(configured: str | None) -> str:
+    """配置里的取值 → **这一层此刻能确定的那一条**（校验取值域，原样交回）。
 
-    `auto` / `web` / `headless` 本轮一律落 headless 子进程（spec 的三条实测理由见模块头），
-    因此这里三种取值都回答 `headless`：状态文件里那一格记的是实际走的这一条。
+    拉起之前落的那一版「在飞」状态（`MinutesHook.launch()` 建线程之前经 `mark_running()`
+    落的那一份）走的是这一条：那一刻还没探 DSH web 服务端在不在跑，因此那一版 `branch`
+    记的就是**配置里写的那个词**（`auto` / `headless` / `web`）；`runner` 探完之后落的
+    下一版才记**实际走的**那一条。取值域不合法时当场抛 `LaunchError`。
     """
     value = (configured or BRANCH_AUTO).strip() or BRANCH_AUTO
     if value not in (BRANCH_AUTO, BRANCH_HEADLESS, BRANCH_WEB):
         raise LaunchError(f"启动分支只认 auto / headless / web，收到 {configured!r}")
-    return BRANCH_HEADLESS
+    return value
 
 
 def find_executable(name: str = "dsh", *, which: Any = None) -> str:
@@ -318,7 +324,7 @@ def launch_headless(
     write_text_atomic(prompt_path, prompt_text)
     relative_prompt = f"{WORKING_DIR}/{RUN_PROMPT_NAME}"
     log_path = directory / ARTIFACT_LOG
-    branch = resolve_branch(config_selector)
+    branch = BRANCH_HEADLESS
 
     exe = executable if executable is not None else find_executable(which=which)
     if not exe:
@@ -534,6 +540,6 @@ __all__ = [
     "interpreter",
     "launch_headless",
     "render_command",
-    "resolve_branch",
+    "configured_branch",
     "WORKING_DIR",
 ]
