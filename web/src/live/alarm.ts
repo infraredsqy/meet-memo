@@ -41,7 +41,7 @@ export function fatalBanner(alert: Alert | null): FatalBannerView | null {
   if (alert === null) return null;
   const name = alert.source === 'mic' ? '本地' : alert.source === 'loopback' ? '远端' : alert.source;
   return {
-    where: `${name}这一路采不到了`,
+    where: `${name}这一路信号丢失`,
     since: `从 ${formatWallClock(alert.since)} 起`,
     elapsed: `已丢 ${formatLostMinutes(alert.duration_seconds)} 分钟`,
   };
@@ -134,5 +134,5 @@ export function decideAlarmSound(
  * 所以字面上说「本场已静音」——它是这一档里唯一会发生的那件事。
  */
 export function muteButtonLabel(alert: Alert | null): string {
-  return alert !== null && alert.muted ? '本场已静音' : '本次会不再出声';
+  return alert !== null && alert.muted ? '本场已静音' : '本场告警提示音';
 }

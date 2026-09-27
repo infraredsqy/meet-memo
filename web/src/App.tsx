@@ -128,7 +128,7 @@ function Channel({ channel }: { channel: ChannelView }): ReactNode {
         <span className={`m-ch__mark m-ch__mark--${channel.mark}`} aria-hidden="true" />
         <span className="m-ch__name">{channel.name}</span>
         <span className="m-ch__device" title={channel.device ?? undefined}>
-          {channel.device ?? '设备名还没探到'}
+          {channel.device ?? '设备名未探测'}
         </span>
         <span className={`m-health m-health--${health.tone}`}>
           <span className={`glyph ${health.glyph}`} aria-hidden="true" />
@@ -136,24 +136,28 @@ function Channel({ channel }: { channel: ChannelView }): ReactNode {
         </span>
       </div>
       <div className="m-grid">
-        <div
-          className="m-meter m-meter--v"
-          style={{ '--level': `${meter.levelPercent.toFixed(1)}%`, '--hold': `${meter.holdPercent.toFixed(1)}%` } as CSSProperties}
-        >
-          <div className="m-meter__scale">
-            <span>0</span>
-            <span>{'\u2212'}20</span>
-            <span>{'\u2212'}40</span>
-            <span>{'\u2212'}60</span>
+        {/* 左格：竖电平 + 读数。两样裹在同一格里，读数才落在井的正下方
+            （`.m-grid` 的 meter 那一栏高度就是这个格子的高度） */}
+        <div className="m-cell">
+          <div
+            className="m-meter m-meter--v"
+            style={{ '--level': `${meter.levelPercent.toFixed(1)}%`, '--hold': `${meter.holdPercent.toFixed(1)}%` } as CSSProperties}
+          >
+            <div className="m-meter__scale">
+              <span>0</span>
+              <span>{'\u2212'}20</span>
+              <span>{'\u2212'}40</span>
+              <span>{'\u2212'}60</span>
+            </div>
+            <div className="m-meter__track">
+              <span className="m-meter__ticks" />
+              <span className="m-meter__fill" />
+              <span className="m-meter__peak" />
+              <span className="m-meter__mark">{'\u2715'}</span>
+            </div>
           </div>
-          <div className="m-meter__track">
-            <span className="m-meter__ticks" />
-            <span className="m-meter__fill" />
-            <span className="m-meter__peak" />
-            <span className="m-meter__mark">{'\u2715'}</span>
-          </div>
+          <span className="m-ch__readout num">{channel.readout}</span>
         </div>
-        <span className="m-ch__readout num">{channel.readout}</span>
         <div className="m-scale" aria-hidden="true">
           <span style={{ left: '0%' }}>0</span>
           <span style={{ left: '33.333%' }}>{'\u2212'}20</span>
@@ -171,8 +175,7 @@ function Channel({ channel }: { channel: ChannelView }): ReactNode {
           ))}
         </div>
         <div className="m-env-note">
-          <span>历史包络 30 秒 · 2 秒一格</span>
-          <span className="m-env__stamp">{channel.stamp}</span>
+          <span>历史包络 30 秒 · 2 秒一格</span>          <span className="m-env__stamp">{channel.stamp}</span>
         </div>
       </div>
     </section>
@@ -193,7 +196,7 @@ function FailureBlock({
     return (
       <div className="fail">
         <div className="fail__why">
-          请求被拦下 · HTTP {failure.status}（未走到动作端点）
+          请求被拦截 · HTTP {failure.status}（未到达动作端点）
         </div>
         <div className="fail__next">{failure.text}</div>
         <div className="fail__log">
@@ -299,7 +302,7 @@ function SummaryFailureCard({
   onClose: () => void;
 }): ReactNode {
   return (
-    <SummaryCard title="这一次总结没成" onClose={onClose}>
+    <SummaryCard title="本次摘要生成失败" onClose={onClose}>
       <p className="summary-card__item">{view.text}</p>
       {view.lines.map((line) => (
         <p className="summary-card__item" key={line}>
@@ -636,7 +639,7 @@ function LiveView(): ReactNode {
   if (snapshot === null || view === null) {
     return (
       <main className="shell page--live">
-        <p className="hint">正在等服务的收一份快照…（连接：{connection}）</p>
+        <p className="hint">正在等待服务的首份快照…（连接：{connection}）</p>
       </main>
     );
   }
@@ -651,7 +654,7 @@ function LiveView(): ReactNode {
         ? 'statusline__caps--on'
         : '';
   const recoveredVisible = recoveredNoteVisible(heartbeat, nowMs);
-  const captureNote = stalled === null ? null : `采集已停 · ${stalled.seconds.toFixed(1)} 秒没收到音频帧`;
+  const captureNote = stalled === null ? null : `采集已停止 · ${stalled.seconds.toFixed(1)} 秒未收到音频帧`;
   /** 失联横幅的正文两处：周期与「最后一次应答 HH:MM:SS」。 */
   const lostView = lostBanner(heartbeat, heartbeatSeconds ?? 10);
 
@@ -688,7 +691,7 @@ function LiveView(): ReactNode {
           <div className="heartbeat__body">{lostView.body}</div>
           <div className="heartbeat__why">{HEARTBEAT_GUIDANCE}</div>
           <div className="heartbeat__do">
-            先别关这台机器，也别关这个页面。到服务那边看一眼：
+            先不要关机，也不要关闭本页。到服务那边确认一下：
             <span className="num">Ctrl+C</span> 停掉再敲一次 <span className="num">meeting web</span>
             {logPath === null ? '' : <>；日志在 <span className="num">{logPath}</span></>}。
           </div>
@@ -755,7 +758,7 @@ function LiveView(): ReactNode {
               disabled={busy}
               onClick={() => runActionQuietly('stop')}
             >
-              结束录音
+              停止录音
             </button>
           )}
         </div>
@@ -772,7 +775,7 @@ function LiveView(): ReactNode {
               }
             />
             <label className="kv__k" htmlFor="alarm-switch-main">
-              告警出声
+              告警提示音
             </label>
           </span>
         </div>
@@ -781,7 +784,7 @@ function LiveView(): ReactNode {
       {/* 采集带：两路左右并列，右侧三分之一给总结入口（方向 A） */}
       <section className="band">
         <div className="band__head">
-          <h2 className="band__title">采集</h2>
+          <h2 className="band__title">音频采集</h2>
           <div className="meter-legend">
             <span className="meter-legend__item">
               <span className="m-ch__mark m-ch__mark--local" aria-hidden="true" />
@@ -804,7 +807,7 @@ function LiveView(): ReactNode {
             <div className="live-tools">
               {/* 四个窗口档位（设计章 2.3）。缺省选中的是「15 分钟」；按下之后请求里带的
                   取值来自 `SUMMARY_WINDOWS` —— 界面上写的是人话，请求里带的是契约取值 */}
-              <div className="seg" role="group" aria-label="总结窗口">
+              <div className="seg" role="group" aria-label="摘要时间范围">
                 {SUMMARY_WINDOWS.map((item) => (
                   <button
                     key={item.choice}
@@ -833,7 +836,7 @@ function LiveView(): ReactNode {
                   disabled={!summaryReady}
                   onClick={() => void summary.run()}
                 >
-                  总结一下
+                  快速总结
                 </button>
               )}
               {summaryWhyText !== null && (
@@ -841,7 +844,7 @@ function LiveView(): ReactNode {
                   {summaryWhyText}
                 </p>
               )}
-              {/* 本场总结记录：入口写着按过的次数，点开列每一次（时刻 + 窗口 + 那几条）。
+              {/* 本场摘要记录：入口写着按过的次数，点开列每一次（时刻 + 窗口 + 那几条）。
                   那一行在**还没取过服务那份**时先写「还没有」—— 这一刻手上确实一条都没有；
                   取回来之后整行换成服务给的条目数。它是**本场**的，与结果面板两块内容各关各的 */}
               <button
@@ -861,7 +864,7 @@ function LiveView(): ReactNode {
       {/* 每路健康：两条文字保证，任何宽度下都不折叠 */}
       <section className="band band--quiet">
         <div className="band__head">
-          <h2 className="band__title">每路健康</h2>
+          <h2 className="band__title">各通道状态</h2>
         </div>
         <div className="band__body">
           <div className="m-chips">
@@ -965,7 +968,7 @@ function LiveView(): ReactNode {
                   type="button"
                   onClick={() => setLogShown((shown) => !shown)}
                 >
-                  看日志
+                  查看日志
                 </button>
                 <button
                   className="btn btn--small btn--danger"
@@ -973,7 +976,7 @@ function LiveView(): ReactNode {
                   disabled={busy}
                   onClick={() => runActionQuietly('stop')}
                 >
-                  结束录音
+                  停止录音
                 </button>
               </div>
               {logShown && logPath !== null && <code className="codeblock">{logPath}</code>}
@@ -982,14 +985,14 @@ function LiveView(): ReactNode {
 
           {stalled !== null && view.fatal === null && (
             <div className="alert alert--fatal">
-              <div className="alert__title">采集已停</div>
+              <div className="alert__title">采集已停止</div>
               <div className="alert__body">
-                服务还在应答，但已经 {stalled.seconds.toFixed(1)} 秒没收到任何一路的音频帧，
-                最后一次收到帧是 {stalled.lastFrameAt}。这段时间里两路的内容都记不下来了。
+                服务仍在应答，但已连续 {stalled.seconds.toFixed(1)} 秒未收到任何一路的音频帧，
+                最后一次收到音频帧是 {stalled.lastFrameAt}。这段时间里两路的内容都记不下来。
               </div>
               <div className="alert__body">
-                先别关机、也别关这个页面。到服务那边看一眼：看日志里最后一次收到帧那一段
-                在报什么{logPath === null ? '' : `；日志在 ${logPath}`}。
+                先不要关机，也不要关闭本页。到服务那边确认一下：看日志里最后一次收到音频帧
+                那一段在报什么{logPath === null ? '' : `；日志在 ${logPath}`}。
               </div>
             </div>
           )}
@@ -1033,8 +1036,8 @@ function LiveView(): ReactNode {
             </div>
             <div className="alert__body">
               {snapshot.ended.phase === 'done'
-                ? '音频已落盘、log 已写完这一场、会后那一套已经启动。'
-                : '音频还在转码、落盘，会后那一套也才刚起来。这几步走完之前，东西还没落好。'}
+                ? '音频与日志均已落盘，会后处理已启动，可以关机。'
+                : '音频仍在转码、落盘，会后处理也刚启动。这些步骤走完之前，数据还没有落好。'}
             </div>
             <div className="alert__acts">
               <span className="kv__v">
@@ -1075,26 +1078,26 @@ function LiveView(): ReactNode {
         <div className="band__head">
           <h2 className="band__title">实时转写</h2>
           <span className="band__note">
-            {started ? '最近 200 行 · 向上可看更早' : '这场还没开始 · 开录之后一行一行落在这里'}
+            {started ? '最近 200 行' : '尚未开始 · 开录后逐行显示'}
           </span>
         </div>
         <div className="band__body">
           {/* 类名契约（ui-design.md 章 7.10 / docs/ui/live.html L214–216）：这一行标签
               用 `.sumbar` 内放两个 `.tag` —— 与设计稿同一条用法，不另造类名 */}
           <div className="sumbar">
-            <span className="tag">临时稿 · 会后重建一份</span>
+            <span className="tag">草稿 · 会后重建</span>
             <span className="tag">
               {snapshot.transcript.health === 'normal'
                 ? '正常'
                 : snapshot.transcript.health === 'behind'
-                  ? '落后'
-                  : '已停'}
+                  ? '延迟'
+                  : '已停止'}
             </span>
           </div>
           {!started && (
             <p className="empty">
-              还没开始录，这里暂时是空的。按下「开始录音」之后，两路各自说的话会一行一行落在这里，
-              带分钟级时间戳，标着是本地还是远端。
+              尚未开始录音。按下「开始录音」后，两路的转写会逐行显示在这里，
+              每行带分钟级时间戳，并标明来源（本地或远端）。
             </p>
           )}
           {started && (
@@ -1145,7 +1148,7 @@ function LiveView(): ReactNode {
                   onClick={() => setTranscriptOpen((open) => !open)}
                 >
                   {transcriptOpen ? '收起' : '展开'}{' '}
-                  <span className="transcript__toggle-hint">最近一句</span>
+                  <span className="transcript__toggle-hint">最近一行</span>
                 </button>
               </div>
             </>
@@ -1154,7 +1157,7 @@ function LiveView(): ReactNode {
       </section>
 
       <p className="hint">
-        界面状态全部是服务推送的副本；不以本地存储保存任何会中状态。
+        页面上的状态全部来自服务推送；不在浏览器本地存储中保存任何会中状态。
         {captureNote === null ? '' : ` ${captureNote}。`}
       </p>
       </main>

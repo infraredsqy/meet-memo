@@ -34,7 +34,7 @@ export const SUMMARY_WINDOWS: readonly SummaryWindow[] = [
   { choice: '5m', label: '5 分钟' },
   { choice: '15m', label: '15 分钟' },
   { choice: '30m', label: '30 分钟' },
-  { choice: 'full', label: '整场' },
+  { choice: 'full', label: '全场' },
 ];
 
 /** 缺省选中的那一档（设计章 2.3：默认为 15 分钟）。 */
@@ -55,8 +55,7 @@ export function windowLabel(choice: SummaryWindowChoice | string): string {
 export const SUMMARY_CLIENT_TIMEOUT_SECONDS = 30;
 
 /** 三小段的段标题（设计章 2.3 逐字）。 */
-export const SUMMARY_SECTION_TITLES = ['刚才在讲什么', '讲到哪儿了', '丢掉了什么'] as const;
-
+export const SUMMARY_SECTION_TITLES = ['讲了什么', '讲到哪里', '丢掉了什么'] as const;
 /** 一次总结的请求状态。 */
 export type SummaryPhase = 'idle' | 'running' | 'done' | 'failure';
 
@@ -277,7 +276,7 @@ export function summaryResultView(result: {
   lost: string[];
 }): SummaryResultView {
   return {
-    title: `刚才的 ${result.window_label}`,
+    title: `近 ${result.window_label}摘要`,
     window: result.window,
     windowLabel: result.window_label,
     at: result.at,
@@ -297,7 +296,7 @@ function unrecognizedFailure(failure: SummaryFailure): SummaryFailureView {
   const subject = failure.fields['subject'];
   const raw = typeof subject === 'string' && subject !== '' ? subject : failure.code;
   return {
-    text: raw === '' ? '这一下没成。' : `这一下没成：${raw}`,
+    text: raw === '' ? '这次生成没成。' : `这次生成没成：${raw}`,
     lines: [],
   };
 }
@@ -314,9 +313,9 @@ function roundedSeconds(value: unknown): number | null {
  * |---|---|
  * | `not_recording` | 沿用既有的失败画法（服务那句 `message` 端出来） |
  * | `invalid_setting` 且 `detail.key === "window"` | 按合法取值数组说 |
- * | `transcript_unavailable` | `转写停了，总结没有材料可读` |
+ * | `transcript_unavailable` | `转写已停止，没有可用的内容` |
  * | `summary_failed` 且 `detail.missing` 在 | 点名缺哪几个配置键 |
- * | `summary_failed` 且 `detail.elapsed_seconds` 在 | `超时了，等了 <N> 秒还没有结果。再按一次。` |
+ * | `summary_failed` 且 `detail.elapsed_seconds` 在 | `超时了，等待 <N> 秒仍未返回结果，请重试。` |
  *
  * `code` 认不出来（客户端自己兜的那一类）就落到兜底那一档 —— 依据是 `code` 与键的存在性，
  * 一个字都不看 `message`。
@@ -336,7 +335,7 @@ export function summaryFailureView(
   if (failure.code === 'not_recording') {
     // 沿用既有的失败画法：这一档服务自己那句话就说得清（`stop` / `mute_session` 同款）
     return {
-      text: failure.message === '' ? '现在没有在录的场次。' : failure.message,
+      text: failure.message === '' ? '当前没有进行中的录音场次。' : failure.message,
       lines: [],
     };
   }
@@ -351,14 +350,14 @@ export function summaryFailureView(
     return {
       text: '窗口档位不合法。',
       lines: [
-        `这一下带的是 ${typeof value === 'string' ? `「${value}」` : String(value)}。`,
+        `这次带的是 ${typeof value === 'string' ? `「${value}」` : String(value)}。`,
         legal.length === 0 ? '合法的档位是四个。' : `合法取值：${legal.join(' / ')}。`,
       ],
     };
   }
 
   if (failure.code === 'transcript_unavailable') {
-    return { text: '转写停了，总结没有材料可读', lines: [] };
+    return { text: '转写已停止，没有可用的内容', lines: [] };
   }
 
   if (failure.code === 'summary_failed') {
@@ -366,7 +365,7 @@ export function summaryFailureView(
     if (Array.isArray(missing)) {
       const keys = missing.map(String);
       return {
-        text: '模型端点没配齐，总结要的那几个配置键还缺着。',
+        text: '模型端点没配齐，生成摘要要的几个配置键还缺着。',
         lines: keys.length === 0 ? [] : [`缺这些键：${keys.join('、')}。`],
       };
     }
@@ -374,7 +373,7 @@ export function summaryFailureView(
       // 服务自己等满预算的那一档：写出**服务实测**的秒数
       const waited = roundedSeconds(fields['elapsed_seconds']);
       return {
-        text: `超时了，等了 ${waited ?? 0} 秒还没有结果。再按一次。`,
+        text: `超时了，等待 ${waited ?? 0} 秒仍未返回结果，请重试。`,
         lines: [],
       };
     }
@@ -392,7 +391,7 @@ export function summaryFailureView(
  */
 export function clientTimeoutView(elapsedSeconds: number): SummaryFailureView {
   return {
-    text: `超时了，等了 ${Math.round(elapsedSeconds)} 秒还没有结果。再按一次。`,
+    text: `超时了，等待 ${Math.round(elapsedSeconds)} 秒仍未返回结果，请重试。`,
     lines: [],
   };
 }
@@ -406,9 +405,9 @@ export function clientTimeoutView(elapsedSeconds: number): SummaryFailureView {
  */
 export const SUMMARY_CLIENT_TIMEOUT = 'client_timeout';
 
-/** 进行中那一行（设计章 2.3：`正在总结刚才的 15 分钟…`；不带倒计时）。 */
+/** 进行中那一行（设计章 2.3：`正在生成摘要：近 15 分钟…`；不带倒计时）。 */
 export function summaryRunningNote(window: SummaryWindowChoice | string): string {
-  return `正在总结刚才的 ${windowLabel(window)}…`;
+  return `正在生成摘要：近 ${windowLabel(window)}…`;
 }
 
 // ---------------------------------------------------------------------------
@@ -453,15 +452,15 @@ export function summaryAvailable(input: SummaryAvailabilityInput): boolean {
 export function summaryWhy(input: SummaryAvailabilityInput): string | null {
   if (input.running) return null;
   if (input.lost) return '心跳失联，先看服务那边';
-  if (input.stalled) return '采集已经停了，先看服务那边';
-  if (input.topState === 'idle') return '开始录音后才能总结';
-  if (input.topState === 'ended') return '这场已经结束，会中总结只在录音时按。';
-  if (input.transcriptHealth === 'stopped') return '转写停了，总结没有材料可读';
+  if (input.stalled) return '采集已停止，先看服务那边';
+  if (input.topState === 'idle') return '开始录音后才能生成摘要';
+  if (input.topState === 'ended') return '本场已结束，仅录音中可用';
+  if (input.transcriptHealth === 'stopped') return '转写已停止，没有可用的内容';
   return null;
 }
 
 // ---------------------------------------------------------------------------
-// 本场总结记录
+// 本场摘要记录
 // ---------------------------------------------------------------------------
 
 /** 记录里的一次总结（`GET /api/summaries` 的条目 + 序号）。 */
@@ -517,23 +516,23 @@ export interface SummaryLogView {
   /** 这一场按过几次（**服务给的条目数**）。 */
   count: number;
   entries: SummaryLogEntry[];
-  /** 一次都没按过时那一句（`这一场还没总结过。`）；否则 `null`。 */
+  /** 一次都没按过时那一句（`本场还没有摘要记录。`）；否则 `null`。 */
   emptyNote: string | null;
 }
 
 /** 一次都没按过时，记录面板里那一句（设计章 5.1 逐字）。 */
-export const SUMMARY_LOG_EMPTY = '这一场还没总结过。';
+export const SUMMARY_LOG_EMPTY = '本场还没有摘要记录。';
 
 /**
  * 入口在**还没取到服务那一份**时写的那一行。
  *
  * 取记录的那一次 GET 只在用到的时候发（面板第一次展开时），所以在取回来之前界面上得有个
  * 字：写「还没有」是诚实的 —— 这一刻手上确实一条记录都没有，服务那边有几条要等取回来才知道
- * （那时整行换成 `本场总结记录（<N> 次）`，N 取服务给的条目数）。
+ * （那时整行换成 `本场摘要记录（<N> 次）`，N 取服务给的条目数）。
  */
 export function summaryLogLabel(count: number | null): string {
-  if (count === null) return '本场总结记录（还没有）';
-  return count === 0 ? '本场总结记录（还没有）' : `本场总结记录（${count} 次）`;
+  if (count === null) return '本场摘要记录（还没有）';
+  return count === 0 ? '本场摘要记录（还没有）' : `本场摘要记录（${count} 次）`;
 }
 
 /**

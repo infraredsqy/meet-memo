@@ -182,11 +182,11 @@ describe('失联档的几处读数', () => {
     expect(frozenClockValue(4354)).not.toBe(frozenClockValue(4355));
   });
 
-  it('转写断口：`[20:57–20:58] 数据已停`', () => {
+  it('转写断口：`[20:57–20:58] 采集中断`', () => {
     expect(transcriptGap(T('20:57:31'), T('20:58:13'))).toEqual({
       from: '20:57',
       to: '20:58',
-      text: '数据已停',
+      text: '采集中断',
     });
   });
 

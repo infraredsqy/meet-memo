@@ -3,6 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- 暗面是第一版：先把 color-scheme 报给浏览器，免得首屏闪一下白底，
+         表单控件与滚动条也不必等样式到了才翻过来 -->
+    <meta name="color-scheme" content="dark light" />
+    <style>
+      html { background: #070a09; }
+    </style>
     <title>meeting · 会中视图</title>
   </head>
   <body>

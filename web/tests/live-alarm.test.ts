@@ -27,12 +27,12 @@ import { makeAlert, makeAlerts, makeSettings, T } from './live-fixtures';
 describe('fatalBanner：哪一路 + 从何时起 + 已丢多久', () => {
   it('远端那一路', () => {
     expect(fatalBanner(makeAlert({ source: 'loopback', since: T('20:57:00'), duration_seconds: 780 })))
-      .toEqual({ where: '远端这一路采不到了', since: '从 20:57 起', elapsed: '已丢 13 分钟' });
+      .toEqual({ where: '远端这一路信号丢失', since: '从 20:57 起', elapsed: '已丢 13 分钟' });
   });
 
   it('本地那一路', () => {
     const view = fatalBanner(makeAlert({ source: 'mic', since: T('09:05:00'), duration_seconds: 180 }));
-    expect(view?.where).toBe('本地这一路采不到了');
+    expect(view?.where).toBe('本地这一路信号丢失');
     expect(view?.since).toBe('从 09:05 起');
     expect(view?.elapsed).toBe('已丢 3 分钟');
   });
@@ -146,9 +146,9 @@ describe('alertIdentity', () => {
 });
 
 describe('muteButtonLabel', () => {
-  it('没静音时是「本次会不再出声」，静音之后换成「本场已静音」', () => {
-    expect(muteButtonLabel(makeAlert({ muted: false }))).toBe('本次会不再出声');
+  it('没静音时是「本场告警提示音」，静音之后换成「本场已静音」', () => {
+    expect(muteButtonLabel(makeAlert({ muted: false }))).toBe('本场告警提示音');
     expect(muteButtonLabel(makeAlert({ muted: true }))).toBe('本场已静音');
-    expect(muteButtonLabel(null)).toBe('本次会不再出声');
+    expect(muteButtonLabel(null)).toBe('本场告警提示音');
   });
 });

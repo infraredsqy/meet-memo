@@ -136,9 +136,18 @@ export function liveView(
   const channels = snapshot.sources.map<ChannelView>((source) => {
     const key: 'mic' | 'loopback' = source.id === 'mic' ? 'mic' : 'loopback';
     const health = healthView(source, losses.windows[key]);
-    // 数据停了：健康位一律写「数据已停」（估出来的读数不再顶着）
+    // 数据停了：健康位一律改写，估出来的读数不再顶着。
+    // 两档各写各的 —— 失联是「界面看不见服务」，采集停是「服务在、帧不来」，
+    // 处置同一套，但原因不同，字面上要分得开。
     const stoppedHealth: HealthView = dataStopped
-      ? { ...health, text: '数据已停', tone: 'stopped', chip: `${source.label} · 数据已停`, frozen: true, dead: false }
+      ? {
+          ...health,
+          text: lost ? '数据已停止' : '采集已停止',
+          tone: 'stopped',
+          chip: `${source.label} · ${lost ? '数据已停止' : '采集已停止'}`,
+          frozen: true,
+          dead: false,
+        }
       : health;
     const meter = meterView(source, frames, snapshot.revision);
     const frozenMeter: MeterView = dataStopped || health.frozen ? { ...meter, frozen: true } : meter;

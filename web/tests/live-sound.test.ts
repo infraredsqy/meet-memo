@@ -270,14 +270,14 @@ describe('liveView：一份快照摊成主视图', () => {
     const view = liveView(snapshot, initialHeartbeatState(), null, null, T('21:10:00'));
     expect(view.status.name).toBe('告警');
     expect(view.fatal).toEqual({
-      where: '远端这一路采不到了',
+      where: '远端这一路信号丢失',
       since: '从 20:57 起',
       elapsed: '已丢 13 分钟',
     });
     expect(view.channels[0]!.health.dead).toBe(false);
     expect(view.channels[0]!.readout).toBe('\u221235.2 dBFS');
     expect(view.channels[1]!.health.dead).toBe(true);
-    expect(view.channels[1]!.health.chip).toBe('远端 · 采不到了，从 20:57 起');
+    expect(view.channels[1]!.health.chip).toBe('远端 · 信号丢失，从 20:57 起');
     expect(view.channels[1]!.meter.envelope.every((h) => h === 0)).toBe(true);
   });
 
@@ -315,30 +315,30 @@ describe('liveView：一份快照摊成主视图', () => {
     expect(view.channels[1]!.health.dead).toBe(true);
   });
 
-  it('采集已停：不在失联那一档，但读数与包络也冻住、健康位写「数据已停」', () => {
+  it('采集已停：不在失联那一档，但读数与包络也冻住、健康位写「采集已停止」', () => {
     const snapshot = makeSnapshot();
     const reply = makeHeartbeat({ recording_alive: false, seconds_since_last_tick: 42.5 });
     const view = liveView(snapshot, initialHeartbeatState(), null, reply, T('20:57:40'));
     expect(view.stalled).toEqual({ seconds: 42.5, lastFrameAt: '20:56' });
     expect(view.alertsHidden).toBe(false);
-    // 与失联同一套冻结处置：读数退成 `—`、健康位写「数据已停」、电平冻结、时间戳停住
+    // 与失联同一套冻结处置：读数退成 `—`、健康位写「采集已停止」、电平冻结、时间戳停住
     expect(view.channels[0]!.readout).toBe('—');
-    expect(view.channels[0]!.health.text).toBe('数据已停');
-    expect(view.channels[0]!.health.chip).toBe('本地 · 数据已停');
+    expect(view.channels[0]!.health.text).toBe('采集已停止');
+    expect(view.channels[0]!.health.chip).toBe('本地 · 采集已停止');
     expect(view.channels[0]!.health.tone).toBe('stopped');
     expect(view.channels[0]!.meter.frozen).toBe(true);
     expect(view.channels[0]!.stamp).toBe('20:56');
     expect(view.channels[1]!.readout).toBe('—');
-    expect(view.channels[1]!.health.chip).toBe('远端 · 数据已停');
+    expect(view.channels[1]!.health.chip).toBe('远端 · 采集已停止');
   });
 
-  it('采集停了：健康位说的是「数据已停」，不把它画成「这一路死了」', () => {
+  it('采集停了：健康位说的是「采集已停止」，不把它画成「这一路死了」', () => {
     const snapshot = makeSnapshot();
     const reply = makeHeartbeat({ recording_alive: false, seconds_since_last_tick: 3 });
     const view = liveView(snapshot, initialHeartbeatState(), null, reply, T('20:57:40'));
     for (const channel of view.channels) {
       expect(channel.health.dead).toBe(false);
-      expect(channel.health.text).toBe('数据已停');
+      expect(channel.health.text).toBe('采集已停止');
     }
   });
 
@@ -348,7 +348,7 @@ describe('liveView：一份快照摊成主视图', () => {
     const view = liveView(snapshot, initialHeartbeatState(), null, reply, T('20:57:40'));
     expect(view.stalled).toBeNull();
     expect(view.channels[0]!.readout).toBe('\u221235.2 dBFS');
-    expect(view.channels[0]!.health.text).toBe('还在采');
+    expect(view.channels[0]!.health.text).toBe('采样中');
     expect(view.channels[0]!.meter.frozen).toBe(false);
   });
 
@@ -366,7 +366,8 @@ describe('liveView：一份快照摊成主视图', () => {
     // 但「出事了」的那句话只有失联那一条全屏横幅
     expect(view.alertsHidden).toBe(true);
     expect(view.channels[0]!.readout).toBe('—');
-    expect(view.channels[0]!.health.chip).toBe('本地 · 数据已停');
+    // 失联这一档写「数据已停止」，与「采集已停止」分开（原因不同，处置同一套）
+    expect(view.channels[0]!.health.chip).toBe('本地 · 数据已停止');
   });
 
   it('空闲 + 服务重启过：顶部那一行就是服务给的正文', () => {

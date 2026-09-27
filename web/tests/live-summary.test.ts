@@ -95,12 +95,12 @@ function failure(code: string, fields: Record<string, unknown> = {}, message = '
 }
 
 describe('四个窗口档位', () => {
-  it('四档逐字：5 分钟 / 15 分钟 / 30 分钟 / 整场', () => {
+  it('四档逐字：5 分钟 / 15 分钟 / 30 分钟 / 全场', () => {
     expect(SUMMARY_WINDOWS.map((item) => item.label)).toEqual([
       '5 分钟',
       '15 分钟',
       '30 分钟',
-      '整场',
+      '全场',
     ]);
   });
 
@@ -136,20 +136,20 @@ describe('可用性与禁用原因', () => {
 
   it('空闲 → 禁用，原因用设计章 2.5 的现成口径', () => {
     expect(summaryAvailable(availability({ topState: 'idle' }))).toBe(false);
-    expect(summaryWhy(availability({ topState: 'idle' }))).toBe('开始录音后才能总结');
+    expect(summaryWhy(availability({ topState: 'idle' }))).toBe('开始录音后才能生成摘要');
   });
 
   it('已结束（收尾中 / 已完成）→ 禁用，说这场已经结束', () => {
     expect(summaryAvailable(availability({ topState: 'ended' }))).toBe(false);
     expect(summaryWhy(availability({ topState: 'ended' }))).toBe(
-      '这场已经结束，会中总结只在录音时按。',
+      '本场已结束，仅录音中可用',
     );
   });
 
   it('转写健康位是「停」→ 禁用，原因用设计章 4.5 那一句', () => {
     const down = availability({ transcriptHealth: 'stopped' });
     expect(summaryAvailable(down)).toBe(false);
-    expect(summaryWhy(down)).toBe('转写停了，总结没有材料可读');
+    expect(summaryWhy(down)).toBe('转写已停止，没有可用的内容');
   });
 
   it('转写「落后」照常可用（窗口可以取小一点）', () => {
@@ -166,7 +166,7 @@ describe('可用性与禁用原因', () => {
   it('采集已停 → 禁用并先说眼前这件事', () => {
     const stalled = availability({ stalled: true });
     expect(summaryAvailable(stalled)).toBe(false);
-    expect(summaryWhy(stalled)).toBe('采集已经停了，先看服务那边');
+    expect(summaryWhy(stalled)).toBe('采集已停止，先看服务那边');
   });
 
   it('正在跑 → 按不动，那一格留给进行中那句', () => {
@@ -177,11 +177,11 @@ describe('可用性与禁用原因', () => {
 });
 
 describe('进行中那一句', () => {
-  it('`正在总结刚才的 15 分钟…`（跟着所选档位走）', () => {
-    expect(summaryRunningNote('15m')).toBe('正在总结刚才的 15 分钟…');
-    expect(summaryRunningNote('5m')).toBe('正在总结刚才的 5 分钟…');
-    expect(summaryRunningNote('30m')).toBe('正在总结刚才的 30 分钟…');
-    expect(summaryRunningNote('full')).toBe('正在总结刚才的 整场…');
+  it('`正在总结近 15 分钟…`（跟着所选档位走）', () => {
+    expect(summaryRunningNote('15m')).toBe('正在生成摘要：近 15 分钟…');
+    expect(summaryRunningNote('5m')).toBe('正在生成摘要：近 5 分钟…');
+    expect(summaryRunningNote('30m')).toBe('正在生成摘要：近 30 分钟…');
+    expect(summaryRunningNote('full')).toBe('正在生成摘要：近 全场…');
   });
 
   it('那一句里没有倒计时、也没有秒数', () => {
@@ -191,7 +191,7 @@ describe('进行中那一句', () => {
 
 describe('三小段与结果面板', () => {
   it('段标题固定，次序恒为 讲什么 / 讲到哪 / 丢掉什么', () => {
-    expect(SUMMARY_SECTION_TITLES).toEqual(['刚才在讲什么', '讲到哪儿了', '丢掉了什么']);
+    expect(SUMMARY_SECTION_TITLES).toEqual(['讲了什么', '讲到哪里', '丢掉了什么']);
     const sections = summarySections(answer());
     expect(sections.map((section) => section.title)).toEqual([...SUMMARY_SECTION_TITLES]);
   });
@@ -204,8 +204,8 @@ describe('三小段与结果面板', () => {
   });
 
   it('面板标题用服务给的 `window_label`，界面不自己拼', () => {
-    expect(summaryResultView(answer()).title).toBe('刚才的 15 分钟');
-    expect(summaryResultView(answer({ window_label: '整场' })).title).toBe('刚才的 整场');
+    expect(summaryResultView(answer()).title).toBe('近 15 分钟摘要');
+    expect(summaryResultView(answer({ window_label: '全场' })).title).toBe('近 全场摘要');
   });
 
   it('四格报告用的数都是服务给的原文', () => {
@@ -255,9 +255,9 @@ describe('五档失败各画一遍（按 code + detail 的键，不看 message�
     expect(view.lines.join(' ')).toContain('5m / 15m / 30m / full');
   });
 
-  it('transcript_unavailable → 转写停了，总结没有材料可读', () => {
+  it('transcript_unavailable → 转写已停止，没有可用的内容', () => {
     const view = summaryFailureView(failure('transcript_unavailable', { health: 'stopped' }), 0.1);
-    expect(view.text).toBe('转写停了，总结没有材料可读');
+    expect(view.text).toBe('转写已停止，没有可用的内容');
     expect(view.lines).toEqual([]);
   });
 
@@ -275,15 +275,15 @@ describe('五档失败各画一遍（按 code + detail 的键，不看 message�
       failure('summary_failed', { elapsed_seconds: 25.0, attempts: 3 }),
       0.1,
     );
-    expect(view.text).toBe('超时了，等了 25 秒还没有结果。再按一次。');
+    expect(view.text).toBe('超时了，等待 25 秒仍未返回结果，请重试。');
     expect(view.lines).toEqual([]);
     // 四舍五入：24.6 → 25、24.4 → 24
     expect(
       summaryFailureView(failure('summary_failed', { elapsed_seconds: 24.6 }), 0).text,
-    ).toBe('超时了，等了 25 秒还没有结果。再按一次。');
+    ).toBe('超时了，等待 25 秒仍未返回结果，请重试。');
     expect(
       summaryFailureView(failure('summary_failed', { elapsed_seconds: 24.4 }), 0).text,
-    ).toBe('超时了，等了 24 秒还没有结果。再按一次。');
+    ).toBe('超时了，等待 24 秒仍未返回结果，请重试。');
   });
 
   it('画法与 `message` 无关：换成一句无关的话，五档一个字都不变', () => {
@@ -317,7 +317,7 @@ describe('五档失败各画一遍（按 code + detail 的键，不看 message�
       { code: SUMMARY_CLIENT_TIMEOUT, message: '', fields: { elapsed_seconds: 30.4 } },
       30.4,
     );
-    expect(view.text).toBe('超时了，等了 30 秒还没有结果。再按一次。');
+    expect(view.text).toBe('超时了，等待 30 秒仍未返回结果，请重试。');
   });
 
   it('认不出的 code → 兜底画法，把服务给的原话端出来', () => {
@@ -438,35 +438,35 @@ describe('本场总结记录', () => {
 
   it('没按过时入口写 `（还没有）`，展开给空态那句', () => {
     const view = summaryLogView([]);
-    expect(view.entryLabel).toBe('本场总结记录（还没有）');
-    expect(view.title).toBe('本场总结记录（还没有）');
+    expect(view.entryLabel).toBe('本场摘要记录（还没有）');
+    expect(view.title).toBe('本场摘要记录（还没有）');
     expect(view.count).toBe(0);
     expect(view.emptyNote).toBe(SUMMARY_LOG_EMPTY);
-    expect(SUMMARY_LOG_EMPTY).toBe('这一场还没总结过。');
+    expect(SUMMARY_LOG_EMPTY).toBe('本场还没有摘要记录。');
     expect(view.entries).toEqual([]);
   });
 
   it('入口那一行：还没取过服务那份时写「还没有」，取回 0 条也是同一句', () => {
-    expect(summaryLogLabel(null)).toBe('本场总结记录（还没有）');
-    expect(summaryLogLabel(0)).toBe('本场总结记录（还没有）');
-    expect(summaryLogLabel(1)).toBe('本场总结记录（1 次）');
-    expect(summaryLogLabel(3)).toBe('本场总结记录（3 次）');
+    expect(summaryLogLabel(null)).toBe('本场摘要记录（还没有）');
+    expect(summaryLogLabel(0)).toBe('本场摘要记录（还没有）');
+    expect(summaryLogLabel(1)).toBe('本场摘要记录（1 次）');
+    expect(summaryLogLabel(3)).toBe('本场摘要记录（3 次）');
   });
 
   it('按过几次由**服务给的条目数**说话', () => {
     const view = summaryLogView([record(0), record(1), record(2)]);
-    expect(view.entryLabel).toBe('本场总结记录（3 次）');
-    expect(view.title).toBe('本场总结记录（3 次）');
+    expect(view.entryLabel).toBe('本场摘要记录（3 次）');
+    expect(view.title).toBe('本场摘要记录（3 次）');
     expect(view.count).toBe(3);
     expect(view.emptyNote).toBeNull();
   });
 
   it('每条：时刻按分钟级、窗口用服务给的标签、三小段按固定次序列', () => {
-    const view = summaryLogView([record(1, { window_label: '整场' })]);
+    const view = summaryLogView([record(1, { window_label: '全场' })]);
     const entry = view.entries[0];
     expect(entry?.time).toBe(formatWallClock(T('21:03:00')));
     expect(entry?.time).toMatch(/^\d{2}:\d{2}$/);
-    expect(entry?.windowLabel).toBe('整场');
+    expect(entry?.windowLabel).toBe('全场');
     expect(entry?.elapsedSeconds).toBe(9.4);
     expect(entry?.sections.map((section) => section.title)).toEqual([...SUMMARY_SECTION_TITLES]);
     expect(entry?.sections[0]?.items).toEqual(['第 1 次的讲什么']);

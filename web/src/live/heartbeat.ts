@@ -227,7 +227,7 @@ export function frozenClockValue(elapsedSeconds: number | null | undefined): str
   return formatElapsed(elapsedSeconds ?? 0);
 }
 
-/** 转写区在中断那一格留的断口：`[20:57–20:58] 数据已停`。 */
+/** 转写区在中断那一格留的断口：`[20:57–20:58] 采集中断`。 */
 export interface TranscriptGap {
   from: string;
   to: string;
@@ -239,7 +239,7 @@ export function transcriptGap(frozenAt: string | null, recoveredAtIso: string): 
   return {
     from: formatWallClock(frozenAt),
     to: formatWallClock(recoveredAtIso),
-    text: '数据已停',
+    text: '采集中断',
   };
 }
 

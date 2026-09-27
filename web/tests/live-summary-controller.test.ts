@@ -116,10 +116,10 @@ describe('一次总结的状态迁移', () => {
     await controller.run();
     const state = controller.state();
     expect(state.phase).toBe('done');
-    expect(state.result?.title).toBe('刚才的 15 分钟');
+    expect(state.result?.title).toBe('近 15 分钟摘要');
     expect(state.result?.sections.map((section) => section.title)).toEqual([
-      '刚才在讲什么',
-      '讲到哪儿了',
+      '讲了什么',
+      '讲到哪里',
       '丢掉了什么',
     ]);
     expect(state.failure).toBeNull();
@@ -130,14 +130,14 @@ describe('一次总结的状态迁移', () => {
     const controller = createSummaryController({
       request: async (window) => {
         seen.push(window);
-        return answer({ window, window_label: '整场' });
+        return answer({ window, window_label: '全场' });
       },
       loadLog: async () => [],
     });
     controller.select('full');
     await controller.run();
     expect(seen).toEqual(['full']);
-    expect(controller.state().result?.title).toBe('刚才的 整场');
+    expect(controller.state().result?.title).toBe('近 全场摘要');
   });
 
   it('失败：进「失败」那一档，code 与 detail 原文照收', async () => {
@@ -242,7 +242,7 @@ describe('本场总结记录那一路', () => {
     expect(controller.log()).toBeNull();
     expect(controller.logCount()).toBeNull();
     await controller.loadRecords();
-    expect(controller.log()?.entryLabel).toBe('本场总结记录（2 次）');
+    expect(controller.log()?.entryLabel).toBe('本场摘要记录（2 次）');
     expect(controller.logCount()).toBe(2);
     expect(controller.log()?.entries.map((entry) => entry.time)).toEqual([
       '20:41',
@@ -257,9 +257,9 @@ describe('本场总结记录那一路', () => {
       loadLog: async () => [],
     });
     await controller.loadRecords();
-    expect(controller.log()?.entryLabel).toBe('本场总结记录（还没有）');
+    expect(controller.log()?.entryLabel).toBe('本场摘要记录（还没有）');
     expect(controller.logCount()).toBe(0);
-    expect(controller.log()?.emptyNote).toBe('这一场还没总结过。');
+    expect(controller.log()?.emptyNote).toBe('本场还没有摘要记录。');
   });
 
   it('取不到：手上那份旧的留着，另给一行说明（不冒充「还没总结过」）', async () => {
@@ -363,7 +363,7 @@ describe('本场总结记录那一路', () => {
     await settle();
     // 那一次成功的总结之后，服务那边有了一条 —— 界面把这一条取回来
     expect(controller.logCount()).toBe(1);
-    expect(controller.log()?.entryLabel).toBe('本场总结记录（1 次）');
+    expect(controller.log()?.entryLabel).toBe('本场摘要记录（1 次）');
   });
 });
 

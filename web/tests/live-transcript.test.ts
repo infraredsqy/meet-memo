@@ -88,7 +88,7 @@ describe('断口：插在时间轴对得上的那一格', () => {
       '20:52 那一句',
     ]);
     expect(withGap[1]!.interlude).toBe(true);
-    expect(withGap[1]!.route).toBe('数据已停');
+    expect(withGap[1]!.route).toBe('采集中断');
   });
 
   it('比窗口里所有行都新：排在最前面', () => {
@@ -105,16 +105,16 @@ describe('断口：插在时间轴对得上的那一格', () => {
   it('断口那一行整行走缺口画法', () => {
     expect(gapRow(T('20:57:31'), 'note')).toMatchObject({
       source: null,
-      route: '数据已停',
+      route: '采集中断',
       gap: true,
       interlude: true,
     });
   });
 
-  it('断口那一行的形状照设计稿 4.5：时刻格 [HH:MM–HH:MM]、路名格 数据已停（返工轮 m2）', () => {
+  it('断口那一行的形状照设计稿 4.5：时刻格 [HH:MM–HH:MM]、路名格 采集中断（返工轮 m2）', () => {
     const row = gapRow(T('20:57:31'), '', T('20:58:13'));
     expect(row.timeText).toBe('[20:57\u201320:58]');
-    expect(row.route).toBe('数据已停');
+    expect(row.route).toBe('采集中断');
     expect(row.text).toBe('');
     // 时刻格整格就是区间（rowTime 优先给 timeText）
     expect(rowTime(row)).toBe('[20:57\u201320:58]');

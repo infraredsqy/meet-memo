@@ -6,6 +6,9 @@
  * 所以这里每一档都同时给出**图形类名**（`.glyph--*`，`clip-path` 画的形状）
  * 与**整行文字**，颜色交给 CSS。
  *
+ * 文案口径：一行只讲一件事，用仪器面板上说惯了的话。采着的时候写「采样中」，
+ * 断了写「信号丢失，从 HH:MM 起」。
+ *
  * 状态全部是从服务推的快照上**读**出来的（`top_state`、`sources[*].health`、
  * `restored`、`lost_since`、`ended.phase`），这一层不做任何判定：
  * 某一路到底丢没丢，是服务说了算。
@@ -40,13 +43,13 @@ export function statusView(
 ): StatusView {
   switch (topState) {
     case 'idle':
-      return { name: '空闲', note: '尚未开始', glyph: 'glyph--idle', tone: 'off' };
+      return { name: '待机', note: '未开始录音', glyph: 'glyph--idle', tone: 'off' };
     case 'recording':
-      return { name: '录音中', note: '两路都在采', glyph: 'glyph--rec', tone: 'on' };
+      return { name: '录音中', note: '两路均在采样', glyph: 'glyph--rec', tone: 'on' };
     case 'alert':
       return {
         name: '告警',
-        note: '一路仍在采，另一路采不到了',
+        note: '一路仍在采样，另一路信号丢失',
         glyph: 'glyph--alert',
         tone: 'alert',
       };
@@ -94,11 +97,11 @@ export interface HealthView {
  * |---|---|---|---|
  * | `unprobed` | 未探测 | `本地 · 未探测` | idle |
  * | `ready` | 已就绪 | `本地 · 已就绪` | idle |
- * | `probe_failed` | 探测失败 · 没有能打开的端点 | 同 | idle（床面空着） |
- * | `capturing` | 还在采 | `本地 · 还在采` | 实时 |
- * | `lost` | 采不到了，从 HH:MM 起 | 同 | dead |
+ * | `probe_failed` | 不可用 · 没有能打开的端点 | 同 | idle（床面空着） |
+ * | `capturing` | 采样中 | `本地 · 采样中` | 实时 |
+ * | `lost` | 信号丢失，从 HH:MM 起 | 同 | dead |
  * | `restored` | 已恢复（…） | 同 | restored |
- * | `stopped` | 已停止 | `本地 · 已停止` | idle |
+ * | `stopped` | 采集已停止 | `本地 · 采集已停止` | idle |
  */
 export function healthView(source: Source, window?: LossWindow): HealthView {
   const label = source.label;
@@ -109,18 +112,18 @@ export function healthView(source: Source, window?: LossWindow): HealthView {
     case 'ready':
       return chip(label, '已就绪', 'glyph--check', 'ready', { idle: true });
     case 'probe_failed':
-      return chip(label, '探测失败 · 没有能打开的端点', 'glyph--cross', 'fail', { idle: true });
+      return chip(label, '不可用 · 没有能打开的端点', 'glyph--cross', 'fail', { idle: true });
     case 'capturing':
-      return chip(label, '还在采', 'glyph--check', 'ok', {});
+      return chip(label, '采样中', 'glyph--check', 'ok', {});
     case 'lost':
-      return chip(label, `采不到了，从 ${since} 起`, 'glyph--cross', 'dead', {
+      return chip(label, `信号丢失，从 ${since} 起`, 'glyph--cross', 'dead', {
         dead: true,
         frozen: true,
       });
     case 'restored':
       return chip(label, restoredText(window), 'glyph--dashed', 'restored', { restored: true });
     case 'stopped':
-      return chip(label, '已停止', 'glyph--dashed', 'stopped', { idle: true });
+      return chip(label, '采集已停止', 'glyph--dashed', 'stopped', { idle: true });
     default: {
       // 契约的七取值之外：不猜，按「未探测」这一档如实显示。
       const never: never = source.health;

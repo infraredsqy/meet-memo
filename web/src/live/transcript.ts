@@ -64,7 +64,7 @@ export function transcriptRow(data: TranscriptData, atIso: string): TranscriptRo
  * 心跳中断留下的那一格断口。
  *
  * `toIso` 给出恢复那一刻时，这一行就是设计章 4.5 的形状（与 `heartbeat.ts` 的
- * `transcriptGap()` 同一口径）：时刻格 `[20:57–20:58]`、路名格 `数据已停` ——
+ * `transcriptGap()` 同一口径）：时刻格 `[20:57–20:58]`、路名格 `采集中断` ——
  * 起于中断开始、止于恢复。只有 `fromIso`（恢复时刻不可知）时退回单时刻。
  * `at` 取中断**开始**的那一刻：断口标的是它发生的时间。
  */
@@ -75,7 +75,7 @@ export function gapRow(fromIso: string, note: string, toIso?: string): Transcrip
   return {
     at: fromIso,
     source: null,
-    route: '数据已停',
+    route: '采集中断',
     text: note,
     gap: true,
     interlude: true,

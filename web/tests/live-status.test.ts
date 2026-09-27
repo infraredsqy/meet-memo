@@ -14,8 +14,8 @@ import { makeSnapshot, makeSource, T } from './live-fixtures';
 describe('statusView：四态各自的字 + 图形', () => {
   it('空闲', () => {
     expect(statusView('idle', null)).toEqual({
-      name: '空闲',
-      note: '尚未开始',
+      name: '待机',
+      note: '未开始录音',
       glyph: 'glyph--idle',
       tone: 'off',
     });
@@ -24,7 +24,7 @@ describe('statusView：四态各自的字 + 图形', () => {
   it('录音中', () => {
     expect(statusView('recording', null)).toEqual({
       name: '录音中',
-      note: '两路都在采',
+      note: '两路均在采样',
       glyph: 'glyph--rec',
       tone: 'on',
     });
@@ -33,7 +33,7 @@ describe('statusView：四态各自的字 + 图形', () => {
   it('告警：说明里两路的关系说全（哪一路还在、哪一路没了）', () => {
     const view = statusView('alert', null);
     expect(view.name).toBe('告警');
-    expect(view.note).toBe('一路仍在采，另一路采不到了');
+    expect(view.note).toBe('一路仍在采样，另一路信号丢失');
     expect(view.glyph).toBe('glyph--alert');
     expect(view.tone).toBe('alert');
   });
@@ -74,19 +74,19 @@ describe('healthView：七取值逐档', () => {
       idle: true,
     });
     expect(healthView(makeSource('loopback', { health: 'probe_failed' }))).toMatchObject({
-      text: '探测失败 · 没有能打开的端点',
+      text: '不可用 · 没有能打开的端点',
       glyph: 'glyph--cross',
       tone: 'fail',
-      chip: '远端 · 探测失败 · 没有能打开的端点',
+      chip: '远端 · 不可用 · 没有能打开的端点',
     });
   });
 
-  it('capturing：还在采', () => {
+  it('capturing：采样中', () => {
     expect(healthView(makeSource('mic'))).toMatchObject({
-      text: '还在采',
+      text: '采样中',
       glyph: 'glyph--check',
       tone: 'ok',
-      chip: '本地 · 还在采',
+      chip: '本地 · 采样中',
       dead: false,
       frozen: false,
     });
@@ -96,17 +96,17 @@ describe('healthView：七取值逐档', () => {
     const view = healthView(
       makeSource('loopback', { health: 'lost', lost_since: T('20:57:00') }),
     );
-    expect(view.text).toBe('采不到了，从 20:57 起');
-    expect(view.chip).toBe('远端 · 采不到了，从 20:57 起');
+    expect(view.text).toBe('信号丢失，从 20:57 起');
+    expect(view.chip).toBe('远端 · 信号丢失，从 20:57 起');
     expect(view.glyph).toBe('glyph--cross');
     expect(view.tone).toBe('dead');
     expect(view.dead).toBe(true);
     expect(view.frozen).toBe(true);
   });
 
-  it('stopped：已停止（已结束那一档）', () => {
+  it('stopped：采集已停止（已结束那一档）', () => {
     expect(healthView(makeSource('mic', { health: 'stopped' }))).toMatchObject({
-      text: '已停止',
+      text: '采集已停止',
       glyph: 'glyph--dashed',
       tone: 'stopped',
       idle: true,

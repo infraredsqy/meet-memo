@@ -1,592 +1,144 @@
 /* ============================================================================
-   meeting · 会中视图样式（由 docs/ui/ui.css 抽出）
+   meeting · 会中视图样式（暗面一稿）
    ----------------------------------------------------------------------------
-   抽取口径（脚本：.work/070b31e0-phase2/tools/extract_live_css.py，可重跑，
-   末尾会打一份逐条审计清单）：
+   上一版是从 `docs/ui/ui.css`（亮面设计稿）里抽出来的抽取物，抽取口径写在
+   `web/README.md`「样式的来源与抽取口径」那一节，原文件备份在
+   `.work/dark-design/live.css.orig`。这一版的来路不同：照着 `src/App.tsx` 的组件树
+   与 `.work/dark-design/PLAN.md` 的方向重画，**类名照旧**（设计章 7.10 的类名契约），
+   换掉的是配色、字体、层级与排版。
 
-   留：
-     - 骨架（.shell / .topbar / .band / .rail）+ 通用控件（.btn / .seg / .glyph /
-       .readout / .tag / .kv / .codeblock / .spinner / .num）+ 会中视图规则
-       （.page--live / .m-band / .m-ch / .m-grid / .m-meter / .m-env / .m-health /
-       .m-chip / .alert / .heartbeat / .recovered-note / .statusline / .clock /
-       .transcript / .sumbar / .meter-legend / .live-tools）
-     - 两个宽度断点（720 / 400）
-     - [data-layout="a"] / [data-layout="b"] 那几条原样留着：页面根节点恒挂
-       data-layout="a"，A 的写法因此照原样生效。本轮不做方向 B，B 那几条是设计稿
-       自己的开关，一个字都不改（改它们等于改设计稿的几何）
+   题材本来就是调音台：两路输入、dBFS 刻度、峰值保持、2 秒一格的历史包络。
+   三条贯穿全篇的口径：
 
-   剔（剔掉的地方留一行注释说明剔了什么）：
-     - 选择器里带 .is-<state> 状态类的规则：`?state=` 的显隐与就地微调那一批。
-       React 版由条件渲染负责显隐，这一批进 CSS 就是死代码
-     - 会后视图专用（.page--post 的胶囊配色）与设计稿的复核导航条（.viewswitch）
+   1. **三层底靠明度差说话** —— 暗室（整页）／台面（面板）／井底（凹槽）依次是
+      `#070A09` → `#111614` → `#040606`，每一层之间差一档，一眼分得开；
+   2. **余晖青只落在读数上** —— 包络柱、电平填充的安静段、录音指示灯。
+      装饰、边框、标题一律走灰阶，于是一屏里只有「还在动的东西」在发光；
+   3. **等宽字管数据、标牌字管标题、正文字只给需要读长句的两处**（转写与告警说明）。
 
-   改（逐处都在下面带注释）：
-     - 靠 .is-* 切档的几条换成挂在部件自己身上的类：胶囊两档配色、空闲时长的灰字、
-       失联时顶栏让位；失联的冻结压灰那条作用域由 <html> 换到 <body>；
-       判据说明由 #hb-guidance 换成 .hb-guidance
-
-   规矩与 ui.css 一致：正文里不出现裸 hex、不出现裸 font-family —— 颜色与字体一律
-   var(--…) 引 tokens.css。**不新造类名**（类名契约在 docs/ui-design.md 章 7.10）。
+   取色与字体全部 `var()` 自 `console.css`（暗面 token 层）与 `tokens.css`
+   （原设计 token：间距、字号、时长、尺寸）。
    ========================================================================= */
 
 /* ============================================================================
-   meeting · 会中与会后视图共用的样式
-   ----------------------------------------------------------------------------
-   规矩：这份文件只引用 tokens.css 的变量。正文里不出现裸 hex、不出现裸
-   font-family —— 每一处颜色与字体都写成 var(--…)。
-
-   它要同时渲染五套页面：
-     live-a.html / live-b.html / live.html  —— 会中（A 与 B 两套方向）
-     post.html                              —— 会后
-     index.html                             —— 设计稿索引
-   以及两个宽度：1440×900 与 390（断点见文件末尾）。
-
-   两套方向靠页面根节点上的 data-layout="a" / "b" 切换，共用同一份 token、
-   同一份结构。分歧只在会中主视图怎么摆：
-     方向 A（选中）· 仪表盘式：两路电平左右并列在一条采集带上，用 .m-band--split
-     方向 B        · 通道条式：每一路占一条整宽横条上下叠放，用 .m-band
-   ========================================================================= */
-
-/* ============================================================================
-   1. 页面底座
+   1. 底座
    ========================================================================= */
 
 .ui {
-  font-family: var(--font-body);
-  color: var(--color-ink);
-  background: var(--color-surface);
+  font-family: var(--t-font-text);
+  font-size: var(--size-body);
+  line-height: var(--line-normal);
+  color: var(--t-ink);
+  background: var(--t-ground);
+  /* 暗底上文字发虚，靠这两条把笔画拉实 */
   -webkit-text-size-adjust: 100%;
+  -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  font-variant-numeric: var(--t-num);
 }
 
 .ui *,
-.ui *::before,
-.ui *::after {
+.ui *::after,
+.ui *::before {
   box-sizing: border-box;
 }
 
 body {
-  margin: var(--space-0);
-  min-height: 100vh;
-  font-size: var(--size-base);
-  line-height: var(--line-normal);
-  background: var(--color-surface);
+  margin: 0;
+  background-color: var(--t-ground);
+  color: var(--t-ink);
 }
 
-/* 数字在等宽字里成列，读数与时长才能纵向比大小 */
 .num {
-  font-family: var(--font-data);
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: "tnum" 1;
-  letter-spacing: var(--track-data);
+  font-family: var(--t-font-mono);
+  font-variant-numeric: var(--t-num);
+  letter-spacing: var(--track-none);
 }
 
 ::selection {
-  background: var(--color-alert-wash);
-  color: var(--color-ink);
+  background: var(--t-signal-wash);
+  color: var(--t-ink);
 }
 
 :focus-visible {
-  outline: var(--size-focus) solid var(--color-focus);
+  outline: var(--size-focus) solid var(--t-focus);
   outline-offset: var(--size-focus-offset);
 }
 
-.sr-only {
-  position: absolute;
-  width: var(--size-divider);
-  height: var(--size-divider);
-  padding: var(--space-0);
-  margin: calc(var(--size-divider) * -1);
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-
-/* ============================================================================
-   2. 排版原语
-   ========================================================================= */
-
-h1,
-h2,
-h3,
-h4,
-p,
-ul,
-ol,
-figure,
-blockquote {
-  margin: var(--space-0);
-}
-
-.prose {
-  max-width: var(--size-content-prose);
-  font-size: var(--size-body);
-  line-height: var(--line-loose);
-}
-
-.label {
-  font-size: var(--size-micro);
-  text-transform: uppercase;
-  letter-spacing: var(--track-caps);
-  color: var(--color-ink-quiet);
-}
-
 .hint {
-  font-size: var(--size-caption);
-  line-height: var(--line-snug);
-  color: var(--color-ink-quiet);
-  max-width: var(--size-content-prose);
-}
-
-.title-lg {
-  font-family: var(--font-display);
-  font-size: var(--size-display);
-  font-weight: var(--weight-bold);
-  letter-spacing: var(--track-tight);
-  line-height: var(--line-tight);
+  margin: var(--space-5) 0 0;
+  color: var(--t-ink-quiet);
+  font-size: var(--size-small);
+  line-height: var(--line-normal);
 }
 
 .title-md {
-  font-family: var(--font-display);
+  margin: 0 0 var(--space-4);
+  font-family: var(--t-font-sign);
   font-size: var(--size-title);
-  font-weight: var(--weight-bold);
-  letter-spacing: var(--track-tight);
-  line-height: var(--line-tight);
-}
-
-.title-sm {
-  font-family: var(--font-display);
-  font-size: var(--size-lead);
   font-weight: var(--weight-semibold);
-  line-height: var(--line-snug);
-  color: var(--color-ink-mid);
+  letter-spacing: var(--track-tight);
+  color: var(--t-ink);
 }
 
 .tag {
-  display: inline-block;
-  padding: var(--space-1) var(--space-2);
-  border: var(--size-divider) solid var(--color-rule);
-  font-family: var(--font-data);
-  font-size: var(--size-micro);
-  letter-spacing: var(--track-label);
-  color: var(--color-ink-mid);
+  display: inline-flex;
+  align-items: center;
+  height: var(--size-chip);
+  padding: 0 var(--space-3);
+  border: var(--size-divider) solid var(--t-rule);
+  background: var(--t-sunk);
+  color: var(--t-ink-quiet);
+  font-family: var(--t-font-mono);
+  font-size: var(--size-caption);
+  letter-spacing: var(--track-data);
   white-space: nowrap;
 }
 
 .kv {
-  display: flex;
-  gap: var(--space-3);
-  align-items: baseline;
-}
-
-.kv__k {
-  font-size: var(--size-micro);
-  text-transform: uppercase;
-  letter-spacing: var(--track-caps);
-  color: var(--color-ink-quiet);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--t-ink-mid);
+  font-size: var(--size-small);
   white-space: nowrap;
 }
 
+.kv__k {
+  cursor: pointer;
+  letter-spacing: var(--track-none);
+}
+
 .kv__v {
-  font-family: var(--font-data);
-  font-size: var(--size-small);
-  letter-spacing: var(--track-data);
-  color: var(--color-ink);
-  word-break: break-word;
-}
-
-.rule-h {
-  border: var(--space-0);
-  border-top: var(--size-divider) solid var(--color-rule);
-  margin: var(--space-0);
-}
-
-.rule-v {
-  border: var(--space-0);
-  border-left: var(--size-divider) solid var(--color-rule);
-  margin: var(--space-0);
-}
-
-/* ============================================================================
-   3. 页面骨架
-   ---------------------------------------------------------------------------
-   顶栏三段（左：状态胶囊 / 中：时长 + 主按钮 / 右：次级操作），
-   下面一条条整宽横带。区块之间用线分开，没有卡片、没有阴影、没有圆角。
-   ========================================================================= */
-
-.shell {
-  max-width: var(--size-shell);
-  margin-inline: auto;
-  padding-inline: var(--size-gutter);
-  padding-block: var(--space-6) var(--space-11);
-}
-
-.topbar {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  gap: var(--space-5);
-  align-items: center;
-  min-height: var(--size-header);
-  padding-bottom: var(--space-4);
-  border-bottom: var(--size-divider) solid var(--color-rule-strong);
-}
-
-.topbar__left {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  min-width: var(--space-0);
-}
-
-.topbar__main {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-5);
-  min-width: var(--space-0);
-}
-
-.topbar__right {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-}
-
-.band {
-  padding-block: var(--space-5);
-  border-bottom: var(--size-divider) solid var(--color-rule);
-}
-
-.band--quiet {
-  border-bottom-color: var(--color-rule-hairline);
-}
-
-.band--alert {
-  background: var(--color-alert-wash);
-  border-block: var(--size-divider) solid var(--color-alert);
-  padding-inline: var(--space-5);
-}
-
-/* 告警区与收尾区只在里面真有东西时才占位置：
-   没有告警的状态里，页面上不该出现两条空的红带子 */
-.band--alert:not(:has(> :not([hidden]))) {
-  display: none;
-}
-
-.band--sticky {
-  position: sticky;
-  top: var(--space-0);
-  z-index: var(--z-sticky);
-  background: var(--color-surface);
-}
-
-.band__head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-5);
-  margin-bottom: var(--space-4);
-  flex-wrap: wrap;
-}
-
-.band__title {
-  font-family: var(--font-display);
-  font-size: var(--size-title);
-  font-weight: var(--weight-bold);
-  letter-spacing: var(--track-tight);
-  line-height: var(--line-tight);
-}
-
-.band__note {
-  font-family: var(--font-data);
+  font-family: var(--t-font-mono);
   font-size: var(--size-caption);
-  letter-spacing: var(--track-data);
-  color: var(--color-ink-quiet);
+  color: var(--t-ink-mid);
+  font-variant-numeric: var(--t-num);
 }
 
-.band__body {
+.codeblock {
   display: block;
-}
-
-.band__foot {
-  margin-top: var(--space-4);
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  flex-wrap: wrap;
-}
-
-/* 左尺：刻度字的列 + 尺子左沿那道最粗的刻度线 */
-.rail {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  padding-left: var(--space-5);
-  border-left: var(--size-rule) solid var(--color-ink);
-  font-family: var(--font-data);
-  font-size: var(--size-micro);
-  letter-spacing: var(--track-data);
-  color: var(--color-ink-quiet);
-  text-align: right;
-  padding-right: var(--space-3);
-  min-width: var(--size-rail);
-}
-
-.rail__tick {
-  display: block;
-  line-height: var(--line-solid);
-}
-
-.rail__label {
-  display: block;
-  line-height: var(--line-solid);
-}
-
-.rail__zero {
-  position: absolute;
-  top: var(--space-0);
-  right: var(--space-0);
-  width: var(--space-3);
-  border-top: var(--size-divider) solid var(--color-rule);
-}
-
-/* ============================================================================
-   4. 控件
-   ========================================================================= */
-
-.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
-  min-height: var(--size-control);
-  padding: var(--space-2) var(--space-5);
-  border: var(--size-divider) solid var(--color-rule-strong);
-  border-radius: var(--radius-square);
-  background: transparent;
-  color: var(--color-ink);
-  font-family: var(--font-body);
-  font-size: var(--size-small);
-  font-weight: var(--weight-semibold);
-  line-height: var(--line-solid);
-  cursor: pointer;
-  transition: background var(--duration-quick) var(--ease-standard),
-              border-color var(--duration-quick) var(--ease-standard);
-}
-
-.btn:hover {
-  background: var(--color-sunk);
-}
-
-.btn:active {
-  transition-duration: var(--duration-instant);
-}
-
-.btn--primary {
-  background: var(--color-ink);
-  color: var(--color-ink-inverse);
-  border-color: var(--color-ink);
-}
-
-.btn--primary:hover {
-  background: var(--color-rule-strong);
-}
-
-.btn--ghost {
-  border-color: var(--color-rule);
-  color: var(--color-ink-mid);
-}
-
-.btn--danger {
-  border-color: var(--color-alert);
-  color: var(--color-alert-ink);
-}
-
-.btn--small {
-  min-height: var(--size-control-small);
-  padding: var(--space-1) var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  margin: var(--space-3) 0 0;
+  border: var(--size-divider) solid var(--t-rule-hair);
+  border-left: var(--size-rule) solid var(--t-rule-strong);
+  background: var(--t-sunk);
+  color: var(--t-ink-mid);
+  font-family: var(--t-font-mono);
   font-size: var(--size-caption);
+  line-height: var(--line-snug);
+  overflow-wrap: anywhere;
+  user-select: all;
 }
 
-.btn--block {
-  width: 100%;
-  justify-content: flex-start;
-}
-
-.btn[disabled],
-.btn[aria-disabled="true"] {
-  color: var(--color-ink-faint);
-  border-color: var(--color-rule-hairline);
-  background: transparent;
-  cursor: not-allowed;
-}
-
-.seg {
-  display: inline-flex;
-  border: var(--size-divider) solid var(--color-rule-strong);
-  flex-wrap: wrap;
-}
-
-.seg__item {
-  min-height: var(--size-control-small);
-  padding: var(--space-1) var(--space-3);
-  border: var(--space-0);
-  border-right: var(--size-divider) solid var(--color-rule-hairline);
-  border-radius: var(--radius-square);
-  background: transparent;
-  color: var(--color-ink-mid);
-  font-family: var(--font-data);
-  font-size: var(--size-caption);
-  letter-spacing: var(--track-data);
-  cursor: pointer;
-}
-
-.seg__item:last-child {
-  border-right: var(--space-0);
-}
-
-.seg__item--on {
-  background: var(--color-ink);
-  color: var(--color-ink-inverse);
-}
-
-.drawer {
-  position: fixed;
-  inset-block: var(--space-0);
-  inset-inline-end: var(--space-0);
-  width: min(24rem, 100vw);
-  z-index: var(--z-drawer);
-  background: var(--color-surface-raised);
-  border-left: var(--size-rule) solid var(--color-ink);
-  padding: var(--space-6) var(--space-5);
-  overflow-y: auto;
-  display: none;
-}
-
-.drawer--open {
-  display: block;
-}
-
-.scrim {
-  position: fixed;
-  inset: var(--space-0);
-  z-index: calc(var(--z-drawer) - 1);
-  background: var(--color-rule-strong);
-  opacity: 0.28;
-  display: none;
-}
-
-/* ============================================================================
-   5. 图形标记 · 四态与对错的形状
-   ---------------------------------------------------------------------------
-   形状是「不靠颜色」的那一半。全部用 clip-path 画出来：
-   不引图片、不引 SVG 资源、不引图标字体，断网打开一个字都不缺。
-     空闲 = 空心方框 / 录音中 = 实心圆 / 告警 = 实心三角
-     收尾中 = 半实心方框 / 已完成 = 方框打勾
-     还在采 = 勾 / 采不到了 = 叉
-   ========================================================================= */
-
-.glyph {
-  position: relative;
-  display: inline-block;
-  flex: none;
-  width: var(--size-dot);
-  height: var(--size-dot);
-  vertical-align: middle;
-  color: currentColor;
-}
-
-/* 空闲：空心方框 */
-.glyph--idle {
-  border: var(--size-focus) solid currentColor;
-}
-
-/* 录音中：实心圆 */
-.glyph--rec {
-  background: currentColor;
-  border-radius: 50%;
-}
-
-/* 告警：实心三角 */
-.glyph--alert {
-  background: currentColor;
-  clip-path: polygon(50% 0, 100% 100%, 0 100%);
-}
-
-/* 已结束·收尾中：半实心方框 */
-.glyph--draining {
-  border: var(--size-focus) solid currentColor;
-  background: linear-gradient(to bottom, currentColor 50%, transparent 50%);
-}
-
-/* 已结束·已完成：方框打勾 */
-.glyph--done::after {
-  content: "";
-  position: absolute;
-  left: 1px;
-  top: -3px;
-  width: 5px;
-  height: 10px;
-  border-right: var(--size-focus) solid currentColor;
-  border-bottom: var(--size-focus) solid currentColor;
-  transform: rotate(45deg);
-}
-
-/* 还在采：勾 */
-.glyph--check::after {
-  content: "";
-  position: absolute;
-  left: 3px;
-  top: 1px;
-  width: 4px;
-  height: 8px;
-  border-right: var(--size-focus) solid currentColor;
-  border-bottom: var(--size-focus) solid currentColor;
-  transform: rotate(45deg);
-}
-
-/* 采不到了：叉。两条 45° 的笔画交叉，stroke 仍是 --size-focus 那 2px，
-   跟上面那个勾的笔画一样粗，四条端点正好落在方框的四角。
-   旧版用一个只有 2px 高的盒子画对角渐变，那对渐变退化成一根横杠——
-   门槛 2 的「徽标换成 ✘」这条形状通道当时并不存在。
-   这里用内联 SVG 当背景（currentColor 跟着文字色走）：形状精确到像素，
-   又不必为它多引一个文件。命名空间那一行的冒号写成 %3A，
-   好让「全文搜 http 开头的地址零命中」这条核对（章 8 门槛 7）继续是 0 */
-.glyph--cross {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http%3A//www.w3.org/2000/svg' viewBox='0 0 11 11'%3E%3Cpath d='M1 1 L10 10 M10 1 L1 10' stroke='currentColor' stroke-width='2' fill='none'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: center;
-  background-size: 100% 100%;
-}
-
-/* 通道形状标记：本地 = 实心方框、远端 = 空心圆圈。
-   灰度下这两块靠它分辨（章 2.3、门槛 1） */
-.m-ch__mark {
-  display: inline-block;
-  flex: none;
-  width: var(--size-dot);
-  height: var(--size-dot);
-  border: var(--size-focus) solid currentColor;
-}
-
-.m-ch__mark--remote {
-  border-radius: 50%;
-  background: transparent;
-}
-
-.m-ch__mark--local {
-  background: currentColor;
-}
-
-/* 不限时的进度指示（总结进行中、会后进行中） */
 .spinner {
   display: inline-block;
-  flex: none;
-  width: var(--size-dot);
-  height: var(--size-dot);
-  border: var(--size-focus) solid var(--color-rule-hairline);
-  border-top-color: var(--color-signal);
+  width: 12px;
+  height: 12px;
+  vertical-align: -1px;
+  border: 2px solid var(--t-signal-deep);
+  border-top-color: var(--t-signal);
+  border-radius: 50%;
   animation: spin var(--duration-slow) var(--ease-linear) infinite;
 }
 
@@ -596,750 +148,983 @@ blockquote {
   }
 }
 
-/* 关掉动效时把这条动画整个摘掉（章 8 门槛 9）。
-   只把 --duration-* 压成 1ms 不够：这条动画的时长就是那个变量、又带 infinite，
-   1ms 一圈等于每秒转一千圈，比开着动效还晃。这里用的是 animation: none，
-   时长变量保持原样，"不播"这件事由这一条自己说清 */
-@media (prefers-reduced-motion: reduce) {
-  .spinner {
-    animation: none;
-  }
+/* 说明用的弱文本块（服务重启过那一行、失联判据那一段） */
+.hint.restart-note,
+.restart-note {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-left: var(--size-rule) solid var(--t-amber);
+  background: var(--t-sunk);
+  color: var(--t-ink-mid);
+  font-size: var(--size-small);
+}
+
+.empty {
+  margin: var(--space-4) 0 0;
+  padding: var(--space-5);
+  border: var(--size-divider) dashed var(--t-rule);
+  background: var(--t-sunk);
+  color: var(--t-ink-quiet);
+  font-size: var(--size-small);
+  line-height: var(--line-loose);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+[hidden] {
+  display: none !important;
 }
 
 /* ============================================================================
-   6. 状态胶囊与时长
+   2. 外壳与版面
    ========================================================================= */
 
-.statusline {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-3);
-  min-height: var(--size-chip);
+.shell {
+  max-width: var(--size-shell);
+  margin: 0 auto;
+  padding: var(--space-6) var(--size-gutter) var(--space-12);
 }
 
-/* 实心块字形面：状态名印在深墨底上。这一档只有会中视图用；
-   会后视图的胶囊是浅底细边，靠字与图形说话 */
+.page--live {
+  display: block;
+}
+
+.band {
+  margin: 0 0 var(--space-8);
+  padding: var(--space-4) 0 0;
+  border-top: var(--size-divider) solid var(--t-hair);
+}
+
+.band--quiet {
+  margin-bottom: var(--space-5);
+}
+
+.band--sticky {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  background: var(--t-ground);
+}
+
+.band--alert {
+  border-top-color: color-mix(in srgb, var(--t-alert) 35%, transparent);
+}
+
+/* 告警区里一条都没有时，那道红线也收掉 */
+.band--alert:not(:has(> :not([hidden]))) {
+  border-top-color: transparent;
+  margin-bottom: 0;
+  padding-top: 0;
+}
+
+.band__head {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-5);
+  padding-bottom: var(--space-3);
+}
+
+.band__title {
+  margin: 0;
+  font-family: var(--t-font-sign);
+  font-size: var(--size-caption);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+  color: var(--t-ink-mid);
+}
+
+.band__note {
+  grid-column: 2;
+  justify-self: end;
+  color: var(--t-ink-quiet);
+  font-size: var(--size-caption);
+}
+
+.band__body {
+  padding-top: var(--space-1);
+}
+
+.band__foot {
+  margin-top: var(--space-4);
+}
+
+/* ============================================================================
+   3. 顶栏：一屏的仪表头
+   ----------------------------------------------------------------------------
+   时长是这一屏上最大的一件东西 —— 开会的人抬眼先看它。它排在中间那一列，
+   46px、等宽、表格数字（跳秒时宽度不抖）。
+   ========================================================================= */
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-5) 0;
+  margin-bottom: var(--space-6);
+  border-bottom: var(--size-divider) solid var(--t-rule-hair);
+  background: color-mix(in srgb, var(--t-ground) 92%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+.topbar__left,
+.topbar__right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.topbar__right {
+  justify-content: flex-end;
+}
+
+.topbar__main {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-6);
+}
+
+/* 心跳失联：顶栏退到后面去，把注意力让给那条横幅 */
+.topbar--hb-lost {
+  opacity: 0.55;
+  filter: saturate(0.4);
+}
+
+.statusline {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
 .page--live .statusline__caps {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-1) var(--space-3);
-  background: var(--color-ink);
-  color: var(--color-ink-inverse);
+  gap: var(--space-3);
+  height: var(--size-control-small);
+  padding: 0 var(--space-4) 0 var(--space-3);
+  border: var(--size-divider) solid var(--t-rule);
+  background: var(--t-raised);
+  color: var(--t-ink-mid);
+  font-family: var(--t-font-sign);
+  font-size: var(--size-small);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--track-label);
+  white-space: nowrap;
 }
 
+.page--live .statusline__caps--on {
+  border-color: color-mix(in srgb, var(--t-signal) 55%, transparent);
+  background: var(--t-signal-wash);
+  color: var(--t-signal-ink);
+}
 
+.page--live .statusline__caps--alert {
+  border-color: color-mix(in srgb, var(--t-alert) 55%, transparent);
+  background: var(--t-alert-wash);
+  color: var(--t-alert-ink);
+}
 
 .statusline__name {
-  font-family: var(--font-display);
-  font-size: var(--size-base);
-  font-weight: var(--weight-bold);
   letter-spacing: var(--track-label);
-  line-height: var(--line-solid);
 }
 
 .statusline__note {
+  color: var(--t-ink-quiet);
   font-size: var(--size-small);
-  color: var(--color-ink-mid);
-  line-height: var(--line-snug);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-/* 录音中那一档：胶囊换成活着的青。青底亮，字与形状翻成深墨才压得住。
-   设计稿把 .is-recording / .is-lost-one / .is-heartbeat-late /
-   .is-heartbeat-lost / .is-heartbeat-recovered 五个状态类并列写成一条；
-   React 版合成这一个修饰类，由条件渲染说了算 */
-.page--live .statusline__caps--on {
-  background: var(--color-signal);
-  color: var(--color-ink);
+/* 状态胶囊里那个 11px 的灯 */
+.glyph {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  width: var(--size-dot);
+  height: var(--size-dot);
+  background: var(--t-ink-quiet);
 }
 
-/* 告警那一档：胶囊换成故障红。红底深，字与形状翻反白 */
-.page--live .statusline__caps--alert {
-  background: var(--color-alert);
-  color: var(--color-ink-inverse);
+/* 空心方框 = 什么都没在跑 */
+.glyph--idle {
+  background: none;
+  border: 2px solid var(--t-ink-faint);
 }
 
+/* 实心圆 = 正在录（红色，跟全世界录音键一个颜色） */
+.glyph--rec {
+  background: var(--t-alert);
+  border-radius: 50%;
+  box-shadow: var(--t-alert-glow);
+  animation: lamp var(--duration-slow) var(--ease-standard) infinite alternate;
+  /* 关掉动效时灯恒亮：静态一个实心红点，照样读得出「在录」（门槛 9） */
+  animation-play-state: var(--t-breathe, running);
+}
+
+/* 实心三角 = 出事了 */
+.glyph--alert {
+  background: var(--t-alert);
+  clip-path: polygon(50% 2%, 100% 98%, 0 98%);
+  box-shadow: var(--t-alert-glow);
+}
+
+/* 半实心方框 = 正在落盘 */
+.glyph--draining {
+  background: linear-gradient(to top, var(--t-amber) 50%, transparent 50%);
+  border: 2px solid var(--t-amber);
+}
+
+.glyph--done {
+  background: var(--t-signal);
+  box-shadow: var(--t-glow-lamp);
+}
+
+/* 勾 / 叉 / 虚线环：给健康徽标用的小号形状 */
+.glyph--check,
+.glyph--cross,
+.glyph--dashed {
+  background: var(--t-ink-quiet);
+}
+
+.glyph--check {
+  background: var(--t-signal);
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2 8.6l3.6 3.4L14 3.4' fill='none' stroke='%23000' stroke-width='2.8'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
+
+.glyph--cross {
+  background: var(--t-alert);
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.2 3.2l9.6 9.6M12.8 3.2l-9.6 9.6' fill='none' stroke='%23000' stroke-width='2.8'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
+
+.glyph--dashed {
+  background: none;
+  border: 2px dashed var(--t-ink-quiet);
+  border-radius: 50%;
+}
+
+@keyframes lamp {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.4;
+  }
+}
+
+/* 时长 */
 .clock {
-  display: inline-flex;
+  display: flex;
   align-items: baseline;
-  gap: var(--space-2);
+  gap: var(--space-4);
 }
 
 .clock__label {
-  font-size: var(--size-micro);
-  text-transform: uppercase;
-  letter-spacing: var(--track-caps);
-  color: var(--color-ink-quiet);
+  color: var(--t-ink-quiet);
+  font-size: var(--size-caption);
+  letter-spacing: var(--track-label);
+  white-space: nowrap;
 }
 
 .clock__value {
-  font-family: var(--font-data);
-  font-size: var(--size-clock);
-  font-weight: var(--weight-mono-bold);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: var(--track-data);
-  color: var(--color-ink);
+  font-size: 46px;
+  font-weight: var(--weight-regular);
+  line-height: var(--line-solid);
+  letter-spacing: -0.02em;
+  color: var(--t-ink);
+  font-variant-numeric: var(--t-num);
 }
 
-/* 空闲：时长还是 00:00:00，它退到后排去（灰）。
-   设计稿靠 .is-idle 切这一档，React 版把它挂在 clock 自己身上 */
 .clock--faint .clock__value {
-  color: var(--color-ink-faint);
+  color: var(--t-ink-faint);
 }
 
 .recovered-note {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-1) var(--space-3);
-  border: var(--size-divider) solid var(--color-rule-hairline);
-  font-family: var(--font-data);
-  font-size: var(--size-micro);
-  letter-spacing: var(--track-data);
-  color: var(--color-ink-mid);
+  height: var(--size-chip);
+  padding: 0 var(--space-3);
+  border: var(--size-divider) solid color-mix(in srgb, var(--t-signal) 45%, transparent);
+  background: var(--t-signal-wash);
+  color: var(--t-signal-ink);
+  font-size: var(--size-caption);
   white-space: nowrap;
 }
 
-/* 「服务重启过」那一行（章 4.5）：只在空闲态回来、日志里有未收尾记录时出现。
-   它是 .hint 的一档，字号与颜色跟着正文小字走，这里只补一条左侧细线当引子，
-   与 shell 左沿对齐；上下留白交给它自己的 margin */
-.restart-note {
-  margin: var(--space-5) 0 0;
-  border-left: var(--size-rule) solid var(--color-rule);
-  padding-left: var(--space-4);
+/* ============================================================================
+   4. 控件
+   ========================================================================= */
+
+.btn {
+  display: inline-grid;
+  place-items: center;
+  height: var(--size-control);
+  padding: 0 var(--space-5);
+  border: var(--size-divider) solid var(--t-rule);
+  background: var(--t-raised);
+  color: var(--t-ink);
+  font-family: var(--t-font-sign);
+  font-size: var(--size-small);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--track-label);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-quick) var(--ease-standard),
+    border-color var(--duration-quick) var(--ease-standard),
+    color var(--duration-quick) var(--ease-standard);
+}
+
+.btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--t-rule) 40%, var(--t-raised));
+  border-color: var(--t-rule-strong);
+}
+
+.btn:active:not(:disabled) {
+  background: var(--t-sunk);
+}
+
+.btn:disabled,
+.btn[aria-disabled="true"] {
+  color: var(--t-ink-faint);
+  border-color: var(--t-rule-hair);
+  background: var(--t-sunk);
+  cursor: not-allowed;
+}
+
+.btn--primary {
+  border-color: var(--t-signal);
+  background: var(--t-signal);
+  color: var(--t-ink-inverse);
+  font-weight: var(--weight-semibold);
+}
+
+.btn--primary:hover:not(:disabled) {
+  background: var(--t-signal-bright);
+  border-color: var(--t-signal-bright);
+}
+
+.btn--primary:disabled {
+  background: var(--t-signal-wash);
+  border-color: var(--t-rule-hair);
+  color: var(--t-ink-quiet);
+}
+
+/* 结束录音：硫红。按下去会停掉正在落的音频，手感上就该比别的按钮重 */
+.btn--end {
+  border-color: var(--t-alert);
+  background: var(--t-alert);
+  color: var(--t-ink-inverse);
+}
+
+.btn--end:hover:not(:disabled) {
+  background: var(--t-alert-ink);
+  border-color: var(--t-alert-ink);
+}
+
+.btn--danger {
+  border-color: color-mix(in srgb, var(--t-alert) 65%, transparent);
+  color: var(--t-alert-ink);
+}
+
+.btn--danger:hover:not(:disabled) {
+  background: var(--t-alert-wash);
+  border-color: var(--t-alert);
+}
+
+.btn--ghost {
+  border-color: var(--t-rule-hair);
+  background: transparent;
+  color: var(--t-ink-mid);
+}
+
+.btn--ghost:hover:not(:disabled) {
+  background: var(--t-sunk);
+  border-color: var(--t-rule);
+  color: var(--t-ink);
+}
+
+.btn--small {
+  height: var(--size-control-small);
+  padding: 0 var(--space-4);
+  font-size: var(--size-caption);
+}
+
+.btn--block {
+  display: grid;
+  width: 100%;
+}
+
+.btn--start {
+  padding: 0 var(--space-8);
+}
+
+/* 四档窗口：一段连在一起的刻度牌。列宽用 minmax(0, 1fr) —— 写 1fr 的话
+   中文标签的固有宽度会把四档一起顶出容器（窄屏尤其明显） */
+.seg {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  border: var(--size-divider) solid var(--t-rule);
+  background: var(--t-sunk);
+}
+
+.seg__item {
+  height: var(--size-control-small);
+  min-width: 0;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-left: var(--size-divider) solid var(--t-rule-hair);
+  background: transparent;
+  color: var(--t-ink-mid);
+  font-family: var(--t-font-mono);
+  font-size: var(--size-caption);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background-color var(--duration-quick) var(--ease-standard);
+}
+
+.seg__item:first-child {
+  border-left: 0;
+}
+
+.seg__item:hover:not(:disabled) {
+  background: var(--t-raised);
+  color: var(--t-ink);
+}
+
+.seg__item--on {
+  background: var(--t-signal-wash);
+  color: var(--t-signal-ink);
+  box-shadow: inset 0 -2px 0 var(--t-signal);
+}
+
+.seg__item:disabled {
+  color: var(--t-ink-faint);
+  cursor: not-allowed;
+}
+
+/* 告警出声那个方框：暗底上给足尺寸，别让人凑近找 */
+input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--t-signal);
+  cursor: pointer;
 }
 
 /* ============================================================================
-   7. 采集带与通道
-   ---------------------------------------------------------------------------
-   一条通道（.m-ch）是一个完整的部件：路名 + 形状标记 + 设备名 + 健康徽标
-   + 电平表 + 信号床 + 当前读数。方向 A 与方向 B 用的是同一个 .m-ch。
+   5. 采集带：两路通道卡 + 右侧工具列
    ========================================================================= */
 
-/* 方向 A（选中）：两路左右并列在一条带子上。.m-chans 是两路通道的容器，
-   方向 A 是 1fr 1fr，方向 B 收成一列 —— 通道容器与总结区因此可以并存 */
 .m-band--split {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-0);
-  border-top: var(--size-divider) solid var(--color-rule-strong);
+  grid-template-columns: 1fr;
+  gap: var(--space-5);
 }
 
 .m-chans {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-0);
-}
-
-.m-chans .m-ch {
-  padding: var(--space-4) var(--space-5);
-  border-right: var(--size-divider) solid var(--color-rule);
-}
-
-.m-chans .m-ch:last-child {
-  border-right: var(--space-0);
-}
-
-/* 方向 B：每一路占一条整宽横条，上下叠放 */
-[data-layout="b"] .m-band {
-  display: block;
-}
-
-[data-layout="b"] .m-chans {
   grid-template-columns: 1fr;
+  gap: var(--space-5);
 }
 
-[data-layout="b"] .m-chans .m-ch {
-  border-right: var(--space-0);
-}
-
-/* 采集带在 1440 下把右侧三分之一让给总结区（方向 A 的写法） */
-.m-band--tools {
-  display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
-  gap: var(--space-0);
-  border-top: var(--size-divider) solid var(--color-rule-strong);
-}
-
-.m-band--tools > * {
-  min-width: var(--space-0);
-}
-
-[data-layout="b"] .m-ch {
-  border-top: var(--size-divider) solid var(--color-rule);
-  padding-block: var(--space-4);
-}
-
-[data-layout="b"] .m-ch:first-child {
-  border-top: var(--size-divider) solid var(--color-rule-strong);
-}
-
-/* 通道本身 */
+/* 通道卡：左沿一道 2px 的余晖 —— 这一路在动的时候它亮 */
 .m-ch {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  min-width: var(--space-0);
-  background: var(--color-surface);
+  position: relative;
+  display: grid;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  border: var(--size-divider) solid var(--t-rule-hair);
+  border-left: 2px solid var(--t-signal-deep);
+  background: var(--t-surface);
+  box-shadow: var(--t-glow-panel);
 }
 
 .m-ch__head {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  flex-wrap: wrap;
+  min-width: 0;
+}
+
+/* 路标：本地一实心方块、远端一空心方块（形状本身是一条冗余通道） */
+.m-ch__mark {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  background: var(--t-ink-quiet);
+}
+
+.m-ch__mark--local {
+  background: var(--t-signal);
+}
+
+.m-ch__mark--remote {
+  background: none;
+  border: 2px solid var(--t-ink-quiet);
 }
 
 .m-ch__name {
-  font-family: var(--font-display);
-  font-size: var(--size-lead);
-  font-weight: var(--weight-bold);
-  letter-spacing: var(--track-tight);
-  line-height: var(--line-tight);
-  color: var(--color-ink);
+  font-family: var(--t-font-sign);
+  font-size: var(--size-body);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--track-label);
+  color: var(--t-ink);
+  white-space: nowrap;
 }
 
 .m-ch__device {
-  font-family: var(--font-data);
+  flex: 1;
+  min-width: 0;
+  color: var(--t-ink-quiet);
   font-size: var(--size-caption);
-  letter-spacing: var(--track-data);
-  color: var(--color-ink-quiet);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 22ch;
 }
 
-.m-ch__readout {
-  align-self: end;
-  justify-self: start;
-  font-family: var(--font-data);
-  font-size: var(--size-readout);
-  font-weight: var(--weight-mono-bold);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: var(--track-data);
-  color: var(--color-signal);
-  line-height: var(--line-tight);
-  white-space: nowrap;
-}
-
-
-/* 通道主体：电平条与读数并排在上，信号床横贯下沿整宽。
-   读数的格宽跟着电平表走（auto），中间不留空档 */
-.m-grid {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: var(--space-3) var(--space-5);
-  align-items: end;
-}
-
-.m-grid .m-env,
-.m-grid .m-scale,
-.m-grid .m-env-note {
-  grid-column: 1 / -1;
-}
-
-/* 方向 A 的竖直表自带刻度列，横排刻度字在这边是重复的 */
-[data-layout="a"] .m-scale {
-  display: none;
-}
-
-.m-env-note {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--space-3);
-  font-family: var(--font-data);
-  font-size: var(--size-micro);
-  letter-spacing: var(--track-caps);
-  color: var(--color-ink-quiet);
-}
-
-/* 水平表底下那排刻度字：0 / −20 / −40 / −60 dBFS。
-   方向 B 的横条里，dBFS 刻度就落在这一行上，和信号床左右对齐；
-   方向 A 用竖直表自带的刻度列，这一行跟着竖直表一起收起来 */
-.m-scale {
-  position: relative;
-  height: var(--size-caption);
-  margin-top: var(--space-1);
-}
-
-.m-scale span {
-  position: absolute;
-  top: var(--space-0);
-  transform: translateX(-50%);
-  font-family: var(--font-data);
-  font-size: var(--size-micro);
-  letter-spacing: var(--track-data);
-  color: var(--color-ink-quiet);
-  line-height: var(--line-solid);
-  white-space: nowrap;
-}
-
-.m-scale span:first-child {
-  transform: none;
-}
-
-.m-scale span:last-child {
-  transform: translateX(-100%);
-}
-
-/* 通道状态：数据已停 / 已恢复 / 还没开始采 */
-.m-ch--idle .m-ch__readout {
-  color: var(--color-ink-faint);
-}
-
-/* 还没开始采的通道：表头与徽标一起退到后排，别跟"正在采"抢亮度。
-   采集相关的信息一个都不少，只是不发光。读数还没有值，就不占那一格 */
-.m-ch--idle .m-ch__name,
-.m-ch--idle .m-ch__device {
-  color: var(--color-ink-quiet);
-}
-
-.m-ch--idle .m-grid > .m-ch__readout,
-.m-ch--idle .m-ch__head .m-ch__readout {
-  display: none;
-}
-
-.m-ch--idle .m-ch__mark,
-.m-ch--idle .m-health {
-  opacity: 0.65;
-}
-
-.m-ch--idle .m-env__bar {
-  background: var(--color-rule-hairline);
-}
-
-/* 一路死掉：床是空的，打上斜纹，读数打叉 —— 一眼看得出「采不到了」 */
-.m-ch--dead .m-env__bar {
-  display: none;
-}
-
-.m-ch--frozen .m-ch__readout {
-  color: var(--color-dead);
-}
-
-.m-ch--frozen .m-ch__name,
-.m-ch--frozen .m-ch__device {
-  color: var(--color-ink-quiet);
-}
-
-/* 数据已停：整块压灰，但每一格刻度、每一根柱子都还在原地 ——
-   不把估出来的数据继续画成在动，也不把结构抹掉 */
-.m-ch--frozen .m-meter__fill,
-.m-ch--frozen .m-env__bar {
-  background: var(--color-dead);
-}
-
-.m-ch--frozen .m-meter__peak {
-  background: var(--color-rule);
-}
-
-.m-ch--frozen .m-ch__head,
-.m-ch--frozen .m-grid {
-  opacity: 0.8;
-}
-
-.m-ch--dead .m-ch__readout {
-  color: var(--color-alert-ink);
-  text-decoration: line-through;
-}
-
-.m-ch--restored .m-ch__name::after {
-  content: "已恢复";
-  margin-left: var(--space-2);
-  padding: var(--space-1) var(--space-2);
-  border: var(--size-divider) solid var(--color-rule);
-  font-family: var(--font-data);
-  font-size: var(--size-micro);
-  font-weight: var(--weight-regular);
-  letter-spacing: var(--track-caps);
-  color: var(--color-ink-mid);
-  vertical-align: middle;
-}
-
-/* ============================================================================
-   8. 电平表
-   ---------------------------------------------------------------------------
-   --level 是当前电平：竖直表从底往上长，水平表从左往右长，范围 0–100%。
-   --hold  是峰值保持的位置，同样用百分比。
-   ========================================================================= */
-
-.m-meter {
-  position: relative;
-  display: grid;
-  grid-template-columns: var(--size-rail-meter) 1fr;
-  gap: var(--space-3);
-  align-items: stretch;
-  --level: 0%;
-  --hold: 0%;
-}
-
-.m-meter__scale {
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  font-family: var(--font-data);
-  font-size: var(--size-micro);
-  letter-spacing: var(--track-data);
-  color: var(--color-ink-quiet);
-}
-
-.m-meter__track {
-  position: relative;
-  background: var(--color-sunk);
-  border: var(--size-divider) solid var(--color-rule);
-  overflow: hidden;
-}
-
-/* 刻度线：每 20 dBFS 一道细线，0 位那道用结构线 */
-.m-meter__ticks {
-  position: absolute;
-  inset: var(--space-0);
-  background: repeating-linear-gradient(to bottom,
-              var(--color-rule-hairline) 0,
-              var(--color-rule-hairline) var(--size-divider),
-              transparent var(--size-divider),
-              transparent 20%);
-  pointer-events: none;
-}
-
-.m-meter__fill {
-  position: absolute;
-  inset-block-end: var(--space-0);
-  inset-inline-start: var(--space-0);
-  width: var(--space-0);
-  height: var(--level);
-  background: var(--color-signal);
-}
-
-/* 峰值保持指针：一根 2px 的亮青横线 */
-.m-meter__peak {
-  position: absolute;
-  inset-inline: var(--space-0);
-  bottom: var(--hold);
-  height: var(--size-focus);
-  background: var(--color-signal-bright);
-}
-
-.m-meter__mark {
-  position: absolute;
-  inset-block-start: var(--space-0);
-  inset-inline-end: var(--space-1);
-  font-family: var(--font-data);
-  font-size: var(--size-micro);
-  color: var(--color-alert-ink);
-  background: var(--color-sunk);
-  padding-inline: var(--space-1);
-  line-height: var(--line-tight);
-  display: none;
-}
-
-.m-meter__mark--on {
-  display: block;
-}
-
-/* 竖直表（方向 A）：一条窄高的槽 */
-.m-meter--v .m-meter__track {
-  width: var(--size-meter);
-  height: var(--size-meter-tall);
-  margin-left: auto;
-}
-
-/* 水平表（方向 B）：一条横贯整条通道的槽，读数落在它右边 */
-.m-meter--h {
-  grid-template-columns: var(--size-rail-meter) 1fr;
-  grid-template-rows: auto auto;
-  align-items: center;
-  column-gap: var(--space-4);
-}
-
-/* 竖着排的那一列刻度字在横表里塞不下四个，只留两头两个端点标记 */
-.m-meter--h .m-meter__scale {
-  grid-column: 1;
-  grid-row: 1;
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.m-meter--h .m-meter__scale span:nth-child(2),
-.m-meter--h .m-meter__scale span:nth-child(3) {
-  display: none;
-}
-
-.m-meter--h .m-meter__track {
-  grid-column: 2;
-  grid-row: 1;
-  width: 100%;
-  height: var(--size-meter-bar);
-}
-
-.m-meter--h .m-meter__ticks {
-  background: repeating-linear-gradient(to right,
-              var(--color-rule-hairline) 0,
-              var(--color-rule-hairline) var(--size-divider),
-              transparent var(--size-divider),
-              transparent 20%);
-}
-
-.m-meter--h .m-meter__fill {
-  inset-block-start: var(--space-0);
-  inset-block-end: var(--space-0);
-  width: var(--level);
-  height: auto;
-}
-
-.m-meter--h .m-meter__peak {
-  inset-block: var(--space-0);
-  inset-inline-start: var(--hold);
-  left: var(--hold);
-  bottom: auto;
-  width: var(--size-focus);
-  height: auto;
-}
-
-/* 方向 B：读数与电平横向并排，读数占剩下的整条右半 */
-[data-layout="b"] .m-grid {
-  grid-template-columns: auto 1fr;
-}
-
-[data-layout="b"] .m-ch__readout {
-  grid-column: 2;
-  grid-row: 1;
-  align-self: center;
-  justify-self: end;
-}
-
-/* 方向 B 的整宽横条里，那 15 根柱子铺满全宽 —— 横条本身就是一台仪器。
-   柱子等分、贴齐两端（13 道 5px 的缝），横条越宽看得越清 */
-[data-layout="b"] .m-env {
-  height: var(--size-envelope-tall);
-  margin-top: auto;
-}
-
-[data-layout="b"] .m-env-note {
-  margin-top: auto;
-}
-
-[data-layout="b"] .m-env__bar {
-  width: calc((100% - var(--space-3) * 13) / 15);
-}
-
-[data-layout="b"] .m-env__bar:nth-child(2) { left: 0; }
-[data-layout="b"] .m-env__bar:nth-child(3) { left: calc((100% - var(--space-3) * 13) / 15 * 1 + var(--space-3) * 1); }
-[data-layout="b"] .m-env__bar:nth-child(4) { left: calc((100% - var(--space-3) * 13) / 15 * 2 + var(--space-3) * 2); }
-[data-layout="b"] .m-env__bar:nth-child(5) { left: calc((100% - var(--space-3) * 13) / 15 * 3 + var(--space-3) * 3); }
-[data-layout="b"] .m-env__bar:nth-child(6) { left: calc((100% - var(--space-3) * 13) / 15 * 4 + var(--space-3) * 4); }
-[data-layout="b"] .m-env__bar:nth-child(7) { left: calc((100% - var(--space-3) * 13) / 15 * 5 + var(--space-3) * 5); }
-[data-layout="b"] .m-env__bar:nth-child(8) { left: calc((100% - var(--space-3) * 13) / 15 * 6 + var(--space-3) * 6); }
-[data-layout="b"] .m-env__bar:nth-child(9) { left: calc((100% - var(--space-3) * 13) / 15 * 7 + var(--space-3) * 7); }
-[data-layout="b"] .m-env__bar:nth-child(10) { left: calc((100% - var(--space-3) * 13) / 15 * 8 + var(--space-3) * 8); }
-[data-layout="b"] .m-env__bar:nth-child(11) { left: calc((100% - var(--space-3) * 13) / 15 * 9 + var(--space-3) * 9); }
-[data-layout="b"] .m-env__bar:nth-child(12) { left: calc((100% - var(--space-3) * 13) / 15 * 10 + var(--space-3) * 10); }
-[data-layout="b"] .m-env__bar:nth-child(13) { left: calc((100% - var(--space-3) * 13) / 15 * 11 + var(--space-3) * 11); }
-[data-layout="b"] .m-env__bar:nth-child(14) { left: calc((100% - var(--space-3) * 13) / 15 * 12 + var(--space-3) * 12); }
-[data-layout="b"] .m-env__bar:nth-child(15) { left: calc((100% - var(--space-3) * 13) / 15 * 13 + var(--space-3) * 13); }
-[data-layout="b"] .m-env__bar:nth-child(16) { left: calc((100% - var(--space-3) * 13) / 15 * 14 + var(--space-3) * 14); }
-
-/* 横条里这条竖直刻度槽没有位置，B 的刻度就是那 15 根柱子的高低 */
-[data-layout="b"] .m-meter {
-  grid-template-columns: 1fr;
-}
-
-[data-layout="b"] .m-meter__scale,
-[data-layout="b"] .m-meter__track {
-  display: none;
-}
-
-/* 通道死了：表停在中线，指针收起 */
-.m-ch--dead .m-meter__fill,
-.m-ch--dead .m-meter__peak {
-  display: none;
-}
-
-/* ============================================================================
-   9. 信号床（签名元素）
-   ---------------------------------------------------------------------------
-   亮槽 + 每 --size-grid（24px = 2 秒）一格的竖格线 + 零位横线，
-   槽里 15 根柱（一根 = 2 秒）。柱子高度写 --h，范围 0–100%。
-   两路并排时，谁在说话、谁塌了，余光一扫就有答案。
-   ========================================================================= */
-
-.m-env {
-  position: relative;
-  height: var(--size-envelope-tall);
-  background: var(--color-sunk);
-  border: var(--size-divider) solid var(--color-rule);
-  overflow: hidden;
-}
-
-/* 格线画在柱子上方，任何高度下都看得见 */
-.m-env::after {
-  content: "";
-  position: absolute;
-  inset: var(--space-0);
-  background: repeating-linear-gradient(to right,
-              var(--color-rule-hairline) 0,
-              var(--color-rule-hairline) var(--size-divider),
-              transparent var(--size-divider),
-              transparent var(--size-grid));
-  pointer-events: none;
-}
-
-.m-env__bar {
-  position: absolute;
-  left: var(--space-0);
-  bottom: var(--space-0);
-  width: var(--size-envelope-bar);
-  height: var(--h, 0%);
-  background: var(--color-signal);
-}
-
-/* 15 根柱均匀铺满一格。摆位由 nth-child 定，HTML 里只写高度 ——
-   零位线是第一个孩子，所以柱子排在 2 到 16 位 */
-.m-env__bar:nth-child(2) { left: 0%; }
-.m-env__bar:nth-child(3) { left: 6.667%; }
-.m-env__bar:nth-child(4) { left: 13.333%; }
-.m-env__bar:nth-child(5) { left: 20%; }
-.m-env__bar:nth-child(6) { left: 26.667%; }
-.m-env__bar:nth-child(7) { left: 33.333%; }
-.m-env__bar:nth-child(8) { left: 40%; }
-.m-env__bar:nth-child(9) { left: 46.667%; }
-.m-env__bar:nth-child(10) { left: 53.333%; }
-.m-env__bar:nth-child(11) { left: 60%; }
-.m-env__bar:nth-child(12) { left: 66.667%; }
-.m-env__bar:nth-child(13) { left: 73.333%; }
-.m-env__bar:nth-child(14) { left: 80%; }
-.m-env__bar:nth-child(15) { left: 86.667%; }
-.m-env__bar:nth-child(16) { left: 93.333%; }
-
-.m-env__zero {
-  position: absolute;
-  inset-inline: var(--space-0);
-  bottom: var(--space-0);
-  height: var(--size-divider);
-  background: var(--color-rule-hairline);
-}
-
-/* 一路死掉：柱子落到零位线上、转成灰，床面被斜纹压住（章 2.5、章 4.3） */
-.m-ch--dead .m-env__bar {
-  height: var(--size-divider);
-  bottom: var(--size-divider);
-  background: var(--color-dead);
-}
-
-.m-ch--dead .m-env {
-  background-image: repeating-linear-gradient(-45deg,
-                    var(--color-rule-hairline) 0,
-                    var(--color-rule-hairline) var(--size-divider),
-                    transparent var(--size-divider),
-                    transparent 8px);
-}
-
-.m-env__stamp {
-  font-family: var(--font-data);
-  font-size: var(--size-micro);
-  letter-spacing: var(--track-data);
-  color: var(--color-ink-quiet);
-}
-
-/* ============================================================================
-   10. 健康徽标与每路健康
-   ---------------------------------------------------------------------------
-   这是「文字保证」：即使有人看不出电平图，读这一行也有答案。
-   它永远与电平同时可见，任何宽度下都不折叠（章 2.3）。
-   ========================================================================= */
-
+/* 健康徽标 */
 .m-health {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  min-height: var(--size-badge);
-  padding: var(--space-1) var(--space-3);
-  border: var(--size-divider) solid var(--color-rule);
-  font-size: var(--size-small);
-  font-weight: var(--weight-medium);
-  line-height: var(--line-solid);
+  flex: none;
+  height: var(--size-badge);
+  padding: 0 var(--space-3);
+  border: var(--size-divider) solid var(--t-rule-hair);
+  background: var(--t-sunk);
+  color: var(--t-ink-mid);
+  font-family: var(--t-font-mono);
+  font-size: var(--size-micro);
+  letter-spacing: var(--track-data);
   white-space: nowrap;
 }
 
+.m-health .glyph {
+  width: 9px;
+  height: 9px;
+}
+
 .m-health--ok,
-.m-health--ready {
-  border-color: var(--color-signal);
-  background: var(--color-signal-wash);
-  color: var(--color-signal);
-}
-
-.m-health--dead {
-  border-color: var(--color-alert);
-  background: var(--color-alert-wash);
-  color: var(--color-alert-ink);
-}
-
+.m-health--ready,
 .m-health--restored {
-  border-style: dashed;
-  color: var(--color-ink-mid);
+  border-color: color-mix(in srgb, var(--t-signal) 45%, transparent);
+  color: var(--t-signal-ink);
 }
 
-/* 数据已停（心跳失联）：整条通道退到"死通道"的灰，不抢"活着"那一抹青。
-   它跟"采不到了"分开说 —— 那一路是没了，这一档是界面看不见服务 */
-.m-health--stopped {
-  border-color: var(--color-dead);
-  border-style: dashed;
-  color: var(--color-dead);
-}
-
-.m-health--untouched {
-  border-style: dashed;
-  color: var(--color-ink-quiet);
-}
-
+.m-health--dead,
 .m-health--fail {
-  border-color: var(--color-alert-bright);
-  border-style: dashed;
-  color: var(--color-alert-ink);
+  border-color: color-mix(in srgb, var(--t-alert) 50%, transparent);
+  background: var(--t-alert-wash);
+  color: var(--t-alert-ink);
 }
 
-/* 每路健康区：两条文字保证并排 */
-.m-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-4) var(--space-6);
+.m-health--stopped,
+.m-health--untouched {
+  color: var(--t-ink-quiet);
 }
 
-.m-chip {
-  display: inline-flex;
+/* 卡内的栅格：左格是竖电平 + 读数，右边整幅是那条 30 秒走纸。
+   井的高度只在这里定义一次（`--meter-h`），刻度、井、填充三处都读它 ——
+   改一处，三样一起动 */
+.m-grid {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    "meter env"
+    "meter note";
+  gap: var(--space-3) var(--space-5);
   align-items: center;
-  gap: var(--space-2);
-  font-size: var(--size-small);
-  color: var(--color-ink-mid);
+  --meter-h: var(--size-meter-tall);
+}
+
+/* 左格：井在上、读数紧贴井底 */
+.m-cell {
+  grid-area: meter;
+  display: grid;
+  justify-items: center;
+  gap: var(--space-3);
+}
+
+/* 原来的横刻度与竖刻度是同一组数字写两遍，这一稿收掉（屏幕阅读器文本照旧在） */
+.m-scale {
+  display: none;
+}
+
+.m-env {
+  position: relative;
+  grid-area: env;
+  height: 148px;
+  background:
+    repeating-linear-gradient(
+      to right,
+      transparent 0 47px,
+      color-mix(in srgb, var(--t-rule-hair) 55%, transparent) 47px 48px
+    ),
+    repeating-linear-gradient(
+      to top,
+      transparent 0 49px,
+      color-mix(in srgb, var(--t-rule-hair) 40%, transparent) 49px 50px
+    );
+}
+
+/* 底线：走纸的零位，柱从这里往上长 */
+.m-env__zero {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: var(--size-divider);
+  background: var(--t-rule);
+}
+
+.m-env__bar {
+  position: absolute;
+  bottom: 0;
+  width: 10px;
+  height: max(2px, var(--h));
+  background: linear-gradient(
+    to top,
+    var(--t-signal-deep) 0%,
+    var(--t-signal) 62%,
+    var(--t-signal-bright) 100%
+  );
+  box-shadow: var(--t-glow-bar);
+}
+
+/* 走纸的右沿：最后一份数据落在这一刻。它不呼吸 —— 呼吸留给录音灯那一处 */
+.m-env::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--size-divider);
+  background: color-mix(in srgb, var(--t-signal) 65%, transparent);
+  box-shadow: var(--t-glow-bar);
+}
+
+.m-env-note {
+  grid-area: note;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  color: var(--t-ink-quiet);
+  font-size: var(--size-micro);
+  letter-spacing: var(--track-data);
+}
+
+.m-env__stamp {
+  font-family: var(--t-font-mono);
+  color: var(--t-ink-mid);
+}
+
+/* 15 根柱的站位：一格 6.667%（24px 一格里 10px 是柱） */
+.m-env__bar:nth-child(2) {
+  left: 0%;
+}
+.m-env__bar:nth-child(3) {
+  left: 6.667%;
+}
+.m-env__bar:nth-child(4) {
+  left: 13.333%;
+}
+.m-env__bar:nth-child(5) {
+  left: 20%;
+}
+.m-env__bar:nth-child(6) {
+  left: 26.667%;
+}
+.m-env__bar:nth-child(7) {
+  left: 33.333%;
+}
+.m-env__bar:nth-child(8) {
+  left: 40%;
+}
+.m-env__bar:nth-child(9) {
+  left: 46.667%;
+}
+.m-env__bar:nth-child(10) {
+  left: 53.333%;
+}
+.m-env__bar:nth-child(11) {
+  left: 60%;
+}
+.m-env__bar:nth-child(12) {
+  left: 66.667%;
+}
+.m-env__bar:nth-child(13) {
+  left: 73.333%;
+}
+.m-env__bar:nth-child(14) {
+  left: 80%;
+}
+.m-env__bar:nth-child(15) {
+  left: 86.667%;
+}
+.m-env__bar:nth-child(16) {
+  left: 93.333%;
+}
+
+/* 空闲 / 已结束：整卡退到后排，走纸空着 */
+.m-ch--idle {
+  border-left-color: var(--t-rule);
+}
+
+.m-ch--idle .m-ch__readout,
+.m-ch--idle .m-ch__device,
+.m-ch--idle .m-health {
+  color: var(--t-ink-faint);
+}
+
+.m-ch--idle .m-env__bar {
+  background: var(--t-rule-hair);
+  box-shadow: none;
+}
+
+/* 这一路采不到了：走纸塌成一条贴底的直线，整条压成灰 */
+.m-ch--dead {
+  border-color: color-mix(in srgb, var(--t-alert) 40%, transparent);
+  border-left-color: var(--t-alert);
+}
+
+.m-ch--dead .m-env {
+  background: var(--t-stripe);
+}
+
+.m-ch--dead .m-env__bar {
+  height: 2px;
+  background: var(--t-dead);
+  box-shadow: none;
+}
+
+.m-ch--dead .m-env__zero {
+  background: var(--t-dead);
+}
+
+.m-ch--dead .m-env::after {
+  background: var(--t-dead);
+  box-shadow: none;
+}
+
+.m-ch--dead .m-ch__readout,
+.m-ch--dead .m-ch__device {
+  color: var(--t-ink-faint);
+}
+
+/* 数据已停（失联 / 采集停）：整条带子冻住 */
+.m-ch--frozen .m-ch__readout,
+.m-ch--frozen .m-ch__device {
+  color: var(--t-ink-faint);
+}
+
+.m-ch--frozen .m-env__bar {
+  background: var(--t-dead);
+  box-shadow: none;
+}
+
+.m-ch--frozen .m-meter__fill {
+  filter: grayscale(0.85);
+}
+
+.m-ch--frozen .m-meter__peak {
+  background: var(--t-dead);
+  box-shadow: none;
+}
+
+.m-ch--frozen .m-env::after {
+  background: var(--t-dead);
+  box-shadow: none;
+}
+
+/* 本场丢过又接回来：路名下面划一道余晖 */
+.m-ch--restored .m-ch__name {
+  box-shadow: inset 0 -2px 0 var(--t-signal-deep);
 }
 
 /* ============================================================================
-   11. 告警
-   ---------------------------------------------------------------------------
-   致命级＝整行横带 + 出声；提示级＝一条细提示条，安静地待在上面。
+   6. 电平表：刻度 + 井 + 填充 + 峰值保持
+   ========================================================================= */
+
+.m-meter {
+  display: grid;
+  /* 刻度那一列给足：−60 这两个字要用上全角减号，挤窄了会压到井口上 */
+  grid-template-columns: 44px auto;
+  align-items: start;
+  gap: var(--space-3);
+}
+
+.m-meter--v .m-meter__track {
+  position: relative;
+  width: var(--size-meter);
+  height: var(--meter-h);
+  border: var(--size-divider) solid var(--t-rule);
+  background: var(--t-sunk);
+  overflow: hidden;
+}
+
+/* 0 / −20 / −40 / −60：顶格、均分、贴底 */
+.m-meter__scale {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  height: var(--meter-h);
+  color: var(--t-ink-quiet);
+  font-family: var(--t-font-mono);
+  font-size: var(--size-micro);
+  line-height: var(--line-solid);
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* 井里的横格线：每 20 dB 一道 */
+.m-meter__ticks {
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    to top,
+    color-mix(in srgb, var(--t-rule) 60%, transparent) 0 1px,
+    transparent 1px 33.333%
+  );
+}
+
+/* 填充：dBFS 越高越暖 —— 安静段余晖青，中段灯丝黄，过顶硫红。
+   background-size 钉到井的高度上，这样渐变跟着刻度走，不跟着当前电平走 */
+.m-meter__fill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: var(--level);
+  background: linear-gradient(
+    to top,
+    var(--t-signal-deep) 0%,
+    var(--t-signal) 46%,
+    var(--t-amber) 78%,
+    var(--t-alert) 100%
+  );
+  background-size: 100% var(--meter-h);
+  background-position: bottom;
+  background-repeat: no-repeat;
+}
+
+/* 峰值保持：一根 2px 的灯丝黄，带一点光晕 */
+.m-meter__peak {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: var(--hold);
+  height: 2px;
+  background: var(--t-amber-bright);
+  box-shadow: var(--t-amber-glow);
+}
+
+/* 采集停 / 失联时读数上那个叉 */
+.m-meter__mark {
+  position: absolute;
+  inset: 50% 0 auto;
+  color: var(--t-dead);
+  font-size: 15px;
+  line-height: 1;
+  text-align: center;
+}
+
+.m-ch__readout {
+  font-size: 26px;
+  font-weight: var(--weight-medium);
+  line-height: var(--line-solid);
+  color: var(--t-ink);
+  text-align: center;
+  white-space: nowrap;
+}
+
+/* 心跳失联：整页的读数一起压灰、打叉 */
+.is-heartbeat-lost .m-ch__readout {
+  color: var(--t-ink-faint);
+}
+
+.is-heartbeat-lost .m-env,
+.is-heartbeat-lost .m-env__bar,
+.is-heartbeat-lost .m-meter__track {
+  filter: grayscale(1);
+}
+
+.is-heartbeat-lost .m-meter__peak {
+  background: var(--t-dead);
+  box-shadow: none;
+}
+
+/* ============================================================================
+   7. 每路健康：两条不折叠的文字保证
+   ========================================================================= */
+
+.m-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.m-chip {
+  padding: var(--space-2) var(--space-4);
+  border: var(--size-divider) solid var(--t-rule-hair);
+  border-left: 2px solid var(--t-rule);
+  background: var(--t-sunk);
+  color: var(--t-ink-mid);
+  font-family: var(--t-font-mono);
+  font-size: var(--size-small);
+  white-space: nowrap;
+}
+
+/* ============================================================================
+   8. 告警
    ========================================================================= */
 
 .alert {
-  display: block;
+  display: grid;
+  gap: var(--space-3);
   padding: var(--space-4) var(--space-5);
-  font-size: var(--size-base);
-  line-height: var(--line-snug);
+  border: var(--size-divider) solid var(--t-rule-hair);
+  background: var(--t-surface);
 }
 
-/* 基础规则（来源：docs/ui/ui.css L1309–1315，原文照录）。返工轮收回：
-   抽取审计第一版把它错标成「收口规则」一并剔掉了 —— 真正的收口规则
-   （display: none 五件套）在 L1539，按选择器组整体匹配才剔得准。
-   少了这一条，`.alert--fatal::before` 那根 4px 亮条失去定位锚
-   （position: relative），会贴到整页 x=0 处画一条红竖线；
-   横幅也丢了自有底色与左边框。 */
 .alert--fatal {
   position: relative;
-  background: var(--color-alert-wash);
-  border-block: var(--size-divider) solid var(--color-alert);
-  border-left: var(--size-rule) solid var(--color-alert-bright);
   padding-left: var(--space-6);
+  border-color: color-mix(in srgb, var(--t-alert) 35%, transparent);
+  background: linear-gradient(to right, var(--t-alert-wash), var(--t-surface) 62%);
+}
+
+/* 左沿那道实心红：出事了的地方都长这样，一眼认得 */
+.alert--fatal::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: var(--size-rule);
+  background: var(--t-alert);
 }
 
 .alert__head {
@@ -1347,463 +1132,214 @@ blockquote {
   align-items: baseline;
   gap: var(--space-3);
   flex-wrap: wrap;
-  font-size: var(--size-lead);
-  color: var(--color-alert-ink);
 }
 
-/* 致命级横幅左侧 4px 的 --color-alert-bright 色条，是整页唯一一处实心色块。
-   灰度下它靠"存在"冒出来，去掉颜色也仍然最显眼 */
-.alert--fatal::before {
-  content: "";
-  position: absolute;
-  inset-block: var(--space-0);
-  inset-inline-start: var(--space-0);
-  width: var(--size-rule);
-  background: var(--color-alert-bright);
+.alert__glyph {
+  align-self: center;
+  color: var(--t-alert);
+  font-size: 11px;
 }
 
-/* 「正在落盘 / 转码失败」这类要一句话说清的标题 */
 .alert__title {
-  font-family: var(--font-display);
-  font-size: var(--size-title);
-  font-weight: var(--weight-bold);
-  letter-spacing: var(--track-tight);
-  line-height: var(--line-tight);
-  color: var(--color-alert-ink);
-  margin-bottom: var(--space-2);
-}
-
-.alert__body {
-  font-size: var(--size-base);
-  line-height: var(--line-normal);
-  color: var(--color-ink-mid);
-  max-width: var(--size-content-prose);
+  font-family: var(--t-font-sign);
+  font-size: var(--size-lead);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--track-label);
+  color: var(--t-alert-ink);
 }
 
 .alert__where {
-  font-family: var(--font-display);
-  font-weight: var(--weight-bold);
-  letter-spacing: var(--track-tight);
+  font-size: var(--size-lead);
+  font-weight: var(--weight-medium);
+  color: var(--t-ink);
 }
 
 .alert__since,
 .alert__elapsed {
-  font-family: var(--font-data);
+  font-family: var(--t-font-mono);
   font-size: var(--size-small);
-  letter-spacing: var(--track-data);
-  color: var(--color-alert-ink);
+  color: var(--t-ink-mid);
+  white-space: nowrap;
 }
 
-.alert__glyph {
-  color: var(--color-alert);
+.alert__elapsed {
+  padding: 0 var(--space-3);
+  background: var(--t-alert-wash);
+  color: var(--t-alert-ink);
+}
+
+.alert__body {
+  max-width: 72ch;
+  color: var(--t-ink-mid);
+  font-size: var(--size-base);
+  line-height: var(--line-loose);
 }
 
 .alert__acts {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  margin-top: var(--space-3);
   flex-wrap: wrap;
 }
 
 .alert--hint {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: var(--space-3);
-  padding: var(--space-2) var(--space-4);
-  border-left: var(--size-rule) solid var(--color-rule);
-  background: var(--color-sunk);
+  padding: var(--space-3) var(--space-4);
+  border-color: var(--t-rule-hair);
+  border-left: 2px solid var(--t-amber);
+  background: var(--t-sunk);
+  color: var(--t-ink-mid);
   font-size: var(--size-small);
-  color: var(--color-ink-mid);
-}
-
-.alert--hint .alert__since {
-  color: var(--color-ink-quiet);
 }
 
 .alert--hint .alert__glyph {
-  color: var(--color-ink-quiet);
+  color: var(--t-amber);
 }
 
-/* 心跳失联：它压在整页最上面，盖住任何状态（章 4.5） */
+.alert--hint .alert__since {
+  color: var(--t-ink-quiet);
+}
+
+/* ============================================================================
+   9. 心跳失联：全屏横幅，盖住一切
+   ========================================================================= */
+
 .heartbeat {
-  display: block;
-  padding: var(--space-6) var(--space-5);
-  background: var(--color-alert);
-  color: var(--color-ink-inverse);
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: var(--z-heartbeat);
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-5) var(--size-gutter) var(--space-6);
+  border-bottom: 2px solid var(--t-alert);
+  background: linear-gradient(to bottom, var(--t-alert-wash), var(--t-ground) 92%);
+  box-shadow: 0 24px 60px rgb(0 0 0 / 55%);
 }
 
 .heartbeat__title {
-  font-family: var(--font-display);
-  font-size: var(--size-display);
-  font-weight: var(--weight-bold);
+  font-family: var(--t-font-sign);
+  font-size: var(--size-title);
+  font-weight: var(--weight-semibold);
   letter-spacing: var(--track-tight);
-  line-height: var(--line-tight);
-  margin-bottom: var(--space-3);
+  color: var(--t-alert);
 }
 
 .heartbeat__body {
-  font-size: var(--size-base);
-  line-height: var(--line-normal);
-  max-width: var(--size-content-prose);
-}
-
-.heartbeat__why,
-.heartbeat__do {
-  font-size: var(--size-small);
-  line-height: var(--line-normal);
-  color: var(--color-alert-wash);
-  max-width: var(--size-content-prose);
-  margin-top: var(--space-2);
-}
-
-.heartbeat--inline {
-  background: transparent;
-  border-left: var(--size-rule) solid var(--color-rule);
-  color: var(--color-ink-quiet);
-  padding: var(--space-2) var(--space-4);
-  font-family: var(--font-data);
-  font-size: var(--size-caption);
-  letter-spacing: var(--track-data);
-}
-
-.heartbeat--recovered {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  background: transparent;
-  border: var(--size-divider) solid var(--color-rule-hairline);
-  color: var(--color-ink-mid);
-  padding: var(--space-1) var(--space-3);
-  font-family: var(--font-data);
-  font-size: var(--size-micro);
-  letter-spacing: var(--track-data);
-}
-
-/* 心跳失联时两路电平冻结压灰，温度降下来，但结构一格不动。
-   设计稿靠 <html> 上的 .is-heartbeat-lost 切这一档；React 版把同一个类名挂到
-   <body> 上（失联是界面本地态、盖在任何顶层状态之上，落在 body 上更贴它的
-   语义）。下面三条选择器的后半段一个字都没改 */
-.is-heartbeat-lost .m-ch__readout {
-  color: var(--color-dead);
-}
-
-/* 失联时床面也要压住：设计稿把这一条写在 11.1 的显隐那一段里，
-   这里跟着「失联」这一档一起收拢（同样一条 -45° 斜纹） */
-.is-heartbeat-lost .m-env {
-  background-image: repeating-linear-gradient(-45deg,
-                    var(--color-rule-hairline) 0,
-                    var(--color-rule-hairline) var(--size-divider),
-                    transparent var(--size-divider),
-                    transparent 8px);
-}
-
-.is-heartbeat-lost .m-meter__fill,
-.is-heartbeat-lost .m-env__bar {
-  background: var(--color-dead);
-}
-
-.is-heartbeat-lost .m-meter__peak {
-  background: var(--color-dead);
-}
-
-/* 两路一眼分得开的图例 */
-.meter-legend {
-  display: flex;
-  align-items: center;
-  gap: var(--space-5);
-  font-family: var(--font-data);
-  font-size: var(--size-micro);
-  letter-spacing: var(--track-caps);
-  color: var(--color-ink-quiet);
-}
-
-.meter-legend__item {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-/* ============================================================================
-   11.1 状态的显隐
-   ---------------------------------------------------------------------------
-   页面根节点上的 ?state= 类名（is-<state>）只负责开关显隐与就地微调；
-   看不见的结构一律留在 DOM 里，切状态不重建页面。
-   ========================================================================= */
-
-
-
-/* 空闲：同一个位置不出现主操作（R17：界面不给第二个「开始」入口） */
-
-
-
-
-/* 告警横幅与失败块：只有出事的那些状态才出现。
-   这里只能放「整块由状态开关的容器」类名：`.hint` 是排版小字类（第 103 行），
-   页面正文里到处都在用它（会议选择器每项的「时长 · 哪几路录到了」、
-   会议选择器、名字待确认与附录的说明、离线转写那行的行数/跨度/字数、
-   no-meetings 的输出目录说明）。把它并列进这条 `display: none`，
-   那些句子会被自己的类名压住、一个字都不显示。
-   提示级告警条用的是列表里的 `.alert--hint` */
-
-
-/* hidden 属性在这份表里必须压得住 .heartbeat / .summary-card 这类带 display 的类 */
-[hidden] {
-  display: none !important;
-}
-
-
-
-/* 收尾失败那一档：它下面那块失败明细（原因 + 可复制的命令 + log 路径）一起现身。
-   这一条带 #drain-band 作用域，所以只影响收尾带；告警带里那条通道失效横幅与它
-   那块明细不受影响（那一档告警带整块也不出现，见下面那条注释） */
-
-
-/* 「某一路采不到了」这条通道失效横幅只归 lost-one 那一档。
-   另外两处挂上它都会把话搅浑：
-   ① 心跳失联说的是「界面看不见服务、整场录音已经中断」，这时候再挂一条
-      「远端这一路采不到了」会把 spec 最在意的「哪一路死了」搅浑；
-   ② 收尾失败（ended-drain-failed）时录音早就结束了，通道那一行写着
-      「已停止」，再挂一条通道失效横幅，屏幕上就出现两处「出事了」的横幅、
-      两段几乎重复的明细。那一档的答案只由收尾横幅 + 明细块给（章 4.2 二、
-      章 4.5 会中状态表）。
-   所以心跳失联那一档在下面显式收掉；收尾失败那一档靠上一段那条作用域选择器
-   把收尾带放出来、告警带里的那条仍旧收着（告警带这一档没有别的内容，
-   整块也不占位置） */
-
-
-
-
-/* 会中的三个失败块 + 会后视图的失败块。
-   .is-failed 是会后页（post.html）挂在 <body> 上的状态类，它下面那一段
-   「原因 + log 路径 + 可复制的命令」是 R15 / R16 的落点（章 3.3）——
-   漏掉这一条，会后失败态整段就是空的。
-   收尾失败那一档不在这一条里：那一档的失败块在收尾带里，由上面那条带
-   #drain-band 作用域的选择器放出来（章 4.2 二） */
-
-
-/* 收尾失败那一档的告警带整块收掉：这一档说「出事了」的横幅只有收尾带里那一条。
-   告警带里那条通道失效横幅（#alert-band 里的 .alert--fatal）在这一档不现身，
-   告警带于是空空如也——页面脚本把它从 hidden 里放出来只为「有没有告警」这一个
-   布尔判断，这里按状态把它收回，页面上不会留下一条空的红带子 */
-
-
-/* 心跳迟到：一行字，不出声、无横幅；心跳失联：全屏横幅 + 判据说明 */
-
-
-
-
-
-
-/* 心跳失联：两路电平冻结压灰，各标一行「数据已停」（章 4.5）。
-   估出来的数据不继续画成在动 */
-
-
-
-
-
-
-
-
-/* 心跳失联横幅是固定的顶层：它盖在任何状态之上，包括空闲与已结束 */
-.heartbeat {
-  position: fixed;
-  inset-block-start: var(--space-0);
-  inset-inline: var(--space-0);
-  z-index: var(--z-heartbeat);
-}
-
-/* 心跳失联横幅是盖上去的（fixed），所以正文要给它让出位置：
-   --hb-h 是横幅自己的高度，由界面量出来写在根节点上；量不出来时退一档，
-   页面照样成立。设计稿靠 <html> 上的 .is-heartbeat-lost 切这一档，
-   React 版把它挂在顶栏自己身上 */
-.topbar--hb-lost {
-  padding-top: calc(var(--space-4) + var(--hb-h, 13rem));
-}
-
-/* 失联那条判据的说明（见 §16 的排序）：它排在顶栏之后。
-   顶栏在失联这一档自带「给全屏横幅让位」的上内边距（就是上面那条
-   padding-top: 4 + 横幅高），所以这一块正好落在横幅底下那一档留白之后，
-   既不会被横幅盖住，也不必再算一次横幅有多高。
-
-   这一句讲的是判据本身：为什么「不看 HTTP 通不通」。它走排版小字（.hint），
-   不带底色、不带边线；失联那一屏上带色块的那一处留给全屏横幅——
-   章 4.5 与章 10.1 第 8 行那张图的说法因此成立 */
-/* 同一个部件（判据说明）的类名：设计稿挂在 id 上，React 版挂在类上
-   （id 由 useId 生成，样式不认它） */
-.hb-guidance {
-  margin-block: var(--space-0);
-  padding: var(--space-4) var(--space-5) var(--space-0);
-}
-
-/* 心跳失联横幅里的「怎么办」那一行：整条横幅只有这一处用最亮的红，
-   它是整页唯一一处实心色块，灰度下也仍然抓眼 */
-.heartbeat__do .num {
-  color: var(--color-alert-bright);
-}
-
-/* 抽屉打开：遮罩出现，抽屉本身是 .drawer--open */
-
-
-.drawer__title {
-  font-family: var(--font-display);
-  font-size: var(--size-title);
-  font-weight: var(--weight-bold);
-  letter-spacing: var(--track-tight);
-  margin-bottom: var(--space-3);
-}
-
-.drawer__group {
-  margin-top: var(--space-6);
-}
-
-/* 总结结果面板：只有几条、可关即消失，不落文件 */
-.summary-card {
-  margin-top: var(--space-4);
-  padding: var(--space-4) var(--space-5);
-  border: var(--size-divider) solid var(--color-rule);
-  background: var(--color-surface-raised);
-}
-
-.summary-card__head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-4);
-  margin-bottom: var(--space-2);
-}
-
-.summary-card__title {
-  font-family: var(--font-display);
-  font-size: var(--size-lead);
-  font-weight: var(--weight-semibold);
-  color: var(--color-ink);
-}
-
-.summary-card__sub {
-  font-family: var(--font-data);
-  font-size: var(--size-micro);
-  letter-spacing: var(--track-caps);
-  color: var(--color-ink-quiet);
-}
-
-.summary-card__item {
+  max-width: 76ch;
+  color: var(--t-ink);
   font-size: var(--size-body);
   line-height: var(--line-normal);
-  color: var(--color-ink-mid);
-  padding-block: var(--space-2);
-  border-bottom: var(--size-divider) solid var(--color-rule-hairline);
 }
 
-.summary-card__item:last-child {
-  border-bottom: var(--space-0);
+.heartbeat__why {
+  max-width: 76ch;
+  color: var(--t-ink-mid);
+  font-size: var(--size-small);
 }
 
-/* 转写的「最近一句 / 展开」开关：720 以上不出按钮，转写本来就在页面上 */
-.transcript__toggle {
-  display: none;
+.heartbeat__do {
+  max-width: 84ch;
+  padding-top: var(--space-2);
+  border-top: var(--size-divider) solid var(--t-rule-hair);
+  color: var(--t-ink-mid);
+  font-size: var(--size-small);
+  line-height: var(--line-normal);
 }
 
-.transcript__toggle-hint {
-  font-family: var(--font-data);
-  font-size: var(--size-micro);
-  letter-spacing: var(--track-caps);
-  color: var(--color-ink-quiet);
+.heartbeat__do .num {
+  padding: 0 var(--space-2);
+  background: var(--t-sunk);
+  color: var(--t-ink);
 }
 
-/* 会中视图底部那条「另一版在这里」的对照入口 */
+/* 心跳迟到那一行弱提示（不是横幅那一档） */
+.heartbeat--inline {
+  position: static;
+  padding: var(--space-3) var(--space-4);
+  border: var(--size-divider) solid var(--t-rule-hair);
+  border-left: 2px solid var(--t-amber);
+  background: var(--t-sunk);
+  box-shadow: none;
+  color: var(--t-ink-mid);
+  font-size: var(--size-small);
+}
 
-
-
-
-
-
-
-
-
+.hb-guidance {
+  max-width: 68ch;
+}
 
 /* ============================================================================
-   16.1 底部那条复核用导航条默认不显示（章 8 门槛 5）
-   ---------------------------------------------------------------------------
-   `.viewswitch` 里那三样——「这是哪一版」的一句说明、?state= 切换器、通往后会/
-   另一版的链接——是给逐状态复核的人用的旁路，会中界面本身的区块清单（章 2.2）
-   里没有它。它原先默认显示在页面底部，把整页撑出 1440×900 之外：`idle` 那一档
-   整页高 914px、`recording` 946px，门槛 5「1440×900 不滚动」因此一直只是靠
-   「六样元素底边 ≤ 900」这个降级口径撑着，事实并不成立。
-   现在它默认不显示，仍然能切出来：地址后面加 `?nav=1`（与 `?state=` 并存，
-   见 three 份会中稿子末尾那段脚本的读法）。复核的人要看导航条时加这一个参数即可；
-   默认打开的稿子就是会中界面本身，不含复核工具。
-   窄屏下同理：390 那几档的整页高里原来也有它一份。
+   10. 失败与拒绝
    ========================================================================= */
 
+.fail {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border: var(--size-divider) solid var(--t-rule-hair);
+  border-left: var(--size-rule) solid var(--t-alert);
+  background: var(--t-surface);
+}
 
+.fail__why {
+  margin: 0;
+  color: var(--t-ink);
+  font-size: var(--size-base);
+  line-height: var(--line-snug);
+  overflow-wrap: anywhere;
+}
 
+.fail__why code {
+  padding: 0 var(--space-2);
+  background: var(--t-alert-wash);
+  color: var(--t-alert-ink);
+  font-family: var(--t-font-mono);
+  font-size: var(--size-small);
+}
 
+.fail__next {
+  margin: 0;
+  padding-left: var(--space-5);
+  color: var(--t-ink-mid);
+  font-size: var(--size-small);
+  line-height: var(--line-loose);
+}
 
-/* ============================================================================
-   17. 会中主视图一屏装下（章 2.2、章 8 门槛 5）
-   ---------------------------------------------------------------------------
-   1440×900 下不滚动要看到：状态 + 时长 + 主按钮 / 两路电平 / 每路健康 /
-   告警区 / 总结入口。所以宽屏上这一页按「仪器面板」压紧：
-   区块留白各降一档、竖直电平表用 --size-meter-tall 的一半。
-   窄屏（720 以下）不套这一档——那一档是由上往下读的，不靠一屏。
-   ========================================================================= */
-
-@media (min-width: 721px) and (min-height: 700px) {
-  .topbar {
-    min-height: var(--space-10);
-    padding-bottom: var(--space-3);
-  }
-
-  .band {
-    padding-block: var(--space-3);
-  }
-
-  .band__head {
-    margin-bottom: var(--space-2);
-  }
-
-  .band--alert {
-    padding-block: var(--space-2);
-  }
-
-  .m-ch {
-    gap: var(--space-2);
-  }
-
-  .m-meter--v .m-meter__track {
-    height: calc(var(--size-meter-tall) / 2);
-  }
-
-  .m-env-note {
-    line-height: var(--line-tight);
-  }
-
-  .live-tools {
-    gap: var(--space-3);
-  }
+.fail__log {
+  color: var(--t-ink-quiet);
+  font-family: var(--t-font-mono);
+  font-size: var(--size-caption);
+  overflow-wrap: anywhere;
 }
 
 /* ============================================================================
-   12. 总结区
+   11. 总结区：四档 + 主按钮 + 结果面板
    ========================================================================= */
 
 .live-tools {
-  display: flex;
-  flex-direction: column;
+  display: grid;
   gap: var(--space-4);
+  align-content: start;
+  padding: var(--space-5);
+  border: var(--size-divider) solid var(--t-rule-hair);
+  border-left: 2px solid var(--t-rule);
+  background: var(--t-surface);
+}
+
+/* 宽屏下工具列跟着顶栏一起钉住：卡里两块内容长短不一，钉住之后
+   翻到转写那里也能随手再总结一次 */
+@media (min-width: 1180px) {
+  .live-tools {
+    position: sticky;
+    top: 108px;
+  }
 }
 
 .sumbar {
-  display: flex;
-  align-items: center;
-  gap: var(--space-5);
-  flex-wrap: wrap;
-  padding-top: var(--space-4);
-  border-top: var(--size-divider) solid var(--color-rule);
-}
-
-.sumbar__acts {
   display: flex;
   align-items: center;
   gap: var(--space-3);
@@ -1811,859 +1347,340 @@ blockquote {
 }
 
 .sumbar__note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0;
+  height: var(--size-control);
+  color: var(--t-ink-mid);
   font-size: var(--size-small);
-  color: var(--color-ink-quiet);
 }
 
-/* 总结按钮禁用时旁边那句原因（章 2.5「禁用，按钮旁写原因」/ 章 5 的失败格）。
-   `.hint` 在这份表里是正文用的排版小字类，本来就是能显示的；这一句另给一个
-   类名，是因为它只由 hidden 属性控制显隐，跟正文里那些纯排版的 .hint 分开，
-   以后改一条不会牵动另一条 */
 .sumbar__why {
-  font-size: var(--size-small);
-  line-height: var(--line-snug);
-  color: var(--color-ink-mid);
-  max-width: var(--size-content-prose);
-}
-
-.readout {
-  font-family: var(--font-data);
-  font-size: var(--size-body);
-  letter-spacing: var(--track-data);
-  color: var(--color-ink);
-}
-
-.readout--great {
-  color: var(--color-signal);
-}
-
-.readout--bad {
-  color: var(--color-alert-ink);
-}
-
-.readout--dead {
-  color: var(--color-dead);
-}
-
-/* ============================================================================
-   13. 实时转写 · 临时稿
-   ---------------------------------------------------------------------------
-   它服务的是告警判断与会中总结，给人偶尔瞄一眼。区块里不出现保存/导出/正式
-   记录这类字样。
-   ========================================================================= */
-
-.transcript {
-  max-height: 34vh;
-  overflow-y: auto;
-  border-top: var(--size-divider) solid var(--color-rule-hairline);
-}
-
-.transcript__line {
-  display: grid;
-  /* 第一格放 [HH:MM]：等宽字下一个全角方括号宽度约等于一个字，
-     6.5ch 才装得下这对括号加五位数字；5.5ch 会把右括号裁掉 */
-  grid-template-columns: 6.5ch 4.5rem 1fr;
-  gap: var(--space-3);
-  padding-block: var(--space-2);
-  border-bottom: var(--size-divider) solid var(--color-rule-hairline);
-  font-size: var(--size-body);
-  line-height: var(--line-normal);
-}
-
-.transcript__time,
-.transcript__route {
-  font-family: var(--font-data);
+  margin: 0;
+  color: var(--t-ink-quiet);
   font-size: var(--size-caption);
-  letter-spacing: var(--track-data);
-  color: var(--color-ink-quiet);
+  line-height: var(--line-snug);
 }
 
-.transcript__text {
-  color: var(--color-ink);
+.summary-card {
+  display: grid;
+  gap: var(--space-4);
+  padding: var(--space-6);
+  border: var(--size-divider) solid var(--t-rule);
+  border-top: 2px solid var(--t-signal);
+  background: var(--t-surface);
+  box-shadow: var(--t-glow-panel);
 }
 
-/* 识别失败的缺口：一眼看出这里是断的，别让它看起来像正常文本 */
-.transcript__gap {
-  position: relative;
-  display: block;
-  padding-left: var(--space-4);
-  border-left: var(--size-rule) solid var(--color-alert-bright);
-  background: var(--color-alert-wash);
-  color: var(--color-alert-ink);
-  font-family: var(--font-data);
-  font-size: var(--size-small);
-}
-
-.transcript__gap::after {
-  content: "缺口";
-  position: absolute;
-  inset-inline-end: var(--space-2);
-  inset-block-start: var(--space-1);
-  font-size: var(--size-micro);
-  letter-spacing: var(--track-caps);
-  color: var(--color-alert-ink);
-}
-
-.transcript__jump {
-  display: flex;
-  justify-content: center;
-  padding-top: var(--space-3);
-}
-
-/* ============================================================================
-   14. 会后视图
-   ========================================================================= */
-
-.picker {
-  display: flex;
-  gap: var(--space-2);
-  flex-wrap: wrap;
-}
-
-.picker__item {
-  padding: var(--space-2) var(--space-4);
-  border: var(--size-divider) solid var(--color-rule);
-  background: transparent;
-  color: var(--color-ink-mid);
-  font-family: var(--font-data);
-  font-size: var(--size-small);
-  letter-spacing: var(--track-data);
-  cursor: pointer;
-  text-align: left;
-}
-
-.picker__item--on {
-  border-color: var(--color-ink);
-  background: var(--color-sunk);
-  color: var(--color-ink);
-}
-
-.meta {
+.summary-card__head {
   display: flex;
   align-items: baseline;
-  gap: var(--space-3);
-  flex-wrap: wrap;
-  font-family: var(--font-data);
-  font-size: var(--size-small);
-  letter-spacing: var(--track-data);
-  color: var(--color-ink-mid);
+  justify-content: space-between;
+  gap: var(--space-5);
 }
 
-/* 紧跟在选择器下面的那一行 */
-.meta--top {
-  margin-top: var(--space-4);
-}
-
-.meta__row {
-  white-space: nowrap;
-}
-
-.meta__sep {
-  color: var(--color-ink-faint);
-}
-
-/* 进度五步：顺序即流程顺序 */
-.steps {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-0);
-  border-top: var(--size-divider) solid var(--color-rule-strong);
-}
-
-.step {
-  display: grid;
-  grid-template-columns: 1.5rem 1fr auto;
-  gap: var(--space-4);
-  align-items: center;
-  padding: var(--space-4) var(--space-0);
-  border-bottom: var(--size-divider) solid var(--color-rule-hairline);
-}
-
-.step__name {
-  font-family: var(--font-display);
-  font-size: var(--size-body);
-  font-weight: var(--weight-semibold);
-  color: var(--color-ink);
-}
-
-.step__state {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: var(--size-small);
-  color: var(--color-ink-mid);
-}
-
-.step__time {
-  font-family: var(--font-data);
-  font-size: var(--size-caption);
-  letter-spacing: var(--track-data);
-  color: var(--color-ink-quiet);
-  white-space: nowrap;
-}
-
-.step--done .step__state {
-  color: var(--color-signal);
-}
-
-.step--run .step__state {
-  color: var(--color-ink);
-}
-
-.step--fail {
-  background: var(--color-alert-wash);
-}
-
-.step--fail .step__state {
-  color: var(--color-alert-ink);
-}
-
-.step--wait .step__state,
-.step--todo .step__state {
-  color: var(--color-ink-quiet);
-}
-
-/* 纪要主位：三格固定，不可为空、不可合并、顺序固定 */
-.minutes {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-8);
-  max-width: var(--size-content-prose);
-}
-
-.minute {
-  padding-left: var(--space-5);
-  border-left: var(--size-rule) solid var(--color-rule);
-}
-
-.minute__title {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  font-family: var(--font-display);
+.summary-card__title {
+  font-family: var(--t-font-sign);
   font-size: var(--size-title);
-  font-weight: var(--weight-bold);
-  letter-spacing: var(--track-tight);
-  line-height: var(--line-tight);
-  margin-bottom: var(--space-4);
-}
-
-.minute__item {
-  font-size: var(--size-body);
-  line-height: var(--line-loose);
-  color: var(--color-ink);
-  margin-bottom: var(--space-3);
-}
-
-.minute__empty {
-  font-size: var(--size-body);
-  line-height: var(--line-loose);
-  color: var(--color-ink-quiet);
-}
-
-.mark-consensus,
-.mark-open,
-.mark-dispute {
-  display: inline-block;
-  flex: none;
-  width: var(--size-dot);
-  height: var(--size-dot);
-  color: var(--color-ink-mid);
-}
-
-/* 已达成的共识：实心圆 */
-.mark-consensus {
-  background: currentColor;
-  border-radius: 50%;
-}
-
-/* 未达成的共识：半环 */
-.mark-open {
-  border: var(--size-focus) solid currentColor;
-  border-radius: 50%;
-  border-right-color: transparent;
-}
-
-/* 有争议的地方：叉 */
-.mark-dispute {
-  position: relative;
-}
-
-.mark-dispute::after {
-  content: "";
-  position: absolute;
-  inset: var(--space-0);
-  background: linear-gradient(to bottom right,
-              transparent calc(50% - var(--size-focus) / 2),
-              currentColor calc(50% - var(--size-focus) / 2),
-              currentColor calc(50% + var(--size-focus) / 2),
-              transparent calc(50% + var(--size-focus) / 2)),
-              linear-gradient(to bottom left,
-              transparent calc(50% - var(--size-focus) / 2),
-              currentColor calc(50% - var(--size-focus) / 2),
-              currentColor calc(50% + var(--size-focus) / 2),
-              transparent calc(50% + var(--size-focus) / 2));
-}
-
-/* 名字待确认：唯一需要用户动手的地方 */
-.names {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  border-top: var(--size-divider) solid var(--color-rule-strong);
-}
-
-.names__row {
-  display: grid;
-  grid-template-columns: 6rem 5rem 1fr auto;
-  gap: var(--space-4);
-  align-items: center;
-  padding-block: var(--space-3);
-  border-bottom: var(--size-divider) solid var(--color-rule-hairline);
-}
-
-.names__id {
-  font-family: var(--font-data);
-  font-size: var(--size-small);
-  letter-spacing: var(--track-data);
-  color: var(--color-ink);
-}
-
-.names__ctx {
-  font-size: var(--size-small);
-  line-height: var(--line-snug);
-  color: var(--color-ink-mid);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.names__acts {
-  display: flex;
-  gap: var(--space-2);
-}
-
-/* 说话人附录：按路径分块，两路的「1 号」不撞在一起 */
-.appendix {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
-  gap: var(--space-6) var(--space-8);
-}
-
-.appendix__block {
-  border-top: var(--size-divider) solid var(--color-rule);
-  padding-top: var(--space-3);
-}
-
-.appendix__row {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-3);
-  padding-block: var(--space-2);
-  border-bottom: var(--size-divider) solid var(--color-rule-hairline);
-}
-
-.appendix__id {
-  font-family: var(--font-data);
-  font-size: var(--size-small);
-  letter-spacing: var(--track-data);
-  color: var(--color-ink);
-  min-width: 6rem;
-}
-
-.appendix__count {
-  margin-left: auto;
-  font-family: var(--font-data);
-  font-size: var(--size-caption);
-  letter-spacing: var(--track-data);
-  color: var(--color-ink-quiet);
-}
-
-/* 两条转写：可展开的原始材料 */
-.srcs {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
-.src {
-  border: var(--size-divider) solid var(--color-rule);
-}
-
-.src__tag {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-4);
-  border-bottom: var(--size-divider) solid var(--color-rule-hairline);
-  font-size: var(--size-small);
   font-weight: var(--weight-semibold);
-  color: var(--color-ink-mid);
+  letter-spacing: var(--track-tight);
+  color: var(--t-ink);
 }
 
-/* 权威那条：字 + 图形，不靠颜色 */
-.src__tag--auth {
-  color: var(--color-signal);
-  border-bottom-color: var(--color-signal);
-}
-
-.src__body {
-  padding: var(--space-4);
-  background: var(--color-sunk);
-  max-height: 40vh;
-  overflow-y: auto;
-}
-
-/* 输入与设置项 */
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding-block: var(--space-3);
-  border-bottom: var(--size-divider) solid var(--color-rule-hairline);
-}
-
-.field__label {
-  font-size: var(--size-micro);
-  text-transform: uppercase;
+/* 三小段：讲什么 / 讲到哪 / 丢掉什么 —— 按读长句的行距给 */
+.summary-card__sub {
+  margin: var(--space-5) 0 var(--space-3);
+  padding-bottom: var(--space-2);
+  border-bottom: var(--size-divider) solid var(--t-rule-hair);
+  color: var(--t-ink-quiet);
+  font-family: var(--t-font-mono);
+  font-size: var(--size-caption);
   letter-spacing: var(--track-caps);
-  color: var(--color-ink-quiet);
 }
 
-.field__row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
+.summary-card__item {
+  margin: 0 0 var(--space-3);
+  max-width: 68ch;
+  color: var(--t-ink);
+  font-size: var(--size-lead);
+  line-height: var(--line-loose);
 }
 
-.field__input {
-  flex: 1;
-  min-height: var(--size-control-small);
-  padding: var(--space-1) var(--space-3);
-  border: var(--size-divider) solid var(--color-rule);
-  border-radius: var(--radius-square);
-  background: var(--color-sunk);
-  color: var(--color-ink);
-  font-family: var(--font-data);
-  font-size: var(--size-small);
-  letter-spacing: var(--track-data);
+.summary-card__item:last-child {
+  margin-bottom: 0;
 }
-
-.field__unit {
-  font-family: var(--font-data);
-  font-size: var(--size-caption);
-  color: var(--color-ink-quiet);
-}
-
-.field__hint {
-  font-size: var(--size-caption);
-  line-height: var(--line-snug);
-  color: var(--color-ink-quiet);
-}
-
-.field__error {
-  font-size: var(--size-caption);
-  line-height: var(--line-snug);
-  color: var(--color-alert-ink);
-}
-
-/* 空态是真实存在的一态，认真排 */
-.empty {
-  padding: var(--space-5);
-  border: var(--size-divider) dashed var(--color-rule);
-  background: var(--color-sunk);
-  color: var(--color-ink-mid);
-  font-size: var(--size-body);
-  line-height: var(--line-normal);
-  max-width: var(--size-content-prose);
-  /* 它是 .band__body 这个纵向 flex 容器的孩子；缺了这一行，块里的字会被
-     flex 容器的居中挤到中间去，与整页「一律左对齐」的排版对不上 */
-  justify-content: flex-start;
-}
-
-/* 失败态：写清哪一步失败、什么原因、下一步怎么办 */
-.fail {
-  padding: var(--space-5);
-  background: var(--color-alert-wash);
-  border-left: var(--size-rule) solid var(--color-alert-bright);
-}
-
-.fail__why {
-  font-family: var(--font-data);
-  font-size: var(--size-small);
-  letter-spacing: var(--track-data);
-  color: var(--color-alert-ink);
-}
-
-.fail__next,
-.fail__log {
-  margin-top: var(--space-3);
-  font-size: var(--size-small);
-  line-height: var(--line-normal);
-  color: var(--color-ink-mid);
-}
-
-.fail__log {
-  font-family: var(--font-data);
-  letter-spacing: var(--track-data);
-  word-break: break-all;
-}
-
-.codeblock {
-  display: block;
-  width: 100%;
-  margin-top: var(--space-3);
-  padding: var(--space-3) var(--space-4);
-  border: var(--size-divider) solid var(--color-rule);
-  background: var(--color-sunk);
-  color: var(--color-ink);
-  font-family: var(--font-data);
-  font-size: var(--size-small);
-  letter-spacing: var(--track-data);
-  text-align: left;
-  cursor: copy;
-  user-select: all;
-}
-
-/* ============================================================================
-   15. 横向列表：转写合集、总结记录这类逐行读的东西
-   ========================================================================= */
 
 .list {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  gap: var(--space-4);
 }
 
 .list__row {
   display: flex;
   align-items: baseline;
   gap: var(--space-4);
-  padding-block: var(--space-3);
-  border-bottom: var(--size-divider) solid var(--color-rule-hairline);
+  padding-bottom: var(--space-4);
+  border-bottom: var(--size-divider) solid var(--t-rule-hair);
+}
+
+.list__row > * {
+  flex: 1;
+  min-width: 0;
+}
+
+.list__row:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
 }
 
 /* ============================================================================
-   16. 宽度
-   ---------------------------------------------------------------------------
-   只有两个断点。
-   720px：方向 A 的两列在这里收成一列（通道上下堆叠、本地在上），采集相关的
-          信息一个都不砍；转写折成一行「最近一句」；抽屉整屏。
-   400px：390 那一档的收口，留白降一档、读数降一档，避免横向溢出。
+   12. 实时转写
    ========================================================================= */
 
-/* 窄屏：告警带排到采集带之前（章 8 门槛 6）。
-   390 下两路电平上下堆叠，采集带加每路健康一共一千多像素高，「哪一路死了」
-   那句话会被顶到首屏 459px 之外——评审口径问的正是「这是一眼能看出哪一路死了
-   的界面吗」，而 390 的第一屏本该先给答案、再给图形。
-   做法只动顺序：把 <main class="shell"> 在窄屏改成单列 flex，
-   告警/收尾这两条带子、加心跳那条判据说明（#hb-guidance）一起 order: -1，
-   落到顶栏之后、采集带之前；
-   1440 下 shell 仍是普通块级容器，版式与门槛 5 的实测数字都不动。
-   告警带照旧在文档流里、整宽不压任何一块表，所以横向溢出与遮挡都是零。
-   心跳那条判据说明（#hb-guidance）在窄屏跟着提前，它讲的就是上面那条全屏
-   横幅的判据；顶栏本来就要给横幅让位，它排在顶栏之后就不会被横幅盖住 */
+.transcript-block .band__body {
+  display: grid;
+  gap: var(--space-4);
+}
 
-@media (max-width: 720px) {
-  .shell {
-    padding-inline: var(--size-gutter-narrow);
-    padding-block: var(--space-4) var(--space-9);
-    display: flex;
-    flex-direction: column;
-  }
+.transcript {
+  height: min(46vh, 460px);
+  overflow-y: auto;
+  padding: var(--space-4) var(--space-5);
+  border: var(--size-divider) solid var(--t-rule-hair);
+  background: var(--t-sunk);
+  scrollbar-color: var(--t-rule) transparent;
+}
 
-  .shell > .band--alert {
-    order: -1;
-  }
+.transcript:focus-visible {
+  outline-offset: -2px;
+}
 
-  /* 失联那条判据说明排在告警带之前、顶栏之后：它讲的是上面那条全屏横幅的判据，
-     紧跟着横幅出现最顺；顶栏本来就要给横幅让位，所以它跟着顶栏走就不会被盖住 */
-  .shell > #hb-guidance {
-    order: -1;
-  }
+.transcript__line {
+  display: grid;
+  grid-template-columns: 5.5rem 4.5rem minmax(0, 1fr);
+  gap: var(--space-4);
+  padding: var(--space-2) 0;
+  border-top: var(--size-divider) solid var(--t-hair);
+}
 
-  .shell > .topbar {
-    order: -2;
-  }
+.transcript__line:first-child {
+  border-top: 0;
+}
 
-  .topbar {
-    grid-template-columns: 1fr;
-    gap: var(--space-4);
-    align-items: start;
-  }
+.transcript__time {
+  color: var(--t-ink-quiet);
+  font-family: var(--t-font-mono);
+  font-size: var(--size-caption);
+  white-space: nowrap;
+}
 
-  .topbar__main {
-    justify-content: flex-start;
-    flex-wrap: wrap;
-  }
+.transcript__route {
+  color: var(--t-signal-ink);
+  font-family: var(--t-font-mono);
+  font-size: var(--size-caption);
+  white-space: nowrap;
+}
 
-  /* 采集带与总结区一律整宽：390 下先采集、后总结、后转写 */
-  .m-band--tools {
-    grid-template-columns: 1fr;
-    gap: var(--space-6);
-  }
+.transcript__text {
+  color: var(--t-ink);
+  font-size: var(--size-body);
+  line-height: var(--line-loose);
+}
 
+/* 断口：数据停过的那一段 */
+.transcript__gap {
+  color: var(--t-alert-ink);
+  font-size: var(--size-small);
+}
+
+.transcript__gap::after {
+  content: "";
+  display: inline-block;
+  width: 4rem;
+  height: var(--size-divider);
+  margin-left: var(--space-3);
+  vertical-align: middle;
+  background: linear-gradient(
+    to right,
+    color-mix(in srgb, var(--t-alert) 60%, transparent),
+    transparent
+  );
+}
+
+.transcript__jump {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.transcript__toggle {
+  border-color: var(--t-rule);
+}
+
+.transcript__toggle-hint {
+  margin-left: var(--space-2);
+  color: var(--t-ink-quiet);
+  font-weight: var(--weight-regular);
+}
+
+/* ============================================================================
+   13. 采集带页头那条图例
+   ========================================================================= */
+
+.meter-legend {
+  grid-column: 2;
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  color: var(--t-ink-quiet);
+  font-size: var(--size-caption);
+}
+
+.meter-legend__item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  white-space: nowrap;
+}
+
+.meter-legend .m-ch__mark {
+  width: 8px;
+  height: 8px;
+}
+
+/* ============================================================================
+   14. 宽度断点
+   ----------------------------------------------------------------------------
+   1440 是这根标尺的原点（`--size-shell`）。往下 1180 一份：采集带分成
+   「通道卡 / 工具列」两栏；900 一份：顶栏收成单栏；720 再一份：转写折成两列。
+   ========================================================================= */
+
+@media (min-width: 1180px) {
   .m-band--split {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1.9fr) minmax(0, 1fr);
+    align-items: start;
   }
 
   .m-chans {
     grid-template-columns: 1fr;
   }
+}
 
-  .m-chans .m-ch {
-    border-right: var(--space-0);
-    border-bottom: var(--size-divider) solid var(--color-rule);
-  }
-
-  .m-chans .m-ch:last-child {
-    border-bottom: var(--space-0);
-  }
-
-  /* 采集带之后依次是告警条、总结区、一行「最近一句」、设置 */
-  .m-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .m-grid > .m-meter {
-    grid-row: 1;
-  }
-
-  .m-grid > .m-ch__readout {
-    grid-row: 2;
-    margin-left: var(--space-0);
-  }
-
-  .m-grid > .m-env-note,
-  .m-grid > .m-env {
-    grid-row: auto;
-  }
-
-  .m-ch__readout {
-    font-size: var(--size-title);
-  }
-
-  [data-layout="b"] .m-ch__readout {
-    justify-self: start;
-  }
-
-  /* 竖直电平表在窄屏上保持竖直：刻度、峰值保持、包络一样都不能少。
-     左尺收窄到一格三列，免得 390 下把电平表挤出去 */
-  .rail {
-    min-width: var(--space-12);
-    padding-left: var(--space-3);
-    padding-right: var(--space-2);
-  }
-
-  .m-meter--v {
-    grid-template-columns: var(--space-9) auto;
-  }
-
-  .m-meter--v .m-meter__track {
-    margin-left: var(--space-0);
-  }
-
-  /* 读数与电平在窄屏上左右排不开，改上下 */
-  .names__row {
-    grid-template-columns: 1fr;
-    gap: var(--space-2);
-  }
-
-  .names__ctx {
-    white-space: normal;
-  }
-
-  /* 一步折成两行：第一行「图形 + 步骤名」，下面「状态 + 耗时」。
-     状态那一格必须跨满整宽（min-width: 0），否则它只按最宽的短词定宽，
-     中文会被压成一列一个字 */
-  .step {
-    grid-template-columns: 1.5rem 1fr;
-    gap: var(--space-2) var(--space-4);
-  }
-
-  .step__state {
-    grid-column: 1 / -1;
-    grid-row: 2;
-    min-width: var(--space-0);
-  }
-
-  .step__time {
-    grid-column: 1 / -1;
-    grid-row: 3;
-  }
-
-  .alert__acts {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .sumbar {
-    flex-direction: column;
-    align-items: stretch;
-    gap: var(--space-3);
-  }
-
-  .seg {
-    width: 100%;
-  }
-
-  .seg__item {
-    flex: 1;
-  }
-
-  /* 转写折成一行「最近一句」，点一下展开成整屏可滚动 */
-  .transcript {
-    max-height: none;
-  }
-
-  /* 390 下这一行排成两段：先 [HH:MM] 与路名，正文独占下一段整宽。
-     三格横排会把正文挤成每行一两个字（窄屏最容易踩的一处），
-     让它换行反而读得下来 */
-  .transcript__line {
-    grid-template-columns: 6.5ch 1fr;
-    gap: var(--space-1) var(--space-3);
-  }
-
-  .transcript__text,
-  .transcript__gap {
-    grid-column: 1 / -1;
-  }
-
-  /* 折成一行「最近一句」：无论它是容器里的第几个孩子，都只留这一行 */
-  .transcript > .transcript__line ~ .transcript__line {
+@media (min-width: 721px) {
+  .transcript__toggle {
     display: none;
   }
 
-  .transcript__toggle {
-    display: inline-flex;
+  .transcript {
+    height: min(48vh, 520px);
+  }
+}
+
+@media (max-width: 900px) {
+  .topbar {
+    grid-template-columns: 1fr;
+    justify-items: start;
+    gap: var(--space-4);
   }
 
-  .transcript.is-open .transcript__line {
-    display: grid;
+  .topbar__main,
+  .topbar__right {
+    justify-content: flex-start;
   }
 
-  .transcript.is-open {
-    max-height: 60vh;
-    overflow-y: auto;
+  .clock__value {
+    font-size: 38px;
+  }
+}
+
+@media (max-width: 720px) {
+  .shell {
+    padding: var(--space-5) var(--size-gutter-narrow) var(--space-10);
   }
 
-  .drawer {
-    width: 100vw;
-    border-left: var(--space-0);
+  .band__head {
+    grid-template-columns: 1fr;
   }
 
-  .picker {
-    flex-wrap: nowrap;
-    overflow-x: auto;
+  .band__note,
+  .meter-legend {
+    grid-column: 1;
+    justify-self: start;
+  }
+
+  .meter-legend {
+    flex-wrap: wrap;
+    gap: var(--space-3) var(--space-4);
+  }
+
+  .m-meter--v .m-meter__track,
+  .m-meter__scale {
+    height: 140px;
+  }
+
+  /* 井的高矮只改这一处：刻度、井、填充都读它 */
+  .m-grid {
+    --meter-h: 140px;
+  }
+
+  .m-env {
+    height: 104px;
+  }
+
+  .m-env__bar {
+    width: 6px;
+  }
+
+  .transcript__line {
+    grid-template-columns: 4.25rem minmax(0, 1fr);
+    gap: var(--space-2) var(--space-3);
+  }
+
+  /* 窄屏四档挤不下「近 30 分钟」这一档：字号收一档，内边距去掉 */
+  .seg__item {
+    padding: 0 var(--space-1);
+    font-size: var(--size-micro);
+  }
+
+  .summary-card__item {
+    font-size: var(--size-body);
+  }
+
+  /* 窄屏一行放不下三格：时刻与路名占头一行，正文另起一行铺满 */
+  .transcript__route {
+    grid-column: 2;
+  }
+
+  .transcript__text {
+    grid-column: 1 / -1;
+  }
+
+  .heartbeat {
+    padding: var(--space-4) var(--size-gutter-narrow) var(--space-5);
+  }
+
+  .clock__value {
+    font-size: 34px;
   }
 }
 
 @media (max-width: 400px) {
-  .shell {
-    padding-inline: var(--space-4);
-  }
-
-  .m-ch__readout {
-    font-size: var(--size-title);
-  }
-
-  .clock__value {
-    font-size: var(--size-title);
-  }
-
-  .label,
-  .rail {
-    letter-spacing: var(--track-label);
+  .m-ch,
+  .live-tools,
+  .summary-card {
+    padding: var(--space-4);
   }
 
   .m-ch__device {
-    max-width: 100%;
+    display: none;
   }
 
-  /* 对照入口在 390 下竖排：切换器与两个互链各占整宽，不横向挤 */
-  .viewswitch {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .viewswitch__tools {
-    flex-direction: column;
-    align-items: stretch;
-    gap: var(--space-3);
-  }
-
-  .viewswitch__tools .list__row {
-    flex-direction: column;
-    align-items: stretch;
-    gap: var(--space-2);
-  }
-
-  .viewswitch__tools #state-switch {
-    width: 100%;
-  }
-}
-
-@media (max-width: 400px) {
-  .shell {
-    padding-inline: var(--space-4);
-  }
-
-  .m-ch__readout {
-    font-size: var(--size-title);
+  .m-env {
+    height: 84px;
   }
 
   .clock__value {
-    font-size: var(--size-title);
-  }
-
-  .label,
-  .rail {
-    letter-spacing: var(--track-label);
-  }
-
-  /* 复核入口页里那些「名字长、拆不开」的等宽串（`live.html?state=idle-untouched`
-     这类取值名）在 400 以下放行换行：`entry.html` 不出媒体查询（它不新增第三份
-     CSS 文件），这一条写在这里统一管。默认那一档（`.num` 整体不换行）留给
-     读数与时长用，取值名不靠它撑住一列 */
-  .list__row .num {
-    white-space: normal;
-    overflow-wrap: anywhere;
+    font-size: 30px;
   }
 }
-
-/* ============================================================================
-   本单元新增（由 .work/070b31e0-phase2/tools/append_live_css.py 追加）
-   ----------------------------------------------------------------------------
-   下面这几条是**产品侧自己需要**的规则，ui.css 里没有对应的原文：每一条都是把
-   设计稿既有的部件按同一套做法组合出来的（用既有 token、既有类名，一个新类名都
-   没有造）。理由逐条写在各自上面，复核时对着 docs/ui-design.md 的对应章节看。
-   【phase3 实测回写更正】初版这一块曾自造 `transcript-tags` 与
-   `transcript__line--interlude` 两个类名（违反上面那句自述），070b31e0 phase3
-   按类名契约换回设计稿的用法：标签行用 `.sumbar` 内放两个 `.tag`
-   （docs/ui/live.html L214–216），断口行用普通 `.transcript__line` +
-   `.transcript__gap`（同稿 L256–260），那三段规则随之删除。
-   ========================================================================= */
-
-/* 转写区那个「展开 / 收起」开关：ui.css 的 §13 让它到 720 以下才现形（窄屏要把
-   转写折成一行「最近一句」），但桌面宽度下它也是一处该能点的东西 —— 不补这一条，
-   那一格在 1440 上就空着。这里只给一条外边距，显隐仍归 §16 那条规则。 */
-.band__foot > .transcript__toggle {
-  margin-right: auto;
-}
-
-/* 已恢复 / 已停止徽标的图形：环形箭头。依据：设计稿章 4.3「已恢复＝环形箭头」。
-   ui.css 没有这个图形的定义，但三份会中稿的脚本都在用这个类名（live.html 的
-   healthGlyph() / chipGlyphClass() 对 restored / stopped 档返回的就是它）——
-   类名挂在徽标上、图形却从来不渲染。这里照 `.glyph--cross` 的同款做法补上
-   **完整定义**：内联 SVG 当背景，currentColor 跟着徽标文字色走，不引图片、
-   不引 SVG 资源、不引图标字体。命名空间那一行的冒号写成 %3A，与 .glyph--cross
-   同一条纪律（章 8 门槛 7：全文搜 http 开头的地址零命中）。
-   一条弧（圆心 5.5,5.5 半径 3.5，留 60° 缺口）+ 缺口处一个实心箭头，笔画粗细
-   与勾 / 叉同为 2px。 */
-.glyph--dashed {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http%3A//www.w3.org/2000/svg' viewBox='0 0 11 11'%3E%3Cpath d='M8.79 4.3 A3.5 3.5 0 1 1 6.11 2.05' stroke='currentColor' stroke-width='2' fill='none'/%3E%3Cpath d='M5.83 3.63 L8.28 2.43 L6.39 0.47 Z' fill='currentColor'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: center;
-  background-size: 100% 100%;
-}
-
-/* #endregion 本单元新增 */
