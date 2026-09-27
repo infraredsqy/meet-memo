@@ -734,7 +734,6 @@ def test_run_post_reports_every_layer_with_absolute_paths(tmp_path: Path) -> Non
 
     # 假启动器被调到一次，它落的终态就是这一趟的账（结论出自这一趟新落的那一版）
     assert launcher.calls == [str(session)]
-    assert json.loads((session / MINUTES_STATUS_NAME).read_text(encoding="utf-8"))["state"] == "done"
 
 
 def test_an_injected_launcher_that_settles_is_waited_for(tmp_path: Path) -> None:

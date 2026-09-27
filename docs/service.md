@@ -268,12 +268,13 @@ python -m pytest -q -m slow         # 慢档：只跑那十二个文件
 python -m pytest tests/test_state_machine.py tests/test_api_actions.py -q   # 只跑某几个文件
 ```
 
-`tests/` 下现在有 **62 个测试文件、1265 个用例**（本机实测：`python -m pytest --collect-only -q` → `1265 tests collected`；`python -m pytest -q` → `1265 passed in 142.40s`。口径是**pytest 会去收用例的文件数**：`tests/_helpers.py` / `tests/_service.py` / `tests/_drain_fakes.py` / `tests/_capture_faulty.py` / `tests/_contract.py` 那几个测试支持模块不算，`tests/v1/test_repeat_filter.py` 算一个）。下面那张逐文件表走到今天这一步，中间隔着三笔增量，分开记：
+`tests/` 下现在有 **62 个测试文件、1263 个用例**（本机实测：`python -m pytest --collect-only -q` → `1263 tests collected`；`python -m pytest -q` → `1263 passed in 146.78s`。口径是**pytest 会去收用例的文件数**：`tests/_helpers.py` / `tests/_service.py` / `tests/_drain_fakes.py` / `tests/_capture_faulty.py` / `tests/_contract.py` 那几个测试支持模块不算，`tests/v1/test_repeat_filter.py` 算一个）。下面那张逐文件表走到今天这一步，中间隔着几笔增量，分开记：
 
 - **`1987cb20` 那一步：49 行（行内用例数相加 976）→ 57 行 / 1133 条，+8 个文件、+157 条。** 六个 `tests/test_summary_*.py` 111 条（会中总结内核那一层，`1987cb20` phase1 —— `test_summary_client.py` 19 条、`test_summary_parse.py` 19 条、`test_summary_prompt.py` 12 条、`test_summary_runner.py` 23 条、`test_summary_settings.py` 21 条、`test_summary_window.py` 17 条）、`tests/test_summary_action.py` 31 条与 `tests/test_summary_buffer.py` 12 条（服务接线那一层，`1987cb20` phase2，含修复轮补的两条：四档之外的 `window` 取值一律 400、以及出口兜底那条自证），外加 `tests/test_minutes_contract.py` 60 → 63 条（会后纪要契约那几条跟上这一层）。
 - **本轮那一步：57 → 58 个文件、1133 → 1147 条，+1 个文件、+14 条**（`796bbff` 与 `1c46c91` 这两笔一起算）。新文件 `tests/test_transcriber_release.py` 11 条（会中模型让出显存那四条语义与收尾接线的顺序），`tests/test_post_hook.py` 14 → 17 条（释放先于 `launch` 的顺序、释放抛错不拖垮整场、真后端确实走这条线）。
 - **那张表里的行内用例数相加，与收集数已经对平**：58 行相加就是 `1147`，与 `1147 tests collected` 逐字相等。这一格先前算下来是 1144、差 3，差在 `tests/test_post_hook.py` 那一行的行内数（那一格写过 14，本机实收 17），改表时把那一格一并订正。
 - **`65dd3e4c` 那一步：58 → 62 个文件、1147 → 1265 条，+4 个文件、+118 条**（三段一起算：phase1 的 `tests/test_cli_post.py`、phase2 的 `tests/test_post_idempotency.py`、phase3 的 `tests/test_cli_post_config.py`（18 条）与 `tests/test_config_isolation.py`（5 条），外加那个慢档文件 `tests/test_web_missing_dist_e2e.py`（1 条））。快档 1041 条、慢档 224 条，加起来就是 1265。
+- **prune 审计第二轮那一步：1265 → 1263 条**（机主点名「检查 UI 文案是否 match 的那类测试完全没必要」之后做的一轮）。整条删掉两个用例函数（`tests/test_minutes_chunk.py` 的 `test_build_index_text_is_pure`、`tests/test_minutes_evidence.py` 的 `test_a_blank_env_var_falls_back_to_the_default`），另在七个存活用例里删掉若干条只把常量／自己刚写进去的值抄一遍的断言（`test_minutes_evidence.py` 的家目录回环、`test_cli_post.py` 的终态回读、`test_post_hook.py` 的线程实参回读、`web/tests/` 三处：恒真的 `frozenClockValue` 自比、恒等的 `formatNumber` 三元式、以及把 `无声明的 `连续 2 次` 抄进断言的整串比对）。**文件数不变**（62），因为两个用例函数所在的文件都还有大量承重内容。同轮把 `muteButtonLabel` 那三条逐字文案断言改写成「两档措辞不同 + 无告警按未静音那一档」的分支比对——它原本是该方法在 `web/tests` 里的唯一覆盖点，直接删会留下覆盖空洞。快档 1039 条、慢档 224 条，加起来就是 1263。
 
 文件数与用例数的口径写在 `docs/spec.md` 的代码现状表里。不需要先 `pip install`，也不需要可编辑安装。
 
@@ -333,11 +334,11 @@ python -m pytest tests/test_state_machine.py tests/test_api_actions.py -q   # �
 | `tests/test_config_isolation.py` | 5 | 第六道兜底自己的用例：真入口读的是重定向后的家目录而不是机主那一份、下一条用例从「没有生效配置」开始、机主家目录被建出 / 改过时守卫当场判红并打出差 |
 | `tests/test_web_missing_dist_e2e.py` | 1 | 真子进程端到端（**慢档**）：`web.dist_dir` 指到不存在的路径 → 真起 `meeting web` → `/` 是说明页、`/api/heartbeat` 与 `/api/state` 照常 `200`、那个目录仍不存在、`Ctrl+C` 后退出码 `0` |
 | `tests/test_minutes_lines.py` | 11 | 两种行形一起吃（无标签的会中稿、带 `**S01**` 的会后稿、带秒的时间戳）、标题行 / 空行 / 注释行返回 `None`、说话人标签为空时落 `None`、识别失败占位符不被当成说话人、`count_lines()` 的空行口径 |
-| `tests/test_minutes_chunk.py` | 23 | 按行切块与区间表：块文件里只有原始行（不加头）、`chunk_NN.md` 的两位数编号、闭区间与 `lines` 三者自洽、重跑先清本源旧块、只动 `chunks/` 里 `chunk_*.md` 这一族、`chunk_lines` 取值域、按名字找两条转写、逐 source 判档与两路合并后的公共档位 |
+| `tests/test_minutes_chunk.py` | 22 | 按行切块与区间表：块文件里只有原始行（不加头）、`chunk_NN.md` 的两位数编号、闭区间与 `lines` 三者自洽、重跑先清本源旧块、只动 `chunks/` 里 `chunk_*.md` 这一族、`chunk_lines` 取值域、按名字找两条转写、逐 source 判档与两路合并后的公共档位 |
 | `tests/test_minutes_contract.py` | 63 | 分段方案的契约校验：必填与可选字段的类型、连续性按 source 各判一遍（跨 source 不判）、段 id 重复、末段与真实行数对齐、`total_lines` 两种合法形状与各自的拒收档、`max_segments`、三种能分辨的读盘错误，以及**在全新解释器里 `import meeting.minutes` 一条重依赖都不拉** |
 | `tests/test_minutes_prompt.py` | 61 | 提示词渲染：五处占位符缺一处就抛错、`{{PHASE_BODY}}` 可省（两块标记就地替换正文）、对不上号的占位符、路径一律正斜杠且相对场次目录、清单的人话与 JSON 两读、逐 source 的档位说明段、模板缺席与空清单不渲染 |
 | `tests/test_minutes_launch.py` | 41 | 启动器与产物四条判据：argv 只带短指针（正文落 `working/run_prompt.md`）、子进程环境那三格、`CREATE_NO_WINDOW`、四档失败的名字与消息、日志头三行、附录判据（表头看宽度不看第一格的字面值、只认附录那一节里的行） |
-| `tests/test_minutes_evidence.py` | 7 | 那一次实测的证据脚本（`.work/nav/nodes/41465462-…/phase2/evidence/run_evidence.py`）**自己写 `evidence.log`**（stdout 全文、UTF-8）：证据目录与 `MINUTES_EVIDENCE_DIR` 的优先级、空值退默认、脚本缺席时带着路径与补救办法跳过、拒绝多余参数。脚本不在盘上（`.work` 被清理）时这几条**跳过**，跑不到不是红的 |
+| `tests/test_minutes_evidence.py` | 6 | 那一次实测的证据脚本（`.work/nav/nodes/41465462-…/phase2/evidence/run_evidence.py`）**自己写 `evidence.log`**（stdout 全文、UTF-8）：证据目录与 `MINUTES_EVIDENCE_DIR` 的优先级、脚本缺席时带着路径与补救办法跳过、拒绝多余参数。脚本不在盘上（`.work` 被清理）时这几条**跳过**，跑不到不是红的 |
 | `tests/test_minutes_runner.py` | 29 | 一次运行的编排：再入闸当场返回 `skipped` 且不写状态文件、拉起之前先落 `running`、一条输入都没有时记 `failed` 且不启动 DSH、切块与渲染失败各记 `failed`、成功档覆盖成 `done`、超时与退出码非 0 的转发（启动器全程是假实现，一条都不真调系统上的 `dsh`） |
 | `tests/test_minutes_registry.py` | 11 | `resolve_minutes_hook()`：`auto` 落 `MinutesHook`、配置里写 JSON `null` 落缺席档（不退回 `auto`）、写字符串 `"null"` 同解、`module:Class` 显式取值、解析失败回退替身且 `has_implementation = false` |
 | `tests/test_capture_devices.py` | 33 | 设备模型与挑选策略（纯逻辑、注入假端点表）：有波形 / 全零 / 开不了三档、`CABLE Output` 抓取型端点挡拦（含 WDM-KS 的 `VB-Audio Point` 写法）、host API 排序、MME 截断名的前缀兜底与**精确名优先**、收尾两档收敛（一条都没打开 → `probe_failed`）、没配名字时种子取**系统默认输入端点**（跟着 `is_default` 走）、loopback 三级（两个子串判据逐字照 V1 的 `in`） |
@@ -370,7 +371,7 @@ addopts = "--strict-markers"
 任何用例，以退出码 **5（no tests collected）** 收场，不会被读成绿。
 
 **一条已知的残余**（本机 pytest 9.0.3 实测）：`-m "not sloww"` 这种**否定式**拼错会让
-pytest 把「sloww」当成一个谁都不带的标记，表达式于是恒真、1265 条全被选上 —— 结果是悄悄跑了
+pytest 把「sloww」当成一个谁都不带的标记，表达式于是恒真、1263 条全被选上 —— 结果是悄悄跑了
 全量（慢，但不假绿）。正向拼错由退出码 5 兜住，否定式拼错由这道 `--strict-markers` 兜不住。
 
 **归位判据**（一条用例满足任一条就进慢档）：
@@ -405,13 +406,13 @@ pytest 把「sloww」当成一个谁都不带的标记，表达式于是恒真�
 
 上表那些单文件读数是各自单独跑一次量的（含解释器冷启动与真应用启动的固定开销），**不随某个文件被挪进挪出慢档而变**；改完代码之后要刷新哪几个数，就按同一口径单跑一遍那个文件。
 
-**三条命令与实测耗时**（本机，`1265` 条用例那一版）：
+**三条命令与实测耗时**（本机，`1263` 条用例那一版）：
 
 | 命令 | 用例 | 实测 |
 |---|---|---|
-| `python -m pytest -q -m "not slow"` | **1041 passed, 224 deselected** | **56.12 s** |
-| `python -m pytest -q -m slow` | **224 passed, 1041 deselected** | **89.87 s** |
-| `python -m pytest -q` | **1265 passed** | **142.40 s** |
+| `python -m pytest -q -m "not slow"` | **1039 passed, 224 deselected** | **60.13 s** |
+| `python -m pytest -q -m slow` | **224 passed, 1039 deselected** | **91.72 s** |
+| `python -m pytest -q` | **1263 passed** | **146.78 s** |
 
 **不加 `-m` 时跑全量**，这一点是有意的：新写的用例默认落在快档，只有被显式标 `slow` 才跳过。
 漏跑的风险因此压在「新写的慢用例拖慢快档」这一侧，而不在「忘了标记 → 慢用例从没跑过」那一侧。

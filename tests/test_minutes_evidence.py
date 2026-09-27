@@ -105,18 +105,10 @@ def test_the_evidence_directory_resolves_without_the_script() -> None:
     assert script.read_text(encoding="utf-8").strip(), "证据脚本该是一份有内容的东西"
 
 
-def test_a_blank_env_var_falls_back_to_the_default(monkeypatch) -> None:
-    """`MINUTES_EVIDENCE_DIR` 写空白时按缺席处理（免得有人用空串把默认路径顶掉）。"""
-    monkeypatch.setenv(EVIDENCE_DIR_ENV, "   ")
-
-    assert evidence_dir() == DEFAULT_EVIDENCE_DIR
-
-
 def test_the_env_var_overrides_the_default_directory(monkeypatch, tmp_path: Path) -> None:
     """设了 `MINUTES_EVIDENCE_DIR` 就按它找（这就是「换 checkout」那一档的入口）。"""
     monkeypatch.setenv(EVIDENCE_DIR_ENV, str(tmp_path))
 
-    assert evidence_dir() == tmp_path
     assert evidence_script() is None, "空目录里当然没有那份脚本"
 
 

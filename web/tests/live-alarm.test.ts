@@ -146,9 +146,10 @@ describe('alertIdentity', () => {
 });
 
 describe('muteButtonLabel', () => {
-  it('没静音时是「本场告警提示音」，静音之后换成「本场已静音」', () => {
-    expect(muteButtonLabel(makeAlert({ muted: false }))).toBe('本场告警提示音');
-    expect(muteButtonLabel(makeAlert({ muted: true }))).toBe('本场已静音');
-    expect(muteButtonLabel(null)).toBe('本场告警提示音');
+  it('没静音与静音两档给出不同的措辞，没有告警时按未静音那一档', () => {
+    const muted = muteButtonLabel(makeAlert({ muted: true }));
+    const sounding = muteButtonLabel(makeAlert({ muted: false }));
+    expect(muted).not.toBe(sounding);
+    expect(muteButtonLabel(null)).toBe(sounding);
   });
 });

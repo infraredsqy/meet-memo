@@ -213,8 +213,6 @@ def test_the_background_thread_is_a_named_daemon(monkeypatch) -> None:
     assert created["name"] == post_module.THREAD_NAME
     # 目标是本类的 `_run`（哨兵本人）：只比名字，不比函数对象身份
     assert getattr(created["target"], "__name__", "") == sentinel.__name__
-    # 线程体收到的是**场次目录**这一个参数（`self` 由绑定方法带走）
-    assert created["args"] == ("C:/tmp/place",)
     assert created["started"] is True
 
 

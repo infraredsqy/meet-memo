@@ -28,7 +28,6 @@ describe('formatNumber / formatDbfs', () => {
     expect(formatNumber(-35.25)).toBe(`${MINUS}35.3`);
     expect(formatNumber(-35.24)).toBe(`${MINUS}35.2`);
     expect(formatNumber(0)).toBe('0.0');
-    expect(formatNumber(MINUS === '\u2212' ? 0 : 0)).toBe('0.0');
   });
 
   it('读数是 `−35.2 dBFS` 这一形；没有读数退成 `—`', () => {

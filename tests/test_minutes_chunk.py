@@ -20,7 +20,6 @@ from meeting.minutes.chunk import (
     INDEX_NAME,
     ChunkError,
     InputSpec,
-    build_index_text,
     chunk_session,
     chunk_source,
     discover_inputs,
@@ -209,13 +208,6 @@ def test_chunk_source_reports_a_missing_transcript(tmp_path: Path) -> None:
 
     with pytest.raises(ChunkError, match="转写读不动"):
         chunk_source("loopback", missing, tmp_path / "out")
-
-
-def test_build_index_text_is_pure() -> None:
-    """区间表的拼装不落盘（读方要的只是那段文本时不必建目录）。"""
-    assert build_index_text(transcript="a.md", total_lines=0, chunk_lines=100, chunks=[]).startswith(
-        "# Chunk Index\n"
-    )
 
 
 # ---------------------------------------------------------------------------
