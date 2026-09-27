@@ -1,6 +1,7 @@
 """`meeting/offline/audio.py` 的契约用例：把容器解成 16k 单声道 float32 波形。
 
 **素材现场生成**：用标准库 `wave` 写一段 16k 单声道 int16 的 wav（不引第三方），
+归档 PCM 那一档直接 `write_bytes()` 写无头裸流（`_write_raw_pcm()`），
 **不依赖任何真实会议音频**（真素材只走 `.work/scripts/mosstd_smoke.py` 那条冒烟）。
 
 解码走 PyAV，因此本文件会真的拉 `av` 进来 —— 与 `meeting/offline/engine.py` 的
@@ -32,6 +33,41 @@ def _write_wav(path: Path, samples: np.ndarray, *, rate: int = RATE, channels: i
         handle.setframerate(rate)
         handle.writeframes(samples.astype("<i2").tobytes())
     return path
+
+
+def _write_raw_pcm(path: Path, samples: np.ndarray) -> Path:
+    """把 int16 样本写成**无头**的裸 PCM（采集侧 `meeting_audio_<source>.pcm` 的形状）。"""
+    path.write_bytes(samples.astype("<i2").tobytes())
+    return path
+
+
+def test_decode_audio_reads_a_headerless_pcm_archive(tmp_path: Path) -> None:
+    """归档 PCM（无头 16k 单声道 s16le）解得开，换算仍是 `/32768.0`。
+
+    PyAV 的容器探测在无头裸流上必然失败（`InvalidDataError`），`decode_audio()` 因此必须
+    按后缀 `.pcm` 显式给出格式 —— `260928` 那一场就是在这里丢掉整条 mic 转写的。
+    """
+    samples = np.array([16384, -16384, 0, 32767, -32768] * PAIR, dtype=np.int16)
+    path = _write_raw_pcm(tmp_path / "meeting_audio_mic.pcm", samples)
+
+    waveform = audio_module.decode_audio(path)
+
+    assert waveform.dtype == np.float32
+    assert waveform.ndim == 1
+    assert waveform.shape == (samples.size,)
+    assert waveform[0] == pytest.approx(0.5, abs=1e-6)
+    assert waveform[4] == pytest.approx(-1.0, abs=1e-6)
+
+
+def test_decode_audio_still_probes_non_pcm_containers(tmp_path: Path) -> None:
+    """非 `.pcm` 的容器照旧走 PyAV 探测：同一段样本的 wav 与裸 PCM 解出同一条波形。"""
+    samples = np.array([16384, -16384, 0, 32767, -32768] * PAIR, dtype=np.int16)
+    wav = _write_wav(tmp_path / "levels.wav", samples)
+    pcm = _write_raw_pcm(tmp_path / "meeting_audio_mic.pcm", samples)
+
+    np.testing.assert_array_equal(
+        audio_module.decode_audio(wav), audio_module.decode_audio(pcm)
+    )
 
 
 def test_decode_audio_returns_16k_mono_float32(tmp_path: Path) -> None:

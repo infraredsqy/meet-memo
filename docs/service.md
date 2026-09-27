@@ -269,7 +269,7 @@ python -m pytest -q -m slow         # 慢档：只跑那十二个文件
 python -m pytest tests/test_state_machine.py tests/test_api_actions.py -q   # 只跑某几个文件
 ```
 
-`tests/` 下现在有 **64 个测试文件、1295 个用例**（本机实测：`python -m pytest --collect-only -q` → `1295 tests collected`；`python -m pytest -q` → `1295 passed in 149.31s`。口径是**pytest 会去收用例的文件数**：`tests/_helpers.py` / `tests/_service.py` / `tests/_drain_fakes.py` / `tests/_capture_faulty.py` / `tests/_dsh_web_fake.py` / `tests/_contract.py` 那几个测试支持模块不算，`tests/v1/test_repeat_filter.py` 算一个）。下面那张逐文件表走到今天这一步，中间隔着几笔增量，分开记：
+`tests/` 下现在有 **64 个测试文件、1297 个用例**（本机实测：`python -m pytest --collect-only -q` → `1297 tests collected`；`python -m pytest -q` → `1297 passed in 154.32s`。口径是**pytest 会去收用例的文件数**：`tests/_helpers.py` / `tests/_service.py` / `tests/_drain_fakes.py` / `tests/_capture_faulty.py` / `tests/_dsh_web_fake.py` / `tests/_contract.py` 那几个测试支持模块不算，`tests/v1/test_repeat_filter.py` 算一个）。下面那张逐文件表走到今天这一步，中间隔着几笔增量，分开记：
 
 - **`1987cb20` 那一步：49 行（行内用例数相加 976）→ 57 行 / 1133 条，+8 个文件、+157 条。** 六个 `tests/test_summary_*.py` 111 条（会中总结内核那一层，`1987cb20` phase1 —— `test_summary_client.py` 19 条、`test_summary_parse.py` 19 条、`test_summary_prompt.py` 12 条、`test_summary_runner.py` 23 条、`test_summary_settings.py` 21 条、`test_summary_window.py` 17 条）、`tests/test_summary_action.py` 31 条与 `tests/test_summary_buffer.py` 12 条（服务接线那一层，`1987cb20` phase2，含修复轮补的两条：四档之外的 `window` 取值一律 400、以及出口兜底那条自证），外加 `tests/test_minutes_contract.py` 60 → 63 条（会后纪要契约那几条跟上这一层）。
 - **本轮那一步：57 → 58 个文件、1133 → 1147 条，+1 个文件、+14 条**（`796bbff` 与 `1c46c91` 这两笔一起算）。新文件 `tests/test_transcriber_release.py` 11 条（会中模型让出显存那四条语义与收尾接线的顺序），`tests/test_post_hook.py` 14 → 17 条（释放先于 `launch` 的顺序、释放抛错不拖垮整场、真后端确实走这条线）。
@@ -277,6 +277,7 @@ python -m pytest tests/test_state_machine.py tests/test_api_actions.py -q   # �
 - **`65dd3e4c` 那一步：58 → 62 个文件、1147 → 1265 条，+4 个文件、+118 条**（三段一起算：phase1 的 `tests/test_cli_post.py`、phase2 的 `tests/test_post_idempotency.py`、phase3 的 `tests/test_cli_post_config.py`（18 条）与 `tests/test_config_isolation.py`（5 条），外加那个慢档文件 `tests/test_web_missing_dist_e2e.py`（1 条））。快档 1041 条、慢档 224 条，加起来就是 1265。
 - **prune 审计第二轮那一步：1265 → 1263 条**（机主点名「检查 UI 文案是否 match 的那类测试完全没必要」之后做的一轮）。整条删掉两个用例函数（`tests/test_minutes_chunk.py` 的 `test_build_index_text_is_pure`、`tests/test_minutes_evidence.py` 的 `test_a_blank_env_var_falls_back_to_the_default`），另在七个存活用例里删掉若干条只把常量／自己刚写进去的值抄一遍的断言（`test_minutes_evidence.py` 的家目录回环、`test_cli_post.py` 的终态回读、`test_post_hook.py` 的线程实参回读、`web/tests/` 三处：恒真的 `frozenClockValue` 自比、恒等的 `formatNumber` 三元式、以及把 `无声明的 `连续 2 次` 抄进断言的整串比对）。**文件数不变**（62），因为两个用例函数所在的文件都还有大量承重内容。同轮把 `muteButtonLabel` 那三条逐字文案断言改写成「两档措辞不同 + 无告警按未静音那一档」的分支比对——它原本是该方法在 `web/tests` 里的唯一覆盖点，直接删会留下覆盖空洞。快档 1039 条、慢档 224 条，加起来就是 1263。
 - **会后纪要的 web 分支那一步：62 → 64 个文件、1263 → 1295 条，+2 个文件、+32 条**（两个都快档：`tests/test_minutes_dsh_web.py`（19 条，交付层自己的契约：自签 cookie、存活探针、三步交付与失败分档、重试那一条线）与 `tests/test_minutes_delivered.py`（13 条，`delivered` 这一档的流转与读方那两道闸）。两个文件共用一件新的测试支持件 `tests/_dsh_web_fake.py`（不被 pytest 收集）；`tests/conftest.py` 同时加了第七道 autouse 兜底 `_no_real_dsh_web_call`。快档 1071 条、慢档 224 条，加起来就是 1295。
+- **归档 PCM 解码修复那一步：1295 → 1297 条，+2 条**（`tests/test_offline_audio.py` 4 → 6：补两条用例钉住「无头裸 PCM 归档解得开」与「非 `.pcm` 的容器照旧走 PyAV 探测」，后者拿同一段样本的 wav 与裸 PCM 比对到逐样本相等）。修的是 `meeting/offline/audio.py`：`av.open()` 在无头裸流上必然探测失败（`InvalidDataError`），改为按后缀分流、对 `.pcm` 显式给出 `s16le` / 16k / 单声道——分流口径与 `runner.py` 的静音门、切块同一条。此前每一场「有真实音频的那一路」的会后转写都会栽在这里（环回那边靠数字静音门在解码之前被跳过，所以只有麦克风撞得上）。快档 1073 条、慢档 224 条，加起来就是 1297。
 
 文件数与用例数的口径写在 `docs/spec.md` 的代码现状表里。不需要先 `pip install`，也不需要可编辑安装。
 
@@ -323,7 +324,7 @@ python -m pytest tests/test_state_machine.py tests/test_api_actions.py -q   # �
 | `tests/test_summary_runner.py` | 23 | 成功 / 空数组 / 空窗口 / 缺键四档收场、解析重试与端点报错当场收工、deadline 是刹车（假钟量）、真钟收敛、每次超时取剩余预算 |
 | `tests/test_summary_action.py` | 31 | `summarize` 动作与 `GET /api/summaries`：成功体八格、四档窗口、**四档之外的取值（含空串）一律 `invalid_setting`(400)**、五档失败逐档 `detail` 与判定次序（请求数为 0）、只读（快照十键与 `revision` 不动）、记录只记成功且按先后、`alert` 态可用、总结期间别的请求不被按住、**没注入假件时被 `tests/conftest.py` 的出口兜底拦下** |
 | `tests/test_summary_buffer.py` | 12 | 转写行经**生产路径那个 sink** 进缓冲（`bind()` 调两次只装一层）、窗口行数对得上、重新 `bind()` 不清已有行、喂行不涨 `revision`、`start_session()` / `shutdown()` / `_clear_session_summary()` 一处清两笔 |
-| `tests/test_offline_audio.py` | 4 | 归档解码：16k / 单声道 / float32 的形状与值域、PCM 与 MP3 两条来源解出同一段波形 |
+| `tests/test_offline_audio.py` | 6 | 归档解码：16k / 单声道 / float32 的形状与值域、PCM 与 MP3 两条来源解出同一段波形、**无头裸 PCM 归档（`meeting_audio_<source>.pcm`）解得开且换算仍是 `/32768.0`**、非 `.pcm` 的容器照旧走 PyAV 探测 |
 | `tests/test_offline_segment.py` | 23 | 会后切段：30ms 帧、静默 2.0 秒收段、丢掉 <500ms 的尾段、单段上限、逐段区间与时间戳 |
 | `tests/test_offline_engine.py` | 29 | 引擎包装：`post.engine`/`post.dtype` 的档位翻译、逐块调用与块内命名空间、失败如实上报 |
 | `tests/test_offline_speakers.py` | 12 | 说话人编号：按本路首次出现顺序编 `S01`、跨路限定名不相交、`headcount.class_count` 的口径 |
@@ -375,7 +376,7 @@ addopts = "--strict-markers"
 任何用例，以退出码 **5（no tests collected）** 收场，不会被读成绿。
 
 **一条已知的残余**（本机 pytest 9.0.3 实测）：`-m "not sloww"` 这种**否定式**拼错会让
-pytest 把「sloww」当成一个谁都不带的标记，表达式于是恒真、1295 条全被选上 —— 结果是悄悄跑了
+pytest 把「sloww」当成一个谁都不带的标记，表达式于是恒真、1297 条全被选上 —— 结果是悄悄跑了
 全量（慢，但不假绿）。正向拼错由退出码 5 兜住，否定式拼错由这道 `--strict-markers` 兜不住。
 
 **归位判据**（一条用例满足任一条就进慢档）：
@@ -410,19 +411,19 @@ pytest 把「sloww」当成一个谁都不带的标记，表达式于是恒真�
 
 上表那些单文件读数是各自单独跑一次量的（含解释器冷启动与真应用启动的固定开销），**不随某个文件被挪进挪出慢档而变**；改完代码之后要刷新哪几个数，就按同一口径单跑一遍那个文件。
 
-**三条命令与实测耗时**（本机，`1295` 条用例那一版）：
+**三条命令与实测耗时**（本机，`1297` 条用例那一版）：
 
 | 命令 | 用例 | 实测 |
 |---|---|---|
-| `python -m pytest -q -m "not slow"` | **1071 passed, 224 deselected** | **61.06 s** |
-| `python -m pytest -q -m slow` | **224 passed, 1071 deselected** | **92.57 s** |
-| `python -m pytest -q` | **1295 passed** | **149.31 s** |
+| `python -m pytest -q -m "not slow"` | **1073 passed, 224 deselected** | **62.94 s** |
+| `python -m pytest -q -m slow` | **224 passed, 1073 deselected** | **92.57 s** |
+| `python -m pytest -q` | **1297 passed** | **154.32 s** |
 
 **不加 `-m` 时跑全量**，这一点是有意的：新写的用例默认落在快档，只有被显式标 `slow` 才跳过。
 漏跑的风险因此压在「新写的慢用例拖慢快档」这一侧，而不在「忘了标记 → 慢用例从没跑过」那一侧。
 快档 56 秒里包含了全部承重的离线契约用例：`test_offline_artifacts.py`（45 条）、
 `test_offline_engine.py`（29 条）、`test_offline_runner.py`（55 条）、`test_offline_segment.py`
-（23 条）、`test_offline_speakers.py`（12 条）、`test_offline_audio.py`（4 条）、
+（23 条）、`test_offline_speakers.py`（12 条）、`test_offline_audio.py`（6 条）、
 `test_post_hook.py`（17 条）合计 193 条，在共享运行里约 1.9 秒；`test_contract_fixtures.py`
 的 29 个 golden 样本漂移比对也在快档。
 
