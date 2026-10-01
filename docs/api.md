@@ -1,6 +1,6 @@
 # meeting · HTTP 面
 
-> 这份文档写服务对外的那几条线：六个端点、动作的信封、动作表与 `code` 表、以及本地防线。
+> 这份文档写服务对外的那几条线：九条端点（七条 `/api/*` + 静态首页 `GET /` + `/debug`）、动作的信封、动作表与 `code` 表、以及本地防线。
 >
 > 读者是接这套 API 的人：前端、验收脚本、命令行复核。四态状态机、快照字段、`session.json`、SSE 帧形状、告警判定写在 `docs/state.md`；怎么起服务写在 `docs/service.md`。
 >
@@ -10,14 +10,14 @@
 
 | 章 | 标题 |
 |---|---|
-| 1 | 六个端点 |
+| 1 | 九条端点 |
 | 2 | 请求信封与应答形状 |
 | 3 | 动作表与 `code` 表 |
 | 4 | `settings_update`：写哪些键、什么时候生效 |
 | 5 | 端口与本地最低防线 |
 | 6 | 复核时怎么打 |
 
-## 1. 六个端点
+## 1. 九条端点
 
 | 端点 | 给什么 |
 |---|---|
@@ -27,6 +27,8 @@
 | `GET /api/events` | SSE。**第一帧一定是 `snapshot`**，之后是 `state` / `levels` / `transcript` 三条通道 |
 | `GET /api/heartbeat` | `{"service": "meeting", "server_time", "revision", "top_state", "recording_alive", "seconds_since_last_tick"}`，`200`，任何状态下都给。`service` 这个字面量是端口探测认亲用的，必须有 |
 | `GET /api/summaries` | 本场按过的、成功产出的那几次会中总结（时刻 + 窗口 + 那几条），`200`，任何状态下都给。记录活在服务侧内存里、**不落文件**，新的一场 `start` 清空 |
+| `GET /api/sessions` | 工作区注册表：软件自己记的那份"我这些会"（住在配置目录 `workspaces.json`、按路径去重），`200`，任何状态下都给；`recent` = 最近一次被打开/切换的那一场。**纯读**，形状与现行口径见 `docs/contract.md` 4.8 |
+| `GET /api/dirs` | 目录选择器的一个现场：一层子目录的名目判读（起点用户主目录，`?dir=` 换层），`200`。**纯读**，只挑已有目录、不建目录 |
 | `POST /api/actions` | 动作端点，见第 2–4 章 |
 
 `/api/*` 的应答一律带 `Cache-Control: no-store`，并且**不发 `Access-Control-Allow-Origin`**（不开 CORS，前端与本服务同源）。
@@ -45,7 +47,7 @@
 
 ## 3. 动作表与 `code` 表
 
-七个动作：`start` / `stop` / `mute_session` / `settings_update` / `reprobe` / `dev_inject` / `summarize`。九个 `code`：
+九个动作：`start` / `stop` / `mute_session` / `settings_update` / `reprobe` / `dev_inject` / `summarize` / `workspace_open` / `workspace_remove`。九个 `code`：
 
 | `code` | HTTP | 意思 | 谁会回它 |
 |---|---|---|---|
@@ -70,6 +72,8 @@
 | `reprobe` | 200：重新枚举并试开设备，两路快照随之更新（`revision +1`） | 409 `already_recording` | 409 `already_recording` | 200：同上 | 200：同上（采集已经停了，重新探测不干扰在飞的东西） |
 | `dev_inject` | 409 `not_recording` | 200（非 dev 后端 404） | 200（非 dev 后端 404） | 409 `not_recording` | 409 `not_recording` |
 | `summarize` | 409 `not_recording` | 200：**只读**，结果在应答体的 `summary` 键里（转写没在跑 503、端点没配齐 502） | 200：同上 | 409 `not_recording` | 409 `not_recording` |
+| `workspace_open` | 200：写工作区注册表（缺 `dir` / 目录不存在 / 非空未确认 → 400） | 200 | 200 | 200 | 200 |
+| `workspace_remove` | 200：摘一行名单，文件不碰 | 200 | 200 | 200 | 200 |
 
 `settings_update` 写的是配置文件，与「这一场录到哪儿」无关，因此**任何状态下都可用**。`mute_session` 只在本场收尾之前可用 —— 收尾完成后本场已无可静音，复位发生在下一场 `start`。`reprobe` 只在**没有场次在跑**的时候可用（`recording` / `alert` 两态回 `already_recording`）：设备在开场前定下来，会中换设备是明文不做的那一档。`summarize` 只在**有场次在跑**的时候可用（它读的是这一场的实时转写）。
 
@@ -120,6 +124,20 @@
 - 逐档失败：没有在录的场次 `not_recording`(409)、`window` 非法 `invalid_setting`(400)、转写没在跑 `transcript_unavailable`(503)、模型端点没配或预算用尽 `summary_failed`(502)。**判定次序固定**（判态 → 校验 `window` → 看转写健康 → 看模型端点配置 → 才动手），前面几档没过时**一个模型请求都不发出去、一条记录都不写**。
 - 本场记录用 `GET /api/summaries` 取（只记成功产出的那几次，按时间先后；服务侧不做并发闸，两个页面同时按下就是两次独立的总结）。逐档 `detail` 与成功体的全文见 `docs/contract.md` 第 4.7 节。
 
+**`workspace_open`** —— 「打开目录」的登记通道（会后工作台收编，形状全文见 `docs/contract.md` 4.8）：
+
+```json
+{"action": "workspace_open", "args": {"dir": "C:\\会议\\跟老王聊周会", "confirm": false}}
+```
+
+- 判名目三档：空目录当新会、有会议材料（`session.json` 或 `meeting_audio_*.pcm`；**有音频名没有 `session.json` 的疑似会议目录照收编**）直接登记、非空且无材料要 `confirm: true` 才登记（不带它回 400 `invalid_setting`，`detail.key = "confirm"`，目录没动过一个字节）。
+- 目录不存在回 400（已存在是硬前提，不建目录）；同一目录选两次只占一行（按规范化路径去重），再选只更新那一行的 `last_opened_at`。
+- 成功体 = `{"ok": true, "revision": N, "workspace": {dir, kind, suspected, first_time}}`。
+
+**`workspace_remove`** —— 「删除」：`{"action": "workspace_remove", "args": {"dir": "…"}}`，成功体 `{ok, revision, workspace: {dir, removed}}`。**只把这一条从注册表摘掉**，工作区目录与文件一个字节不动（`docs/design-intent.md` 第 5 条）；没登记过这条也照样 200（`removed: false`）。
+
+**`GET /api/sessions` / `GET /api/dirs`** —— 两只纯读端点：前者给注册表 + `recent`，后者给选择器的一层子目录名目。**"最近一场"只从注册表读**：启动、请求都不扫任何场次目录（`docs/design-intent.md` 第 4 条）。
+
 ## 4. `settings_update`：写哪些键、什么时候生效
 
 请求的 `args` 就是**「配置点号键名 → 值」的扁平映射**，只有这一层、不按键前缀分组：
@@ -154,7 +172,7 @@
 - 端口被占**不猜、不静默换端口**，两种情形都以退出码 `2` 结束：占用者是 meeting 服务（`GET /api/heartbeat` 应答里有 `"service": "meeting"`）→ 说「已经有一个 meeting 服务在跑」；占用者是别的程序 → 写明端口被谁占着、怎么改。
 - 三道最低防线，挡的是「本机浏览器里的恶意页面往 `127.0.0.1:8765` 发请求」：
   1. **Host 校验**：`Host` 不是 `127.0.0.1[:port]` / `localhost[:port]` 就 `403`（挡 DNS rebinding）。
-  2. **动作要自定义头**：`POST /api/actions` 的两个必需头，缺任一条 `403`。
+  2. **动作要自定义头**：`POST /api/actions` 的两个必需头，缺任一条 `403`（改状态的动作集中在这一个信封里，头校验也只守它一处 —— 另开带写语义的 POST 端点会绕开这道头哨，这是新动作不另开端点的原因）。
   3. **不开 CORS**：不发 `Access-Control-Allow-Origin`，前端由本服务同源发出。
 
 ## 6. 复核时怎么打
@@ -171,9 +189,11 @@ $env:MEETING_CAPTURE="dev"; $env:MEETING_NO_BROWSER="1"; meeting web
 curl.exe -s http://127.0.0.1:8765/api/state
 curl.exe -s -N http://127.0.0.1:8765/api/events     # 首帧 snapshot，之后 state / levels / transcript
 curl.exe -s http://127.0.0.1:8765/api/heartbeat
+curl.exe -s http://127.0.0.1:8765/api/sessions
+curl.exe -s http://127.0.0.1:8765/api/dirs
 curl.exe -s -X POST http://127.0.0.1:8765/api/actions `
   -H "Content-Type: application/json" -H "X-Meeting-Service: 1" `
-  -d '{\"action\":\"start\",\"args\":{\"dir\":\"C:\\\\会议\\\\跟老王聊周会\"}}'
+  -d '{\"action\":\"workspace_open\",\"args\":{\"dir\":\"C:\\\\会议\\\\跟老王聊周会\"}}'
 ```
 
 默认 `capture.backend = auto` 解析到真采集后端：设备起得来时 `start` 真的开一场（设备全起不来才回 `503 capture_unavailable`，`detail.reason` 写明哪一路为什么）；显式配 `null` 替身时 `start` 回 `503 capture_unavailable`（如实报「采集后端未接入」，盘上不落任何新东西）；dev 替身给开发与测试用（合成电平 + 故障注入，不写真实音频）。
@@ -185,5 +205,5 @@ curl.exe -s -X POST http://127.0.0.1:8765/api/actions `
 - 怎么起服务、配置、日志、退出码、跑测试：`docs/service.md`
 - 后端协议与 dev 替身：`docs/backend-protocols.md`
 - 前端工程怎么跑、怎么构建：`web/README.md`
-- 契约的可机读基准（28 个 golden 样本与掩码规则）：`contract/README.md`
+- 契约的可机读基准（32 个 golden 样本与掩码规则）：`contract/README.md`
 - 索引：`docs/spec.md`

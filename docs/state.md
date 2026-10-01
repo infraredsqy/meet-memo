@@ -296,7 +296,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 **启动时不再去读任何别的场次目录**（`docs/design-intent.md` 第 4 条）：原「扫输出根下最新的一场 → 挂 `notice.restart_unfinished` → 把那份记录改写成 `draining + interrupted` → 拦住新场次」这一整条，随「默认输出根」的退场一并拆掉，**不影子保留**。启动序列现在只做：解析后端、探设备、组装初始快照 —— 绝不自动开始录音、也绝不读别的场次目录。
 
 - 没走完收尾就被打断的那一场，盘上那版 `session.json` 原样留在原地：谁都不去改写它、也不拦新场次的 `start`。
-- 未收尾场次的「看住与收回」归下一节点的注册表收编（把场次登记进配置目录里注册表，见该节点的 spec/报告）。
+- 工作区的登记与"最近一场"由收编节点（e2f6166b）落地：注册表住在配置目录 `workspaces.json`，界面经 `GET /api/sessions` 读（形状见 `docs/contract.md` 4.8）——启动序列对场次目录照旧一个字不读。
 
 ## 4. 心跳与 `recording_alive`
 
@@ -407,5 +407,5 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 - 会中与会后两套模型的选型、四个 `post.*` 键的取值依据与本机实测：`docs/asr-backends.md`
 - 界面怎么画这四态：`docs/ui-design.md`
 - 前端工程怎么跑、怎么构建：`web/README.md`
-- 契约的可机读基准（28 个 golden 样本与掩码规则）：`contract/README.md`
+- 契约的可机读基准（32 个 golden 样本与掩码规则）：`contract/README.md`
 - 索引：`docs/spec.md`

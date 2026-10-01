@@ -3,7 +3,7 @@
 > 这个目录是 meeting 的界面工程：契约层（zod schema + 静态类型）、服务接口客户端（SSE / 动作 / 心跳），
 > 以及**会中主视图** —— 用户开着它开会，不用盯着屏幕也知道一切正常，出事时第一眼看出是哪一路死了。
 >
-> 契约正文在 `docs/contract.md`，可机读基准在 `contract/fixtures/`（28 个 golden 样本）。
+> 契约正文在 `docs/contract.md`，可机读基准在 `contract/fixtures/`（32 个 golden 样本）。
 > **契约层逐字段照它们写** —— schema 改了、样本再跑起来红了，说明契约漂了。
 > 界面这一侧的权威是 `docs/ui-design.md`（章 2 会中信息架构、章 4 状态机、章 7 类名契约、章 8 十一条硬门槛）。
 
@@ -54,14 +54,15 @@ npm test             # vitest run（等价于 npx vitest run）
 
 | 路径 | 是什么 |
 |---|---|
-| `src/contract/` | 契约层：zod schema 为源，`z.infer` 出静态类型。掩码占位符（`<iso>` / `<path>` / `<session-id>` / `<port>` / `<url>` / `<dbfs>`）在 parse 层照实放行；动作信封（`actions.ts`：九个 `code`、逐档 `detail`、`summarize` 那份带 `summary` 的成功体）与本场记录端点（`summaries.ts`：`GET /api/summaries` 的 `{session_id, entries}`）各一份 |
-| `src/api/` | 服务接口：`events.ts`（SSE 四事件 + 快照重同步）、`actions.ts`（动作信封与两个必需头）、`summaries.ts`（本场摘要记录那条 GET）、`heartbeat.ts`（可配周期轮询与三态判定 `judgeHeartbeat`） |
+| `src/contract/` | 契约层：zod schema 为源，`z.infer` 出静态类型。掩码占位符（`<iso>` / `<path>` / `<session-id>` / `<port>` / `<url>` / `<dbfs>`）在 parse 层照实放行；动作信封（`actions.ts`：九个 `code`、逐档 `detail`、`summarize` 那份带 `summary` 的成功体、收编两动作那份带 `workspace` 的成功体）、本场记录端点（`summaries.ts`：`GET /api/summaries` 的 `{session_id, entries}`）与工作区清单 / 目录现场（`sessions.ts`：`GET /api/sessions` 的 `{sessions, recent}` 逐行十键、`GET /api/dirs` 的一层现场）各一份 |
+| `src/api/` | 服务接口：`events.ts`（SSE 四事件 + 快照重同步）、`actions.ts`（动作信封与两个必需头）、`summaries.ts`（本场摘要记录那条 GET）、`sessions.ts`（工作区清单与目录现场两只 GET）、`heartbeat.ts`（可配周期轮询与三态判定 `judgeHeartbeat`） |
+| `src/home/` | **工作区首页**（e2f6166b）：`HomeGate` 按 `top_state === 'idle' && session === null` 分流 —— 空闲态开 `WorkspaceHome`、其余给会中主视图；`WorkspaceHome` 左侧清单（`GET /api/sessions`，按 `recent` 定选中行）+ 空态（logo + 开场指引）+ 目录选择器弹窗（`GET /api/dirs`，起点 `~/`、非空父目录「进这一层」）+ 非空收编与删除确认弹窗 + Windows 大小写并一行；纯逻辑抽在 `model.ts`（选中判据 `startWhy` / 空态文案 / 初始选择）与 `confirmWorkspaceOpen.ts`（`workspace_open` 的非空确认二段式） |
 | `src/live/` | 会中视图的**纯逻辑**（组件里不夹业务判断） |
 | `src/App.tsx` | 会中主视图的组件树：外壳、两路通道、告警区、收尾区、实时转写、总结区（四档 / 主按钮 / 进行中 / 结果与失败面板 / 本场摘要记录回看） |
 | `src/styles/tokens.css` | **逐字节拷贝** `docs/ui/tokens.css`（除文件头那段注释）。设计 token 的唯一定义处是 `docs/ui/tokens.css`，这一份是它进构建的那一份 |
 | `src/styles/console.css` | **暗面 token 层**，也是主题开关所在：`:root` 给每个具名色一份暗面取值（`--t-*`），`[data-theme="light"]` 再给一套亮面覆盖。暗面的值单独写在这里，`tokens.css` 一个字符都不动 —— 那份文件自称设计 token 的唯一定义处，改它等于改设计稿 |
 | `src/styles/live.css` | 会中视图样式（**暗面一稿**，来路见下） |
-| `tests/` | vitest 用例（`npm test`，12 个文件 327 个用例）：契约层三份（拿 golden 样本过 schema、验 schema 咬得住、验动作信封与心跳三态）、失败分档一份（`app-failure.test.ts`）、会中视图逻辑**八份** `live-*.test.ts`（`live-format` / `live-status` / `live-alarm` / `live-heartbeat` / `live-transcript` / `live-sound` / `live-summary` / `live-summary-controller`）+ 用例自己的真值快照构造器 `live-fixtures.ts` |
+| `tests/` | vitest 用例（`npm test`，14 个文件 340 个用例）：契约层三份（拿 golden 样本过 schema、验 schema 咬得住、验动作信封与心跳三态）、失败分档一份（`app-failure.test.ts`）、**工作区首页两份**（`home.test.ts` 纯逻辑与端点取数、`home-mount.test.tsx` 首页挂载与分流）、会中视图逻辑**八份** `live-*.test.ts`（`live-format` / `live-status` / `live-alarm` / `live-heartbeat` / `live-transcript` / `live-sound` / `live-summary` / `live-summary-controller`）+ 用例自己的真值快照构造器 `live-fixtures.ts` |
 
 ### `src/live/` 里各管什么
 

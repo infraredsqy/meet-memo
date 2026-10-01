@@ -27,7 +27,7 @@
 
 **单一契约声明**：服务对外只有**一个**契约面，就是这一份。`GET /api/state` 的 body、SSE 的 `snapshot` 帧、SSE 的 `state` 帧**三者是同一个函数出的同一份东西**（`ServiceRuntime.to_dict()` → `Snapshot.to_dict()`），不存在「快照有两套形状」这回事。界面拿到哪一份都可以按第 2 章逐键读。
 
-**口径一句话**：**五条 `/api/*` + `/debug` + 静态挂载**。
+**口径一句话**：**七条 `/api/*` + `/debug` + 静态挂载**（`sessions` / `dirs` 两只读端点来自工作台收编节点 e2f6166b，形状在 4.8）。
 
 | 路径 | 方法 | 给什么 |
 |---|---|---|
@@ -123,7 +123,7 @@
   - 于是快照里的 `settings.devices.mic` 仍是用户写下的那个名字，而 `sources[0].device_name` 是**真正在采的那条端点**。判断「这一场到底在录哪个设备」时看 `device_name`。
 - 这里读到的是**运行期生效值**。非热读的键改了要重启才在快照里可见（第 4 章）。
 
-**`notice` 槽位已退场**（`docs/design-intent.md` 第 4 条）：原「启动扫最近一场 → 空闲态挂 `restart_unfinished` 提示」整条随「默认输出根」一并拆掉，快照顶层不再有这个键；未收尾场次的寻址归下一节点的注册表收编，届时重新定义这里的形态。
+**`notice` 槽位已退场**（`docs/design-intent.md` 第 4 条）：原「启动扫最近一场 → 空闲态挂 `restart_unfinished` 提示」整条随「默认输出根」一并拆掉，快照顶层不再有这个键；**工作区的登记与"最近一场"已由收编节点落地**（`GET /api/sessions` 的 `recent`，形状见 4.8）——启动序列对场次目录照旧一个字不读。
 
 **`revision` 的语义**：递增与广播只经 `ServiceRuntime.commit()` 一处。同一次事实处理里的多次改动合并成一次 `+1`、一次全量快照；被状态机拒绝的动作**不涨 `revision`、不写盘、不广播**。界面拿它作「我手上这份是最新的吗」的参照，**不许自己算它**。
 
@@ -273,7 +273,7 @@ X-Meeting-Service: 1
 
 **请求体本身的毛病**（不是 JSON / 不是对象 / `args` 不是对象）也走这个信封：`code = invalid_setting`、`status = 400`、`detail = {}`。
 
-### 4.3 七个动作的语义
+### 4.3 九个动作的语义
 
 | 动作 | 语义 | `args` |
 |---|---|---|
@@ -284,6 +284,8 @@ X-Meeting-Service: 1
 | `reprobe` | 重新枚举并试开设备，结果落进快照两路（`revision +1`）。**只在没有场次在跑的时候可用**：`recording` / `alert` 回 `already_recording`(409) | 无 |
 | `dev_inject` | 注入故障（**只在 dev 采集替身在场时可用**） | `source` / `fault` / `after_seconds` / `duration_seconds` |
 | `summarize` | 会中一键总结：把最近这段时间的实时转写读一遍，给回三小段（见 4.7）。**只读**：不写快照、不动 `revision` | `window`：`5m` / `15m` / `30m` / `full`，**缺省取配置的 `summary.default_window`**（`15m`） |
+| `workspace_open` | 打开/收编一个**已存在**的目录，登记进工作区注册表（4.8）。空目录当新会、有会议材料（含疑似会议目录）当收编、**非空且无材料**要 `confirm: true` 才登记。**任何状态下都可用**（清单维护不碰快照） | `dir`：**必给**，已存在目录的路径；`confirm`：非空无材料那一档确认收编时为 `true` |
+| `workspace_remove` | **只把这一条从注册表摘掉**：工作区目录与里面所有文件一个字节不动（`docs/design-intent.md` 第 5 条）。没登记过这一条也照样 200（`removed: false`，重复删除安全） | `dir`：必给 |
 
 **`start` 的失败顺序是固定的**：先判态（`already_recording` / `draining`）→ 再校验 `args`（`dir` 缺失 / 目录不存在 / 目录里已有另一场的记录、`mode` 非法 → `invalid_setting`）→ 再判后端可用性（`capture_unavailable`）→ 最后才写第一版文件。**态不对或后端不可用时盘上不落这个目录里的任何新东西（目录本身是用户给的，软件也不删它）。**
 
@@ -317,7 +319,7 @@ X-Meeting-Service: 1
 | `draining` | `{session_id, dir, failed_steps: [{id, error}], log_path}` —— 没有失败步时 `failed_steps` 是**空数组** | `actions/fail-draining.json` |
 | `capture_unavailable` | **三档**：空对象；或 `{session_id, dir, error}`（第一版 `session.json` 写不进去）；或 `{session_id, dir, reason}`（采集起不来） | `actions/fail-capture-unavailable.json` |
 | `not_recording` | 空 | `actions/fail-not-recording.json` |
-| `invalid_setting` | **三档**：`{key, value, legal}`（值非法；`legal` 是合法取值数组）；或 `{source, fault, error}`（`dev_inject` 的取值非法）；或空。**未知动作名是第四档**：`{action, known}`（`known` 是七个动作名的数组） | `actions/fail-invalid-setting.json`、`actions/fail-invalid-setting-unknown-action.json` |
+| `invalid_setting` | **三档**：`{key, value, legal}`（值非法；`legal` 是合法取值数组）；或 `{source, fault, error}`（`dev_inject` 的取值非法）；或空。**未知动作名是第四档**：`{action, known}`（`known` 是九个动作名的数组） | `actions/fail-invalid-setting.json`、`actions/fail-invalid-setting-unknown-action.json` |
 | `persist_failed` | `{error}` | `actions/fail-persist-failed.json` |
 | `action_unavailable` | 空 | `actions/fail-action-unavailable.json` |
 | `transcript_unavailable` | `{health: "stopped"}` —— 恒这一格（转写没在跑就是这一档，健康度只有一个取值） | `actions/fail-transcript-unavailable.json` |
@@ -340,6 +342,8 @@ X-Meeting-Service: 1
 | `reprobe` | 200（重新枚举并试开设备，两路快照随之更新、`revision +1`） | 409 `already_recording` | 409 `already_recording` | 200 | 200（采集已经停了，重新探测不干扰在飞的东西） |
 | `dev_inject` | 409 `not_recording` | 200（非 dev 后端 404） | 200（非 dev 后端 404） | 409 `not_recording` | 409 `not_recording` |
 | `summarize` | 409 `not_recording` | 200（转写没在跑 503 `transcript_unavailable`、端点没配齐 502 `summary_failed`） | 200（同上两档 503 / 502） | 409 `not_recording` | 409 `not_recording` |
+| `workspace_open` | 200（写注册表，不碰快照；缺 `dir` / 目录不存在 / 非空未确认 → 400 `invalid_setting`） | 200 | 200 | 200 | 200 |
+| `workspace_remove` | 200（摘一行名单；文件不碰） | 200 | 200 | 200 | 200 |
 
 `settings_update` 写的是配置文件，与「这一场录到哪儿」无关，因此**任何状态下都可用**。`mute_session` 只在本场收尾之前可用 —— 收尾完成后本场已无可静音，复位发生在下一场 `start`。`reprobe` 只在**没有场次在跑**的时候可用（`recording` / `alert` 两态回 `already_recording`）：设备在开场前定下来，会中换设备是明文不做的那一档。`summarize` 只在**有场次在跑**的时候可用（它读的是这一场的实时转写），两档失败 503 / 502 的判据见 4.7。
 
@@ -439,6 +443,56 @@ X-Meeting-Service: 1
 
 **这一档的 fixtures**：`contract/fixtures/actions/summarize-ok.json`、`actions/fail-transcript-unavailable.json`、`actions/fail-summary-failed-missing.json` 与 `contract/fixtures/summaries/after-one.json`。
 
+### 4.8 工作台收编：`workspace_open` / `workspace_remove` 与两只读端点
+
+**`workspace_open`**（`POST /api/actions`，成功体 = 通用信封 + `workspace` 键）：
+
+```json
+{"action": "workspace_open", "args": {"dir": "C:\\会议\\跟老王聊周会", "confirm": false}}
+```
+
+成功体：
+
+```json
+{"ok": true, "revision": 1,
+ "workspace": {"dir": "<path>", "kind": "meeting", "suspected": false, "first_time": true}}
+```
+
+- 先判名目（`meeting/workspace.py` 的 `classify_workspace_dir()`），**三档三条路**（R20）：
+  - `kind: "empty"` —— 空目录当一场新会，直接登记；
+  - `kind: "meeting"` —— 有会议材料（`session.json` 或 `meeting_audio_<source>.pcm` 两名之一）就收编；**`suspected: true` = 有音频归档名但没有 `session.json` 的疑似会议目录**（兜底档：照收编处理，不当杂物目录）；
+  - `kind: "unknown"` —— 非空、没有会议材料：`confirm` 缺失时回 **400 `invalid_setting`**（`detail = {key: "confirm", value: null, legal: [...]}`；**目录与盘面一个字节没动**），带 `confirm: true` 重发才登记。
+- `dir` 给到不存在的路径回 **400 `invalid_setting`**（已存在是硬前提，本服务不建目录）；注册表写盘失败回 **500 `persist_failed`**。
+- 去重判据是**规范化后的绝对路径**：同一个目录选两次（拖尾分隔符之类的写法差也算同一处）只占一行；已登记过的路径只更新这一行的 `last_opened_at`（`first_time: false`）。**任何状态下都可用**；它不碰快照、`revision` 不因登记涨。
+
+**`workspace_remove`**：成功体 `{ok, revision, workspace: {dir, removed}}`。**只把这一条从注册表摘掉**，工作区目录与里面所有文件一个字节不动（R21）；之后随时可用 `workspace_open` 把它收回来。没登记过这条也照样 200（`removed: false`）。重复删除安全。
+
+**`GET /api/sessions`**（**任何状态下都 200**；纯读、不涨 `revision`、不广播）：
+
+```json
+{"sessions": [{"dir": "<path>", "session_id": "<session-id>|null", "dir_exists": true,
+               "kind": "empty|meeting|unknown|missing", "suspected": false,
+               "state": "recording|draining|done|failed|null", "date": "<YYYY-MM-DD>|null",
+               "mode": "both|mic|loopback|null", "added_at": "<iso>", "last_opened_at": "<iso>"}],
+ "recent": "<path>|null"}
+```
+
+- 清单是**软件自己记的那一份**（住在服务侧配置目录 `workspaces.json`，按路径去重）；**列表从登记来** —— 本端点不列任何没登记过的目录，`start` 与 `workspace_open` 是仅有的两个登记入口。
+- 每行的"目录还在不在、里面是什么"由服务**现场判**（注册表条目只记两个时刻）：`dir_exists: false` 的那一行如实等着界面写「路径已不在」；`state` 只在盘上 `session.json` 读得出来时带值、四档之外如实 `null`（读盘那份**只判集合成员关系**，不反查映射、不读成 `top_state`）。
+- `recent` = **最近一次被打开/切换**的那一条的目录（`workspace_open` 与开成一场的 `start` 都刷新这一格）；**只从注册表读，服务与界面都不扫任何场次目录**（`docs/design-intent.md` 第 4 条的退场判据仍在）。
+
+**`GET /api/dirs`**（目录选择器的一个现场；**任何状态下都 200**；纯读）：
+
+```json
+{"home": "<path>", "cwd": "<path>", "up": "<path>|null", "dirs": [
+  {"name": "空会", "dir": "<path>", "kind": "empty", "suspected": false}]}
+```
+
+`?dir=` 省略时从用户主目录起步（设计第 4 条：选择器起点 `~/`，落点由用户挑）；`up` 到主目录时为 `null`（不再往上给）。每项只判名目（`classify_workspace_dir()`），不读内容、不写任何东西；`?dir=` 给到不存在的目录回 400 `invalid_setting`。
+
+**这一档的 fixtures**：`contract/fixtures/sessions/empty.json`、`sessions/after-open.json`、`actions/workspace-open-ok.json`、`actions/workspace-remove-ok.json`。
+
+
 ## 5. 心跳
 
 `GET /api/heartbeat`，**任何状态下都 200**（包括没有正在录的场次、包括收尾进行中）。应答**恰好六字段**：
@@ -489,7 +543,7 @@ X-Meeting-Service: 1
 
 **两条「出事了」的话不得同屏**：失联横幅说的是「界面看不见服务、整场录音已经中断」，致命级告警横幅说的是「服务还在、某一路没了」。心跳失联下**整块告警区（含致命横幅与它上面的按钮）不出现**，屏幕上关于「出事了」的话只有全屏横幅这一处。
 
-**服务重启后的自洽**：服务重启后界面重新打开时向服务取状态；服务侧**没有**正在进行的会话，界面就停在 `空闲`。**启动不再去读任何别的场次目录**（「扫最近一场 → 空闲态顶部给一行 `notice.restart_unfinished` 提示」已随默认输出根退场，`docs/design-intent.md` 第 4 条）；未收尾场次的寻址归下一节点的注册表收编。**界面不自己记状态、不从浏览器本地存储里恢复任何东西**（第 6 章）。
+**服务重启后的自洽**：服务重启后界面重新打开时向服务取状态；服务侧**没有**正在进行的会话，界面上工作台首页列出注册表里的那些会并选中 `recent` 那一场（最近一场只从注册表读，`docs/design-intent.md` 第 4 条；未注册的目录一概不上列表）。**界面不自己记状态、不从浏览器本地存储里恢复任何东西**（第 6 章）。
 
 **这一档的 fixtures**：`contract/fixtures/heartbeat/idle.json`（两字段 `null`）、`contract/fixtures/heartbeat/recording.json`（`recording_alive` 为 `true`、`seconds_since_last_tick` 掩码 0）。
 
@@ -524,8 +578,8 @@ X-Meeting-Service: 1
 | 定名的东西 | 形状（草案） | 归属节点 | 现状 |
 |---|---|---|---|
 | 快照键 `summary` | **不做**：会中总结的结果**不进快照**，结果走 `summarize` 动作的应答体、记录走 `GET /api/summaries`（正文见 4.7） | 手动总结节点（`1987cb20`，已定论） | **明确不做，也不留位**。理由有两条：结果是一过性的视图产物（设计章 2.3「关掉即消失、不落文件」），而快照是**会议的**权威状态；前端契约层的两道硬门（`web/src/contract/snapshot.ts` 的 `.strict()` 与 `contract.test.ts` 的「顶层恰好九键、不许多 `summary`」）正是照这条口径立的。`to_dict()` 不产出这个键，顶层键集合恰好是第 2 章那张表 |
-| `GET /api/sessions` | 场次列表（会后视图的会议选择器） | 会后节点 | **路由没有注册**：`all_routes()` 只有五条 `/api/*` + `/debug`，因此这个路径落到末端 404（回 `Not Found`） |
-| `GET /api/sessions/{id}` | 单场状态（会后视图的进度区） | 会后节点 | 同上：未注册，末端 404 |
+| `GET /api/sessions` | **已落地**（工作台收编节点 e2f6166b）：形状与现行口径在 4.8 —— 载的是工作区注册表；会后视图的会议选择器建立在这只端点之上，不再把它列作未实现 | 本节点（会后节点沿用，不另开形状） | **路由已注册**：`GET /api/sessions` 在 `all_routes()` 里；`?dir=` 的现场形状也是 4.8 |
+| `GET /api/sessions/{id}` | 单场状态（会后视图的进度区） | 会后节点 | 未注册：`all_routes()` 有七条 `/api/*` + `/debug`，这个路径落到末端 404（回 `Not Found`） |
 | 转写历史回看 | 中途订阅能不能拿到已经出过的转写行 | **待下游决断（`9e5db89c` / `070b31e0`）** | **现状是拿不到**：`transcript` 通道只发「订上之后新出的行」，连接时的首帧 `snapshot` 也不带转写正文（`transcript.last_line_at` 只是个时间戳、`buffered_lines` 是计数）。界面在会话中途打开时，**只能显示从那一刻起的新行**，拿不到已有行。会中这些行落在场次目录的 `meeting_transcript_<source>.md` 里，会后那份权威转写也住在同一个目录，两样都没有读它们的端点 |
 | 说话人名字落盘 / 跳过编号 | 用户给某个编号起名、或标记「这个编号不认领」 | **会后管线（`41465462` / `7c6952e5`）** | **本契约不覆盖**：这是会后产物那一侧的事，服务侧的会中契约里没有对应字段。会后离线这一层（`7c6952e5`）落地之后仍然没有承载它的字段：`meeting_offline_speakers_<source>.json` 里只有类编号（`mic:S01` 这种限定名）与每段的起止秒数，**名字既不推断、也没有可写的位置**，「不认领」这个标记同样无处安放 |
 
@@ -535,14 +589,15 @@ X-Meeting-Service: 1
 
 ## 8. fixtures 与掩码（附录）
 
-契约的**可机读基准**是 `contract/fixtures/` 下的 28 个 golden 样本。它们一律**出自真实服务路径**，不是手写的。规则、出处与再生成办法写在 `contract/README.md`；这里给读者一份速查。
+契约的**可机读基准**是 `contract/fixtures/` 下的 32 个 golden 样本。它们一律**出自真实服务路径**，不是手写的。规则、出处与再生成办法写在 `contract/README.md`；这里给读者一份速查。
 
 | 目录 | 样本 | 对应本文件 |
 |---|---|---|
 | `snapshot/` | `idle` / `recording` / `alert` / `ended-done` / `ended-draining`（**5**） | 第 2 章 |
 | `sse/` | `first-snapshot` / `state` / `levels` / `transcript` / `resync-snapshot`（**5**） | 第 3 章 |
-| `actions/` | 成功五档 `start-ok` / `stop-ok` / `mute-session-ok` / `settings-update-ok` / `summarize-ok`；失败十档 = 九个 `code` 各一 + 未知动作名那一档，其中 `summary_failed` 这份是**缺键**那一档（预算用尽那一档要一个真等满预算的假端点，由 `tests/test_summary_action.py` 实测）（**15**） | 第 4 章 |
+| `actions/` | 成功七档 `start-ok` / `stop-ok` / `mute-session-ok` / `settings-update-ok` / `summarize-ok` / `workspace-open-ok` / `workspace-remove-ok`；失败十档 = 九个 `code` 各一 + 未知动作名那一档，其中 `summary_failed` 这份是**缺键**那一档（预算用尽那一档要一个真等满预算的假端点，由 `tests/test_summary_action.py` 实测）（**17**） | 第 4 章 |
 | `summaries/` | `after-one`（按过一次之后的本场总结记录，**1**） | 第 4.7 节 |
+| `sessions/` | `empty`（空注册表） / `after-open`（登记三档目录之后的清单 + `recent`，**2**） | 第 4.8 节 |
 | `heartbeat/` | `idle` / `recording`（**2**） | 第 5 章 |
 
 **掩码（`tests/_contract.py` 的 `normalize()`）**：fixtures 由真实服务采集，采集里的墙钟、路径、端口、电平每次都不同，落盘前一律换成**自描述占位符**：
@@ -589,7 +644,7 @@ python -m pytest tests/test_contract_fixtures.py --regen-contract -q
 1. **抽一个快照 fixtures 与 `Snapshot.to_dict()` 逐字段对照**：`meeting/state.py` 的 `to_dict()` 是唯一产出形态，顶层九键、`session` 六子键、`sources` 九键、`DrainStep` 四键都能逐行对上。`ended` / `session` 两个 `null` 档都能在 `idle` 样本里看一次。
 2. **故意改坏一个键名跑比对测试，确认会红**（验完还原）：例如把 `contract/fixtures/snapshot/recording.json` 里的 `"top_state"` 改成 `"topState"`，`python -m pytest tests/test_contract_fixtures.py -q` 应当报出「与实时采集不一致」。
 3. **任选两条 `detail` 与 `meeting/service/runtime.py` 的实际路径对照**：`already_recording` 三键在 `_already_recording_error()`、`draining` 四键在 `_draining_error()` / `_draining_error_for_dir()`（后者从盘上那一版读 `failed_steps`）。
-4. **确认保留登记章里没有任何端点被顺手实现**：`python -c "from meeting.service.routes import all_routes; print([r.path for r in all_routes()])"` 应当只打出六条路径（五条 `/api/*` + `/debug`：`/api/state` / `/api/events` / `/api/heartbeat` / `/api/actions` / `/api/summaries` / `/debug`）；`ACTION_NAMES` 应当有七个名字（`start` / `stop` / `mute_session` / `settings_update` / `reprobe` / `dev_inject` / `summarize`），其中会中总结那一个的正文在第 4.7 节。
+4. **确认保留登记章里没有任何端点被顺手实现**：`python -c "from meeting.service.routes import all_routes; print([r.path for r in all_routes()])"` 应当只打出八条路径（七条 `/api/*` + `/debug`：`/api/state` / `/api/events` / `/api/heartbeat` / `/api/actions` / `/api/summaries` / `/api/sessions` / `/api/dirs` / `/debug`）；`ACTION_NAMES` 应当有九个名字（`start` / `stop` / `mute_session` / `settings_update` / `reprobe` / `dev_inject` / `summarize` / `workspace_open` / `workspace_remove`），会中总结那一个的正文在第 4.7 节、收编那两个的正文在第 4.8 节。
 
 ## 10. 相关文档
 

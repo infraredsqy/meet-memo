@@ -1,12 +1,12 @@
 # contract/ —— 双端契约的 golden 样本
 
-> 这个目录是**服务与界面之间那份契约的可机读基准**：`fixtures/` 下的 28 个 JSON 样本一律出自真实服务路径，`tests/test_contract_fixtures.py` 每次跑测试都重走一遍采集、与盘上样本逐字比对，服务侧形状一漂移就红。
+> 这个目录是**服务与界面之间那份契约的可机读基准**：`fixtures/` 下的 32 个 JSON 样本一律出自真实服务路径，`tests/test_contract_fixtures.py` 每次跑测试都重走一遍采集、与盘上样本逐字比对，服务侧形状一漂移就红。
 >
 > 契约正文在 `docs/contract.md`（端点口径、快照 schema、SSE 帧形状、动作信封与 `code`/`detail` 表、心跳语义、客户端义务、保留登记）。这个 README 只讲三件事：**样本从哪儿来、掩码怎么打、怎么再生成**。
 >
 > 代码落点：掩码与采集辅助在 `tests/_contract.py`；比对与再生成在 `tests/test_contract_fixtures.py`；再生成开关 `--regen-contract` 注册在 `tests/conftest.py` 的 `pytest_addoption`。
 
-## 1. 样本清单（28 个）
+## 1. 样本清单（32 个）
 
 | 目录 | 文件 | 采集路径 | 固定的是什么 |
 |---|---|---|---|
@@ -23,17 +23,19 @@
 | `actions/` | `start-ok.json` / `stop-ok.json` / `mute-session-ok.json` | 进程内 TestClient 的真实动作端点 | 成功体 `{ok, revision}`；`revision` 是那一趟的真实提交号 |
 | | `summarize-ok.json` | 同上（注入假总结客户端 `_contract.SummaryStub` + 假转写后端，窗口里铺 12 行） | 成功体 = 通用信封 + `summary` **八格**（`window` / `window_label` / `at` / `elapsed_seconds` / `lines` / `what` / `where` / `lost`；`lines` 是窗口行数、三段来自假客户端的固定输出。**`GET /api/summaries` 那一条少一格 `lines`**，见下面 `summaries/after-one.json`） |
 | | `settings-update-ok.json` | 同上 | 成功体含 `applied` / `pending_restart` **两数组**、**没有 `message`** |
+| | `workspace-open-ok.json` / `workspace-remove-ok.json` | 进程内 TestClient（e2f6166b）：挑一个临时根下的已有目录走「新会议」；再从列表移除 | 成功体 = 通用信封 + `workspace` 键（`open` 给 `{dir, kind, suspected, first_time}`，`remove` 给 `{dir, removed}`） |
 | | `fail-already-recording.json` | 录音中再 `start` | 409 + `detail` 三键 |
 | | `fail-draining.json` | 失败停留档里再 `start` | 409 + `detail` 四键（含 `failed_steps`） |
 | | `fail-capture-unavailable.json` | 进程内 TestClient（显式配 `capture.backend: null` 替身；默认 `auto` 已接真采集，`start` 会真开一场） | 503 + `detail` 三键（`{session_id, dir, reason}` 那一档） |
 | | `fail-not-recording.json` | 空闲态 `stop` | 409 + **空对象** `detail` |
 | | `fail-invalid-setting.json` | `start` 带 `mode: "burst"` | 400 + `detail` 三键（`{key, value, legal}`） |
-| | `fail-invalid-setting-unknown-action.json` | 打一个不认识的动作名 | 400 + `detail` 两键（`{action, known}`，`known` 是**七个动作名**） |
+| | `fail-invalid-setting-unknown-action.json` | 打一个不认识的动作名 | 400 + `detail` 两键（`{action, known}`，`known` 是**九个动作名**） |
 | | `fail-persist-failed.json` | `monkeypatch` 把 `write_config_values` 换成抛 `OSError` | 500 + `detail = {error}` |
 | | `fail-action-unavailable.json` | 空闲态 `dev_inject`（非 dev 后端） | 404 + **空对象** `detail` |
 | | `fail-transcript-unavailable.json` | 录音中把转写后端拿掉再 `summarize` | 503 + `detail = {health: "stopped"}` |
 | | `fail-summary-failed-missing.json` | 录音中把只读配置视图换成一份缺端点的再 `summarize` | 502 + `detail = {missing: [...]}` |
 | `summaries/` | `after-one.json` | 进程内 TestClient：按过一次 `summarize` 之后读 `GET /api/summaries` | `{session_id, entries}`、记录那一条七键（不含 `lines`）、时刻与那次应答逐字同值 |
+| `sessions/` | `empty.json` / `after-open.json` | 进程内 TestClient（工作台收编节点 e2f6166b）：空注册表一份；再往临时根下造的三个目的目录（空 / 带 `session.json` / 只有音频归档名的疑似档）逐个走 `workspace_open` 之后读 `GET /api/sessions` | `{sessions, recent}`、每行十键（`dir` / `session_id` / `dir_exists` / `kind` / `suspected` / `state` / `date` / `mode` / `added_at` / `last_opened_at`）；路径与目录名掩成 `<path>` / `<session-id>` |
 | `heartbeat/` | `idle.json` | 进程内 TestClient（dev 替身） | 六字段、两字段 `null` |
 | | `recording.json` | 同上，等 `recording_alive is True` | 六字段、`recording_alive` 为 `true` |
 
