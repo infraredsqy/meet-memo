@@ -1,35 +1,26 @@
 <!doctype html>
 <!--
-  meeting · 会中视图 · 布局方案 A（仪表盘式）
+  meeting · 会中视图 · 仪表盘式
   ---------------------------------------------------------------------------
-  这是 docs/ui-design.md 章 2.6「方向 A」的渲染稿，也是选中方向的候选稿。
+  这是 docs/ui-design.md 章 2.6 的渲染稿。
   纯设计稿：不进构建、不被服务引用、不引入任何依赖；只引用同目录的
   tokens.css 与 ui.css，断网打开与联网一模一样。全站零外链、零外部字体。
 
-  切状态：live-a.html?state=<状态名>，取值见 docs/ui-design.md 章 4.5。
-  两版的差别只有两处，都是「A/B 根本分歧」本身：
-    A（本页）根节点 data-layout="a"；采集带 .m-band.m-band--split.m-band--tools，
-             里面 .m-chans 两列（1fr 1fr）左右并列，电平表用 .m-meter--v
-    B        根节点 data-layout="b"；采集带 .m-band.m-band--tools，
-             里面 .m-chans 单列整宽横条上下叠放，电平表用 .m-meter--h
-  除这两处以外，本页与另一版逐字一致（同一模板产出，已逐行比对）。
+  切状态：live.html?state=<状态名>，取值见 docs/ui-design.md 章 4.5。
+  版面：采集带 .m-band.m-band--split.m-band--tools，里面 .m-chans 两列
+  （1fr 1fr）左右并列，本地在左、远端在右，电平表用 .m-meter--v
 -->
-<html lang="zh-CN" class="ui page--live" data-layout="a" data-state="idle">
+<html lang="zh-CN" class="ui page--live" data-state="idle">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>会中 · 布局 A 仪表盘式 · meeting 设计稿</title>
+<title>会中 · 仪表盘式 · meeting 设计稿</title>
 <link rel="stylesheet" href="tokens.css">
 <link rel="stylesheet" href="ui.css">
 </head>
 <body class="page--live">
 
 <main class="shell">
-
-  <!-- 服务重启过（章 4.5）：只在空闲态回来、且日志里有未收尾记录时出现。
-       上一场没走完收尾就被打断，音频与 log 都还在，先把这两条路径给出来，
-       别让人以为这场会顺着重启一起没了。没有未收尾记录时这一行不出现 -->
-  <div class="restart-note hint" id="restart-note" hidden>服务重启过。上一场的收尾没走完，音频在 <span class="num">C:\会议\out\250906\</span>，日志在 <span class="num">C:\Users\<user>\.config\meeting\logs\meeting.log</span>。</div>
 
   <!-- 顶栏三段：状态胶囊 / 时长 + 主按钮 / 次级操作 -->
   <header class="topbar">
@@ -62,7 +53,7 @@
     </div>
   </header>
 
-  <!-- 采集带：方向 A 是「两路左右并列 + 右侧三分之一给总结」，方向 B 是整宽横条上下叠放 -->
+  <!-- 采集带：两路左右并列 + 右侧三分之一给总结 -->
   <section class="band">
     <div class="band__head">
       <h2 class="band__title">采集</h2>
@@ -267,11 +258,11 @@
   </section>
 
   <!-- 复核用的旁路：默认不显示，地址后面加 ?nav=1 才出现。
-       它是给逐状态复核的人用的工具（切换状态、跳另一版、跳会后），
+       它是给逐状态复核的人用的工具（切换状态、跳会后），
        会中界面本身不含它——门槛 5「1440×900 不滚动」要的是界面本身，
        这条导航条排在最底部，会把整页顶出 900 之外（章 8 门槛 5） -->
   <footer class="viewswitch">
-    <span class="viewswitch__note">会中视图 · 布局 A 仪表盘式（两路并列，告警横幅插在采集带之外） · <span id="state-echo">?state=idle</span></span>
+    <span class="viewswitch__note">会中视图 · 仪表盘式（两路并列，告警横幅插在采集带之外） · <span id="state-echo">?state=idle</span></span>
     <!-- 状态切换器：给逐状态复核用的旁路，会中界面本身没有它 -->
     <div class="viewswitch__tools">
       <div class="list__row">
@@ -279,7 +270,6 @@
         <select class="field__input" id="state-switch"></select>
       </div>
       <div class="topbar__right">
-        <a class="btn btn--small" href="live-b.html">看布局 B 通道条式</a>
         <a class="btn btn--small btn--ghost" href="post.html">看会后视图</a>
       </div>
     </div>
@@ -366,7 +356,6 @@
   "use strict";
 
   var ROOT = document.documentElement;
-  var LAYOUT_B = ROOT.dataset.layout === "b";
 
   var CH = [
     { id: "local", name: "本地 · 麦克风", device: "麦克风 (USB Audio)", mark: "local" },
@@ -470,11 +459,8 @@
     "idle-device-fail": { name: "空闲", note: "尚未开始", clock: "00:00:00", start: true, summaryDisabled: true, summaryWhyText: "开始录音后才能总结",
       local: { readout: "—", health: "ready", healthText: "已就绪", bars: ZERO, chipText: "本地 · 已就绪 · 麦克风 (USB Audio)" },
       remote: { readout: "—", health: "fail", healthText: "探测失败 · 没有能打开的端点", bars: ZERO, hideBars: true, chipGlyph: "cross", chipText: "远端 · 探测失败 · 没有能打开的端点" } },
-    /* 服务重启过：界面重新打开时向服务取状态，服务侧没有正在进行的会话，
-       所以还是空闲；日志里那条未收尾记录由顶部那一行说出来（章 4.5） */
-    "idle-restarted": { name: "空闲", note: "尚未开始 · 上次的收尾没走完", clock: "00:00:00", start: true, restart: true, summaryDisabled: true, summaryWhyText: "开始录音后才能总结",
-      local: { readout: "—", health: "ready", healthText: "已就绪", bars: ZERO, chipText: "本地 · 已就绪" },
-      remote: { readout: "—", health: "ready", healthText: "已就绪", bars: ZERO, chipText: "远端 · 已就绪" } },
+    /* （原「idle-restarted：服务重启过那一行」已随默认输出根退场 —— 启动不再扫最近一场，
+       空闲态不再挂重启提示；见 docs/design-intent.md 第 4 条） */
     recording: {},
     "recording-transcript-behind": { hint: true, since: "20:55", transcriptHealth: "落后" },
     "lost-one": { name: "告警", note: "一路仍在采，另一路采不到了", fatal: true, since: "20:57", stamp: "21:10",
@@ -528,7 +514,6 @@
 
   var GLYPH = {
     idle: "glyph--idle", "idle-untouched": "glyph--idle", "idle-device-fail": "glyph--idle",
-    "idle-restarted": "glyph--idle",
     "start-failed": "glyph--idle", "start-rejected": "glyph--idle",
     "lost-one": "glyph--alert",
     "ended-draining": "glyph--draining", "ended-drain-failed": "glyph--draining",
@@ -573,7 +558,7 @@
         '<span class="m-ch__readout num">' + st.readout + '</span>' +
       '</div>' +
       '<div class="m-grid">' +
-        '<div class="m-meter m-meter--' + (LAYOUT_B ? "h" : "v") + '" style="--level: ' + lv + '%; --hold: ' + lv + '%;">' +
+        '<div class="m-meter m-meter--v" style="--level: ' + lv + '%; --hold: ' + lv + '%;">' +
           '<div class="m-meter__scale"><span>0</span><span>−20</span><span>−40</span><span>−60</span></div>' +
           '<div class="m-meter__track">' +
             '<span class="m-meter__ticks"></span>' +
@@ -602,7 +587,7 @@
     base();
     ["name", "note", "clock", "clockLabel", "start", "live", "summary", "summaryDisabled", "summaryWhyText",
      "fatal", "hint", "fail", "drainTitle", "drainBody", "drainDetail", "late", "guidance", "hbRecord",
-     "restart", "drawer", "since", "transcriptHealth", "stamp", "tape"].forEach(function (k) {
+     "drawer", "since", "transcriptHealth", "stamp", "tape"].forEach(function (k) {
       if (cfg[k] !== undefined) { S[k] = cfg[k]; }
     });
     ["local", "remote"].forEach(function (k) {
@@ -647,7 +632,7 @@
     document.getElementById("clock-label").textContent = S.clockLabel;
     document.getElementById("clock-value").textContent = S.clock;
 
-    /* 3. 采集带：两块通道。A 是 .m-band--split 的两列，B 是 .m-band 的整宽横条。
+    /* 3. 采集带：两块通道，.m-band--split 的两列。
           只换两个挂载点本身，采集带的骨架与总结区一格不动。
           心跳失联时两路都换成「数据已停」，读数不再顶着估出来的值 */
     if (hbLost) {
@@ -710,8 +695,6 @@
     document.getElementById("fail-drain").hidden = S.fail !== "drain";
     document.getElementById("hb-late").hidden = !S.late;
     document.getElementById("hb-guidance").hidden = !S.guidance;
-    /* 服务重启那行：只有空闲态回来、日志里有未收尾记录时才出现（章 4.5） */
-    document.getElementById("restart-note").hidden = !S.restart;
 
     /* 6. 收尾横幅：能不能关机只由这一条回答。收尾走完（或本来没收尾）时整块不出现。
           收尾内部失败那一档，它在收尾带里的失败块要现身——原因、log 与可复制的

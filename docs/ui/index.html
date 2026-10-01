@@ -2,8 +2,8 @@
 <!--
   meeting · 设计稿索引（人肉复核的入口页）
   ---------------------------------------------------------------------------
-  这是 docs/ui/ 的门口：15 张状态截图 + 每个状态的可点直达 + 两套竞争方向的
-  入口 + 没有独立截图的那几个状态点哪条链接 + 复核时怎么核。
+  这是 docs/ui/ 的门口：15 张状态截图 + 每个状态的可点直达 + 没有独立截图的
+  那几个状态点哪条链接 + 复核时怎么核。
 
   纯设计稿：不进构建、不被服务引用、不引入任何依赖；只引用同目录的
   tokens.css 与 ui.css，不新增第三份 CSS 文件、正文里没有裸 hex、没有裸
@@ -23,7 +23,7 @@
   一屏短的按 900 出），390 那一档是 390×844 下的整页长图。每张图的像素高与
   该档当前的 documentElement.scrollHeight 一一对应。
 
-  底部那条复核用的导航条默认不显示：打开会中三份稿子时，地址后面加 ?nav=1
+  底部那条复核用的导航条默认不显示：打开会中稿时，地址后面加 ?nav=1
   才出现（?state= 与它并存）。它是复核工具，会中界面本身的区块清单里没有它。
 
   窄屏：本页没有媒体查询（不新增第三份 CSS 文件这条边界），列数由内联的
@@ -311,13 +311,13 @@
   </section>
 
   <!-- ======================================================================
-       第八段：会中每个状态的可点直达。20 个取值与 live-a.html / live-b.html
-       脚本里的 STATES 对象逐字一致（状态清单按脚本抄，不按记忆抄）。
+       第八段：会中每个状态的可点直达。20 个取值与 live.html 脚本里的
+       STATES 对象逐字一致（状态清单按脚本抄，不按记忆抄）。
        ====================================================================== -->
   <section class="band">
     <div class="band__head">
       <h2 class="band__title">会中视图 · 20 个状态可点直达</h2>
-      <span class="band__note">live.html?state=… · 取值与 live-a.html / live-b.html 脚本里的 STATES 对象逐字一致</span>
+      <span class="band__note">live.html?state=… · 取值与 live.html 脚本里的 STATES 对象逐字一致</span>
     </div>
     <div class="band__body">
       <div>
@@ -335,11 +335,6 @@
         <p class="list__row">
           <a class="tag" href="live.html?state=idle-device-fail">?state=idle-device-fail</a>
           空闲：远端「探测失败 · 没有能打开的端点」—— 这一路一个能打开的端点都没有，开始之前就当场说，省得录了两小时才发现这一路根本没接上。
-        </p>
-
-        <p class="list__row">
-          <a class="tag" href="live.html?state=idle-restarted">?state=idle-restarted</a>
-          空闲 + 服务重启过：上一场的收尾没走完就被打断，界面回来时仍是空闲，顶部多一行把音频与 log 两条路径给出来 —— 别让人以为这场会顺着重启一起没了。
         </p>
 
         <p class="list__row">
@@ -473,37 +468,28 @@
   </section>
 
   <!-- ======================================================================
-       第六段：两套竞争方向。分歧只有一处 —— 会中主视图怎么摆。
-       ====================================================================== -->
+        第六段：会中主视图的版面。两路电平左右并列在一条采集带上。
+        ====================================================================== -->
   <section class="band">
     <div class="band__head">
-      <h2 class="band__title">两套竞争方向 · 分歧在哪、为什么选中 A</h2>
-      <span class="band__note">同一份 token、同一份 ui.css、同一套状态表；差别只有两处类名</span>
+      <h2 class="band__title">会中主视图 · 两路并列在一条采集带上</h2>
+      <span class="band__note">同一份 token、同一份 ui.css、同一套状态表；采集带用 .m-band--split 的两列写法</span>
     </div>
     <div class="band__body" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(17rem, 100%), 1fr)); min-width: 0; gap: var(--space-6) var(--space-7); align-items: start;">
       <div>
-        <p class="title-sm">方向 A · 仪表盘式（选中）</p>
+        <p class="title-sm">仪表盘式（选中）</p>
         <p class="band__note">两路电平左右并列在同一条采集带上，告警横幅插在采集带之外，采集之外的一律排在带子下面。</p>
         <p style="display: flex; gap: var(--space-3); flex-wrap: wrap; margin-top: var(--space-4);">
-          <a class="btn btn--small" href="live-a.html">打开 live-a.html</a>
-          <a class="btn btn--small" href="live.html">打开 live.html（选中版）</a>
+          <a class="btn btn--small" href="live.html">打开 live.html</a>
         </p>
-        <p class="band__note" style="margin-top: var(--space-4);">选它的理由只有一条：本设计的骨头是「一眼看出哪一路死了，<strong>同时</strong>一眼看出另一路还活着」。A 里两块表天生同屏，告警横幅又不侵入任何一块表 —— 「告警期间录音仍在继续」这句话在界面上只有这一个正确形状。</p>
-      </div>
-      <div>
-        <p class="title-sm">方向 B · 通道条式</p>
-        <p class="band__note">每一路占一条整宽横条，电平、健康、设备、包络在横条里横向展开，两路上下叠放；告警横幅排在采集带之后，与 A 同一个位置。</p>
-        <p style="display: flex; gap: var(--space-3); flex-wrap: wrap; margin-top: var(--space-4);">
-          <a class="btn btn--small" href="live-b.html">打开 live-b.html</a>
-        </p>
-        <p class="band__note" style="margin-top: var(--space-4);">B 的包络铺得更宽、单条通道看得更清，代价是两路被纵向拆开：「另一路还在不在」要多看一眼，390 下非出事的那一路容易被推到首屏之外，得靠滚动或粘性定位补救 —— 而补救意味着信息架构里多一层约定，那正是下一次返工的入口。</p>
+        <p class="band__note" style="margin-top: var(--space-4);">选它的理由只有一条：本设计的骨头是「一眼看出哪一路死了，<strong>同时</strong>一眼看出另一路还活着」。两路并列在一条带上，两块表天生同屏，告警横幅又不侵入任何一块表 —— 「告警期间录音仍在继续」这句话在界面上只有这一个正确形状。</p>
       </div>
     </div>
   </section>
 
   <!-- ======================================================================
-       第七段：不截图但能切出来的状态。章 10 的已知缺口清单必须在入口页上
-       有对应的可点路径，否则那一条缺口在复核时是走不通的。
+       第七段：不截图但能切出来的状态。每一个都得在入口页上点得进去，
+       否则复核时那一条走不通。
        ====================================================================== -->
   <section class="band">
     <div class="band__head">
@@ -511,13 +497,9 @@
       <span class="band__note">15 张装不下这些；能切出来 + 写明，就有据可查</span>
     </div>
     <div class="band__body">
-      <p class="band__note">下面 18 条在章 10 的已知缺口清单里各占一行。截图之外的每一个状态都有这条可点路径，复核时按状态名点进去看。</p>
-      <p class="band__note">顺带说清缺省档：不带 <span class="num">?state=</span> 直接打开时，<span class="num">live.html</span> / <span class="num">live-a.html</span> / <span class="num">live-b.html</span> 落在空闲态（<span class="num">state=idle</span>），<span class="num">post.html</span> 落在已完成那一档（<span class="num">state=done</span>，也就是默认选中最近一场 <span class="num">250906</span> 的结果）。想切哪一档就照上面的链接加参数。</p>
+      <p class="band__note">下面 17 条逐个占一行，截图之外的状态也都在这里。复核时按状态名点进去看。</p>
+      <p class="band__note">顺带说清缺省档：不带 <span class="num">?state=</span> 直接打开时，<span class="num">live.html</span> 落在空闲态（<span class="num">state=idle</span>），<span class="num">post.html</span> 落在已完成那一档（<span class="num">state=done</span>，也就是默认选中最近一场 <span class="num">250906</span> 的结果）。想切哪一档就照上面的链接加参数。</p>
       <div>
-        <p class="list__row">
-          <a class="tag" href="live.html?state=idle-restarted">live.html?state=idle-restarted</a>
-          服务重启过：空闲态顶部那一行「上一场的收尾没走完」，音频与 log 两条路径都在（章 4.5）。
-        </p>
         <p class="list__row">
           <a class="tag" href="live.html?state=heartbeat-late">live.html?state=heartbeat-late</a>
           心跳迟到：弱提示这一级到底长什么样，与失联那一级的差别就在这里。
@@ -569,7 +551,7 @@
         </p>
         <p class="list__row">
           <span class="tag">一屏</span>
-          1440×900 不滚动就能看到状态、时长、两路电平、每路健康、告警区、总结入口。20 个状态逐个量过，这六样元素的底边最远 634。（硬门槛 5）
+          1440×900 不滚动就能看到状态、时长、两路电平、每路健康、告警区、总结入口。20 个状态逐个量过，这六样元素的底边最远 791（`ended-drain-failed` 那一档的收尾带 `#drain-band`）。（硬门槛 5）
         </p>
         <p class="list__row">
           <span class="tag">可见性</span>
@@ -577,7 +559,7 @@
         </p>
         <p class="list__row">
           <span class="tag">导航条</span>
-          三份会中稿子底部那条复核用的导航条（切换状态、跳另一版、跳会后）默认不显示：地址后面加 <span class="num">?nav=1</span> 才出来（与 <span class="num">?state=</span> 并存）。门槛 5 要的是界面本身，那条导航条会把它顶出 900。
+          会中稿底部那条复核用的导航条（切换状态、跳会后）默认不显示：地址后面加 <span class="num">?nav=1</span> 才出来（与 <span class="num">?state=</span> 并存）。门槛 5 要的是界面本身，那条导航条会把它顶出 900。
         </p>
         <p class="list__row">
           <span class="tag">窄屏</span>
@@ -607,7 +589,7 @@
       <h2 class="band__title">键盘</h2>
     </div>
     <div class="band__body">
-      <p class="band__note">按 Tab 从顶上走一遍：截图、状态链接、两个方向的入口全部有可见的焦点环（--color-focus 的 2px 实线）。本页所有可点的东西都是原生 &lt;a&gt;，没有用脚本伪造可点区域。</p>
+      <p class="band__note">按 Tab 从顶上走一遍：截图、状态链接、会中与会后两页的入口全部有可见的焦点环（--color-focus 的 2px 实线）。本页所有可点的东西都是原生 &lt;a&gt;，没有用脚本伪造可点区域。</p>
     </div>
   </section>
 
@@ -615,9 +597,7 @@
     <div class="band__foot">
       <span class="band__note">meeting · 会中与会后界面 V2 · 设计稿索引 · 纯设计稿，不写应用代码、不进构建、不引入依赖</span>
       <span style="display: flex; gap: var(--space-3); flex-wrap: wrap;">
-        <a class="btn btn--small" href="live.html">会中（选中版）</a>
-        <a class="btn btn--small btn--ghost" href="live-a.html">布局 A</a>
-        <a class="btn btn--small btn--ghost" href="live-b.html">布局 B</a>
+        <a class="btn btn--small" href="live.html">会中</a>
         <a class="btn btn--small btn--ghost" href="post.html">会后</a>
       </span>
     </div>

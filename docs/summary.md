@@ -161,15 +161,15 @@ V1 的「3 次 × 硬编码 60 秒超时」（最坏 180 秒）**没搬**——�
 **结果是一过性的视图产物**，这条口径落在三处：
 
 - 走 `summarize` 动作的**应答体**，记录走 `GET /api/summaries` 的内存表，**不加 SSE 事件**；
-- **不进快照**：快照是**会议的**权威状态。打一次总结前后各取一次 `/api/state`，`revision` 与顶层十键逐字相同；`summary` 这个键在快照里一次都不出现（前端契约层用 `.strict()` 与「顶层恰好十键」两道硬门钉住它）；
+- **不进快照**：快照是**会议的**权威状态。打一次总结前后各取一次 `/api/state`，`revision` 与顶层九键逐字相同；`summary` 这个键在快照里一次都不出现（前端契约层用 `.strict()` 与「顶层恰好九键」两道硬门钉住它）；
 - **不落任何文件**：`meeting/summary/` 与接线这一层都不写盘。记录活在内存里、会话级——新的一场 `start` 把缓冲与记录**一起**清空，服务关停同样清掉。
 
 ## 9. 测试与验证
 
 - 用例一律**注入假件**：客户端走 `post` 注入点，服务侧走 `runtime.summary_client`，转写后端走 `runtime.transcriber_backend` 加 `bind(runtime.bind_transcriber(...))`。**一条真实模型端点请求都不发**。
 - 出口还有一道兜底：`tests/conftest.py` 的 `_no_real_model_call`（autouse）按目标地址判，本机回环放行、其余当场抛 `RealModelCallForbidden`——`summary.base_url` 的配置默认值就是真地址，忘了注入假客户端就会被它拦下。
-- 真实端点与真实素材的实测是一次性的 `.work` 脚本（`summary_probe.py`，四档 `--only window/fake/real/material`），**会花钱的两档收在 `--allow-network` 后面、默认拒跑**，证据封存在 `.work/nav/nodes/1987cb20-…/phase1/evidence/` 里。这一档的实测结论：四档窗口（最短 5 分钟到整场 411 行）逐档 1.74–2.83 秒，全在预算内。
-- 为什么这么办写在 `README.md` 的「测试与验证纪律」与 `docs/legacy-assets.md` 第 5 章纪律 14–16。
+- 真实端点与真实素材的实测走一次性脚本（`summary_probe.py`，四档 `--only window/fake/real/material`），**会花钱的两档收在 `--allow-network` 后面、默认拒跑**。这一档的实测结论：四档窗口（最短 5 分钟到整场 411 行）逐档 1.74–2.83 秒，全在预算内。脚本与它跑出来的证据属于一次性材料，不随仓库保留。
+- 为什么这么办写在 `README.md` 的「测试与验证纪律」与 `docs/v1-lineage.md` 第 4 章。
 
 ## 10. 相关文档
 
@@ -177,6 +177,6 @@ V1 的「3 次 × 硬编码 60 秒超时」（最坏 180 秒）**没搬**——�
 - HTTP 面速查（端点表、动作表与 `code` 表在第 3 章；七个键在 `settings_update` 那一张表里，第 4 章）：`docs/api.md`
 - 服务现状（端点表、配置键、跑测试）：`docs/service.md`
 - 前端这一侧（总结区纯逻辑、请求状态机、契约 schema）：`web/README.md`
-- V1 里搬过来的那几件事与不搬的那几条：`docs/legacy-assets.md` 的 B15 与第 5 章
+- V1 里搬过来的那几件事与不搬的那几条：`docs/v1-lineage.md` 第 4 章
 - 需求锚（R7 会中一键总结、R6 实时转写是它的前提）：`docs/requirements.md`
 - 索引：`docs/spec.md`

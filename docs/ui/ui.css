@@ -4,16 +4,14 @@
    规矩：这份文件只引用 tokens.css 的变量。正文里不出现裸 hex、不出现裸
    font-family —— 每一处颜色与字体都写成 var(--…)。
 
-   它要同时渲染五套页面：
-     live-a.html / live-b.html / live.html  —— 会中（A 与 B 两套方向）
-     post.html                              —— 会后
-     index.html                             —— 设计稿索引
+   它要同时渲染三套页面：
+     live.html   —— 会中
+     post.html   —— 会后
+     index.html  —— 设计稿索引
    以及两个宽度：1440×900 与 390（断点见文件末尾）。
 
-   两套方向靠页面根节点上的 data-layout="a" / "b" 切换，共用同一份 token、
-   同一份结构。分歧只在会中主视图怎么摆：
-     方向 A（选中）· 仪表盘式：两路电平左右并列在一条采集带上，用 .m-band--split
-     方向 B        · 通道条式：每一路占一条整宽横条上下叠放，用 .m-band
+   会中主视图只有一套版面：两路电平左右并列在顶部一条采集带上，用
+   .m-band--split；采集之外的东西排在带子下面。
    ========================================================================= */
 
 /* ============================================================================
@@ -660,8 +658,7 @@ blockquote {
   color: var(--color-ink);
 }
 
-.is-idle .clock__value,
-.is-idle-restarted .clock__value {
+.is-idle .clock__value {
   color: var(--color-ink-faint);
 }
 
@@ -678,24 +675,17 @@ blockquote {
   white-space: nowrap;
 }
 
-/* 「服务重启过」那一行（章 4.5）：只在空闲态回来、日志里有未收尾记录时出现。
-   它是 .hint 的一档，字号与颜色跟着正文小字走，这里只补一条左侧细线当引子，
-   与 shell 左沿对齐；上下留白交给它自己的 margin */
-.restart-note {
-  margin: var(--space-5) 0 0;
-  border-left: var(--size-rule) solid var(--color-rule);
-  padding-left: var(--space-4);
-}
+/* （原「服务重启过」那一行 .restart-note 已随默认输出根退场，见 docs/ui-design.md 章 4.5）
 
 /* ============================================================================
    7. 采集带与通道
    ---------------------------------------------------------------------------
    一条通道（.m-ch）是一个完整的部件：路名 + 形状标记 + 设备名 + 健康徽标
-   + 电平表 + 信号床 + 当前读数。方向 A 与方向 B 用的是同一个 .m-ch。
+   + 电平表 + 信号床 + 当前读数。两路共用同一个 .m-ch。
    ========================================================================= */
 
-/* 方向 A（选中）：两路左右并列在一条带子上。.m-chans 是两路通道的容器，
-   方向 A 是 1fr 1fr，方向 B 收成一列 —— 通道容器与总结区因此可以并存 */
+/* 两路左右并列在一条带子上。.m-band--split 自己就是两列；.m-chans 是两路
+   通道的容器（1fr 1fr），通道容器与总结区因此可以并存 */
 .m-band--split {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -718,20 +708,7 @@ blockquote {
   border-right: var(--space-0);
 }
 
-/* 方向 B：每一路占一条整宽横条，上下叠放 */
-[data-layout="b"] .m-band {
-  display: block;
-}
-
-[data-layout="b"] .m-chans {
-  grid-template-columns: 1fr;
-}
-
-[data-layout="b"] .m-chans .m-ch {
-  border-right: var(--space-0);
-}
-
-/* 采集带在 1440 下把右侧三分之一让给总结区（方向 A 的写法） */
+/* 采集带在 1440 下把右侧三分之一让给总结区 */
 .m-band--tools {
   display: grid;
   grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
@@ -741,15 +718,6 @@ blockquote {
 
 .m-band--tools > * {
   min-width: var(--space-0);
-}
-
-[data-layout="b"] .m-ch {
-  border-top: var(--size-divider) solid var(--color-rule);
-  padding-block: var(--space-4);
-}
-
-[data-layout="b"] .m-ch:first-child {
-  border-top: var(--size-divider) solid var(--color-rule-strong);
 }
 
 /* 通道本身 */
@@ -817,11 +785,6 @@ blockquote {
   grid-column: 1 / -1;
 }
 
-/* 方向 A 的竖直表自带刻度列，横排刻度字在这边是重复的 */
-[data-layout="a"] .m-scale {
-  display: none;
-}
-
 .m-env-note {
   display: flex;
   justify-content: space-between;
@@ -832,10 +795,10 @@ blockquote {
   color: var(--color-ink-quiet);
 }
 
-/* 水平表底下那排刻度字：0 / −20 / −40 / −60 dBFS。
-   方向 B 的横条里，dBFS 刻度就落在这一行上，和信号床左右对齐；
-   方向 A 用竖直表自带的刻度列，这一行跟着竖直表一起收起来 */
+/* 横排刻度字那一行：0 / −20 / −40 / −60 dBFS。竖直表自带刻度列，这一行收掉
+   （屏幕阅读器文本照旧在）——与产品页 `live.css` 同一条口径 */
 .m-scale {
+  display: none;
   position: relative;
   height: var(--size-caption);
   margin-top: var(--space-1);
@@ -1016,117 +979,11 @@ blockquote {
   display: block;
 }
 
-/* 竖直表（方向 A）：一条窄高的槽 */
+/* 竖直表：一条窄高的槽 */
 .m-meter--v .m-meter__track {
   width: var(--size-meter);
   height: var(--size-meter-tall);
   margin-left: auto;
-}
-
-/* 水平表（方向 B）：一条横贯整条通道的槽，读数落在它右边 */
-.m-meter--h {
-  grid-template-columns: var(--size-rail-meter) 1fr;
-  grid-template-rows: auto auto;
-  align-items: center;
-  column-gap: var(--space-4);
-}
-
-/* 竖着排的那一列刻度字在横表里塞不下四个，只留两头两个端点标记 */
-.m-meter--h .m-meter__scale {
-  grid-column: 1;
-  grid-row: 1;
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.m-meter--h .m-meter__scale span:nth-child(2),
-.m-meter--h .m-meter__scale span:nth-child(3) {
-  display: none;
-}
-
-.m-meter--h .m-meter__track {
-  grid-column: 2;
-  grid-row: 1;
-  width: 100%;
-  height: var(--size-meter-bar);
-}
-
-.m-meter--h .m-meter__ticks {
-  background: repeating-linear-gradient(to right,
-              var(--color-rule-hairline) 0,
-              var(--color-rule-hairline) var(--size-divider),
-              transparent var(--size-divider),
-              transparent 20%);
-}
-
-.m-meter--h .m-meter__fill {
-  inset-block-start: var(--space-0);
-  inset-block-end: var(--space-0);
-  width: var(--level);
-  height: auto;
-}
-
-.m-meter--h .m-meter__peak {
-  inset-block: var(--space-0);
-  inset-inline-start: var(--hold);
-  left: var(--hold);
-  bottom: auto;
-  width: var(--size-focus);
-  height: auto;
-}
-
-/* 方向 B：读数与电平横向并排，读数占剩下的整条右半 */
-[data-layout="b"] .m-grid {
-  grid-template-columns: auto 1fr;
-}
-
-[data-layout="b"] .m-ch__readout {
-  grid-column: 2;
-  grid-row: 1;
-  align-self: center;
-  justify-self: end;
-}
-
-/* 方向 B 的整宽横条里，那 15 根柱子铺满全宽 —— 横条本身就是一台仪器。
-   柱子等分、贴齐两端（13 道 5px 的缝），横条越宽看得越清 */
-[data-layout="b"] .m-env {
-  height: var(--size-envelope-tall);
-  margin-top: auto;
-}
-
-[data-layout="b"] .m-env-note {
-  margin-top: auto;
-}
-
-[data-layout="b"] .m-env__bar {
-  width: calc((100% - var(--space-3) * 13) / 15);
-}
-
-[data-layout="b"] .m-env__bar:nth-child(2) { left: 0; }
-[data-layout="b"] .m-env__bar:nth-child(3) { left: calc((100% - var(--space-3) * 13) / 15 * 1 + var(--space-3) * 1); }
-[data-layout="b"] .m-env__bar:nth-child(4) { left: calc((100% - var(--space-3) * 13) / 15 * 2 + var(--space-3) * 2); }
-[data-layout="b"] .m-env__bar:nth-child(5) { left: calc((100% - var(--space-3) * 13) / 15 * 3 + var(--space-3) * 3); }
-[data-layout="b"] .m-env__bar:nth-child(6) { left: calc((100% - var(--space-3) * 13) / 15 * 4 + var(--space-3) * 4); }
-[data-layout="b"] .m-env__bar:nth-child(7) { left: calc((100% - var(--space-3) * 13) / 15 * 5 + var(--space-3) * 5); }
-[data-layout="b"] .m-env__bar:nth-child(8) { left: calc((100% - var(--space-3) * 13) / 15 * 6 + var(--space-3) * 6); }
-[data-layout="b"] .m-env__bar:nth-child(9) { left: calc((100% - var(--space-3) * 13) / 15 * 7 + var(--space-3) * 7); }
-[data-layout="b"] .m-env__bar:nth-child(10) { left: calc((100% - var(--space-3) * 13) / 15 * 8 + var(--space-3) * 8); }
-[data-layout="b"] .m-env__bar:nth-child(11) { left: calc((100% - var(--space-3) * 13) / 15 * 9 + var(--space-3) * 9); }
-[data-layout="b"] .m-env__bar:nth-child(12) { left: calc((100% - var(--space-3) * 13) / 15 * 10 + var(--space-3) * 10); }
-[data-layout="b"] .m-env__bar:nth-child(13) { left: calc((100% - var(--space-3) * 13) / 15 * 11 + var(--space-3) * 11); }
-[data-layout="b"] .m-env__bar:nth-child(14) { left: calc((100% - var(--space-3) * 13) / 15 * 12 + var(--space-3) * 12); }
-[data-layout="b"] .m-env__bar:nth-child(15) { left: calc((100% - var(--space-3) * 13) / 15 * 13 + var(--space-3) * 13); }
-[data-layout="b"] .m-env__bar:nth-child(16) { left: calc((100% - var(--space-3) * 13) / 15 * 14 + var(--space-3) * 14); }
-
-/* 横条里这条竖直刻度槽没有位置，B 的刻度就是那 15 根柱子的高低 */
-[data-layout="b"] .m-meter {
-  grid-template-columns: 1fr;
-}
-
-[data-layout="b"] .m-meter__scale,
-[data-layout="b"] .m-meter__track {
-  display: none;
 }
 
 /* 通道死了：表停在中线，指针收起 */
@@ -1493,7 +1350,6 @@ blockquote {
 .is-idle .btn--end,
 .is-idle-untouched .btn--end,
 .is-idle-device-fail .btn--end,
-.is-idle-restarted .btn--end,
 .is-start-failed .btn--end,
 .is-start-rejected .btn--end,
 .is-recording .btn--start,
@@ -1517,7 +1373,6 @@ blockquote {
 .is-idle .btn--start,
 .is-idle-untouched .btn--start,
 .is-idle-device-fail .btn--start,
-.is-idle-restarted .btn--start,
 .is-start-failed .btn--start,
 .is-start-rejected .btn--start {
   display: inline-flex;
@@ -2416,7 +2271,7 @@ blockquote {
    16. 宽度
    ---------------------------------------------------------------------------
    只有两个断点。
-   720px：方向 A 的两列在这里收成一列（通道上下堆叠、本地在上），采集相关的
+   720px：两列在这里收成一列（通道上下堆叠、本地在上），采集相关的
           信息一个都不砍；转写折成一行「最近一句」；抽屉整屏。
    400px：390 那一档的收口，留白降一档、读数降一档，避免横向溢出。
    ========================================================================= */
@@ -2510,10 +2365,6 @@ blockquote {
 
   .m-ch__readout {
     font-size: var(--size-title);
-  }
-
-  [data-layout="b"] .m-ch__readout {
-    justify-self: start;
   }
 
   /* 竖直电平表在窄屏上保持竖直：刻度、峰值保持、包络一样都不能少。

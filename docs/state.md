@@ -24,7 +24,7 @@
 
 | 状态 | 怎么进来 | 怎么出去 |
 |---|---|---|
-| `idle` | 进程刚起、还没开过任何一场（包括启动时扫到未收尾场次、挂了 `notice` 的那一种） | `start` 成功 → `recording` |
+| `idle` | 进程刚起、还没开过任何一场 | `start` 成功 → `recording` |
 | `recording` | `start` 成功，已选的路都在采 | 某路判 `lost` → `alert`；`stop` → `ended` |
 | `alert` | 某路静默连续达 `alert.silence_seconds`，或后端报该路流中断 | 该路连续有信号达 `alert.recover_seconds` → `recording`；`stop` → `ended` |
 | `ended` | `stop`。子状态 `phase` 从 `draining` 走到 `done` | 下一场 `start`（`phase == "done"` 时放行）→ `recording`；收尾没走完的那一档不放行 |
@@ -96,12 +96,12 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 
 ## 2. 状态快照的形状
 
-快照是**顶层十键**的对象，`GET /api/state` 的 body 与 SSE 首帧 `snapshot` 是同一个 `to_dict()` 出的同一份东西。
+快照是**顶层九键**的对象，`GET /api/state` 的 body 与 SSE 首帧 `snapshot` 是同一个 `to_dict()` 出的同一份东西。
 
 | 顶层键 | 取值 |
 |---|---|
 | `revision` | int，进程内单调递增；每次服务启动从同一个起点重新计，不跨进程延续、不落盘 |
-| `service` | 六子键：`started_at` / `version`（非空字符串）/ `port` / `url` / `log_path` / `out_root`；启动时定一次 |
+| `service` | 五子键：`started_at` / `version`（非空字符串）/ `port` / `url` / `log_path`；启动时定一次 |
 | `top_state` | 四态之一 |
 | `session` | `null`，或 `{id, dir, started_at, mode, elapsed_seconds, frozen}` |
 | `sources` | **恰好两项**（`mic` / `loopback`），见下表 |
@@ -109,7 +109,6 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 | `transcript` | `{health, last_line_at, buffered_lines, failed_segments}` |
 | `ended` | `null`，或 `{phase, steps: [DrainStep], error}` |
 | `settings` | `{alarm_sound, heartbeat_interval_seconds, asr{…}, devices{mic, loopback}}` |
-| `notice` | `null`，或 `{kind, text, session_dir, log_path}` |
 
 `sources[*]` 九键：`id`（`mic` / `loopback`）/ `label`（`本地` / `远端`）/ `device_name` / `health` / `lost_since` / `restored` / `level_dbfs` / `peak_dbfs` / `envelope`。
 
@@ -118,7 +117,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 
 `session` 的语义：
 
-- `id` 就是场次目录名（`250906` 这种），`dir` 是场次目录路径 —— 这两个名字全链路统一，与 `session.json` 里的字段名逐字一致。
+- `id` 就是工作区目录名（人给的那一个，形状任意 —— 目录名就是这一场会的名字，软件不按日期生成、不解析它；`docs/design-intent.md` 第 3 条），`dir` 是工作区目录的绝对路径 —— 这两个名字全链路统一，与 `session.json` 里的字段名逐字一致。
 - `mode ∈ both / mic / loopback`，开场前定死，录音期间不切。
 - `elapsed_seconds` 在 `recording` / `alert` 态走秒，进 `ended` 就冻结。
 - 一个容易看错的点：**`top_state` 停在 `ended` 而那场的 `session` 还留着**（成功档与失败档都留）。界面据此画「已结束·已完成」，直下一场 `start` 才清。
@@ -145,7 +144,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 - **刷新路径四条**：`startup()` 里取一次初值、`start_session()` 里就地刷一次（`stopped -> normal` 跟着那一场自己的提交走）、每来一行刷一次，外加一条 **0.5 秒的低频节拍**（`TRANSCRIBER_HEALTH_INTERVAL_SECONDS`）—— worker 停摆之后不再有行到来，那一档只能靠节拍刷到快照上。读路径（`/api/state`、SSE 首帧）保持纯读：谁读一次都不会涨 `revision`。
 - 转写这一侧出事**不影响录音、电平与告警**，录音照跑、状态机一步都不动。
 
-`notice` 的语义：现在只有 `kind = "restart_unfinished"` 一种，`text` 是「服务重启过。上一场的收尾没走完，音频在 <场次目录>，日志在 <服务级 log 路径>。」，`session_dir` 指没收完的那一场，`log_path` 指**本次启动的服务级日志**（与 `service.log_path` 同一处取值，不是场次日志）。
+**`notice` 槽位已退场**：原「重启提示（`restart_unfinished`）」随默认输出根一并退场，快照顶层不再有这个键；重启自洽的现行口径见本章末「重启自洽」。
 
 ### 一次变更 = 一次 revision
 
@@ -153,17 +152,17 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 
 ## 3. 场次目录、`session.json` 与会后离线产物
 
-- 输出根 = `output.root`（默认 `%USERPROFILE%\Documents\meeting\out`）。**根不存在时在 `start` 那一刻建**，服务启动与扫描都不建。
-- 场次目录名 = `YYMMDD`，同名已存在就让位到 `YYMMDD-2`、`YYMMDD-3`……**让位不复用**。
+- **没有默认落点**（`docs/design-intent.md` 第 4 条）：一场会落在 start 请求 / 命令行**显式给的已存在目录**里；服务不建目录、不按日期命名，目录名就是这场会的名字。日期仍是每一场的元信息（`session.json` 的 `date` 字段，取开场时刻），只是它不再写进目录名。
+- 一次只接受一个新场次：目标目录里已经有另一场的 `session.json` 时 `start` 拒绝（`invalid_setting`）。
 - 一场会一个目录，目录里只有一份 `session.json` 是服务现在写的。**两路音频归档也落在这里**（`dca4539b` 已落地）：`meeting_audio_mic.pcm` 与 `meeting_audio_loopback.pcm`，16k / 单声道 / int16 小端裸 PCM、无头，**边采边写**（无缓冲追加写，服务被强杀最多丢最后一个块的尾巴）；收尾第 2 步在同目录同名换扩展名产出 `.mp3`（64k），**转码成功之后 PCM 照样留着**（`sources[*].archive` 声明的就是它）。未选中的那一路也建出文件，内容是 0 字节。
 - **两路转写各自落一本会中临时稿**（`9e5db89c` 已落地）：`meeting_transcript_mic.md` 与 `meeting_transcript_loopback.md`，追加写、逐行 flush，每行 `[HH:MM] 正文` —— 时间戳取**分钟级**的采集时刻：段一入队就盖上，识别慢也不会把后面几行的时间戳挤到一起。某一段识别不出来也照落一行，正文是**占位符**：`[[识别失败: 超时 20s]]` / `[[识别失败: 重复循环]]` / `[[识别失败: 无输出]]`（双层方括号、裸文本、不带时间戳、**不含 `**`**；识别过程抛错那一档落 `[[识别失败: 错误]]`）；纯噪声的段落一行都不写，连占位符也不写。同一行同时经 SSE 的 `transcript` 通道推给界面（第 6 章）。它是**临时稿**：会后那条离线转写才作准，界面上也照这么标（`docs/ui-design.md`）。
-- `session.json` **原子写**：同目录临时文件 + `os.replace` + `flush`。**每个阶段变更都写一次**（`start` 的第一版、进收尾中、每一步的 `status`/`detail`、终态那一版），被打断不留半截文件、输出根里不留 `.tmp` 残骸。
+- `session.json` **原子写**：同目录临时文件 + `os.replace` + `flush`。**每个阶段变更都写一次**（`start` 的第一版、进收尾中、每一步的 `status`/`detail`、终态那一版），被打断不留半截文件、工作区目录里不留 `.tmp` 残骸。
 
 字段全貌（**字段名与字段个数是冻结项**，示例里的取值只是某一版的示意）：
 
 ```json
 {
-  "session_id": "250906", "dir": "...", "mode": "both",
+  "session_id": "250906", "dir": "...", "date": "...", "mode": "both",
   "state": "recording | draining | done | failed",
   "created_at": "...", "started_at": "...", "ended_at": "... | null",
   "sources": [
@@ -183,8 +182,8 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 
 - `state` 的四取值与顶层四态是**两套词汇**（`alert` 在盘上写 `recording`：告警不是盘上的一档，会话还在录）。映射只有一处实现，读回时只做集合成员判断。
 - `sources[*].archive` 的形状固定为 `meeting_audio_<source>.pcm`。**这两个文件无条件都列出来**（冻结项），所以采集侧开场就把两份都建出来 —— 未选中的那一路是 0 字节文件，收尾也不给它产 `.mp3`（`dca4539b` 已落地）。
-- **一场会的事实全在这一份文件里**，不另开服务级状态文件。重启靠它判断上一场走没走完，`meeting post` 也靠它认场次。
-- `start` 阶段写这份文件失败 → **不进 `recording`**，回 503 并把刚建的场次目录清掉、在主 log 留一条痕（「没有落痕就开始录」是不许的）。
+- **一场会的事实全在这一份文件里**，不另开服务级状态文件。`meeting post` 靠它认场次（服务自己不再扫未收尾场次，见本章末「重启自洽」）。
+- `start` 阶段写这份文件失败 → **不进 `recording`**，回 503 并把本场写入的这份 `session.json` 收走、在主 log 留一条痕（工作区目录本身是用户给的，服务不删）；「没有落痕就开始录」是不许的。
 
 ### 会后离线产物
 
@@ -294,15 +293,10 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 
 ### 重启自洽
 
-服务启动时扫输出根，取**最新的一场**，判据只有一条：`state ∈ {recording, draining}` **或** `interrupted: true`。
+**启动时不再去读任何别的场次目录**（`docs/design-intent.md` 第 4 条）：原「扫输出根下最新的一场 → 挂 `notice.restart_unfinished` → 把那份记录改写成 `draining + interrupted` → 拦住新场次」这一整条，随「默认输出根」的退场一并拆掉，**不影子保留**。启动序列现在只做：解析后端、探设备、组装初始快照 —— 绝不自动开始录音、也绝不读别的场次目录。
 
-命中就做两件事：在空闲态挂 `notice.restart_unfinished`；把那份记录**改写**成 `state: "draining"` + `interrupted: true`，**原 `steps` 原样保留、不伪造终态**。被强制打断的场次盘上本来就是这一副面孔，重启扫描照同一条路把它认领下来。
-
-- **绝不自动续录、绝不把状态恢复成「录音中」**。
-- 扫描只写这一处：只动那一份 `session.json`，场次目录里其余文件逐字不变，不新建任何目录。
-- **这一场还要拦住新场次**：新的 `start` 回 `draining`(409)，`detail` 带场次目录 + 失败步 + 场次 log 路径。放行会让第一次 `start` 把现场覆盖掉。
-- `done` / `failed` 的场次不触发 `notice`、不被改写。
-- 输出根不存在时，扫的结果就是「没有未收尾场次」，并且**不趁机建目录**。
+- 没走完收尾就被打断的那一场，盘上那版 `session.json` 原样留在原地：谁都不去改写它、也不拦新场次的 `start`。
+- 未收尾场次的「看住与收回」归下一节点的注册表收编（把场次登记进配置目录里注册表，见该节点的 spec/报告）。
 
 ## 4. 心跳与 `recording_alive`
 
@@ -413,5 +407,5 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 - 会中与会后两套模型的选型、四个 `post.*` 键的取值依据与本机实测：`docs/asr-backends.md`
 - 界面怎么画这四态：`docs/ui-design.md`
 - 前端工程怎么跑、怎么构建：`web/README.md`
-- 契约的可机读基准（29 个 golden 样本与掩码规则）：`contract/README.md`
+- 契约的可机读基准（28 个 golden 样本与掩码规则）：`contract/README.md`
 - 索引：`docs/spec.md`

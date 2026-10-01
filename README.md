@@ -54,15 +54,18 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
   （上一趟还在跑，或崩在半路）就**拒跑**并点名那个状态文件，让确认之后再 `meeting post <场次目录> --force`。
   `--force` 是**唯一**会再次花钱的开关：它无视两层的终态、把离线段与纪要段都重跑一遍。
 
-启动成功后终端上会打三样东西（同样的三行也进服务级 log）：
+启动成功后终端上会打两样东西（同样的两行也进服务级 log）：
 
     URL：http://127.0.0.1:8765
-    输出根：C:\Users\<你>\Documents\meeting\out
     log 路径：C:\Users\<你>\.config\meeting\logs\meeting.log
 
 ### 1.1 录一场会
 
-默认就能录：起服务、按页面上的「开始录音」。这一场会做这些事：
+**一场会的落点由它的工作区目录决定**：start 请求要显式给 `args.dir` —— 一条**已存在**的
+目录的路径。本软件不建目录、不按日期命名、也没有默认落点（`docs/design-intent.md` 第 3、4
+条）；目录名就是这场会的名字。这部分呈给用户的选择入口（目录选择器 / 工作区列表）归下一个
+节点收编，界面上暂未接上落点选择时，可以直接经服务端动作 / 接口按上面的形状开。
+一场会开起来之后它做这些事：
 
 - 开场前 **`probe()` 真探测**：枚举声卡端点、以 16k 试开一遍、**读回一小段样本**，两路各给
   一条结论（`ready` / `probe_failed`，没探测过是 `unprobed`）；
@@ -136,12 +139,13 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 `alarm.sound`（本场出不出声的持久化开关）收在热读档，是为了让钩子上的「出声开关」勾选即生效：
 `settings_update` 写盘成功那一刻快照里的 `settings.alarm_sound` 就换过去了。
 
-其余键（`web.*` / `output.root` / `log.*` / `alert.*` / `heartbeat.*` /
+其余键（`web.*` / `log.*` / `alert.*` / `heartbeat.*` /
 `capture.*` / `transcriber.*` / `post.*` / `minutes.*` / `summary.*`）**改完要重启**。这份「其余键」清单以
-`meeting/config.py` 的键全集为准。
+`meeting/config.py` 的键全集为准。**没有 `output.root` 键**：一场会放哪由它的工作区目录给
+（start 显式传 `args.dir`），配置清空也照样能开会。
 
-**环境变量一律在启动时求值**，改了不会热生效。本服务的环境变量一共五个：
-`MEETING_PORT` / `MEETING_OUT_ROOT` / `MEETING_LOG_DIR` / `MEETING_CAPTURE` /
+**环境变量一律在启动时求值**，改了不会热生效。本服务的环境变量一共四个：
+`MEETING_PORT` / `MEETING_LOG_DIR` / `MEETING_CAPTURE` /
 `MEETING_NO_BROWSER`；另有 `MEETING_SUMMARY_API_KEY` 单独映射会中总结那一格的密钥
 （它不改变哪几个键生效，只是给 `summary.api_key` 供一个不进配置文件的来源）。
 
@@ -189,11 +193,8 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 按下第一次落在哪一档，看的是**这一刻有没有收尾在跑**：
 
 - **正在录（`recording` / `alert`）**：起收尾、等它落定 → `0`（收尾有步骤 `failed` → `1`）；
-- **刚起、还没开过任何一场（`idle`）**：直接退出 → `0`；
-- **服务重启过、上一场没走完**（空闲态挂着「服务重启过。上一场的收尾没走完……」这条提示）：
-  同样**直接退出 → `0`** —— 这一刻没有任何收尾在跑，重启留下的现场只拦「开始录音」
-  （新场次一律回 `409 draining`），**盘上那份 `session.json` 一个字都不会被这次关停改写**
-  （不写 `interrupted`、不写 `ended_at`），因此**不会被当成强制打断（`130`）**；
+- **刚起、还没开过任何一场（`idle`）**：直接退出 → `0`（启动也不读别的场次目录：盘上没走完
+  收尾的那一场不被这次关停改写，也不再拦新场次 —— 收编归下一节点的注册表）；
 - **已经停在收尾中 / 收尾失败的现场**（`ended` 里还有收尾在跑，或收尾失败后停着）：
   第一次按下就等同第二次 → `130`。
 
@@ -207,9 +208,8 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 
 | 东西 | 默认位置 |
 |---|---|
-| 配置 | `~/.config/meeting/config.json`（点号扁平键名的单层映射，例如 `{"web.port": 8765}`；**不迁移** V1 的 `~/.config/meeting_notes/`） |
-| 输出根 | `%USERPROFILE%\Documents\meeting\out`（`output.root` / `MEETING_OUT_ROOT` 可改） |
-| 场次目录 | `<输出根>\YYMMDD`（同名已存在就让位到 `-2` / `-3`…） |
+| 配置 | `~/.config/meeting/config.json`（点号扁平键名的单层映射，例如 `{"web.port": 8765}`；**不迁移** V1 的 `~/.config/meeting_notes/`；**没有输出根键 —— 没有默认落点**） |
+| 场次落点 | start 显式给的 `args.dir`（**已存在的目录**，软件不建目录；日期在 `session.json` 的 `date` 元信息字段里，不进目录名） |
 | 前端产物 | `web.dist_dir`（默认 `web/dist`）。目录缺失时 `GET /` 给一张说明页、服务照常起，`/debug` 与 `/api/*` 照常可用；目录**在但是空的**回 404 —— 跑 `npm run build` 重新产出即可。目录存在性**按每请求判定**，产物一建好刷新即可见，不必重启服务 |
 
 回归入口：
@@ -232,9 +232,9 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 
 - `tests/` 里的用例一律**注入假件**，一条真实模型端点请求都不发；出口另有一道 autouse 兜底
   （`tests/conftest.py` 的 `_no_real_model_call`：本机回环放行，其余一律拦下）。
-- 真实端点、真实会议素材的验证写成**一次性的 `.work` 脚本**，跑一次、把证据封存在那里，
-  **不进 `tests/`**。会中总结那一层的那份脚本与四档证据在
-  `.work/nav/nodes/1987cb20-…/phase1/`，会花钱的两档收在显式开关后面、默认拒跑。
+- 真实端点、真实会议素材的验证写成**一次性脚本**，跑一次、看完证据就完事，**不进 `tests/`**。
+  会中总结那一层的那份脚本与四档证据当时就是这么跑的：会花钱的两档收在显式开关后面、默认拒跑。
+  这类脚本与证据属一次性材料，不随仓库保留。
 - `tests/` 要**便宜且确定**：单条用例 ≤5 秒、单个测试文件 ≤10 秒，等真墙钟的那几条走慢档。
 
 ---
@@ -270,7 +270,7 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
     npm test           # vitest run，12 个文件 327 个用例
     npm run typecheck  # 两条 tsc --noEmit -p，各查各的 project
 
-`npm run build` 里已经含 `npm run typecheck`，所以构建过一次就不必再单独跑；只改类型不看产物时跑 `typecheck` 更快。契约正文在 `docs/contract.md`，可机读基准（29 个 golden 样本与掩码规则）在 `contract/`，前端工程的五个脚本（`dev` / `typecheck` / `build` / `preview` / `test`）与其余说明在 `web/README.md`。
+`npm run build` 里已经含 `npm run typecheck`，所以构建过一次就不必再单独跑；只改类型不看产物时跑 `typecheck` 更快。契约正文在 `docs/contract.md`，可机读基准（28 个 golden 样本与掩码规则）在 `contract/`，前端工程的五个脚本（`dev` / `typecheck` / `build` / `preview` / `test`）与其余说明在 `web/README.md`。
 
 ---
 

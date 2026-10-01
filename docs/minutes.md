@@ -137,7 +137,7 @@
 
 ## 7. 手动跑一遍
 
-三个只读盘、不加载 `meeting.config` 的子命令（一个后端子命令不必把家目录、日志、输出根那条配置链捆在自己身上）：
+三个只读盘、不加载 `meeting.config` 的子命令（一个后端子命令不必把家目录、日志那条配置链捆在自己身上）：
 
 ```powershell
 python -m meeting.minutes chunk  <场次目录> [--chunk-lines N]   # 切块 + 写行号区间表

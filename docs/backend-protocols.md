@@ -200,5 +200,5 @@
 - 四态、快照、收尾四步、dev 替身怎么用：`docs/state.md`
 - 会后纪要那一层吃什么、经哪几步、怎么手动跑：`docs/minutes.md`
 - 会中与会后两套模型的选型、四个 `post.*` 键的取值依据与本机实测：`docs/asr-backends.md`
-- V1 里可搬的转写退化防护逻辑与参数标定：`docs/legacy-assets.md`（1.A / 1.B）
+- V1 里可搬的转写退化防护逻辑与参数标定：`docs/v1-lineage.md` 第 1 章
 - 索引：`docs/spec.md`

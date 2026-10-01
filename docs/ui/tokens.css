@@ -2,7 +2,7 @@
    meeting · 设计 token —— 唯一定义处
    ----------------------------------------------------------------------------
    这份文件是设计 token 唯一的家。docs/ui/ 下其它文件（ui.css、index.html、
-   live-a.html、live-b.html、live.html、post.html）只准用 var(--…) 引用这里
+   live.html、post.html）只准用 var(--…) 引用这里
    的名字，不准再定义第二遍。
 
    名字与 docs/ui-design.md 第 7 章逐字一致（章 7 是名单，这里是实现）。
@@ -158,10 +158,9 @@
   --size-focus: 2px;
   --size-focus-offset: 2px;
 
-  /* 电平表：竖直一档（方向 A）、水平一档（方向 B） */
+  /* 电平表：竖直那一档，左尺是 dBFS 刻度 */
   --size-meter: 30px;
   --size-meter-tall: 200px;
-  --size-meter-bar: 10px;
   --size-rail-meter: 48px;
 
   /* 信号床：一格 24px = 2 秒；槽里 15 根柱并排铺满一格；床高 44px */
