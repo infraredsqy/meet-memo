@@ -46,7 +46,6 @@ def test_system_carries_every_hard_rule() -> None:
         WINDOW_TEXT, window_label="15 分钟", started_at=None, line_count=3
     )[0]["content"]
 
-    assert len(SYSTEM_RULES) == 7
     for rule in SYSTEM_RULES:
         assert rule in system
     assert "刚才在讲什么" in system

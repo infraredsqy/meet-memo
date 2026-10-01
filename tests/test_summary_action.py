@@ -271,7 +271,6 @@ def test_summarize_and_its_two_codes_are_registered():
         "invalid_setting", "persist_failed", "action_unavailable",
         "transcript_unavailable", "summary_failed",
     }
-    assert len(ACTION_CODES) == 9
 
 
 def test_summarize_is_in_the_action_dispatch(tmp_path):

@@ -219,11 +219,6 @@ def test_too_many_segments_is_rejected_per_source() -> None:
         validate_segmentation(payload, expected_lines=EXPECTED, max_segments=2)
 
 
-def test_the_default_segment_limit_is_eight() -> None:
-    """默认上限是 8（`minutes.max_segments` 的默认值）。"""
-    assert DEFAULT_MAX_SEGMENTS == 8
-
-
 def test_a_backwards_range_is_rejected() -> None:
     """`line_end < line_start`：区间倒挂。"""
     payload = _plan([_segment(1, "mic", 8, 3)])

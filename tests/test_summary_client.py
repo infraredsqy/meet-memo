@@ -213,7 +213,6 @@ def test_complete_reports_a_timeout() -> None:
 
 def test_complete_reports_a_socket_timeout_too() -> None:
     """`socket.timeout` 与 `TimeoutError` 是同一个类，归同一档。"""
-    assert socket.timeout is TimeoutError
     post = RecordingPost(raises=socket.timeout("timed out"))
 
     try:

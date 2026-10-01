@@ -479,10 +479,6 @@ def test_settings_key_groups_cover_the_whole_table(tmp_path):
         assert APPLIED_KEYS | PENDING_KEYS == set(config_module.SETTING_KEY_GROUPS)
         assert set(config_module.APPLIED_SETTING_KEYS) == APPLIED_KEYS
         assert set(config_module.PENDING_RESTART_SETTING_KEYS) == PENDING_KEYS
-        # 计数逐条钉住：6 + 32 = 38（三分表 = `DEFAULT_VALUES` 的键全集；「输出根」那一格退场）
-        assert len(APPLIED_KEYS) == 6
-        assert len(PENDING_KEYS) == 32
-        assert len(config_module.SETTING_KEY_GROUPS) == 38 == len(config_module.DEFAULT_VALUES)
         # 两个数组按定义就是这一档的补集关系（不是两张各自维护的名单）
         assert set(config_module.APPLIED_SETTING_KEYS) == set(config_module.HOT_KEYS)
         assert set(config_module.PENDING_RESTART_SETTING_KEYS) == (

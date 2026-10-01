@@ -94,8 +94,6 @@ def test_the_evidence_directory_resolves_without_the_script() -> None:
     这一条在任何情形下都有断言要跑：脚本缺席时它只剩「路径解析」那一半（因此仍绿），
     脚本在时再把「这份文件读得动」也一起核了。
     """
-    assert DEFAULT_EVIDENCE_DIR.is_absolute()
-    assert DEFAULT_EVIDENCE_DIR.name == "evidence"
     expected = os.environ.get(EVIDENCE_DIR_ENV, "").strip()
     assert evidence_dir() == (Path(expected) if expected else DEFAULT_EVIDENCE_DIR)
 

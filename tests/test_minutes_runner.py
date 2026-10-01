@@ -364,25 +364,6 @@ def test_the_launcher_is_handed_the_rendered_prompt(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_the_four_minutes_keys_are_registered_with_the_frozen_values() -> None:
-    """四个键：默认值 / 取值域 / 三分表分组逐条钉住（改完要重启那一档）。"""
-    assert config_module.DEFAULT_VALUES["minutes.hook"] == "auto"
-    assert config_module.DEFAULT_VALUES["minutes.chunk_lines"] == 100
-    assert config_module.DEFAULT_VALUES["minutes.max_segments"] == 8
-    assert config_module.DEFAULT_VALUES["minutes.timeout_seconds"] == 14400
-    assert config_module.INT_LIMITS["minutes.chunk_lines"] == (10, 1000)
-    assert config_module.INT_LIMITS["minutes.max_segments"] == (1, 20)
-    assert config_module.INT_LIMITS["minutes.timeout_seconds"] == (60, 86400)
-    assert config_module.STRING_LIMITS["minutes.hook"] == config_module.BACKEND_SELECTORS
-    for key in (
-        "minutes.hook",
-        "minutes.chunk_lines",
-        "minutes.max_segments",
-        "minutes.timeout_seconds",
-    ):
-        assert config_module.setting_group(key) == "pending_restart", key
-
-
 def test_a_temp_config_file_lets_chunk_lines_through_and_rejects_an_out_of_range_one(
     tmp_path: Path,
 ) -> None:

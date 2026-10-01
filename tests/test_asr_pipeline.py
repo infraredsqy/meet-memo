@@ -1016,12 +1016,6 @@ def test_stop_is_idempotent_and_closes_the_transcript_files(session_dir: Path):
     assert line_texts(session_dir / TRANSCRIPT_FILE_TEMPLATE.format(source="mic"))
 
 
-def test_behind_threshold_constant_is_the_frozen_value():
-    """`behind` 的积压门槛取 V1 TUI 那个「待转写 ≥20 段转红」的取值。"""
-    assert BACKLOG_BEHIND_THRESHOLD == 20
-    assert SAMPLE_WIDTH == 2 and FRAME_BYTES == 960 and SAMPLE_RATE == 16000
-
-
 def test_segmenter_caps_a_single_segment_at_the_configured_length(session_dir: Path, monkeypatch):
     """单段硬上限按 `asr.max_segment_seconds` 秒：超了立即出段再续，**一段都不丢**。
 

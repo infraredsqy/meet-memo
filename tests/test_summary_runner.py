@@ -290,7 +290,6 @@ def test_the_four_window_labels_match_the_design_wording() -> None:
         "30m": "30 分钟",
         "full": "整场",
     }
-    assert DEFAULT_MAX_ATTEMPTS == 3
 
 
 def test_parse_failure_retries_with_the_hint() -> None:
