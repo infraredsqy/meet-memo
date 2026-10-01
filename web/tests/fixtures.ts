@@ -58,9 +58,9 @@ export const SSE_FIXTURES = [
 ] as const;
 
 /**
- * 十五个动作样本：**五个成功**（四个通用成功体 + `settings_update` 那种带数组的 +
- * 会中总结那种带 `summary` 的）与**十个失败**（九个 `code` 各一 + 未知动作名那一档，
- * 其中 `summary_failed` 有两个样本：端点缺键那一档与预算用尽那一档）。
+ * 十七个动作样本：**七个成功**（五个如上 + 工作台收编节点的 `workspace_open` /
+ * `workspace_remove` 两份带 `workspace` 的）与**十个失败**（九个 `code` 各一 +
+ * 未知动作名那一档，其中 `summary_failed` 有两个样本：端点缺键那一档与预算用尽那一档）。
  */
 export const ACTION_FIXTURES = [
   'start-ok',
@@ -68,6 +68,8 @@ export const ACTION_FIXTURES = [
   'mute-session-ok',
   'settings-update-ok',
   'summarize-ok',
+  'workspace-open-ok',
+  'workspace-remove-ok',
   'fail-already-recording',
   'fail-draining',
   'fail-capture-unavailable',

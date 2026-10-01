@@ -1,0 +1,15 @@
+{
+  "action": "workspace_remove",
+  "args": {
+    "dir": "<path>"
+  },
+  "status": 200,
+  "body": {
+    "ok": true,
+    "revision": 1,
+    "workspace": {
+      "dir": "<path>",
+      "removed": true
+    }
+  }
+}

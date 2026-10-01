@@ -1,0 +1,41 @@
+{
+  "sessions": [
+    {
+      "dir": "<path>",
+      "session_id": null,
+      "dir_exists": true,
+      "kind": "empty",
+      "suspected": false,
+      "state": null,
+      "date": null,
+      "mode": null,
+      "added_at": "<iso>",
+      "last_opened_at": "<iso>"
+    },
+    {
+      "dir": "<path>",
+      "session_id": "<session-id>",
+      "dir_exists": true,
+      "kind": "meeting",
+      "suspected": false,
+      "state": "done",
+      "date": "2026-09-21",
+      "mode": "both",
+      "added_at": "<iso>",
+      "last_opened_at": "<iso>"
+    },
+    {
+      "dir": "<path>",
+      "session_id": null,
+      "dir_exists": true,
+      "kind": "meeting",
+      "suspected": true,
+      "state": null,
+      "date": null,
+      "mode": null,
+      "added_at": "<iso>",
+      "last_opened_at": "<iso>"
+    }
+  ],
+  "recent": "<path>"
+}

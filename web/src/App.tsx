@@ -54,6 +54,7 @@ import {
 } from './live/transcript';
 import { liveView } from './live/view';
 import type { ChannelView } from './live/view';
+import { HomeGate } from './home/HomeGate';
 
 /**
  * 会中主视图。
@@ -313,7 +314,8 @@ function SummaryFailureCard({
   );
 }
 
-function LiveView(): ReactNode {
+/** 会中主视图（由 `home/HomeGate` 在非空闲形势下渲染出去；组件本体不动）。 */
+export function LiveView(): ReactNode {
   /** 服务推过来的那一份。界面手上这份是**副本**，分歧以服务为准。 */
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [observedAt, setObservedAt] = useState<string>(() => new Date().toISOString());
@@ -1165,7 +1167,7 @@ function LiveView(): ReactNode {
 export function App(): ReactNode {
   return (
     <ShellErrorBoundary>
-      <LiveView />
+      <HomeGate />
     </ShellErrorBoundary>
   );
 }

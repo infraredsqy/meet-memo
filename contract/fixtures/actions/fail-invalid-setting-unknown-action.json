@@ -5,7 +5,7 @@
   "body": {
     "ok": false,
     "code": "invalid_setting",
-    "message": "不认识的动作名：'definitely_not_an_action'（可用：start / stop / mute_session / settings_update / reprobe / dev_inject / summarize）",
+    "message": "不认识的动作名：'definitely_not_an_action'（可用：start / stop / mute_session / settings_update / reprobe / dev_inject / summarize / workspace_open / workspace_remove）",
     "detail": {
       "action": "definitely_not_an_action",
       "known": [
@@ -15,7 +15,9 @@
         "settings_update",
         "reprobe",
         "dev_inject",
-        "summarize"
+        "summarize",
+        "workspace_open",
+        "workspace_remove"
       ]
     }
   }

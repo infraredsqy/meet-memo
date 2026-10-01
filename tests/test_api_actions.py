@@ -132,10 +132,11 @@ def wait_for_done(client):
 
 def test_action_names_and_codes_are_the_frozen_ones():
     """动作名清单与 `code` 表逐字冻结（`reprobe` 是 `dca4539b` 加的那一名、`summarize` 与它那两个
-    `code` 是 `1987cb20` phase2 加的那一档，其余不动）。"""
+    `code` 是 `1987cb20` phase2 加的那一档，其余不动）。`workspace_open` / `workspace_remove`
+    两只是工作台收编节点 `e2f6166b` 加的。"""
     assert ACTION_NAMES == (
         "start", "stop", "mute_session", "settings_update", "reprobe", "dev_inject",
-        "summarize",
+        "summarize", "workspace_open", "workspace_remove",
     )
     assert set(ACTION_CODES) == {
         "already_recording", "draining", "capture_unavailable", "not_recording",

@@ -620,6 +620,85 @@ def test_capture_summarize_group(tmp_path, make_client, contract_regen):
 
 
 # ---------------------------------------------------------------------------
+# 工作区注册表与目录选择器（工作台收编节点 e2f6166b）
+# ---------------------------------------------------------------------------
+
+
+def test_capture_workspace_group(tmp_path, make_client, contract_regen):
+    """`GET /api/sessions` 两份 + `workspace_open` / `workspace_remove` 两份成功体。
+
+    注册表在 `~/.config/meeting/workspaces.json`（按路径去重）；每行的现场读数
+    （`dir_exists` / `kind` / `suspected` / 盘上 `session.json` 的 `state`）由服务判，
+    样本记的是**形状**：三个目的目录在采集用的临时根下造好（空目录 / 带 `session.json`
+    的会议目录 / 有音频归档名没有 `session.json` 的疑似会议目录），路径与目录名一律
+    掩成 `<path>` / `<session-id>`。
+    """
+    client = make_client({"capture.backend": "dev"})
+
+    # 空注册表的那一份
+    listed = client.get("/api/sessions")
+    assert listed.status_code == 200
+    empty_listing = listed.json()
+    assert empty_listing == {"sessions": [], "recent": None}
+
+    # 造三个目的目录并逐个走「新会议」：空的 / 有会议材料的 / 疑似会议目录
+    place = tmp_path / "contract-workspaces"
+    place.mkdir()
+    empty_dir = place / "empty_ws"
+    empty_dir.mkdir()
+    meeting_dir = place / "meeting_ws"
+    meeting_dir.mkdir()
+    (meeting_dir / "session.json").write_text(
+        '{"session_id": "meeting_ws", "state": "done", "date": "2026-09-21", "mode": "both"}',
+        encoding="utf-8",
+    )
+    suspected_dir = place / "suspected_ws"
+    suspected_dir.mkdir()
+    (suspected_dir / "meeting_audio_mic.pcm").write_bytes(b"")
+    # 一个非空又没有材料的目录：被确认之前拒（`invalid_setting` + confirm 提示）
+    junk_dir = place / "junk_ws"
+    junk_dir.mkdir()
+    (junk_dir / "wj.pdf").write_bytes(b"%PDF")
+
+    opened_empty = _act(client, "workspace_open", {"dir": str(empty_dir)})
+    assert opened_empty.status_code == 200, opened_empty.text
+    assert opened_empty.json()["workspace"]["kind"] == "empty"
+
+    opened_meeting = _act(client, "workspace_open", {"dir": str(meeting_dir)})
+    assert opened_meeting.status_code == 200, opened_meeting.text
+
+    suspected = _act(client, "workspace_open", {"dir": str(suspected_dir)})
+    assert suspected.status_code == 200, suspected.text
+    assert suspected.json()["workspace"]["suspected"] is True
+
+    confirm_required = _act(client, "workspace_open", {"dir": str(junk_dir)})
+    assert confirm_required.status_code == 400
+    assert confirm_required.json()["code"] == "invalid_setting"
+
+    after = client.get("/api/sessions").json()
+    assert len(after["sessions"]) == 3
+    assert after["recent"] is not None
+    # 删除的一档：从列表摘走（返回 `removed`），文件无人碰 —— 文件面归单测，这里只采形状
+    removed = _act(client, "workspace_remove", {"dir": str(empty_dir)})
+    assert removed.status_code == 200
+    assert removed.json()["workspace"]["removed"] is True
+
+    emit(
+        {
+            "sessions/empty.json": normalize(empty_listing),
+            "sessions/after-open.json": normalize(after),
+            "actions/workspace-open-ok.json": _action_record(
+                opened_meeting, "workspace_open", {"dir": "<path>"}
+            ),
+            "actions/workspace-remove-ok.json": _action_record(
+                removed, "workspace_remove", {"dir": "<path>"}
+            ),
+        },
+        regen=contract_regen,
+    )
+
+
+# ---------------------------------------------------------------------------
 # SSE 帧样本（真服务子进程：dev 替身 + module:Class 假转写后端）
 # ---------------------------------------------------------------------------
 

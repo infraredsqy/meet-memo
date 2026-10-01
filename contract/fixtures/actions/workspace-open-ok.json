@@ -1,0 +1,17 @@
+{
+  "action": "workspace_open",
+  "args": {
+    "dir": "<path>"
+  },
+  "status": 200,
+  "body": {
+    "ok": true,
+    "revision": 1,
+    "workspace": {
+      "dir": "<path>",
+      "kind": "meeting",
+      "suspected": false,
+      "first_time": true
+    }
+  }
+}

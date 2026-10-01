@@ -95,6 +95,7 @@ from meeting.state import (
     start_recording,
     validate_health,
 )
+from meeting.workspace import WorkspaceRegistry, canonical_dir, classify_workspace_dir
 
 _log = logging.getLogger("meeting.service.runtime")
 
@@ -348,7 +349,8 @@ ACTION_CODES: tuple[str, ...] = (
     "summary_failed",
 )
 
-#: 动作名清单（phase2 §3.13 + `dca4539b` 的 `reprobe` + `1987cb20` phase2 的 `summarize`）
+#: 动作名清单（phase2 §3.13 + `dca4539b` 的 `reprobe` + `1987cb20` phase2 的 `summarize`
+#: + 工作台收编节点的 `workspace_open` / `workspace_remove`）
 ACTION_NAMES: tuple[str, ...] = (
     "start",
     "stop",
@@ -357,6 +359,8 @@ ACTION_NAMES: tuple[str, ...] = (
     "reprobe",
     "dev_inject",
     "summarize",
+    "workspace_open",
+    "workspace_remove",
 )
 
 #: `start` 的 `mode` 取值域与缺省
@@ -388,6 +392,8 @@ class ServiceRuntime:
     def __init__(self, config: Any) -> None:
         self.config = config
         self.store = SessionStore()
+        # 工作区注册表（住在配置目录 workspaces.json；列表是软件自己记的，不扫任何根目录）
+        self.registry = WorkspaceRegistry()
 
         # `service` 六个字段（重建生效日志、取到实际监听地址之后才齐）
         self.started_at: str = now_iso()
@@ -1642,6 +1648,8 @@ class ServiceRuntime:
             _log.error(
                 "挂场次 log 失败（%s: %s）；录音照常继续，这一场没有场次 log", type(exc).__name__, exc
             )
+        # 这一场开成了：注册表顺手记一笔 last_opened_at（失败只警告、不阻塞录音）
+        self._note_registry_open(session_dir, why="场次开始")
 
         if self.transcriber_backend is not None:
             try:
@@ -1902,6 +1910,171 @@ class ServiceRuntime:
         """本场总结记录归属的场次目录名（没有场次时 `null`）。"""
         session = getattr(self.snapshot, "session", None)
         return None if session is None else str(session.id)
+
+    # -- 工作区注册表（工作台收编节点 e2f6166b）---------------------------
+
+    #: `session.json` 的 `state` 四档取值（读盘那一份时**只判集合成员关系**，
+    #: 不做反查映射、不把它读成 `top_state` —— reading 的口径与 `state_for` 写侧对齐）
+    _DISK_STATE_VALUES: frozenset[str] = frozenset(
+        {"recording", "draining", "done", "failed"}
+    )
+
+    def workspace_open(self, dir: Any, confirm: bool = False) -> dict[str, Any]:
+        """`workspace_open`：打开/收编一个**已存在**的目录，登记进注册表。
+
+        判别三档（`meeting/workspace.py` 的 `classify_workspace_dir()`）：
+
+        - `empty` → 当一场新会，直接登记；
+        - `meeting`（含**疑似会议目录**：有音频归档名但没有 `session.json`）→ 收编，
+          直接登记；
+        - `unknown`（非空、没有会议材料）→ 用户确认之后再登记：`confirm=False` 回
+          `invalid_setting`(400)，**目录与盘面一个字节没动**；`confirm=True` 才落笔。
+        - `missing` → `invalid_setting`(400)（已存在是硬前提，本服务不建目录）。
+
+        已经登记过的路径只更新 `last_opened_at`（去重判据就是规范化路径）。
+        成功返回进应答体的 `workspace` 键：`{dir, kind, suspected, first_time}`。
+        """
+        info = classify_workspace_dir(dir)
+        kind = str(info["kind"])
+        path = str(info["dir"])
+        if kind == "missing":
+            raise ActionError(
+                "invalid_setting",
+                f"目标工作区目录不存在（只接受已存在的目录，不自动建）：{path}",
+                status=400,
+                detail={"key": "dir", "value": None if dir is None else str(dir),
+                        "legal": ["已存在的目录路径（空目录当新会；有会议材料的收编）"]},
+            )
+        if kind == "unknown" and not confirm:
+            raise ActionError(
+                "invalid_setting",
+                "选中的目录不是空的、也没有会议材料（session.json 或 meeting_audio_*.pcm）："
+                "确认把它当工作区收编之后才登记",
+                status=400,
+                detail={"key": "confirm", "value": None,
+                        "legal": ["确认收编时带 confirm: true 重新发一次本动作"]},
+            )
+        stamp = now_iso()
+        try:
+            entry = self.registry.open(path, now=stamp)
+        except OSError as exc:
+            raise ActionError(
+                "persist_failed",
+                f"工作区注册表写不下去，这次打开没有生效：{type(exc).__name__}: {exc}",
+                status=500,
+                detail={"error": f"{type(exc).__name__}: {exc}"},
+            ) from exc
+        return {
+            "dir": entry["dir"],
+            "kind": "empty" if kind == "empty" else kind,
+            "suspected": bool(info["suspected"]),
+            "first_time": bool(entry["first_time"]),
+        }
+
+    def workspace_remove(self, dir: Any) -> dict[str, Any]:
+        """`workspace_remove`：**只把这一条从注册表移走**；文件一个字节不动（第 5 条）。
+
+        目录被事先移走/删掉的那一条也照样移（`removed: False` 只是"名单里本来没有"），
+        重复删除安全。
+        """
+        return self.registry.remove(dir)
+
+    def sessions_dict(self) -> dict[str, Any]:
+        """`GET /api/sessions` 的应答体：注册表 + 每一行的现场读数。
+
+        条目只记两个时刻（`added_at` / `last_opened_at`），**"目录还在不在、里面是什么"
+        由本函数现场判**（注册表不反映目录内容）：`dir_exists` 由 `Path.is_dir()` 给、
+        `kind` 由 `classify_workspace_dir()` 给、`state` / `date` / `mode` 只在盘上的
+        `session.json` 读得出来时带值（四档之外如实为 `null`，不反查映射）。
+        `recent` 是最近一次被打开/切换的那一条的目录（**只从注册表读**，不扫任何场次
+        目录 —— 启动序列对它的口径见 `docs/state.md`「重启自洽」）。
+        """
+        rows: list[dict[str, Any]] = []
+        for entry in self.registry.entries():
+            path = str(entry["dir"])
+            probe = classify_workspace_dir(path)
+            record = self.store.read_session_json(path)
+            state = None
+            date = None
+            mode = None
+            if record is not None:
+                raw_state = record.get("state")
+                state = str(raw_state) if str(raw_state) in self._DISK_STATE_VALUES else None
+                date = str(record["date"]) if isinstance(record.get("date"), str) else None
+                mode = str(record["mode"]) if isinstance(record.get("mode"), str) else None
+            rows.append(
+                {
+                    "dir": path,
+                    "session_id": None if record is None else record.get("session_id")
+                    or Path(path).name,
+                    "dir_exists": probe["kind"] != "missing",
+                    "kind": probe["kind"],
+                    "suspected": bool(probe["suspected"]),
+                    "state": state,
+                    "date": date,
+                    "mode": mode,
+                    "added_at": entry["added_at"],
+                    "last_opened_at": entry["last_opened_at"],
+                }
+            )
+        recent = self.registry.recent()
+        return {
+            "sessions": rows,
+            "recent": None if recent is None else str(recent["dir"]),
+        }
+
+    def dirs_listing(self, dir: Any) -> dict[str, Any]:
+        """`GET /api/dirs` 的应答体：目录选择器的一个现场（起点是用户主目录）。
+
+        `cwd` 是规范化后的当前层；`up` 是上一层（到了主目录就是 `null`，不再往上给）。
+        `parent` 恒是主目录（`docs/design-intent.md` 第 4 条：选择器起点 `~/`，落点由
+        用户挑，软件不替他挑）。每项只判名目（`classify_workspace_dir()`），不读内容。
+        """
+        raw = config_module.home_dir() if dir is None else str(dir)
+        cwd = Path(canonical_dir(raw))
+        home = Path(config_module.home_dir())
+        if not cwd.is_dir():
+            raise ActionError(
+                "invalid_setting",
+                f"要浏览的目录不存在：{cwd}",
+                status=400,
+                detail={"key": "dir", "value": str(dir),
+                        "legal": ["已存在的目录路径；省略时从用户主目录起步"]},
+            )
+        rows: list[dict[str, Any]] = []
+        try:
+            children = sorted((item for item in cwd.iterdir() if item.is_dir()),
+                              key=lambda item: item.name.lower())
+        except OSError as exc:
+            raise ActionError(
+                "invalid_setting",
+                f"要浏览的目录读不动（{type(exc).__name__}: {exc}）",
+                status=400,
+                detail={"key": "dir", "value": str(cwd), "legal": []},
+            ) from exc
+        for item in children:
+            probe = classify_workspace_dir(item)
+            rows.append(
+                {"name": item.name, "dir": str(item), "kind": probe["kind"],
+                 "suspected": bool(probe["suspected"])}
+            )
+        return {
+            "home": str(home),
+            "cwd": str(cwd),
+            "up": None if cwd == home else str(cwd.parent),
+            "dirs": rows,
+        }
+
+    def _note_registry_open(self, session_dir: str, *, why: str) -> None:
+        """把开过的这场顺手在注册表上记一笔 `last_opened_at`（失败只警告、不阻塞录音）。"""
+        try:
+            self.registry.open(session_dir)
+        except OSError as exc:
+            _log.warning(
+                "工作区注册表写不进去（%s: %s）；场次的 %s 照旧运转（%s）",
+                type(exc).__name__, exc, session_dir, why,
+            )
+
 
     def summaries_dict(self) -> dict[str, Any]:
         """`GET /api/summaries` 的应答体：本场按过的、**成功产出的**那几次（按时间先后）。

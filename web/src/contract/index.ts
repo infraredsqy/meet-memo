@@ -14,4 +14,5 @@ export * from './snapshot';
 export * from './sse';
 export * from './actions';
 export * from './summaries';
+export * from './sessions';
 export * from './heartbeat';

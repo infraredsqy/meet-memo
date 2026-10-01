@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { SUMMARY_WINDOW_CHOICES } from './primitives';
 import { errorCodeSchema } from './enums';
 import { isoStringSchema } from './snapshot';
+import { workspaceOkSchema } from './sessions';
 
 /**
  * 动作信封（`docs/contract.md` 第 4 章）。
@@ -256,9 +257,10 @@ export const actionErrorSchema = z
   })
   .strict();
 
-/** 应答体：成功或失败，二选一。 */
+/** 应答体：成功或失败，二选一。`workspace_open` / `workspace_remove` 的成功体带 `workspace` 键（4.8）。 */
 export const actionBodySchema = z.union([
   summarizeOkSchema,
+  workspaceOkSchema,
   settingsUpdateOkSchema,
   actionOkSchema,
   actionErrorSchema,

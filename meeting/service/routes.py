@@ -1,12 +1,15 @@
-"""六条路由的**唯一注册点**（phase2 §3.7 / §3.8 / §3.9 / §3.11 / §3.12；`1987cb20` phase2 加 `summaries`）。
+"""八条路由的**唯一注册点**（phase2 §3.7 / §3.8 / §3.9 / §3.11 / §3.12；`1987cb20` phase2 加 `summaries`；
+工作台收编节点 e2f6166b 加 `sessions` / `dirs` 两只读端点与 `workspace_open` / `workspace_remove` 两动作）。
 
 全应用只在这里注册一次：
 
   - `GET /api/state`（完整版，body 就是 `to_dict()` 的产出）；
   - `GET /api/events`（SSE：`snapshot` 先行 + `state` / `levels` / `transcript` 三通道）；
   - `GET /api/heartbeat`（完整版，`service` 字面量必须有）；
-  - `POST /api/actions`（信封 + 七个动作名 + `code` 表）；
+  - `POST /api/actions`（信封 + 九个动作名 + `code` 表）；
   - `GET /api/summaries`（本场按过的、成功产出的那几次会中总结；读内存，不落文件）；
+  - `GET /api/sessions`（工作区注册表：按路径去重的那一份"我这些会"，读盘上注册表文件）；
+  - `GET /api/dirs`（目录选择器的现场：一层子目录的名目判读，读现场不写任何东西）；
   - `GET /debug`（骨架自检页，从包内读）。
 
 **装配模块 `app.py` 里那两条最小版注册与 `static.py` 的 `/debug` 注册都已在本 Phase 摘除**：
@@ -137,6 +140,41 @@ async def _api_events(request: Request) -> Response:
 
 
 # ---------------------------------------------------------------------------
+# GET /api/sessions · GET /api/dirs（工作台收编节点 e2f6166b：两只读端点）
+# ---------------------------------------------------------------------------
+
+
+async def _api_sessions(request: Request) -> Response:
+    """工作区注册表：`{sessions, recent}`（**200**，任何状态下都给）。
+
+    与 `GET /api/summaries` 同一档纯读：不提交、不涨 `revision`、不广播；
+    "最近一场"只从注册表读（启动与请求侧都**不扫任何场次目录**，
+    `docs/design-intent.md` 第 4 条）。
+    """
+    runtime = _runtime_of(request)
+    if runtime is None:  # pragma: no cover - 应用未装配
+        return JSONResponse({"error": "runtime 未装配"}, status_code=500)
+    runtime.bind_from_scope(request.scope)
+    return JSONResponse(runtime.sessions_dict())
+
+
+async def _api_dirs(request: Request) -> Response:
+    """目录选择器的现场：`{home, cwd, up, dirs}`（**200**；`?dir=` 省略时从主目录起步）。
+
+    纯读：只判每层子目录的名目（三档），不写任何东西。「软件自己会不建目录」这条
+    在这里同样成立 —— 选择器只用来挑一个**已有**目录。
+    """
+    runtime = _runtime_of(request)
+    if runtime is None:  # pragma: no cover - 应用未装配
+        return JSONResponse({"error": "runtime 未装配"}, status_code=500)
+    runtime.bind_from_scope(request.scope)
+    try:
+        return JSONResponse(runtime.dirs_listing(request.query_params.get("dir")))
+    except ActionError as exc:
+        return _error_response(exc)
+
+
+# ---------------------------------------------------------------------------
 # POST /api/actions
 # ---------------------------------------------------------------------------
 
@@ -210,6 +248,26 @@ async def _api_actions(request: Request) -> Response:
                     "summary": await runtime.summarize(args),
                 }
             )
+        elif action == "workspace_open":
+            # 成功体在通用信封上多一个 `workspace` 键（先例是 `summarize` 的 `summary`）：
+            # 判别档位与去重回扣由服务给，界面不派生；失败档（目录不存在、非空未确认、
+            # 注册表写盘失败）走 ActionError 的 `code` 表。
+            return JSONResponse(
+                {
+                    "ok": True,
+                    "revision": runtime.revision,
+                    "workspace": runtime.workspace_open(args.get("dir"),
+                                                        confirm=bool(args.get("confirm"))),
+                }
+            )
+        elif action == "workspace_remove":
+            return JSONResponse(
+                {
+                    "ok": True,
+                    "revision": runtime.revision,
+                    "workspace": runtime.workspace_remove(args.get("dir")),
+                }
+            )
     except ActionError as exc:
         return _error_response(exc)
     except Exception as exc:  # 未捕获异常带堆栈进 log（R16 的最低要求）
@@ -245,13 +303,15 @@ async def _debug_page(request: Request) -> Response:
 
 
 def api_routes() -> list[Route]:
-    """五条 `/api/*` 路由（`/debug` 在 `debug_routes()` 里，同一个模块）。"""
+    """七条 `/api/*` 路由（`/debug` 在 `debug_routes()` 里，同一个模块）。"""
     return [
         Route("/api/state", _api_state, methods=["GET"]),
         Route("/api/events", _api_events, methods=["GET"]),
         Route("/api/heartbeat", _api_heartbeat, methods=["GET"]),
         Route("/api/actions", _api_actions, methods=["POST"]),
         Route("/api/summaries", _api_summaries, methods=["GET"]),
+        Route("/api/sessions", _api_sessions, methods=["GET"]),
+        Route("/api/dirs", _api_dirs, methods=["GET"]),
     ]
 
 

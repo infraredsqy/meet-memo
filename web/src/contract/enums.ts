@@ -44,7 +44,7 @@ export const transcriptLineKindSchema = z.enum(TRANSCRIPT_LINE_KINDS);
 /** 告警分级：致命级同时只留一条，提示级上限 3。 */
 export const alertLevelSchema = z.enum(['critical', 'hint']);
 
-/** 七个动作名。 */
+/** 九个动作名。 */
 export const actionNameSchema = z.enum(ACTION_NAMES);
 
 /** 失败信封的九个 `code`。 */

@@ -1672,3 +1672,285 @@ input[type="checkbox"] {
     font-size: 30px;
   }
 }
+
+/* ============================================================================
+   meeting · 工作台首页（工作台收编节点 e2f6166b 的那一屏，空闲态）
+   ----------------------------------------------------------------------------
+   左边"我这些会"（注册表，服务给的原文）、右边选中的那一场；空态、目录选择器
+   弹窗与两只确认弹窗也从这里走。类名登记在 `docs/ui-design.md` §7.10 的新增段。
+   取色与字体全部 var() 自 console.css / tokens.css，不引入任何新颜色。
+   ========================================================================= */
+
+/* 1. 页骨架：上下两段，首页窄于会中（左清单 + 右边那一格） */
+.page--home {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding: 0 var(--size-gutter);
+}
+
+.topbar--home .topbar__main {
+  gap: var(--space-3);
+}
+
+.title-sm {
+  font-family: var(--t-font-sign);
+  font-size: var(--size-lead);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--track-tight);
+  color: var(--t-ink);
+}
+
+/* 2. 首页主体：左清单 + 右侧那一场 */
+.home {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: var(--space-6);
+  padding: var(--space-6) 0 var(--space-9);
+}
+
+.home__list {
+  min-width: 0;
+}
+
+.home__aside {
+  min-width: 0;
+  padding-top: var(--space-2);
+}
+
+/* 3. 清单与一行 */
+.wslist {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.wslist__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) auto auto;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: var(--size-divider) solid var(--t-rule-hair);
+  background: var(--t-surface);
+  cursor: pointer;
+}
+
+.wslist__row--on {
+  border-color: var(--t-rule-strong);
+  background: var(--t-raised);
+}
+
+.wslist__row:focus-visible {
+  outline: var(--size-focus) solid var(--t-focus);
+  outline-offset: var(--size-focus-offset);
+}
+
+.wslist__name {
+  font-family: var(--t-font-sign);
+  font-size: var(--size-base);
+  font-weight: var(--weight-medium);
+  color: var(--t-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wslist__path {
+  font-family: var(--t-font-mono);
+  font-size: var(--size-caption);
+  color: var(--t-ink-quiet);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wslist__state {
+  font-size: var(--size-caption);
+  color: var(--t-signal);
+  white-space: nowrap;
+}
+
+.wslist__state--dim {
+  color: var(--t-ink-faint);
+}
+
+.wslist__remove {
+  flex: none;
+}
+
+/* 4. 空态：logo + 那两句 */
+.ws-empty {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-12) var(--space-6);
+  margin: 0 auto;
+  max-width: 40rem;
+  text-align: center;
+}
+
+.ws-empty__logo {
+  font-size: var(--size-display);
+  color: var(--t-signal);
+  text-shadow: var(--t-glow-lamp);
+}
+
+.ws-empty__title {
+  font-family: var(--t-font-sign);
+  font-size: var(--size-title);
+  font-weight: var(--weight-semibold);
+  color: var(--t-ink);
+}
+
+.ws-empty__body {
+  color: var(--t-ink-mid);
+  font-size: var(--size-small);
+  line-height: var(--line-normal);
+}
+
+/* 5. 右侧那一场 */
+.wspane {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-5);
+  border: var(--size-divider) solid var(--t-rule-hair);
+  background: var(--t-surface);
+}
+
+.wspane__title {
+  font-family: var(--t-font-sign);
+  font-size: var(--size-lead);
+  font-weight: var(--weight-semibold);
+  color: var(--t-ink);
+}
+
+.wspane__why {
+  color: var(--t-ink-faint);
+  font-size: var(--size-small);
+}
+
+/* 6. 弹窗：目录选择器与确认共用一层 */
+.dlg__layer {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-drawer);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(4 6 6 / 72%);
+  padding: var(--space-6);
+}
+
+.dlg {
+  width: min(40rem, 100%);
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-6);
+  border: var(--size-divider) solid var(--t-rule-strong);
+  background: var(--t-surface);
+}
+
+.dlg__title {
+  font-family: var(--t-font-sign);
+  font-size: var(--size-lead);
+  font-weight: var(--weight-semibold);
+  color: var(--t-ink);
+}
+
+.dlg__text {
+  color: var(--t-ink-mid);
+  font-size: var(--size-small);
+  line-height: var(--line-normal);
+}
+
+.dlg__acts {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+
+/* 7. 选择器的清单：一行 name + kind，右侧标名目；窄屏照单列叠 */
+.picker__list {
+  min-height: 8rem;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.picker__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-2);
+  border: var(--size-divider) solid var(--t-rule-hair);
+  background: var(--t-sunk);
+  text-align: left;
+}
+
+/* 行本体按钮（挑这一项）：透明底，样式由外层 .picker__row 承担 */
+.picker__pick {
+  display: flex;
+  flex: 1;
+  justify-content: space-between;
+  gap: var(--space-3);
+  background: none;
+  border: var(--size-divider) solid transparent;
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+  text-align: left;
+}
+
+.picker__name {
+  color: var(--t-ink);
+  font-size: var(--size-small);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.picker__kind {
+  color: var(--t-ink-quiet);
+  font-size: var(--size-caption);
+  white-space: nowrap;
+}
+
+/* 8. 窄屏不塌：左右两列收成一列（720 以下），弹窗整屏 */
+@media (max-width: 720px) {
+  .home {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .wslist__row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'name state'
+      'path state'
+      'acts acts';
+  }
+
+  .wslist__name {
+    grid-area: name;
+  }
+
+  .wslist__path {
+    grid-area: path;
+  }
+
+  .wslist__state {
+    grid-area: state;
+  }
+
+  .wslist__remove {
+    grid-area: acts;
+    justify-self: end;
+  }
+
+  .dlg__layer {
+    align-items: stretch;
+    padding: var(--space-3);
+  }
+}

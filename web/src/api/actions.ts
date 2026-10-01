@@ -3,12 +3,14 @@ import {
   actionOkSchema,
   settingsUpdateOkSchema,
   summarizeOkSchema,
+  workspaceOkSchema,
   type ActionArgs,
   type ActionDetail,
   type ActionOk,
   type ErrorCode,
   type SettingsUpdateOk,
   type SummarizeOk,
+  type WorkspaceOk,
 } from '../contract';
 
 /**
@@ -81,7 +83,8 @@ export class ActionProtocolError extends Error {
 export type ActionResult =
   | ({ kind: 'ok' } & ActionOk)
   | ({ kind: 'settings_update' } & SettingsUpdateOk)
-  | ({ kind: 'summarize' } & SummarizeOk);
+  | ({ kind: 'summarize' } & SummarizeOk)
+  | ({ kind: 'workspace' } & WorkspaceOk);
 
 export interface PostActionOptions {
   /** 覆盖 fetch（测试注入用）。 */
@@ -105,12 +108,17 @@ function parseEnvelope(status: number, text: string): ActionResult {
 
   const body = parsed.data;
   if (body.ok) {
-    // 两份「多几个键」的成功体先认：`summarize` 多一个 `summary`、`settings_update`
-    // 多两个数组。三条分支各自的 schema 都是 `.strict()`，因此认错顺序也不会误收
-    // （带 `summary` 的体过不了另两条，反之亦然）。
+    // 三份「多几个键」的成功体先认：`summarize` 多一个 `summary`、`settings_update`
+    // 多两个数组、`workspace_open` / `workspace_remove` 多一个 `workspace`。四条分支
+    // 各自的 schema 都是 `.strict()`，因此认错顺序也不会误收
+    // （带 `summary` 的体过不了另几条，反之亦然）。
     const summary = summarizeOkSchema.safeParse(body);
     if (summary.success) {
       return { kind: 'summarize', ...summary.data };
+    }
+    const workspace = workspaceOkSchema.safeParse(body);
+    if (workspace.success) {
+      return { kind: 'workspace', ...workspace.data };
     }
     const settings = settingsUpdateOkSchema.safeParse(body);
     if (settings.success) {
@@ -124,8 +132,9 @@ function parseEnvelope(status: number, text: string): ActionResult {
 
 /**
  * 打一个动作。成功返 `{kind:'ok', ok, revision}`（`settings_update` 另带
- * `applied` / `pending_restart`，`summarize` 另带 `summary`），失败抛
- * `ActionFailedError`（带 `code` / `message` / `detail`）。
+ * `applied` / `pending_restart`，`summarize` 另带 `summary`，`workspace_open` /
+ * `workspace_remove` 另带 `workspace`），失败抛 `ActionFailedError`
+ * （带 `code` / `message` / `detail`）。
  */
 export async function postAction(
   name: string,
