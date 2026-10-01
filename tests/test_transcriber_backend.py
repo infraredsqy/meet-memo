@@ -1071,6 +1071,11 @@ ONE_TRANSCRIPT_LINE = "按住模型期间来的一行。"
 def action(client, name: str, args: dict | None = None):
     """打一个动作信封（与界面同一条路径：`/api/actions` + 本地防线头）。"""
     body: dict = {"action": name}
+    if name == "start" and (args or {}).get("dir") is None:
+        # `start` 必须显式带目标工作区目录：没给时由测试层预建一个（产品没有默认落点）
+        root = getattr(client, "place_root", None)
+        assert root is not None, "打 start 却没法预建工作区：给 client.place_root 或显式传 dir"
+        args = {"dir": helpers.allocate_start_dir(root), **(args or {})}
     if args is not None:
         body["args"] = args
     return client.post("/api/actions", json=body, headers={"X-Meeting-Service": "1"})
@@ -1159,10 +1164,11 @@ def test_backlog_changes_reach_the_snapshot_without_touching_the_revision(sessio
     values = {
         "capture.backend": "dev",
         "web.dist_dir": str(helpers.missing_dist_dir(home)),
-        "output.root": str(Path(session_dir).parent / "out-revision"),
     }
 
     with helpers.app_client(home, values=values) as client:
+        client.place_root = Path(session_dir).parent / "out"
+        client.place_root.mkdir(parents=True, exist_ok=True)
         runtime = client.app.state.runtime
         # 换掉解析出来的转写后端（与 `test_a_raising_model_…` 同一手法：只换模型那一环）
         runtime.transcriber_backend = backend
@@ -1230,7 +1236,6 @@ def test_worker_stall_reaches_the_snapshot_without_any_new_line(session_dir: Pat
     values = {
         "capture.backend": "dev",
         "web.dist_dir": str(helpers.missing_dist_dir(home)),
-        "output.root": str(Path(session_dir).parent / "out-stall"),
     }
 
     def _stall_sample(client):
@@ -1239,6 +1244,8 @@ def test_worker_stall_reaches_the_snapshot_without_any_new_line(session_dir: Pat
         return state if state["transcript"]["health"] == "stopped" else None
 
     with helpers.app_client(home, values=values) as client:
+        client.place_root = Path(session_dir).parent / "out"
+        client.place_root.mkdir(parents=True, exist_ok=True)
         runtime = client.app.state.runtime
         runtime.transcriber_backend = backend
         backend.bind(runtime.bind_transcriber(backend), config=runtime._config_view())
@@ -1319,7 +1326,6 @@ def test_snapshot_reads_do_not_refresh_and_do_not_push_the_revision(session_dir:
     values = {
         "capture.backend": "dev",
         "web.dist_dir": str(helpers.missing_dist_dir(home)),
-        "output.root": str(Path(session_dir).parent / "out-read-jitter"),
     }
     backend = StubTranscriberBackend(backlog=1)
 
@@ -1366,6 +1372,8 @@ def test_snapshot_reads_do_not_refresh_and_do_not_push_the_revision(session_dir:
 
     # 健康度真的迁移时，`revision` 照旧要动（这一格是「迁移才提交」的另一半）
     with helpers.app_client(home, values=values) as client:
+        client.place_root = Path(session_dir).parent / "out"
+        client.place_root.mkdir(parents=True, exist_ok=True)
         runtime = client.app.state.runtime
         backend = StubTranscriberBackend(backlog=0, health="stopped")
         runtime.transcriber_backend = backend

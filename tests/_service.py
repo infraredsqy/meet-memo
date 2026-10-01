@@ -197,8 +197,14 @@ class ServiceProcess(helpers.ServiceProcess):
         overrides["USERPROFILE"] = str(home)
         if port is not None:
             overrides["MEETING_PORT"] = str(port)
+        # `out_root=` 这一项沿用旧名，语义变了：它只是**测试层的场次放置根**
+        # （给 `post_action()` 为 `start` 动作预建工作区目录用），不再写 env —— 产品
+        # 已经没有 `MEETING_OUT_ROOT` 这条变量与「输出根」这层配置。
+        self.sessions_root = None
         if out_root is not None:
-            overrides["MEETING_OUT_ROOT"] = str(out_root)
+            sessions_root = Path(out_root)
+            sessions_root.mkdir(parents=True, exist_ok=True)
+            self.sessions_root = sessions_root
         if log_dir is not None:
             overrides["MEETING_LOG_DIR"] = str(log_dir)
         if capture is not None:
@@ -723,8 +729,18 @@ def post_action(base_url: Any, action: str, args: dict[str, Any] | None = None, 
     本机新建一个 `httpx.Client` 要 0.83 秒，动作请求与状态轮询都不该为它买单。
     """
     body: dict[str, Any] = {"action": action}
-    if args is not None:
-        body["args"] = args
+    merged_args = dict(args or {})
+    # `start` 必须显式带目标工作区目录：调用方没给时由**测试层**的这个放置根预建一个
+    # （产品侧没有默认落点，测试也不该悄悄兜在产品里 —— 缺省只为让既有用例少改几行）。
+    if action == "start" and merged_args.get("dir") is None:
+        sessions_root = getattr(base_url, "sessions_root", None)
+        assert sessions_root is not None, (
+            "打 start 却没给 args.dir，也没有可用的预建根："
+            "请经 service_process 夹具起进程（它给 out_root=），或显式传 dir。"
+        )
+        merged_args["dir"] = helpers.allocate_start_dir(sessions_root)
+    if merged_args:
+        body["args"] = merged_args
     headers = {"Content-Type": "application/json", "X-Meeting-Service": "1"}
     headers.update(kwargs.pop("headers", {}) or {})
     url = f"{_resolve_base_url(base_url)}/api/actions"

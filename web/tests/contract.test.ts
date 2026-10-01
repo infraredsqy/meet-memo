@@ -45,27 +45,16 @@ describe('快照样本', () => {
     expect(listFixtures('snapshot')).toEqual([...SNAPSHOT_FIXTURES].sort());
   });
 
-  it('idle 与 idle-notice 的三处 null 齐：session / ended / notice 各看一次', () => {
+  it('idle 样本的三处 null：session / ended 各看一次（`notice` 槽位已退场）', () => {
     const idle = snapshotSchema.parse(readFixture('snapshot', 'idle'));
     expect(idle.session).toBeNull();
     expect(idle.ended).toBeNull();
-    expect(idle.notice).toBeNull();
     expect(idle.top_state).toBe('idle');
-
-    const notice = snapshotSchema.parse(readFixture('snapshot', 'idle-notice'));
-    expect(notice.session).toBeNull();
-    expect(notice.ended).toBeNull();
-    expect(notice.notice?.kind).toBe('restart_unfinished');
-    // 掩码把路径换成了 `<path>`，schema 认它。
-    expect(notice.notice?.session_dir).toBe('<path>');
-    expect(notice.notice?.log_path).toBe('<path>');
-    expect(notice.notice?.text).toContain('<path>');
   });
 
   it('四态样本各落在该有的那一态', () => {
     const expected: Record<(typeof SNAPSHOT_FIXTURES)[number], Snapshot['top_state']> = {
       idle: 'idle',
-      'idle-notice': 'idle',
       recording: 'recording',
       alert: 'alert',
       'ended-done': 'ended',
@@ -84,7 +73,7 @@ describe('快照样本', () => {
         expect(source.envelope, `${name}·${source.id}`).toHaveLength(ENVELOPE_BAR_COUNT);
       }
     }
-    for (const name of ['idle', 'idle-notice'] as const) {
+    for (const name of ['idle'] as const) {
       const snap = snapshotSchema.parse(readFixture('snapshot', name));
       for (const source of snap.sources) {
         expect(source.envelope, `${name}·${source.id}`).toEqual([]);
@@ -143,7 +132,6 @@ describe('快照样本', () => {
     expect(snap.service.port).toBe('<port>');
     expect(snap.service.url).toBe('<url>');
     expect(snap.service.log_path).toBe('<path>');
-    expect(snap.service.out_root).toBe('<path>');
     expect(snap.session?.id).toBe('<session-id>');
     expect(snap.session?.dir).toBe('<path>');
     expect(snap.session?.started_at).toBe('<iso>');
@@ -160,7 +148,7 @@ describe('快照样本', () => {
     ]);
   });
 
-  it('顶层恰好十键，多一个键就要红（第 7 章那些键位不该冒出来）', () => {
+  it('顶层恰好九键，多一个键就要红（第 7 章那些键位、连同退场的 notice 都不该冒出来）', () => {
     const snap = readFixture('snapshot', 'idle') as Record<string, unknown>;
     expect(Object.keys(snap).sort()).toEqual(
       [
@@ -173,11 +161,11 @@ describe('快照样本', () => {
         'transcript',
         'ended',
         'settings',
-        'notice',
       ].sort(),
     );
     expect(snap).not.toHaveProperty('summary');
-    const extra = { ...snap, summary: null };
+    expect(snap).not.toHaveProperty('notice');
+    const extra = { ...snap, summary: null, notice: null };
     expect(snapshotSchema.safeParse(extra).success).toBe(false);
   });
 
@@ -198,7 +186,7 @@ describe('SSE 帧样本', () => {
     expect(listFixtures('sse')).toEqual([...SSE_FIXTURES].sort());
   });
 
-  it('首帧是 snapshot、带 id、data 就是十键快照、id == data.revision', () => {
+  it('首帧是 snapshot、带 id、data 就是九键快照、id == data.revision', () => {
     const frame = sseFrameSchema.parse(readFixture('sse', 'first-snapshot'));
     expect(frame.event).toBe('snapshot');
     expect(frame.id).toBe('2');
@@ -253,10 +241,10 @@ describe('SSE 帧样本', () => {
     const resync = resyncSnapshotSchema.parse(frame.data);
     expect(resync.resync).toBe(true);
     expect(resync.dropped).toBeGreaterThanOrEqual(1);
-    // 顶层十二键 = 十键 + resync + dropped。
-    expect(Object.keys(frame.data).sort()).toHaveLength(12);
+    // 顶层十一键 = 九键 + resync + dropped。
+    expect(Object.keys(frame.data).sort()).toHaveLength(11);
     expect(frame.id).toBe(String(resync.revision));
-    // 十键形状认不得它 —— 两个键是多余的。
+    // 九键形状认不得它 —— 两个键是多余的。
     expect(snapshotSchema.safeParse(frame.data).success).toBe(false);
   });
 

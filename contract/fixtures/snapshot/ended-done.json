@@ -5,8 +5,7 @@
     "version": "0.1.0",
     "port": "<port>",
     "url": "<url>",
-    "log_path": "<path>",
-    "out_root": "<path>"
+    "log_path": "<path>"
   },
   "top_state": "ended",
   "session": {
@@ -127,6 +126,5 @@
       "mic": null,
       "loopback": null
     }
-  },
-  "notice": null
+  }
 }

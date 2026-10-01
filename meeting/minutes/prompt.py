@@ -525,7 +525,7 @@ def main(argv: Sequence[str] | None = None, *, prog: str = "python -m meeting.mi
         prog=prog,
         description="按场次目录渲染会后纪要的编排提示词（模板正文归 prompts/meeting_final.md）。",
     )
-    parser.add_argument("session_dir", help="场次目录（<输出根>/YYMMDD）")
+    parser.add_argument("session_dir", help="场次目录（工作区目录，路径由人给）")
     parser.add_argument("--mode", choices=MODES, default=None, help="档位（默认按盘上的输入自己判）")
     parser.add_argument("--template", default=str(DEFAULT_TEMPLATE), help="提示词模板的路径")
     parser.add_argument("--max-segments", type=int, default=DEFAULT_MAX_SEGMENTS, help="每路分段上限")

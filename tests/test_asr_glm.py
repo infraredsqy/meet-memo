@@ -14,7 +14,7 @@
   - **文本级兜底**：拿 V1 那条真实坏行（`tests/v1/fixtures_real_loops.py` 的 `LOOP_LINE_283`，
     2515 字符的截断副本）当模型输出喂进去，断言出来的文本被砍到 <60 字符；
   - **参数一律从配置读出**：写一份 `config.json`、`config.load()` 之后断言 kwargs 里的
-    `max_new_tokens` 与超时秒数跟着变（`docs/legacy-assets.md` 的 C9：要验就写 `config.json`，
+    `max_new_tokens` 与超时秒数跟着变（`docs/v1-lineage.md` 的 C9：要验就写 `config.json`，
     不 monkeypatch 配置函数）；
   - **重依赖不进 `sys.modules`**：`import meeting.asr.glm` 在**一个全新解释器**里跑，
     `torch` / `transformers` / `numpy` / `webrtcvad` 一个都不许出现
@@ -235,7 +235,7 @@ def test_import_chain_pulls_no_heavy_dependency():
 def test_loader_seam_is_the_module_namespace_itself():
     """`_load_models` 是 `meeting.asr.glm` 的模块级名字，`_load_transcriber` 从**这份**字典里取它。
 
-    这条盯的是 `docs/legacy-assets.md` 的 C9 / E9 那个坑：一旦有人在 `glm.py` 里写
+    这条盯的是 `docs/v1-lineage.md` 的 C9 / E9 那个坑：一旦有人在 `glm.py` 里写
     `from ... import _load_models`（把函数对象绑到另一个模块对象上），
     `monkeypatch.setattr(meeting.asr.glm, "_load_models", fake)` 就会变成**一边通过一边什么都没验**。
     """
@@ -445,7 +445,7 @@ def test_loop_guard_call_signature_is_exactly_three_names():
     多写一个 `**kwargs` 就会在 `generate` 内部抛
     `ValueError: Make sure that all the required parameters ... are passed`，
     **而堆栈指向 transformers**，很容易被误判成「这个模型不支持那个参数」
-    （`docs/legacy-assets.md` 的 C8 / E8、`phase1/task.md` 的「必须保住的形状」第 1 条）。
+    （`docs/v1-lineage.md` 的 C8 / E8、`phase1/task.md` 的「必须保住的形状」第 1 条）。
 
     这条形状原先**没有任何用例盯着**（phase1 复审 minor-5：把签名改成
     `(self, input_ids, scores, **kwargs)` 之后 30 条用例全绿）—— 运行时零影响的那类改动

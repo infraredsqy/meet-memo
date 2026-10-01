@@ -21,14 +21,15 @@ hook 在文末；`pytest_sessionfinish` 是 PATH 守卫与真家目录守卫的�
     起进程即传环境变量覆盖、家目录 `HOME` 与 `USERPROFILE` 两项都设）；
   - `app_client`：**应用客户端**（`TestClient(app, base_url="http://127.0.0.1")` 形态）；
   - `dev_runtime`：**开发替身运行时**（`MEETING_CAPTURE=dev` 的运行时实例）；
-  - `tmp_out_root`：**临时输出根**；
+  - `tmp_out_root`：**临时场次放置根**（给 `start` 的 `args.dir` 预建目录用）；
   - `isolated_config_dir`：**隔离的临时配置目录**（连同隔离的临时日志目录）。
 
 phase3 追加两个夹具（名字固定，与上面五个不重名）：
 
-  - `meeting_env`：**本用例的一套隔离环境**（临时输出根 + 临时 log 目录 + **家目录重定向**
-    + 本服务那四个环境变量：`MEETING_NO_BROWSER` / `MEETING_PORT` / `MEETING_OUT_ROOT` /
-    `MEETING_LOG_DIR`），把子进程的环境变量一次给全。**采集后端不在这份 env 里**（第七轮审查
+  - `meeting_env`：**本用例的一套隔离环境**（临时场次放置根 + 临时 log 目录 + **家目录重定向**
+    + 本服务的环境变量：`MEETING_NO_BROWSER` / `MEETING_PORT` / `MEETING_LOG_DIR`）——
+    （`MEETING_OUT_ROOT` 随 `output.root` 配置键一并退场，不再出现）。把子进程的环境变量一次给
+    全。**采集后端不在这份 env 里**（第七轮审查
     m9、第八轮审查 m5 / m6）：它由各用例自己 `config.json` 的 `capture.backend` 表达，env 里
     留着 `MEETING_CAPTURE` 会把那条配置键静默压住 —— 本夹具因此**看门**（建 env 之前那条
     断言）要求宿主进程 env 里也没有这一项，四条 `tests/test_e2e_*.py` 全部同源；
@@ -875,7 +876,7 @@ def _no_real_dsh_web_call(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]
 
 @pytest.fixture()
 def tmp_out_root(tmp_path: Path) -> Path:
-    """**临时输出根**（场次目录只在 `start` 那一刻建在它下面）。"""
+    """**临时场次放置根**（测试层给 `start` 的 `args.dir` 预建目录用；产品没有输出根）。"""
     root = tmp_path / "out"
     root.mkdir(parents=True, exist_ok=True)
     return root
@@ -1067,7 +1068,7 @@ def dev_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
     home = tmp_path / "home-dev-runtime"
     home.mkdir(parents=True, exist_ok=True)
     helpers.write_config_json(
-        home, {"web.port": 8765, "output.root": str(tmp_path / "out-dev-runtime")}
+        home, {"web.port": 8765}
     )
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
@@ -1090,7 +1091,11 @@ def dev_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
 
 @dataclass
 class MeetingEnv:
-    """一个用例的一套隔离环境（`meeting_env` 夹具给出的那一个）。"""
+    """一个用例的一套隔离环境（`meeting_env` 夹具给出的那一个）。
+
+    `out_root` 沿用旧名，语义变了：它只是**测试层的场次放置根**（给 `start` 的
+    `args.dir` 预建工作区目录用），不再是任何配置键的值。
+    """
 
     home: Path
     out_root: Path
@@ -1109,13 +1114,12 @@ class MeetingEnv:
 
 @pytest.fixture()
 def meeting_env(tmp_path: Path) -> MeetingEnv:
-    """**本用例的一套隔离环境**：临时输出根 + 临时 log 目录 + **家目录重定向** + 服务变量。
+    """**本用例的一套隔离环境**：临时场次放置根 + 临时 log 目录 + **家目录重定向** + 服务变量。
 
     逐项照 §3.8 的「子进程环境（每条测试的必备项）」：
 
       - `MEETING_NO_BROWSER=1`（**每一条子进程测试都必须设上**，否则真机会弹浏览器）；
-      - `MEETING_PORT=0`、`MEETING_OUT_ROOT=<本用例临时目录>`、
-        `MEETING_LOG_DIR=<本用例临时目录>`；
+      - `MEETING_PORT=0`、`MEETING_LOG_DIR=<本用例临时目录>`；
       - **家目录重定向**：`HOME` 与 `USERPROFILE` 都指向本用例的临时家目录 —— 这是硬条件：
         配置文件 `~/.config/meeting/config.json` 与服务级 `logs/` 都挂在它下面，只设输出根 /
         端口而漏掉它，子进程会读真实用户的配置与日志（测试全绿却验的不是临时配置）。
@@ -1148,7 +1152,6 @@ def meeting_env(tmp_path: Path) -> MeetingEnv:
         "USERPROFILE": str(home),
         "MEETING_NO_BROWSER": "1",
         "MEETING_PORT": "0",
-        "MEETING_OUT_ROOT": str(out_root),
         "MEETING_LOG_DIR": str(log_dir),
     }
     return MeetingEnv(

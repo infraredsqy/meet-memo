@@ -68,10 +68,10 @@ SUMMARY_KEYS = {
 }
 #: `GET /api/summaries` 每一条的键全集（与应答体那个 `summary` 同形，**少 `lines` 与 `at` 之外没有别的差别**）
 ENTRY_KEYS = {"window", "window_label", "at", "elapsed_seconds", "what", "where", "lost"}
-#: 快照顶层十键（`summary` 一个都不许多）
+#: 快照顶层九键（`summary` 一个都不许多）
 TOP_LEVEL_KEYS = {
     "revision", "service", "top_state", "session", "sources",
-    "alerts", "transcript", "ended", "settings", "notice",
+    "alerts", "transcript", "ended", "settings",
 }
 
 #: 假客户端答的那份合法输出（三条固定标签齐备，跑一次就成功）
@@ -186,7 +186,6 @@ def live(tmp_path: Path, values: dict | None = None, *, health: str = "normal"):
     out_root = tmp_path / "out"
     out_root.mkdir(parents=True, exist_ok=True)
     config = {
-        "output.root": str(out_root),
         "capture.backend": "dev",
         "web.dist_dir": str(helpers.missing_dist_dir(home)),
         # 端点四件套配齐（密钥是**假值**：假客户端从注入点进，一个真实请求都不发出去）。
@@ -197,6 +196,7 @@ def live(tmp_path: Path, values: dict | None = None, *, health: str = "normal"):
     }
     config.update(values or {})
     with helpers.app_client(home, values=config) as client:
+        client.place_root = out_root
         runtime = client.app.state.runtime
         transcriber = FakeTranscriber(health=health)
         runtime.transcriber_backend = transcriber
@@ -208,8 +208,8 @@ def live(tmp_path: Path, values: dict | None = None, *, health: str = "normal"):
 
 def post(client, action: str, args: dict | None = None):
     body = {"action": action}
-    if args is not None:
-        body["args"] = args
+    if args is not None or action == "start":
+        body["args"] = helpers.start_args(action, args, client.place_root)
     return client.post("/api/actions", json=body, headers={"X-Meeting-Service": "1"})
 
 

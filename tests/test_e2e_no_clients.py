@@ -27,6 +27,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from tests import _helpers as helpers
 from tests._service import post_action, wait_until
 
 # ---------------------------------------------------------------------------
@@ -72,7 +73,8 @@ def _finish_case(started: float) -> None:
 
 
 def _start(proc) -> None:
-    started = post_action(proc.base_url, "start")
+    workspace = helpers.allocate_start_dir(proc.sessions_root)
+    started = post_action(proc.base_url, "start", {"dir": workspace})
     assert started.status_code == 200, started.text
 
 

@@ -50,8 +50,6 @@ export interface LiveView {
   hints: HintView[];
   /** 本场静音按钮上的字。 */
   muteLabel: string;
-  /** 顶部那一行「服务重启过」（只在空闲态、且服务推了 `notice` 时）。 */
-  restartNote: string | null;
   /** 采集已停那一档；`null` 表示不在这一档。 */
   stalled: CaptureStalledView | null;
   /** 心跳失联：整块告警区收掉（两句话不得同屏）。 */
@@ -182,7 +180,6 @@ export function liveView(
     critical: snapshot.alerts.critical,
     hints: hintLines(snapshot.alerts),
     muteLabel: muteButtonLabel(snapshot.alerts.critical),
-    restartNote: snapshot.top_state === 'idle' ? snapshot.notice?.text ?? null : null,
     stalled,
     alertsHidden: lost,
   };

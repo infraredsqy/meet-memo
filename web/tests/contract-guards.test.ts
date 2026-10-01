@@ -114,62 +114,53 @@ describe('掩码串 schema 咬得住（C1）', () => {
     expectVerdicts(dbfsSchema, ['<iso>', '0.5'], ['<dbfs>', 0.5, -12]);
   });
 
-  it('场次目录名：真服务的裸目录名与 <session-id> 过，别的形状被拒', () => {
+  it('场次目录名：人给的工作区目录过，路径与别的占位符被拒', () => {
     const sessionId = sessionIdSchema;
     expectVerdicts(
       sessionId,
       [
-        // 空串与「看起来像名字」的裸串都不成形状。
+        // 空串、含分隔符（它不是名称而是路径）与带 `<` 的串都不过。
         '',
-        'not a dir',
-        'meeting',
-        '2609',
-        '2609212',
-        // 让位后缀从 -2 起，-1 与多级后缀都不在服务的产出里。
-        '260921-1',
-        '260921-2-3',
-        '260921-',
-        '260921- ',
-        // 前后带空白、带路径前缀、别的占位符都不过。
-        ' 260921',
-        '260921 ',
         'out/260921',
         'C:\\out\\260921',
+        '<path>',
         '<iso>',
         '<url>',
-        // **这一格与 `<path>` 是两档**：目录名与路径各用各的占位符，串了就是漂。
-        '<path>',
+        // 其他占位符串一律不是目录名。
+        '<whatever>',
       ],
       [
         '<session-id>',
-        // 服务的真值是 `strftime("%y%m%d")` 的裸 6 位数字 + 让位后缀。
+        // 真值就是用户给的目录名 —— 形状任意，日期命名已退场。
         '260921',
         '260921-2',
-        '260921-3',
-        '260921-12',
-        '991231',
-        // 形状对即成（不查日历，也不查目录在不在）。
-        '260932',
+        '跟老王聊周会',
+        '会议-2026-09-21',
+        'ws1',
       ],
     );
   });
 
   it('真服务产出的 session.id 真的过得了快照：不靠占位符冒充', () => {
-    // C1 的现场：复审查出的那一格，真值就是这种裸目录名。
+    // 现场旧照：真值就是裸目录名（如今是人给的名字，目录拒绝做语义解析）。
     const snap = readFixture('snapshot', 'recording') as Record<string, unknown>;
     const session = { ...(snap['session'] as Record<string, unknown>) };
     session['id'] = '260921';
     expect(sessionSchema.safeParse(session).success).toBe(true);
 
-    // 让位档同样过。
-    session['id'] = '260921-2';
+    session['id'] = '跟老王聊周会';
     expect(sessionSchema.safeParse(session).success).toBe(true);
 
-    // 不合形状的值进不了快照。
+    // 空串进不了快照；带路径分隔符的名称（它就不是名称了）也进不了。
     const withBad = structuredClone(snap);
-    (withBad['session'] as Record<string, unknown>)['id'] = 'not a dir';
+    (withBad['session'] as Record<string, unknown>)['id'] = '';
     expect(
       sseFrameSchema.safeParse({ event: 'state', id: '2', data: withBad }).success,
+    ).toBe(false);
+    const withPathish = structuredClone(snap);
+    (withPathish['session'] as Record<string, unknown>)['id'] = 'out\\260921';
+    expect(
+      sseFrameSchema.safeParse({ event: 'state', id: '2', data: withPathish }).success,
     ).toBe(false);
 
     // `dir` 那一格照旧走绝对路径判据 —— 两条 schema 各管各的。
@@ -295,9 +286,9 @@ describe('嵌套契约对象逐层收严（N1）', () => {
     }
   });
 
-  it('ended 与它的 drainStep、notice 逐层收严', () => {
-    // recording 样本的 ended / notice 都是 null —— 往 null 上加键是没意义的，
-    // 这里拿 ended-done 样本改 ended，拿 idle-notice 样本改 notice。
+  it('ended 与它的 drainStep 逐层收严（notice 槽位已随默认输出根退场）', () => {
+    // recording 样本的 ended 是 null —— 往 null 上加键是没意义的，
+    // 这里拿 ended-done 样本改 ended 与它的 drainStep。
     const endedSnap = structuredClone(
       readFixture('snapshot', 'ended-done') as Record<string, unknown>,
     );
@@ -312,12 +303,6 @@ describe('嵌套契约对象逐层收严（N1）', () => {
     >;
     injectExtra(steps[0] as Record<string, unknown>);
     expect(snapshotSchema.safeParse(stepSnap).success, 'drainStep 多一个键该被拒').toBe(false);
-
-    const noticeSnap = structuredClone(
-      readFixture('snapshot', 'idle-notice') as Record<string, unknown>,
-    );
-    injectExtra(noticeSnap['notice'] as Record<string, unknown>);
-    expect(snapshotSchema.safeParse(noticeSnap).success, 'notice 多一个键该被拒').toBe(false);
   });
 
   it('alert 六字段那一层也收严（critical 与 hints 各试一次）', () => {
@@ -644,7 +629,7 @@ describe('levels 帧的结构不变量（M4）', () => {
   it('只对 levels 帧收紧：快照侧的空包络（空闲态）照旧合法', () => {
     // 空闲态快照里两路 envelope 是空数组 —— 拿 15 去卡快照会误伤这一档。
     expect(envelopeSchema.safeParse([]).success).toBe(true);
-    for (const name of ['idle', 'idle-notice'] as const) {
+    for (const name of ['idle'] as const) {
       const snap = readFixture('snapshot', name) as {
         sources: { envelope: unknown[] }[];
       };

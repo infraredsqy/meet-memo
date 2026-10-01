@@ -98,7 +98,6 @@ def live(tmp_path: Path, backend: StubTranscriber, *, reset_hints: bool = True):
     values = {
         "capture.backend": "dev",
         "web.dist_dir": str(helpers.missing_dist_dir(home)),
-        "output.root": str(out_root),
     }
     return home, values
 
@@ -133,12 +132,14 @@ def recording(tmp_path: Path, backend: StubTranscriber):
     算「键集合没动」、返回假。
     """
     home, values = live(tmp_path, backend)
+    out_root = tmp_path / "out"
+    out_root.mkdir(parents=True, exist_ok=True)
     with helpers.app_client(home, values=values) as client:
         runtime = client.app.state.runtime
         settle(runtime, backend)
         response = client.post(
             "/api/actions",
-            json={"action": "start", "args": {"mode": "both"}},
+            json={"action": "start", "args": helpers.start_args("start", {"mode": "both"}, out_root)},
             headers={"X-Meeting-Service": "1"},
         )
         assert response.status_code == 200, response.text
@@ -351,6 +352,8 @@ def test_the_health_ticker_carries_the_hint_without_any_new_line(tmp_path):
     """
     backend = StubTranscriber(health="behind")
     home, values = live(tmp_path, backend)
+    out_root = tmp_path / "out"
+    out_root.mkdir(parents=True, exist_ok=True)
     with helpers.app_client(home, values=values) as client:
         runtime = client.app.state.runtime
         settle(runtime, backend)
@@ -358,7 +361,7 @@ def test_the_health_ticker_carries_the_hint_without_any_new_line(tmp_path):
         assert (
             client.post(
                 "/api/actions",
-                json={"action": "start", "args": {"mode": "both"}},
+                json={"action": "start", "args": helpers.start_args("start", {"mode": "both"}, out_root)},
                 headers={"X-Meeting-Service": "1"},
             ).status_code
             == 200
@@ -388,6 +391,8 @@ def test_hints_stay_empty_while_the_transcriber_reports_normal(tmp_path):
     """
     backend = StubTranscriber()
     home, values = live(tmp_path, backend)
+    out_root = tmp_path / "out"
+    out_root.mkdir(parents=True, exist_ok=True)
     with helpers.app_client(home, values=values) as client:
         runtime = client.app.state.runtime
         settle(runtime, backend)
@@ -409,6 +414,8 @@ def test_hints_stay_empty_in_idle_and_ended(tmp_path):
     """
     backend = StubTranscriber(health="behind")
     home, values = live(tmp_path, backend)
+    out_root = tmp_path / "out"
+    out_root.mkdir(parents=True, exist_ok=True)
     with helpers.app_client(home, values=values) as client:
         runtime = client.app.state.runtime
         settle(runtime, backend)
@@ -422,7 +429,7 @@ def test_hints_stay_empty_in_idle_and_ended(tmp_path):
         assert (
             client.post(
                 "/api/actions",
-                json={"action": "start", "args": {"mode": "both"}},
+                json={"action": "start", "args": helpers.start_args("start", {"mode": "both"}, out_root)},
                 headers={"X-Meeting-Service": "1"},
             ).status_code
             == 200

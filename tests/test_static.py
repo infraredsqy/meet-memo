@@ -49,9 +49,8 @@ TOP_LEVEL_KEYS = {
     "transcript",
     "ended",
     "settings",
-    "notice",
 }
-SERVICE_KEYS = {"started_at", "version", "port", "url", "log_path", "out_root"}
+SERVICE_KEYS = {"started_at", "version", "port", "url", "log_path"}
 SOURCE_KEYS = {
     "id",
     "label",
@@ -380,12 +379,12 @@ def test_action_request_with_both_headers_gets_a_real_answer(tmp_path, client_fa
     out_root = tmp_path / "out_for_actions_ok"
     out_root.mkdir()
     client = client_factory(
-        {"web.dist_dir": str(helpers.missing_dist_dir(home)), "output.root": str(out_root)}
+        {"web.dist_dir": str(helpers.missing_dist_dir(home))}
     )
 
     response = client.post(
         "/api/actions",
-        json={"action": "start"},
+        json={"action": "start", "args": {"dir": str(helpers.allocate_start_dir(out_root))}},
         headers={"X-Meeting-Service": "1"},
     )
     # 真实应答：dev 替身在场，`start` 起得来 —— 成功体就是 `{ok, revision}`
@@ -443,7 +442,6 @@ def test_api_state_shape_is_the_full_one(tmp_path, client_factory):
     assert isinstance(service["version"], str) and service["version"]
     assert service["port"] == 8765  # ASGI 层夹具把绑定设成回环 8765
     assert service["url"] == "http://127.0.0.1:8765"
-    assert service["out_root"]
     assert service["log_path"]
     assert service["started_at"]
 
@@ -472,10 +470,9 @@ def test_api_state_shape_is_the_full_one(tmp_path, client_factory):
         "buffered_lines": 0,
         "failed_segments": 0,
     }
-    # 空闲态的真值：没有会话、没有收尾摘要、没有提示
+    # 空闲态的真值：没有会话、没有收尾摘要
     assert snapshot["session"] is None
     assert snapshot["ended"] is None
-    assert snapshot["notice"] is None
 
     settings = snapshot["settings"]
     assert set(settings) == SETTINGS_TOP_KEYS
@@ -496,7 +493,6 @@ def test_api_state_revision_grows_by_one_per_state_change(tmp_path, client_facto
     client = client_factory(
         {
             "web.dist_dir": str(helpers.missing_dist_dir(home)),
-            "output.root": str(out_root),
             "capture.backend": "dev",
         }
     )
@@ -504,7 +500,9 @@ def test_api_state_revision_grows_by_one_per_state_change(tmp_path, client_facto
     before = client.get("/api/state").json()["revision"]
     # 一次成功的 start 是一次状态变更 → 恰好 +1
     started = client.post(
-        "/api/actions", json={"action": "start"}, headers={"X-Meeting-Service": "1"}
+        "/api/actions",
+        json={"action": "start", "args": {"dir": str(helpers.allocate_start_dir(out_root))}},
+        headers={"X-Meeting-Service": "1"},
     )
     assert started.status_code == 200, started.text
     after_start = started.json()["revision"]
@@ -628,7 +626,7 @@ def test_idle_state_has_no_session_artifacts(tmp_path, client_factory):
     before = sorted(item.name for item in out_root.iterdir())
 
     client = client_factory(
-        {"web.dist_dir": str(helpers.missing_dist_dir(home)), "output.root": str(out_root)}
+        {"web.dist_dir": str(helpers.missing_dist_dir(home))}
     )
     client.get("/api/state")
 

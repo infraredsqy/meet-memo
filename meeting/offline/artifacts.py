@@ -175,7 +175,7 @@ KNOWN_SCHEMA_MAJOR = 1
 #: 状态文件自己的模式版本
 STATUS_SCHEMA_VERSION = 1
 
-#: V1 会后回放的实测实时率（`legacy-assets` B16）：报告里拿它当对照基线
+#: V1 会后回放的实测实时率（`v1-lineage` B16）：报告里拿它当对照基线
 V1_RTF_BASELINE = 0.39
 
 #: `[HH:MM]` 的形状：5 个字符的分钟级时间戳（`HH` 在超过 99 分钟时照样是数字，长度会变长）

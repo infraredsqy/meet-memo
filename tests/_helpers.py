@@ -272,6 +272,34 @@ def write_config_json(home: Path, values: dict[str, Any]) -> Path:
     return path
 
 
+def allocate_start_dir(root: Path) -> str:
+    """测试专用：在 `root` 之下**预建**一个工作区目录并返回它的路径。
+
+    产品代码不再建目录（落点由 start 的 `args.dir` 显式给、且必须是已存在的目录），
+    这里替**测试层**把目录建出来：按 `ws1` / `ws2`… 递增（撞到已存在的就让位）。
+    `root` 本身是各用例夹具给的放置根（`meeting_env.out_root` 这一个名字沿用），
+    它不再有任何「输出根」的配置语义。
+    """
+    root = Path(root)
+    root.mkdir(parents=True, exist_ok=True)
+    index = 1
+    while True:
+        candidate = root / f"ws{index}"
+        try:
+            candidate.mkdir()
+            return str(candidate)
+        except FileExistsError:
+            index += 1
+
+
+def start_args(action: str, args: dict[str, Any] | None, root: Path) -> dict[str, Any]:
+    """测试层给 `start` 动作补缺省落点：`args` 里没显式给 `dir` 时由 `root` 预建一个。"""
+    merged = dict(args or {})
+    if action == "start":
+        merged.setdefault("dir", allocate_start_dir(root))
+    return merged
+
+
 #: **测试层给 `capture.backend` 的共用缺省值**（`dev`：项目既有的开发替身）。
 #:
 #: 为什么必须有一个缺省：`capture.backend` 的产品缺省是 `auto`，它解析到

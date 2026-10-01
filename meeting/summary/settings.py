@@ -13,7 +13,7 @@
      取不到键时用 `meeting/config.py` 的默认值表，因此用例塞一个残缺对象也不会炸。
 
 **端点四件套的取值**（`base_url` / `api_key` / `model` / `extra_body_json`）跟着
-`docs/legacy-assets.md` 的「模型端点与 preset 配置」那一条走：语义照搬 V1 的 preset，
+`docs/v1-lineage.md` 的「模型端点与 preset 配置」那一条走：语义照搬 V1 的 preset，
 落到 V2 是四个**点号扁平键名**（`summary.*`），`extra_body` 那一段以**一个 JSON 字符串键**
 承载（V2 配置层装载时明确拒收 dict 值，为这一个键放开那条硬约束不划算）。
 """

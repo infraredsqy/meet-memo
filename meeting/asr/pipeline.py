@@ -3,7 +3,7 @@
 节点 `9e5db89c` 的 phase2（`phase2/task.md` 的落地口径 1–6）。吃 phase1 的
 `meeting/asr/guards.py`（四层防护的判定内核）与 `meeting/asr/glm.py`（单段识别）。
 
-**音频从哪来 —— 这一段的骨头**（`phase2/task.md` §1 / `docs/legacy-assets.md` 的 R2 / R3）：
+**音频从哪来 —— 这一段的骨头**（`phase2/task.md` §1 / `docs/v1-lineage.md` 的 R2 / R3）：
 
   - 采集只管往 `session_dir/meeting_audio_<source>.pcm` 里写（`meeting/capture/archive.py`
     的 `open_pcm()` 是 `buffering=0` 的追加写，写在盘上**立刻可见**）；
@@ -25,7 +25,7 @@ VAD 实例与自己的缓冲，每 0.5 秒重读一次段长上限（V1 的 `_TU
 顺序消费就是「不丢内容」要的形状）。
 
 **落盘**：每路一个文件 `session_dir/meeting_transcript_<source>.md`（`source ∈ mic / loopback`），
-**追加模式、逐行 flush**，行的形状与 V1 的行格式接口一致（`docs/legacy-assets.md` 的 B12 / B13）：
+**追加模式、逐行 flush**，行的形状与 V1 的行格式接口一致（`docs/v1-lineage.md` 的 B12 / B13）：
 
     [HH:MM] 文本
     [HH:MM] [[识别失败: 超时 20s]]
@@ -39,7 +39,7 @@ VAD 实例与自己的缓冲，每 0.5 秒重读一次段长上限（V1 的 `_TU
 `numpy` 与 `webrtcvad` 都在函数体内惰性 import，于是「没装模型依赖的机器上
 `meeting.backends.transcribe` 仍能 import 成功」这条要求成立。
 
-搬过来的三处出处（照 `docs/legacy-assets.md` 的 1.0 留出处注释）：
+搬过来的三处出处（照 `docs/v1-lineage.md` 的 1.0 留出处注释）：
 
   - VAD 切段判据：`mnotes_core/vad.py:12-77`（`VADProcessor`）
   - 入队盖章的语义：`mnotes_core/pipeline.py:47-62`（`_TaggedSink`）、队列形状 `coordinator.py:108`
@@ -218,7 +218,7 @@ def _format_failure(reason: str, duration: float = 0.0, timed_out: bool = False)
 
     形状：`[[识别失败: 超时 20s]]` —— **双层方括号、裸文本**：不带时间戳（时间戳由调用方
     拼上）、**绝不含 `**`**，否则下游会把 `**X**:` 当成说话人标签
-    （`docs/legacy-assets.md` 的 B12 / E12）。
+    （`docs/v1-lineage.md` 的 B12 / E12）。
     """
     label = FAILURE_LABELS.get(reason, DEFAULT_FAILURE_LABEL)
     if timed_out and duration:

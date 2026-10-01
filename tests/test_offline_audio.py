@@ -2,7 +2,7 @@
 
 **素材现场生成**：用标准库 `wave` 写一段 16k 单声道 int16 的 wav（不引第三方），
 归档 PCM 那一档直接 `write_bytes()` 写无头裸流（`_write_raw_pcm()`），
-**不依赖任何真实会议音频**（真素材只走 `.work/scripts/mosstd_smoke.py` 那条冒烟）。
+**不依赖任何真实会议音频**（真素材只走一条一次性 MOSSTD 冒烟脚本，跑完即弃）。
 
 解码走 PyAV，因此本文件会真的拉 `av` 进来 —— 与 `meeting/offline/engine.py` 的
 惰性 import 不冲突：那条纪律要求「import 模块」不拉重依赖，调用解码函数时当然要拉。

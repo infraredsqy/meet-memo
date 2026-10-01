@@ -1,7 +1,8 @@
 {
   "action": "start",
   "args": {
-    "mode": "both"
+    "mode": "both",
+    "dir": "<path>"
   },
   "status": 200,
   "body": {

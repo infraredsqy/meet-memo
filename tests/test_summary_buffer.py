@@ -86,7 +86,6 @@ def live(tmp_path: Path, values: dict | None = None):
     out_root = tmp_path / "out"
     out_root.mkdir(parents=True, exist_ok=True)
     config = {
-        "output.root": str(out_root),
         "capture.backend": "dev",
         "web.dist_dir": str(helpers.missing_dist_dir(home)),
         "summary.base_url": "http://127.0.0.1:1/v1",
@@ -95,6 +94,7 @@ def live(tmp_path: Path, values: dict | None = None):
     }
     config.update(values or {})
     with helpers.app_client(home, values=config) as client:
+        client.place_root = out_root
         runtime = client.app.state.runtime
         backend = FakeTranscriber()
         runtime.transcriber_backend = backend
@@ -106,8 +106,8 @@ def live(tmp_path: Path, values: dict | None = None):
 
 def post(client, action: str, args: dict | None = None):
     body = {"action": action}
-    if args is not None:
-        body["args"] = args
+    if args is not None or action == "start":
+        body["args"] = helpers.start_args(action, args, client.place_root)
     return client.post("/api/actions", json=body, headers={"X-Meeting-Service": "1"})
 
 

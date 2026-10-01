@@ -286,8 +286,8 @@ describe('SSE 帧的同步解析（parse 返回真实载荷）', () => {
 
     const snapRaw = JSON.stringify(sseData('first-snapshot'));
     const snapshot = client.parse('snapshot', snapRaw);
-    // 返回值就是这一帧的载荷 —— 顶层十键齐、top_state 读得出来。
-    expect(Object.keys(snapshot).sort()).toHaveLength(10);
+    // 返回值就是这一帧的载荷 —— 顶层九键齐、top_state 读得出来。
+    expect(Object.keys(snapshot).sort()).toHaveLength(9);
     expect(snapshot.top_state).toBe('recording');
 
     const levelsRaw = JSON.stringify(sseData('levels'));

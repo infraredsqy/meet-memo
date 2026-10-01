@@ -81,12 +81,11 @@ export function makeSnapshot(overrides: Partial<Snapshot> = {}): Snapshot {
       port: 8791,
       url: 'http://127.0.0.1:8791',
       log_path: 'C:\\Users\\<user>\\.config\\meeting\\logs\\meeting.log',
-      out_root: 'D:\\meeting\\out',
     },
     top_state: 'recording',
     session: {
-      id: '260921',
-      dir: 'D:\\meeting\\out\\260921',
+      id: '跟老王聊周会',
+      dir: 'C:\\会议\\跟老王聊周会',
       started_at: T('20:45:20'),
       mode: 'both',
       elapsed_seconds: 4354,
@@ -102,7 +101,6 @@ export function makeSnapshot(overrides: Partial<Snapshot> = {}): Snapshot {
     },
     ended: null,
     settings: makeSettings(),
-    notice: null,
     ...overrides,
   };
 }

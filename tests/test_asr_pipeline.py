@@ -7,7 +7,7 @@
   - **落盘格式**：两路各一个 `meeting_transcript_<source>.md`，每行匹配 `^\\[\\d{2}:\\d{2}\\] `；
   - **队列语义**：段队列无界（`maxsize == 0`）、顺序消费、源码里没有 busy-drop 路径；
   - **三档占位符**：超时 / 判环 / 无输出各自落成规定的方括号形状、**不含 `**`**，
-    用 `docs/legacy-assets.md` A7 的下游正则 match 之后 `spk` 组是 `None`；
+    用 `docs/v1-lineage.md` A7 的下游正则 match 之后 `spk` 组是 `None`；
   - **噪声段不写行**（连占位符也不写）；
   - **收尾预算**：`30 + n × (timeout + 5)`、下限 30、封顶 300；预算耗完还有剩段时
     **如实记账**（`caplog` 断言那一行）。
@@ -63,7 +63,7 @@ TEST_SILENCE_TIMEOUT_SECONDS = 0.3
 #: 每段日志里排队延迟那一格（`wait=%.1fs`，`docs/specs.md:143-149` 的字段）
 WAIT_RE = re.compile(r"wait=([\d.]+)s")
 
-#: 一行转写的形状（`docs/legacy-assets.md` A7 那条下游正则的**收紧变体**）。
+#: 一行转写的形状（`docs/v1-lineage.md` A7 那条下游正则的**收紧变体**）。
 #:
 #: A7 的原件住在 V1 的 `.work/handoff/split_raw.py:12-13`：
 #: `r"^\[(\d{2}:\d{2}(?::\d{2})?)\]\s*(?:\*\*(?P<spk>.+?)\*\*\s*:?\s*)?(?P<text>.*)$"`。

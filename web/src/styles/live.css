@@ -1,11 +1,10 @@
 /* ============================================================================
    meeting · 会中视图样式（暗面一稿）
    ----------------------------------------------------------------------------
-   上一版是从 `docs/ui/ui.css`（亮面设计稿）里抽出来的抽取物，抽取口径写在
-   `web/README.md`「样式的来源与抽取口径」那一节，原文件备份在
-   `.work/dark-design/live.css.orig`。这一版的来路不同：照着 `src/App.tsx` 的组件树
-   与 `.work/dark-design/PLAN.md` 的方向重画，**类名照旧**（设计章 7.10 的类名契约），
-   换掉的是配色、字体、层级与排版。
+   上一版是从 `docs/ui/ui.css`（亮面设计稿）里抽出来的抽取物，已被这一稿整份取代 ——
+   抽取物与抽取脚本都不在仓库里了。这一稿的来路是 `src/App.tsx` 的组件树：照着这棵树
+   重画，**类名照旧**（设计章 7.10 的类名契约），换掉的是配色、字体、层级与排版。
+   三份样式怎么分工，写在 `web/README.md` 的「样式的来源」那一节。
 
    题材本来就是调音台：两路输入、dBFS 刻度、峰值保持、2 秒一格的历史包络。
    三条贯穿全篇的口径：
@@ -146,17 +145,6 @@ body {
   to {
     transform: rotate(360deg);
   }
-}
-
-/* 说明用的弱文本块（服务重启过那一行、失联判据那一段） */
-.hint.restart-note,
-.restart-note {
-  margin: 0 0 var(--space-4);
-  padding: var(--space-3) var(--space-4);
-  border-left: var(--size-rule) solid var(--t-amber);
-  background: var(--t-sunk);
-  color: var(--t-ink-mid);
-  font-size: var(--size-small);
 }
 
 .empty {

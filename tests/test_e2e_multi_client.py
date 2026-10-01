@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import time
 
+from tests import _helpers as helpers
 from tests._helpers import read_text
 from tests._service import post_action, wait_until
 
@@ -77,7 +78,8 @@ def _warm_up_client(proc) -> None:
 
 
 def _start(proc) -> None:
-    started = post_action(proc.base_url, "start")
+    workspace = helpers.allocate_start_dir(proc.sessions_root)
+    started = post_action(proc.base_url, "start", {"dir": workspace})
     assert started.status_code == 200, started.text
 
 

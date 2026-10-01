@@ -32,6 +32,7 @@ import os
 import threading
 import time
 import weakref
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor as _ThreadPoolExecutor
 from concurrent.futures.thread import _worker as _threadpool_worker
 from typing import Any, Callable
@@ -59,7 +60,7 @@ from meeting.session import (
     SESSION_FILE_NAME,
     SessionStore,
     build_session_record,
-    restart_unfinished_text,
+    resolve_workspace_dir,
     state_for,
     steps_from_ended,
 )
@@ -77,7 +78,6 @@ from meeting.state import (
     PROBE_STATUS,
     Alert,
     InvalidTransitionError,
-    Notice,
     ServiceInfo,
     SessionInfo,
     SettingsView,
@@ -385,10 +385,9 @@ class ActionError(Exception):
 class ServiceRuntime:
     """唯一状态权威：持有 `Snapshot` 与唯一一份状态字段，只在事件循环里改，不加锁。"""
 
-    def __init__(self, out_root: str, config: Any) -> None:
-        self.output_root = str(out_root)
+    def __init__(self, config: Any) -> None:
         self.config = config
-        self.store = SessionStore(str(out_root))
+        self.store = SessionStore()
 
         # `service` 六个字段（重建生效日志、取到实际监听地址之后才齐）
         self.started_at: str = now_iso()
@@ -462,7 +461,6 @@ class ServiceRuntime:
         self._ticker: asyncio.Task | None = None
         #: 转写健康度节拍（低频、只写快照；见 `_transcriber_health_loop()`）
         self._transcriber_ticker: asyncio.Task | None = None
-        self._pending_restart_session: str | None = None
 
         # -- 会中总结（`1987cb20` phase2 §3.6）--------------------------------
         #
@@ -514,10 +512,6 @@ class ServiceRuntime:
     @property
     def log_path(self) -> str:
         return logging_setup.service_log_path()
-
-    @property
-    def out_root(self) -> str:
-        return self.output_root
 
     def _value(self, key: str) -> Any:
         if self.config is None:
@@ -583,8 +577,8 @@ class ServiceRuntime:
 
     async def startup(self) -> None:
         """启动序列：取事件循环 → 写关停目标 → 信号自检 → 解析后端 → 探测设备 →
-        组装初始快照（**含 `transcript` 三格的初值**，见 ⑤b）→ 扫未收尾场次 → 打开浏览器。
-        **绝不自动开始录音。**
+        组装初始快照（**含 `transcript` 三格的初值**，见 ⑤b）→ 打开浏览器。
+        **绝不自动开始录音，也不去读任何别的场次目录**（落点由工作区给，注册表归下一节点）。
         """
         if self._started:
             return
@@ -633,10 +627,7 @@ class ServiceRuntime:
         # 这里再显式清一次，是为了让「快照 = 记账」这条不变量从第一帧就成立。
         self._clear_hints()
 
-        # ⑥ 扫未收尾场次（只取最新的一场；命中即挂 notice 并改写现场）
-        self._scan_unfinished()
-
-        # ⑦ 打开浏览器（尾部；`MEETING_NO_BROWSER=1` 时跳过并落一行日志）
+        # ⑥ 打开浏览器（尾部；`MEETING_NO_BROWSER=1` 时跳过并落一行日志）
         self._open_browser()
 
     def _open_browser(self) -> None:
@@ -915,34 +906,6 @@ class ServiceRuntime:
             raw, DEFAULT_FRAME_INTERVAL_SECONDS,
         )
 
-    def _scan_unfinished(self) -> None:
-        """扫未收尾场次：命中即在空闲态挂 `notice.restart_unfinished` 并改写现场。
-
-        **绝不自动续录、绝不把状态恢复成「录音中」**；改写只动那一份 `session.json`。
-        """
-        session_dir, warning = self.store.scan_unfinished()
-        if warning:
-            _log.warning(warning)
-        if session_dir is None:
-            return
-        record, _error = self.store.load(session_dir)
-        if record is None:  # pragma: no cover - scan_unfinished 已保证读得出来
-            return
-        log_path = self.log_path
-        self.store.mark_unfinished(session_dir, record)
-        self._pending_restart_session = session_dir
-        self.snapshot.notice = Notice(
-            kind="restart_unfinished",
-            text=restart_unfinished_text(session_dir, log_path),
-            session_dir=session_dir,
-            log_path=log_path,
-        )
-        _log.warning(
-            "启动扫描改写：已把 %s 的 %s 改写成 state=draining + interrupted=true"
-            "（原 steps 原样保留、不伪造终态），这一场拦住新场次",
-            session_dir, SESSION_FILE_NAME,
-        )
-
     # -- 状态 JSON 产出（唯一产出者） -------------------------------------
 
     def _live_elapsed(self) -> None:
@@ -975,7 +938,6 @@ class ServiceRuntime:
             port=int(self.bound_port or 0),
             url=self.url if self.bound_port not in (None, 0) else "",
             log_path=self.log_path,
-            out_root=self.out_root,
         )
 
     # -- 每一路健康迁移的日志事件（契约点名的必落 log 事件） ----------------
@@ -1288,7 +1250,7 @@ class ServiceRuntime:
             text = getattr(line, "text", "")
             self.snapshot.transcript.last_line_at = now_iso()
             if str(text).startswith("[[识别失败"):
-                # 占位符是失败档的唯一形状（`docs/legacy-assets.md` 的 B12）：
+                # 占位符是失败档的唯一形状（`docs/v1-lineage.md` 的 B12）：
                 # 计数只在这里 +1，与后端报的失败原因同源（同一份文本）
                 self.snapshot.transcript.failed_segments += 1
             changed = self._refresh_transcript_snapshot()
@@ -1554,17 +1516,30 @@ class ServiceRuntime:
         )
         return self.store.write_session_json(session.dir, record)
 
-    def start_session(self, mode: str | None = None) -> SessionInfo:
-        """`start`：判态 → 校验 `mode` → 判后端可用性 → 建目录写文件 → 进 `recording`。"""
+    def start_session(self, mode: str | None = None, dir: Any = None) -> SessionInfo:
+        """`start`：判态 → 校验落点与 `mode` → 判后端可用性 → 写第一版文件 → 进 `recording`。
+
+        落点 = 请求**显式**给的目标工作区目录（`args.dir`，已存在的目录）：本方法**不建目录、
+        不按日期命名、没有默认落点**（`docs/design-intent.md` 第 3、4 条）。
+        """
         mode = DEFAULT_SESSION_MODE if mode is None else mode
 
-        # ① 判态三档（含「重启现场拦住新场次」那一档）
+        # ① 判态两档（已录 / 收尾中）
         if self.snapshot.top_state in ("recording", "alert"):
             raise self._already_recording_error()
         if self.snapshot.top_state == "ended" and self._is_draining():
             raise self._draining_error(self.snapshot.session)
-        if self.snapshot.top_state == "idle" and self._pending_restart_session is not None:
-            raise self._draining_error_for_dir(self._pending_restart_session)
+
+        # ② 校验落点（**显式给、已存在、里面没有另一场的记录**；不建目录）
+        try:
+            session_dir = resolve_workspace_dir(dir)
+        except ValueError as exc:
+            raise ActionError(
+                "invalid_setting", str(exc), status=400,
+                detail={"key": "dir", "value": None if dir is None else str(dir),
+                        "legal": "已存在的目录（本服务不设默认落点、不建目录）"},
+            ) from exc
+        session_id = Path(session_dir).name
 
         # ② 校验 args（**在建目录之前**）
         if mode not in SESSION_MODES:
@@ -1582,8 +1557,7 @@ class ServiceRuntime:
                 "capture_unavailable", "采集后端未接入：当前没有可用的采集实现", status=503
             )
 
-        # ④ 建目录 → **先把第一版 session.json 落稳** → 挂场次 log → 起采集 → 进 recording
-        session_id, session_dir = self.store.create_session_dir()
+        # ④ **先把第一版 session.json 落稳** → 挂场次 log → 起采集 → 进 recording
         session = SessionInfo(
             id=session_id,
             dir=session_dir,
@@ -1610,15 +1584,17 @@ class ServiceRuntime:
                 ),
             )
         except Exception as exc:
-            # **不进入 recording**：清掉刚建的场次目录并留痕（R16 与重启自洽都依赖这份文件）
+            # **不进入 recording**：把刚写下的那份 session.json 收走并留痕（目录是用户的，
+            # 只清本场写入的文件，不删工作区目录本身）
             self.store.remove_session_dir(session_dir)
             _log.error(
-                "场次开始失败：%s 的 %s 写不进去（%s: %s）；场次目录已清理：%s",
-                session_id, SESSION_FILE_NAME, type(exc).__name__, exc, session_dir,
+                "场次开始失败：%s 的 %s 写不进去（%s: %s）；已收走本场写入的 %s：%s",
+                session_id, SESSION_FILE_NAME, type(exc).__name__, exc,
+                SESSION_FILE_NAME, session_dir,
             )
             raise ActionError(
                 "capture_unavailable",
-                f"场次目录建好但 {SESSION_FILE_NAME} 写不进去，已清理并放弃这一场",
+                f"{SESSION_FILE_NAME} 写不进工作区目录，已收走本场写入的文件并放弃这一场",
                 status=503,
                 detail={"session_id": session_id, "dir": session_dir,
                         "error": f"{type(exc).__name__}: {exc}"},
@@ -1643,14 +1619,15 @@ class ServiceRuntime:
         )
 
         try:
-            # 采集起不来 → 如实回 `capture_unavailable`(503)，**刚建的场次目录清掉**
-            # （态不对 / 后端不可用时盘上不留任何目录，phase2 §3.6.2 的硬要求）
+            # 采集起不来 → 如实回 `capture_unavailable`(503)，**收走本场已写入的文件**
+            # （不删用户的工作区目录本身；态不对 / 后端不可用时盘上不留这一场的记录）
             backend.start(mode, session_dir)
         except Exception as exc:
             message = getattr(exc, "message", None) or f"{type(exc).__name__}: {exc}"
             _log.error("采集起不来：%s（场次 %s）", message, session_id)
             self.store.remove_session_dir(session_dir)
-            _log.warning("场次目录已清理：%s（采集起不来，盘上不留这一场）", session_dir)
+            _log.warning("已收走本场写入的 %s：%s（采集起不来，盘上不留这一场）",
+                         SESSION_FILE_NAME, session_dir)
             self._abort_session(session)
             raise ActionError(
                 "capture_unavailable",
@@ -1681,7 +1658,6 @@ class ServiceRuntime:
             # `buffered_lines` 照旧只写快照、不参与这次提交。
             self._refresh_transcript_snapshot()
 
-        self._pending_restart_session = None
         self.last_frame_ts = None
         self.commit()
         # 健康度节拍**从这一场开始起**（见 `_ensure_transcriber_health_ticker()` 的说明）
@@ -1799,26 +1775,6 @@ class ServiceRuntime:
                 "session_id": None if session is None else session.id,
                 "dir": None if session is None else session.dir,
                 "failed_steps": self._failed_steps_detail(),
-                "log_path": self.log_path,
-            },
-        )
-
-    def _draining_error_for_dir(self, session_dir: str) -> ActionError:
-        """重启现场的拒绝路径：场次目录来自扫描结果（快照里 `session` 仍是 `null`）。"""
-        record = self.store.read_session_json(session_dir) or {}
-        failed = [
-            {"id": step.get("id"), "error": step.get("error")}
-            for step in (record.get("drain", {}) or {}).get("steps", [])
-            if step.get("status") == "failed"
-        ]
-        return ActionError(
-            "draining",
-            "上一场没走完（服务重启过），这一场不能开",
-            status=409,
-            detail={
-                "session_id": record.get("session_id") or session_dir.rsplit("\\", 1)[-1].rsplit("/", 1)[-1],
-                "dir": session_dir,
-                "failed_steps": failed,
                 "log_path": self.log_path,
             },
         )
@@ -2729,7 +2685,7 @@ class ServiceRuntime:
                 _log.error(
                     "收尾有失败步 %s：会话停在 draining，服务不自杀；"
                     "出路一：`meeting post %s`（音频与 session.json 都在盘上，重跑不欠这次收尾什么）；"
-                    "出路二：看清现场后重启服务（重启走 restart_unfinished 那一档）",
+                    "出路二：看清现场后重启服务",
                     failed, session_dir,
                 )
         return final_state
@@ -2817,9 +2773,9 @@ class ServiceRuntime:
         语义是「先跑收尾、再请求关停」，四类触发点在这里分支（§3.5 的表）：
 
           - `force=False` 且**当场没有收尾要管** → 直接退出（空闲退出档）：`idle`（进程刚起、
-            没开过任何一场）、`idle` 挂着重启提示（`notice.restart_unfinished`）、以及
+            没开过任何一场）、以及
             `ended` 且四步已全部落定**无 `failed`**（`ended.phase == "done"`，收尾干净走完）
-            三格都落在这一支 —— 第三种是审查问题 C1 补上的那一格，它**不写盘**；
+            两格都落在这一支 —— 第二种是审查问题 C1 补上的那一格，它**不写盘**；
           - `force=False` 且当时 `recording` / `alert` → 走**同一条**
             `stop_session(reason="ctrl_c")` 路径起收尾，等它落定再请求关停；
           - `force=True`，或当时已经停在 `ended·draining`（`stop` 之后、收尾失败或还没跑完）
@@ -2877,8 +2833,8 @@ class ServiceRuntime:
         if self.snapshot.ended is not None:
             self._settle_drain_host()
             self.mark_interrupted()
-        else:  # pragma: no cover - 重启现场那一档：盘上已是 draining + interrupted
-            _log.warning("强制打断：手上没有收尾中的场次（重启现场的盘上那一版已由启动扫描落稳）")
+        else:  # pragma: no cover - 盘上有没收完的场次但快照没有它（收编归注册表节点）
+            _log.warning("强制打断：手上没有收尾中的场次，盘上那一版不在本次收尾的责任范围")
         await self._cancel_drain_task()
         self._request_server_shutdown()
         return "interrupted"
@@ -2894,8 +2850,8 @@ class ServiceRuntime:
 
         §3.5 行为表把「收尾进行中」「收尾失败现场」两档与「无收尾可做」分得一清二楚，
         判据因此落在**句柄 `_drain_task` 的读法**上（它由 phase2 的 `drain()` 持有、走完含
-        被取消那趟后置空），**不看盘上有没有未收尾场次**：`_pending_restart_session` 是
-        `start` 的拦截条件（§3.6 的启动扫描留下的现场），此刻**没有任何收尾在跑**。
+        被取消那趟后置空），**不看盘上有没有未收尾场次**：盘上的旧场次归下一节点的
+        注册表收编，但与本收尾句柄无关 —— 此刻**没有任何收尾在跑**。
         """
         return self.drain_in_progress()
 
@@ -2929,11 +2885,8 @@ class ServiceRuntime:
           - `ended` + 四步已全部落定且**无 `failed`**（`ended.phase == "done"`）→ **没有收尾要管**：
             收尾终态已经由 `finish_drain()` 那一趟落稳（盘上 `state="done"` + `ended_at` 都在），
             这一刻直接退出即可（空闲退出档），**盘上一个字节都不改**（C1 的那一格）；
-          - **其余情形直接退出、走空闲退出档** —— `idle` 挂着重启提示
-            （`notice.restart_unfinished`）时正落在这一格：这一刻 `_drain_task is None`，
-            手上没有任何要收的尾，重启现场那一版盘上值已由启动扫描落稳。
-            `_pending_restart_session` 只拦新场次的 `start`，拿它当关停档位的判据会让
-            「重启提示态下第一次 `Ctrl+C`」落进强制打断档（退出码 130）。
+          - **其余情形直接退出、走空闲退出档** —— `idle`（手上没有场次）正落在这一格：
+            这一刻 `_drain_task is None`，手上没有任何要收的尾。
         """
         top = self.snapshot.top_state
         if top in ("recording", "alert"):

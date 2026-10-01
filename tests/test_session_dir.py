@@ -1,14 +1,15 @@
-"""`tests/test_session_dir.py` —— 场次目录、`session.json` 与原子写（phase2 §5.1 第四行）。
+"""`tests/test_session_dir.py` —— 工作区寻址与 `session.json`（「没有默认落点」定稿）。
 
 覆盖：
 
-  - 输出根不存在时**只在 `start` 那一刻建**（服务启动与扫描都不建）；
-  - `preview_next_dir()` **只算不建**（调用后目录不存在）且与随后 `start` 选中的名字一致；
-  - `YYMMDD` 命名与 `-2` / `-3` 递增；`session.id` **就是目录名**；
-  - `session.json` 字段全貌、**原子写**（输出根里**无 `.tmp` 残骸**、读到的永远是完整 JSON）、
+  - `start` **必须显式给目标工作区目录**：缺失 / 不是已存在目录 / 里面已有另一场的
+    `session.json` 都被 `invalid_setting` 拦下；服务侧不建目录、不按日期命名；
+  - `session.id` **就是目录名**，`dir` 是工作区目录的绝对路径；
+  - **日期**是 `session.json` 的元信息字段（`date`），从开场的时刻取，不来自目录名；
+  - `session.json` 字段全貌、**原子写**（**无 `.tmp` 残骸**、读到的永远是完整 JSON）、
     **每个阶段变更都落盘一次**（四步的 `status` / `detail` 各写一次）；
   - `sources[*].archive` = `meeting_audio_<source>.pcm`；
-  - `start` 写文件失败 → **不进 `recording`**、刚建的场次目录被清掉、主 log 有那条清理留痕。
+  - `start` 写文件失败 → **不进 `recording`**、只收走本场写入的文件、主 log 有留痕。
 """
 
 from __future__ import annotations
@@ -17,7 +18,6 @@ import asyncio
 import json
 import threading
 import time
-from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -27,79 +27,109 @@ from meeting.session import (
     SESSION_FILE_NAME,
     SessionStore,
     build_session_record,
+    resolve_workspace_dir,
     state_for,
 )
 from meeting.state import DRAIN_STEP_IDS
 
-#: 慢钩子最长阻塞（秒）：足够用例观察到「收尾中」那一版盘上内容
-SLOW_HOOK_SECONDS = 10.0
-
 
 # ---------------------------------------------------------------------------
-# 目录分配
+# 工作区寻址（没有默认落点）
 # ---------------------------------------------------------------------------
 
 
-def test_output_root_is_created_only_at_start(tmp_path):
-    """输出根不存在时**只在 `start` 那一刻建**：服务启动不建、扫描不建。"""
-    out_root = tmp_path / "not-created-yet"
-    assert not out_root.exists()
+def test_resolve_workspace_dir_requires_an_existing_directory(tmp_path):
+    """必给、已存在、里面没有另一场的记录；返回**绝对路径**，什么都没建。"""
+    workspace = tmp_path / "跟老王聊周会"
+    workspace.mkdir()
+    resolved = resolve_workspace_dir(str(workspace))
+    assert Path(resolved).is_absolute()
+    assert resolved == str(workspace)
+    # 没设默认落点：除了用户自己建的那个什么都没有
+    assert [item.name for item in tmp_path.iterdir()] == ["跟老王聊周会"]
 
-    home = tmp_path / "home"
-    home.mkdir()
-    helpers.write_config_json(home, {"web.port": 0, "output.root": str(out_root)})
-    proc = helpers.spawn_service(home)
+
+def test_resolve_workspace_dir_refuses_missing_or_dirty_targets(tmp_path):
+    """缺失值 / 不存在的目录 / 已有 session.json 的目录都在这里当场拦下。"""
+    with pytest.raises(ValueError):
+        resolve_workspace_dir(None)
+    with pytest.raises(ValueError):
+        resolve_workspace_dir("")
+    with pytest.raises(ValueError):
+        resolve_workspace_dir(str(tmp_path / "not-there"))  # 不自动建
+
+    taken = tmp_path / "taken"
+    taken.mkdir()
+    (taken / SESSION_FILE_NAME).write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError):
+        resolve_workspace_dir(str(taken))
+
+
+def test_start_action_requires_the_workspace_dir(tmp_path):
+    """走真入口：不带 `args.dir` 的 start 回 `invalid_setting`(400)，话里说明没有默认落点。"""
+    stack, client, runtime, out_root = build_client(tmp_path)
     try:
-        proc.wait_ready()
-        assert not out_root.exists(), "服务启动（含扫未收尾场次）不该建输出根"
+        response = _post(client, "start", {})
+        assert response.status_code == 400, response.text
+        body = response.json()
+        assert body["code"] == "invalid_setting"
+        assert "默认落点" in body["message"]
+        # 放置根下什么都没出现（没建目录、没有场次目录）
+        assert list(out_root.iterdir()) == []
+        assert runtime.snapshot.top_state == "idle"
     finally:
-        proc.terminate()
+        stack.close()
 
 
-def test_preview_next_dir_calculates_without_creating(tmp_path):
-    """`preview_next_dir()` **只算不建**，且与随后真正 `start` 时算出的名字一致。"""
-    out_root = tmp_path / "out"
-    store = SessionStore(str(out_root))
-    preview = store.preview_next_dir()
-    assert not Path(preview).exists()
-    assert not out_root.exists(), "预览不该顺手把输出根建出来"
-
-    session_id, session_dir = store.create_session_dir()
-    assert Path(session_dir).exists()
-    assert Path(preview).name == session_id
-    # 已经用掉那个名字之后，下一次预览让位到 -2
-    assert Path(store.preview_next_dir()).name == f"{session_id}-2"
-
-
-def test_session_dir_names_increment_with_dash_suffix(tmp_path):
-    """`YYMMDD` 与 `-2` / `-3` 递增；**已存在就让位、不复用**。"""
-    out_root = tmp_path / "out"
-    store = SessionStore(str(out_root))
-    day = datetime(2026, 9, 6)
-
-    first_id, first_dir = store.create_session_dir(today=day)
-    second_id, second_dir = store.create_session_dir(today=day)
-    third_id, third_dir = store.create_session_dir(today=day)
-
-    assert first_id == "250906"
-    assert second_id == "250906-2"
-    assert third_id == "250906-3"
-    for directory in (first_dir, second_dir, third_dir):
-        assert Path(directory).is_dir()
-    assert len({first_dir, second_dir, third_dir}) == 3
+def test_start_action_refuses_a_nonexistent_dir_and_does_not_create_it(tmp_path):
+    """`args.dir` 指到不存在的目录：400、目录不被建出来（软件不建目录）。"""
+    stack, client, runtime, _out = build_client(tmp_path)
+    try:
+        target = tmp_path / "out" / "陌生人给的目录"
+        response = _post(client, "start", {"dir": str(target)})
+        assert response.status_code == 400
+        assert response.json()["code"] == "invalid_setting"
+        assert not target.exists(), "服务不该替用户建目录"
+        assert runtime.snapshot.top_state == "idle"
+    finally:
+        stack.close()
 
 
-def test_preview_matches_the_name_start_will_take(tmp_path):
-    """预览与实建同名：留一个 `250906` 在场，预览与实建都落在 -2 上。"""
-    out_root = tmp_path / "out"
-    store = SessionStore(str(out_root))
-    day = datetime(2026, 9, 6)
-    (out_root / "250906").mkdir(parents=True)
+def test_start_action_refuses_a_workspace_that_already_has_a_session(tmp_path):
+    """目录里已有 `session.json`：拒绝，不给它盖第二份现场。"""
+    stack, client, _runtime, out_root = build_client(tmp_path)
+    try:
+        taken = helpers.allocate_start_dir(out_root)
+        (Path(taken) / SESSION_FILE_NAME).write_text("{}", encoding="utf-8")
+        response = _post(client, "start", {"dir": taken})
+        assert response.status_code == 400
+        assert response.json()["code"] == "invalid_setting"
+    finally:
+        stack.close()
 
-    assert Path(store.preview_next_dir(today=day)).name == "250906-2"
-    session_id, _dir = store.create_session_dir(today=day)
-    assert session_id == "250906-2"
-    assert Path(store.preview_next_dir(today=day)).name == "250906-3"
+
+def test_start_uses_the_given_workspace_verbatim(tmp_path):
+    """显式给的目录原样成为这一场的工作区：`session.id` = 目录名、`dir` = 绝对路径、
+    日期进 `session.json` 的 `date` 字段。"""
+    stack, client, runtime, out_root = build_client(tmp_path)
+    try:
+        workspace = Path(helpers.allocate_start_dir(out_root)) / "250906-不按日期命名的名字"
+        workspace.mkdir()
+        response = _post(client, "start", {"dir": str(workspace)})
+        assert response.status_code == 200, response.text
+        record = read_json(workspace / SESSION_FILE_NAME)
+        assert runtime.snapshot.session.id == workspace.name
+        assert runtime.snapshot.session.dir == str(workspace)
+        assert record["session_id"] == workspace.name == "250906-不按日期命名的名字"
+        assert record["dir"] == str(workspace)
+        # 日期是元信息：从开场的时刻取（今天），目录名的语义不算数
+        assert len(record["date"]) == 10 and record["date"][4] == "-"
+        assert set(record) == {
+            "session_id", "dir", "date", "mode", "state", "created_at", "started_at",
+            "ended_at", "sources", "drain", "interrupted", "service",
+        }
+    finally:
+        stack.close()
 
 
 # ---------------------------------------------------------------------------
@@ -110,8 +140,8 @@ def test_preview_matches_the_name_start_will_take(tmp_path):
 def test_session_json_has_the_frozen_field_shape(tmp_path):
     """字段全貌：一份都不省（四步各一条、每条四键齐；两路各一条、每条三键齐）。"""
     record = build_session_record(
-        session_id="250906",
-        session_dir=str(tmp_path / "250906"),
+        session_id="跟老王聊周会",
+        session_dir=str(tmp_path / "跟老王聊周会"),
         mode="both",
         state="recording",
         created_at="2025-09-06T10:00:00+08:00",
@@ -120,9 +150,10 @@ def test_session_json_has_the_frozen_field_shape(tmp_path):
         pid=1234,
     )
     assert set(record) == {
-        "session_id", "dir", "mode", "state", "created_at", "started_at", "ended_at",
+        "session_id", "dir", "date", "mode", "state", "created_at", "started_at", "ended_at",
         "sources", "drain", "interrupted", "service",
     }
+    assert record["date"] == "2025-09-06"
     assert record["state"] in ("recording", "draining", "done", "failed")
     assert [step["id"] for step in record["drain"]["steps"]] == list(DRAIN_STEP_IDS)
     for step in record["drain"]["steps"]:
@@ -140,23 +171,23 @@ def test_session_json_has_the_frozen_field_shape(tmp_path):
 
 
 def test_write_session_json_is_atomic_and_leaves_no_tmp(tmp_path):
-    """原子写：输出根里**无 `.tmp` 残骸**，盘上那一版永远是完整可解析的 JSON。"""
-    out_root = tmp_path / "out"
-    store = SessionStore(str(out_root))
-    session_id, session_dir = store.create_session_dir()
+    """原子写：**无 `.tmp` 残骸**，盘上那一版永远是完整可解析的 JSON。"""
+    workspace = tmp_path / "out" / "ws"
+    workspace.mkdir(parents=True)
+    store = SessionStore()
     record = build_session_record(
-        session_id=session_id, session_dir=session_dir, mode="both", state="recording",
+        session_id="ws", session_dir=str(workspace), mode="both", state="recording",
         created_at="t0", started_at="t0",
     )
-    target = store.write_session_json(session_dir, record)
+    target = store.write_session_json(str(workspace), record)
 
     assert Path(target).name == SESSION_FILE_NAME
-    leftovers = [item.name for item in Path(session_dir).iterdir() if item.name.endswith(".tmp")]
+    leftovers = [item.name for item in workspace.iterdir() if item.name.endswith(".tmp")]
     assert leftovers == []
     assert json.loads(Path(target).read_text(encoding="utf-8"))["state"] == "recording"
 
-    # 写不进去的情形也要清掉临时文件：让场次目录本身不可写（同名目录顶替目标文件）
-    blocked = Path(session_dir) / "blocked"
+    # 写不进去的情形也要清掉临时文件：让目录里同名目录顶替目标文件
+    blocked = workspace / "blocked"
     blocked.mkdir()
     (blocked / SESSION_FILE_NAME).mkdir()
     with pytest.raises(OSError):
@@ -197,15 +228,15 @@ def build_client(tmp_path: Path, values: dict | None = None):
     home.mkdir(parents=True, exist_ok=True)
     out_root = tmp_path / "out"
     out_root.mkdir(parents=True, exist_ok=True)
-    config = {"output.root": str(out_root), "capture.backend": "dev",
-              "web.dist_dir": str(helpers.missing_dist_dir(home))}
+    config = {"capture.backend": "dev", "web.dist_dir": str(helpers.missing_dist_dir(home))}
     config.update(values or {})
     stack = contextlib.ExitStack()
     client = stack.enter_context(helpers.app_client(home, values=config))
     return stack, client, client.app.state.runtime, out_root
 
 
-def post(client, action: str, args: dict | None = None):
+def _post(client, action: str, args: dict | None = None, *, explicit_dir: Path | None = None):
+    """打一个动作；`explicit_dir is None` 时**不自动补** `dir`（要验「不给 dir」那一档）。"""
     body = {"action": action}
     if args is not None:
         body["args"] = args
@@ -220,10 +251,10 @@ def test_every_phase_change_writes_the_session_file(tmp_path, monkeypatch):
     """`session.id` = 目录名；`start` / 收尾每一步 / 终态各落盘一次。"""
     stack, client, runtime, out_root = build_client(tmp_path)
     try:
-        assert post(client, "start").status_code == 200
+        workspace = Path(helpers.allocate_start_dir(out_root))
+        assert _post(client, "start", {"dir": str(workspace)}).status_code == 200
         session_dir = Path(runtime.snapshot.session.dir)
-        assert session_dir.parent == out_root
-        assert session_dir.name == runtime.snapshot.session.id
+        assert session_dir == workspace
 
         first = read_json(session_dir / SESSION_FILE_NAME)
         assert first["state"] == "recording"
@@ -257,13 +288,6 @@ def test_every_phase_change_writes_the_session_file(tmp_path, monkeypatch):
         # 本用例把这一层换成「照原样调用、如实回报耗时」的替身：**同步实现放进工作线程**
         # （与真实现里的 `asyncio.to_thread` 同形），慢钩子因此不会把事件循环钉住，
         # `/api/state` 在整个等待里照常应答。
-        # 接缝要收得下 `_drain_wait()` 的签名（`deadline` / `min_budget` / `invoke` 都是关键字）。
-        #
-        # **这一处改动的授权来源（第七轮审查 m4）**：phase3 的 `_drain_wait` 取代
-        # `_call_step` —— phase2 时本用例 monkeypatch 的是 `runtime._call_step`，那个接缝在
-        # phase3 的等待上限里被删掉了，替换成这一个。本用例要验的仍是同一件事
-        # （「每换一个阶段都写一次 session.json」+ 慢钩子期间盘上那一版的样子），
-        # 断言一字未改。
         async def transparent_drain_wait(step_id, call, **kwargs):
             del step_id, kwargs
             began = time.monotonic()
@@ -276,7 +300,7 @@ def test_every_phase_change_writes_the_session_file(tmp_path, monkeypatch):
 
         monkeypatch.setattr(runtime, "_drain_wait", transparent_drain_wait)
 
-        assert post(client, "stop").status_code == 200
+        assert _post(client, "stop").status_code == 200
         assert hook.started.wait(timeout=SLOW_HOOK_SECONDS), "收尾该走到 post 那一步"
         during = read_json(session_dir / SESSION_FILE_NAME)
         assert during["state"] == "draining"
@@ -301,8 +325,8 @@ def test_every_phase_change_writes_the_session_file(tmp_path, monkeypatch):
         }
         assert done["ended_at"]
         assert done["interrupted"] is False
-        # 输出根里没有 `.tmp` 残骸
-        assert [item.name for item in out_root.rglob("*.tmp")] == []
+        # 工作区里没有 `.tmp` 残骸
+        assert [item.name for item in session_dir.rglob("*.tmp")] == []
     finally:
         stack.close()
 
@@ -318,11 +342,15 @@ def _wait_for(predicate, *, what: str, timeout: float = 15.0):
     raise AssertionError(f"等待超时（{timeout}s）：{what}（最后观察值 {last!r}）")
 
 
+SLOW_HOOK_SECONDS = 10.0
+
+
 def test_start_writes_sources_archive_names_and_mode(tmp_path):
     """`mode` 与两路 `device` / `archive` 都进第一版 `session.json`。"""
-    stack, client, runtime, _out = build_client(tmp_path)
+    stack, client, runtime, out_root = build_client(tmp_path)
     try:
-        assert post(client, "start", {"mode": "mic"}).status_code == 200
+        workspace = Path(helpers.allocate_start_dir(out_root))
+        assert _post(client, "start", {"dir": str(workspace), "mode": "mic"}).status_code == 200
         session_dir = Path(runtime.snapshot.session.dir)
         record = read_json(session_dir / SESSION_FILE_NAME)
         assert record["mode"] == "mic"
@@ -333,10 +361,12 @@ def test_start_writes_sources_archive_names_and_mode(tmp_path):
         stack.close()
 
 
-def test_start_failure_cleans_the_session_dir_and_leaves_a_trace(tmp_path, monkeypatch):
-    """`start` 写 `session.json` 失败 → 不进 `recording`、刚建的目录被清掉、主 log 有留痕。"""
+def test_start_failure_cleans_its_own_file_and_leaves_a_trace(tmp_path, monkeypatch):
+    """`start` 写 `session.json` 失败 → 不进 `recording`、收走本场写入的文件、主 log 有留痕。"""
     stack, client, runtime, out_root = build_client(tmp_path)
     try:
+        workspace = Path(helpers.allocate_start_dir(out_root))
+        (workspace / "用户自己的文件.txt").write_text("别动我", encoding="utf-8")
         boom = RuntimeError("写盘按测试要求失败")
         original = runtime.store.write_session_json
 
@@ -345,27 +375,21 @@ def test_start_failure_cleans_the_session_dir_and_leaves_a_trace(tmp_path, monke
 
         monkeypatch.setattr(runtime.store, "write_session_json", failing)
 
-        response = post(client, "start")
+        response = _post(client, "start", {"dir": str(workspace)})
         assert response.status_code == 503, response.text
         assert response.json()["code"] == "capture_unavailable"
         assert runtime.snapshot.top_state == "idle"
         assert runtime.snapshot.session is None
-        # 刚建的场次目录被清掉、盘上不留任何场次目录
-        assert [item for item in out_root.iterdir() if item.is_dir()] == []
-        # 清掉之后 `preview_next_dir()` 算出的下一个名字与随后真正 start 时一致
+        # 工作区目录与用户自己的文件**都在**（软件不删用户目录），同一目录可再开一场
+        assert workspace.is_dir()
+        assert (workspace / "用户自己的文件.txt").read_text(encoding="utf-8") == "别动我"
+        assert not (workspace / ".session.json").exists()
         monkeypatch.setattr(runtime.store, "write_session_json", original)
-        today_name = datetime.now().strftime("%y%m%d")
-        preview = Path(runtime.store.preview_next_dir())
-        assert not preview.exists(), "预览只算不建"
-        assert preview.name == today_name, "清掉之后下一个名字回到当天那一档"
-        assert post(client, "start").status_code == 200
-        session_dir = Path(runtime.snapshot.session.dir)
-        assert session_dir.name == preview.name, "预览的名字就是随后真正 start 用掉的那个"
-        assert session_dir.name == today_name
+        assert _post(client, "start", {"dir": str(workspace)}).status_code == 200
+        assert Path(runtime.snapshot.session.dir) == workspace
 
-        # 主 log 里能读到那条清理留痕
+        # 主 log 里能读到那条留痕
         log_text = helpers.read_text(helpers.service_log_path_of(tmp_path / "home"))
-        assert "场次目录已清理" in log_text
         assert "写不进去" in log_text
     finally:
         stack.close()

@@ -456,7 +456,7 @@ class SoundcardLoopbackSource:
 
     线程体的第一件事仍是 `ctypes.windll.ole32.CoInitializeEx(None, 0)`：`soundcard` 依赖
     COM（WASAPI），子线程不手动初始化 apartment 会报 `0x800401F0`，而那个失败会被
-    `except: pass` 吞掉，只能从「采到的是全零」倒推出来（`docs/legacy-assets.md` 的坑 C2）。
+    `except: pass` 吞掉，只能从「采到的是全零」倒推出来（`docs/v1-lineage.md` 的坑 C2）。
     """
 
     #: 这一路的标识（引擎按 `source` 记账）

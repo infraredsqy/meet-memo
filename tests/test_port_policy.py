@@ -83,7 +83,7 @@ def _free_ephemeral_port() -> int:
 
 
 def test_service_starts_and_reports_selected_port(tmp_path):
-    """起得来：终端有 URL / 输出根 / log 路径三样；选中端口可问 heartbeat。"""
+    """起得来：终端有 URL / log 路径两样；选中端口可问 heartbeat。"""
     home = tmp_path / "home"
     home.mkdir()
     helpers.write_config_json(home, {"web.port": 0})
@@ -93,7 +93,6 @@ def test_service_starts_and_reports_selected_port(tmp_path):
         proc.wait_ready()
         stdout = proc.stdout()
         assert "URL：" in stdout
-        assert "输出根：" in stdout
         assert "log 路径：" in stdout
 
         port = proc.port()

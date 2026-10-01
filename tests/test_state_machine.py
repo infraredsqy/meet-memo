@@ -81,10 +81,11 @@ def build_live_client(tmp_path: Path, values: dict | None = None):
     home.mkdir(parents=True, exist_ok=True)
     out_root = tmp_path / "out-live"
     out_root.mkdir(parents=True, exist_ok=True)
-    config = {"output.root": str(out_root), "web.dist_dir": str(helpers.missing_dist_dir(home))}
+    config = {"web.dist_dir": str(helpers.missing_dist_dir(home))}
     config.update(values or {})
     stack = contextlib.ExitStack()
     client = stack.enter_context(helpers.app_client(home, values=config))
+    client.place_root = out_root
     runtime = client.app.state.runtime
     return stack, client, runtime
 
@@ -137,8 +138,8 @@ def wait_for_drain_done(client, *, timeout: float = STATE_POLL_TIMEOUT_SECONDS) 
 
 def post(client, action: str, args: dict | None = None):
     body = {"action": action}
-    if args is not None:
-        body["args"] = args
+    if args is not None or action == "start":
+        body["args"] = helpers.start_args(action, args, client.place_root)
     return client.post("/api/actions", json=body, headers={"X-Meeting-Service": "1"})
 
 
@@ -171,17 +172,15 @@ def test_empty_snapshot_shape_is_the_frozen_one():
             port=8765,
             url="http://127.0.0.1:8765",
             log_path="x/meeting.log",
-            out_root="x/out",
         )
     )
     assert set(payload) == {
         "revision", "service", "top_state", "session", "sources",
-        "alerts", "transcript", "ended", "settings", "notice",
+        "alerts", "transcript", "ended", "settings",
     }
     assert payload["top_state"] == "idle"
     assert payload["session"] is None
     assert payload["ended"] is None
-    assert payload["notice"] is None
     assert [item["id"] for item in payload["sources"]] == ["mic", "loopback"]
     for item in payload["sources"]:
         assert item["health"] in SOURCE_HEALTH
@@ -293,7 +292,7 @@ def test_rejected_request_does_not_grow_revision_or_touch_disk(tmp_path):
         assert response.status_code == 409
         assert response.json()["code"] == "not_recording"
         assert snapshot_of(client)["revision"] == before
-        assert not list(Path(runtime.output_root).rglob("session.json"))
+        assert not list(Path(client.place_root).rglob("session.json"))
     finally:
         stack.close()
 
@@ -308,7 +307,11 @@ def test_rejected_request_does_not_touch_disk_when_recording(tmp_path):
         assert rejected.status_code == 409
         assert rejected.json()["code"] == "already_recording"
         assert snapshot_of(client)["revision"] == after
-        dirs = [item for item in Path(runtime.output_root).iterdir() if item.is_dir()]
+        # 录中的那一场只有一个：预建的 ws1 里落了 session.json，拒绝路径没有第二场
+        dirs = [
+            item for item in Path(client.place_root).iterdir()
+            if (item / "session.json").exists()
+        ]
         assert len(dirs) == 1, f"盘上不该有第二场：{dirs}"
     finally:
         stack.close()
@@ -801,7 +804,7 @@ def test_probe_status_out_of_range_falls_back_to_probe_failed(tmp_path):
 
     home = tmp_path / "home-weird"
     home.mkdir()
-    helpers.write_config_json(home, {"web.port": 8765, "output.root": str(tmp_path / "out-weird")})
+    helpers.write_config_json(home, {"web.port": 8765})
     import os
 
     old_home, old_profile = os.environ.get("HOME"), os.environ.get("USERPROFILE")
@@ -838,7 +841,7 @@ def test_unassembled_snapshot_raises(tmp_path):
     """未装配（还没绑监听 socket）即取快照 → 抛错，不留退化的空值。"""
     home = tmp_path / "home-unassembled"
     home.mkdir()
-    helpers.write_config_json(home, {"output.root": str(tmp_path / "out-unassembled")})
+    helpers.write_config_json(home, {"web.port": 8765})
     import os
 
     old_home, old_profile = os.environ.get("HOME"), os.environ.get("USERPROFILE")

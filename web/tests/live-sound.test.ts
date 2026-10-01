@@ -370,8 +370,7 @@ describe('liveView：一份快照摊成主视图', () => {
     expect(view.channels[0]!.health.chip).toBe('本地 · 数据已停止');
   });
 
-  it('空闲 + 服务重启过：顶部那一行就是服务给的正文', () => {
-    const text = '服务重启过。上一场的收尾没走完，音频在 D:\\meeting\\out\\250906\\，日志在 C:\\log\\meeting.log。';
+  it('空闲：复位档（`notice` 槽位已随默认输出根退场，顶部不再有重启提示行）', () => {
     const snapshot = makeSnapshot({
       top_state: 'idle',
       session: null,
@@ -379,17 +378,14 @@ describe('liveView：一份快照摊成主视图', () => {
         makeSource('mic', { health: 'ready', level_dbfs: null, envelope: [] }),
         makeSource('loopback', { health: 'ready', level_dbfs: null, envelope: [] }),
       ],
-      notice: {
-        kind: 'restart_unfinished',
-        text,
-        session_dir: 'D:\\meeting\\out\\250906',
-        log_path: 'C:\\log\\meeting.log',
-      },
     });
+    expect('notice' in snapshot).toBe(false);
     const view = liveView(snapshot, initialHeartbeatState(), null, null, T('09:00:00'));
-    expect(view.restartNote).toBe(text);
     expect(view.clock).toEqual({ label: '已录', value: '00:00:00', faint: true });
     expect(view.channels.every((c) => c.stamp === '—')).toBe(true);
+    // 顶部那一行「服务重启过」没有这回事，视图层不再产生该格
+    expect('restartNote' in view).toBe(false);
+    expect(view.fatal).toBeNull();
   });
 
   it('已结束·收尾中：时长改标签并冻结', () => {

@@ -5,7 +5,8 @@
   - 默认值表逐键（含 §3.12 四个阈值、`asr.*` 五个沿用 V1 实测值、`alarm.sound` 默认 `true`）；
   - `asr.*` 五个热读键的清单；
   - `timeout_seconds > max_segment_seconds` 这条键间校验；
-  - 环境变量映射（`MEETING_PORT` / `MEETING_OUT_ROOT` / `MEETING_LOG_DIR`，**不新增变量**）；
+  - 环境变量映射（`MEETING_PORT` / `MEETING_LOG_DIR`，**不新增变量**；`MEETING_OUT_ROOT`
+    已随 `output.root` 配置键一并退场）；
   - `config.json` **缺失**时用默认值照常起；
   - `config.json` **损坏**时 `config.load()` 抛配置损坏错误（**进程内**，两支：非法 JSON / 同名目录）；
   - **值非法 → `EXIT_REJECTED`**（子进程退出码；含 `web.port` 的类型 / 范围与 `asr` 的键间规则）；
@@ -62,7 +63,6 @@ def test_default_values_match_the_frozen_table(tmp_path, monkeypatch):
     expected = {
         "web.port": 8765,
         "web.dist_dir": "web/dist",
-        "output.root": str(home / "Documents" / "meeting" / "out"),
         "log.level": "INFO",
         "log.dir": str(home / ".config" / "meeting" / "logs"),
         "log.max_bytes": 5 * 1024 * 1024,
@@ -322,7 +322,6 @@ def test_priority_environment_beats_json_beats_default(tmp_path, monkeypatch):
         home,
         {
             "web.port": 9001,
-            "output.root": str(out_root),
             "log.dir": str(log_dir),
             "web.dist_dir": "somewhere/dist",
         },
@@ -331,7 +330,6 @@ def test_priority_environment_beats_json_beats_default(tmp_path, monkeypatch):
     # ① 只有 config.json：json 层生效
     loaded = _load_with_env(monkeypatch, home, {})
     assert loaded.get("web.port") == 9001
-    assert loaded.get("output.root") == str(out_root)
     assert loaded.get("log.dir") == str(log_dir)
     assert loaded.source_of("web.port") == "config.json"
     # 没在 json 里写的键仍取默认
@@ -339,36 +337,32 @@ def test_priority_environment_beats_json_beats_default(tmp_path, monkeypatch):
     assert loaded.get("log.max_bytes") == 5 * 1024 * 1024
     assert loaded.source_of("log.max_bytes") == "默认"
 
-    # ② 环境变量压过 config.json
-    env_out = tmp_path / "out_from_env"
+    # ② 环境变量压过 config.json（不存在「输出根」那一格了：它已随默认落点退场）
     env_log = tmp_path / "logs_from_env"
     loaded = _load_with_env(
         monkeypatch,
         home,
         {
             "MEETING_PORT": "9123",
-            "MEETING_OUT_ROOT": str(env_out),
             "MEETING_LOG_DIR": str(env_log),
         },
     )
     assert loaded.get("web.port") == 9123
-    assert loaded.get("output.root") == str(env_out)
     assert loaded.get("log.dir") == str(env_log)
     assert loaded.source_of("web.port") == "环境变量 MEETING_PORT"
-    assert loaded.source_of("output.root") == "环境变量 MEETING_OUT_ROOT"
     assert loaded.source_of("log.dir") == "环境变量 MEETING_LOG_DIR"
 
 
-def test_env_mapping_is_the_five_frozen_names_plus_the_summary_key():
-    """环境变量映射：契约 §3.11 的那五个 + 会中总结的密钥那一格。
+def test_env_mapping_is_the_four_frozen_names_plus_the_summary_key():
+    """环境变量映射：契约 §3.11 的那四个 + 会中总结的密钥那一格。
 
-    `MEETING_SUMMARY_API_KEY`（`1987cb20` phase1 定名）是第六个。它是密钥，因此唯一的
-    用法就是环境变量 —— 这一条钉住它走的是与另外五个**同一条**通路（同一个表、同一档
+    `MEETING_SUMMARY_API_KEY`（`1987cb20` phase1 定名）是第五个。它是密钥，因此唯一的
+    用法就是环境变量 —— 这一条钉住它走的是与另外四个**同一条**通路（同一个表、同一档
     优先级），顺带钉住测试层的剔除清单会把它一起剔掉（那条派生见下一条用例）。
+    「输出根」那一条（`MEETING_OUT_ROOT` → `output.root`）已随默认落点退场。
     """
     assert config_module.ENV_KEYS == {
         "MEETING_PORT": "web.port",
-        "MEETING_OUT_ROOT": "output.root",
         "MEETING_LOG_DIR": "log.dir",
         "MEETING_CAPTURE": "capture.backend",
         "MEETING_SUMMARY_API_KEY": "summary.api_key",
@@ -381,12 +375,12 @@ def test_helpers_service_env_names_derive_from_the_frozen_names():
     """测试层的剔除清单由这张表派生，与 §3.11 的清单逐名对齐（密钥那一格排在最后）。
 
     `_helpers.SERVICE_ENV_NAMES` 原先手抄了一份副本；改成派生之后，这一条同时钉住两边：
-    派生结果**必须**恰好等于契约里那五个名字（顺序也照 §3.11）加新增的密钥那一格，
+    派生结果**必须**恰好等于契约里那四个名字（顺序也照 §3.11）加新增的密钥那一格，
     因此手抄副本不再有漏剔的余地，`ENV_KEYS` 将来多出键时这里会先红。
+    （`MEETING_OUT_ROOT` 随 `output.root` 退场，不再出现在清单里。）
     """
     assert helpers.SERVICE_ENV_NAMES == (
         "MEETING_PORT",
-        "MEETING_OUT_ROOT",
         "MEETING_LOG_DIR",
         "MEETING_CAPTURE",
         "MEETING_SUMMARY_API_KEY",
@@ -506,6 +500,29 @@ def test_json_unknown_key_is_rejected(tmp_path, monkeypatch):
     assert info.value.key == "web.host"
     assert "键表" in info.value.detail
     assert "'0.0.0.0'" in str(info.value)
+
+
+def test_retired_output_root_key_is_ignored(tmp_path, monkeypatch):
+    """存量 config.json 残留 `output.root`（本节点已退场的键）→ 读到即忽略，不再抛错。
+
+    既有的未知键严格拒绝**保留**（上面的 `web.host` 照样拦）；这个豁免只认
+    `output.root` 这一个退场键的字面键名。忽略时落一条 log，键不进生效值。
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    helpers.write_config_json(home, {"output.root": "D:/legacy-meetings", "web.port": 0})
+
+    _redirect_home(monkeypatch, home)
+    cfg = config_module.load()
+    assert "output.root" not in cfg.applied
+    assert "output.root" not in config_module.DEFAULT_VALUES
+    assert cfg.applied["web.port"] == 0
+
+    # 其它未知键仍然严格拒绝——豁免没有被放大成「所有未知键都忽略」
+    helpers.write_config_json(home, {"output.rooot": 1})
+    with pytest.raises(config_module.ConfigValueError) as info:
+        config_module.load()
+    assert info.value.key == "output.rooot"
 
 
 # ---------------------------------------------------------------------------

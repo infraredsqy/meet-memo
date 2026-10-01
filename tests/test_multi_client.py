@@ -40,6 +40,9 @@ def dev_service(tmp_path, service_process):
 
 def post(proc, action: str, args: dict | None = None):
     body = {"action": action}
+    if action == "start" and (args or {}).get("dir") is None:
+        # `start` 必须显式带目标工作区目录：没给时由测试层预建一个（产品没有默认落点）
+        args = {"dir": helpers.allocate_start_dir(proc.sessions_root), **(args or {})}
     if args is not None:
         body["args"] = args
     return helpers.local_post(

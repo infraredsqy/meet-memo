@@ -11,7 +11,6 @@ import {
   alertLevelSchema,
   drainStepIdSchema,
   endedPhaseSchema,
-  noticeKindSchema,
   sourceHealthSchema,
   sourceIdSchema,
   sourceModeSchema,
@@ -68,10 +67,10 @@ export const isoStringSchema = maskedString(
 );
 
 /**
- * 路径：`log_path` / `out_root` / 场次目录 / 场次目录路径，样本里统一是 `<path>`。
+ * 路径：`log_path` / 场次目录 / 场次目录路径，样本里统一是 `<path>`。
  *
  * 真值形状照线上来的那几种绝对路径开端：盘符（`C:\` / `C:/`）、UNC（`\\`）、
- * 或 POSIX 根（`/`）。相对路径不在契约里（服务的 `log_path` / `out_root` / `dir` 都是
+ * 或 POSIX 根（`/`）。相对路径不在契约里（服务的 `log_path` / `dir` 都是
  * 绝对路径），因此不放行。
  *
  * **`session.id` 不走这一条** —— 它是场次目录名而不是路径，见 `sessionIdSchema`。
@@ -79,34 +78,28 @@ export const isoStringSchema = maskedString(
 export const pathStringSchema = maskedString(PATH_PLACEHOLDER, /^(?:[A-Za-z]:[\\/]|\\\\|\/)/);
 
 /**
- * 场次目录名（`session.id`）：裸的 `YYMMDD` / `YYMMDD-N`，样本里是 `<session-id>`。
+ * 场次目录名（`session.id`）：**人给的工作区目录名**（『目录名就是这一场会的名字』，
+ * `docs/design-intent.md` 第 3 条 —— 不再由服务按日期生成），样本里是 `<session-id>`。
  *
  * **它必须与 `pathStringSchema` 分开**，两半的理由各是一条实测事实：
  *
- * - 值这一半：服务产出的 `session.id` 是**裸目录名**，取值落在场次目录的名字上。
- *   `meeting/session.py` 用 `SESSION_DIR_DATE_FORMAT = "%y%m%d"` 算出 `250906`，
- *   同名已存在就让位成 `250906-2`、`250906-3`…（`create_session_dir()` 的循环，
- *   靠不带 `exist_ok` 的 `mkdir` 裁决并发），`meeting/state.py` 把这个名字原样放进
- *   `session.id`。于是 `260921` 既没有路径前缀、也不等于占位符，
+ * - 值这一半：服务产出的 `session.id` 是**裸目录名**（`start_session()` 用
+ *   `Path(session_dir).name` 取它；目录由用户显式给、软件不解析它的语义）。
  *   拿 `pathStringSchema` 去卡它**两半都过不了** —— 真服务上 `recording` / `alert` /
  *   `ended` 三态的整份快照会因此解析失败（`idle` 因 `session: null` 不受影响）。
- * - 掩码那一半：`contract/README.md` 2.1 / 2.2 把这一格掩成 `<session-id>`
- *   （`session.id` 与 `dir` 各用各的占位符），golden 样本里写的就是 `<session-id>`。
- *   这一格早先与 `dir` 同掩成 `<path>`，掩码一旦通过就**冒充**了真值的通过 ——
- *   这正是这个槽位此前没被发现的原因；现在占位符自己就说清了这一格该长什么样。
+ * - 掩码那一半：`contract/README.md` 2.1 / 2.2 把这一格掩成 `<session-id>`，
+ *   golden 样本里写的就是 `<session-id>`。
  *
- * 形状细则（照服务实现定，与 `contract/README.md` 2.3 的「`YYMMDD` 形状」同口径）：
+ * 形状细则（照服务实现定）：
  *
- * - 恰好 6 位数字：`YY` + `MM` + `DD`（`strftime("%y%m%d")` 定长输出，前后不带空白）；
- * - 让位后缀是 `-<序号>`，**序号从 2 起**（`index == 1` 走的是不带后缀那一支），
- *   到 12、13 这种两位序号也照收（`create_session_dir()` 的 `index` 一直往上数）；
- *   序号不写前导零（服务侧是 `f"{base}-{index}"` 的十进制字面量）。
- * - **只做形状校验**：不查日历（不判 `260932` 这种不存在的日期）、不查目录是否真的存在 ——
- *   日历与目录归属都归服务的语义，schema 只管「这一格的写法对不对」。
+ * - 非空、不含路径分隔符（`/` 与 `\`）与占位符标记 `<` —— 它是名称而不是路径，
+ *   真值里不会出现 `<...>` 这种串；
+ * - **只做形状校验**：不查日历（旧口径的 `YYMMDD` 形状判据随日期取名一并退场）、
+ *   不查目录是否真的存在 —— 语义归服务，schema 只管「这一格的写法对不对」。
  */
 export const sessionIdSchema = maskedString(
   SESSION_ID_PLACEHOLDER,
-  /^\d{6}(?:-(?:[2-9]|[1-9]\d+))?$/,
+  /^(?:[^<>/\\\r\n])+$/,
 );
 
 /** 端口：线上是 int，样本里是 `<port>`（掩码把数字换成了串，两档都得放行）。 */
@@ -131,14 +124,13 @@ export const envelopeSchema = z.array(dbfsSchema);
 /** ISO 时间戳｜null。 */
 export const nullableIsoSchema = isoStringSchema.nullable();
 
-/** `service` 六子键，启动时定一次（`docs/contract.md` 第 2 章）。 */
+/** `service` 五子键，启动时定一次（`docs/contract.md` 第 2 章）。**没有 `out_root`**：落点由工作区给。 */
 export const serviceSchema = strict({
   started_at: isoStringSchema,
   version: z.string().min(1),
   port: portSchema,
   url: urlSchema,
   log_path: pathStringSchema,
-  out_root: pathStringSchema,
 });
 
 /** `session` 六子键。`null` 表示现在没有场次。 */
@@ -242,19 +234,11 @@ export const settingsSchema = strict({
   devices: z.record(z.string(), z.unknown()),
 });
 
-/** `notice` 四键。现在只有 `kind = "restart_unfinished"` 一种。 */
-export const noticeSchema = strict({
-  kind: noticeKindSchema,
-  text: z.string(),
-  session_dir: pathStringSchema,
-  log_path: pathStringSchema,
-});
-
 /**
- * 快照顶层**恰好十键**（`docs/contract.md` 第 2 章）。
+ * 快照顶层**恰好九键**（`docs/contract.md` 第 2 章）。
  *
  * `GET /api/state` 的 body、SSE 首帧 `snapshot`、SSE 的 `state` 帧三处是同一个函数出的
- * 同一份东西，因此共用这一个 schema。重同步那一帧在十键之上多 `resync` / `dropped` 两键，
+ * 同一份东西，因此共用这一个 schema。重同步那一帧在九键之上多 `resync` / `dropped` 两键，
  * 见 `snapshotFrameSchema`。
  *
  * 收严的口径与嵌套对象**同一处**（`strict()`，见文件开头那一段）：每一层多一个键都要红。
@@ -271,11 +255,10 @@ export const snapshotSchema = strict({
   transcript: transcriptSchema,
   ended: endedSchema.nullable(),
   settings: settingsSchema,
-  notice: noticeSchema.nullable(),
 });
 
 /**
- * 重同步帧的快照形状：顶层十二键 = 十键 + `resync` + `dropped`（`docs/contract.md` 3.5）。
+ * 重同步帧的快照形状：顶层十一键 = 九键 + `resync` + `dropped`（`docs/contract.md` 3.5）。
  * 见到 `resync: true` 就把手上这份整块换成它，**不把 `dropped` 当错误码**。
  */
 export const resyncSnapshotSchema = snapshotSchema.extend({
@@ -293,7 +276,6 @@ export type DrainStep = z.infer<typeof drainStepSchema>;
 export type Ended = z.infer<typeof endedSchema>;
 export type AsrSettings = z.infer<typeof asrSettingsSchema>;
 export type Settings = z.infer<typeof settingsSchema>;
-export type Notice = z.infer<typeof noticeSchema>;
 export type Snapshot = z.infer<typeof snapshotSchema>;
 export type ResyncSnapshot = z.infer<typeof resyncSnapshotSchema>;
 export type TopState = z.infer<typeof topStateSchema>;

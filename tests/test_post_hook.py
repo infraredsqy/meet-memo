@@ -352,7 +352,6 @@ def test_the_drain_post_step_turns_done_with_this_implementation(
 
     applied = {
         **config_module.DEFAULT_VALUES,
-        "output.root": str(tmp_path / "out-post-wiring"),
         "log.dir": str(home / "logs"),
         "capture.backend": "dev",
         "post.hook": "auto",
@@ -389,7 +388,9 @@ def test_the_drain_post_step_turns_done_with_this_implementation(
         assert isinstance(runtime.post_hook, post_module.PostProcessHook)
 
         # 开一场（拿真实的场次目录），再把收尾推到「第 4 步待跑」那一档
-        runtime.start_session()
+        workspace = tmp_path / "ws-post-wiring"
+        workspace.mkdir()
+        runtime.start_session(dir=str(workspace))
         session_dir = Path(runtime.snapshot.session.dir)
         begin_drain(runtime.snapshot, reason="user")
 
@@ -425,7 +426,6 @@ def test_the_absent_lane_still_records_skipped(tmp_path: Path, monkeypatch) -> N
 
     applied = {
         **config_module.DEFAULT_VALUES,
-        "output.root": str(tmp_path / "out-post-absent"),
         "log.dir": str(home / "logs"),
         "capture.backend": "dev",
         "post.hook": "null",
@@ -438,7 +438,9 @@ def test_the_absent_lane_still_records_skipped(tmp_path: Path, monkeypatch) -> N
         )
         runtime._resolve_backends()
         assert runtime.post_resolution.has_implementation is False
-        runtime.start_session()
+        workspace = tmp_path / "ws-post-absent"
+        workspace.mkdir()
+        runtime.start_session(dir=str(workspace))
         begin_drain(runtime.snapshot, reason="user")
         asyncio.run(runtime._drain_post(deadline=time.monotonic() + 10.0))
     finally:
@@ -523,7 +525,6 @@ def _post_wiring(tmp_path: Path, monkeypatch, *, events: list[str], transcriber_
 
     applied = {
         **config_module.DEFAULT_VALUES,
-        "output.root": str(tmp_path / "out-post-release"),
         "log.dir": str(home / "logs"),
         "capture.backend": "dev",
         "post.hook": "auto",
@@ -541,7 +542,9 @@ def _post_wiring(tmp_path: Path, monkeypatch, *, events: list[str], transcriber_
         )
     )
     runtime._resolve_backends()
-    runtime.start_session()
+    workspace = tmp_path / "ws-post-release"
+    workspace.mkdir()
+    runtime.start_session(dir=str(workspace))
     # **替身后端要挂在 `start_session()` 之后**：这一串装配是按真实顺序走的 —— `_resolve_backends()`
     # 在这里由用例自己调（`runtime.py` 里它的唯一生产调用点在 `startup()` 那条 lifespan 路径上，
     # `start_session()` 里没有它），随后 `start_session()` 会把解析出来的**真**转写后端一路带下去

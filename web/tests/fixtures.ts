@@ -39,10 +39,9 @@ export function listFixtures(group: FixtureGroup): string[] {
     .sort();
 }
 
-/** 六个快照样本的名字。 */
+/** 五个快照样本的名字。 */
 export const SNAPSHOT_FIXTURES = [
   'idle',
-  'idle-notice',
   'recording',
   'alert',
   'ended-done',

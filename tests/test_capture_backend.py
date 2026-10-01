@@ -91,7 +91,7 @@ class _FailingStart(FakeCaptureSource):
 def install_fake_probe(monkeypatch: pytest.MonkeyPatch, factory: SourceFactory) -> None:
     """把**端点枚举 + 试开 + 造源**三处都换成假件，一个真声卡入口都不碰。
 
-    三处都要换（`docs/legacy-assets.md` 的坑 C9 那一手：**函数内查找**）：
+    三处都要换（`docs/v1-lineage.md` 的坑 C9 那一手：**函数内查找**）：
 
       - `sources.list_input_endpoints` / `list_render_endpoints` → 假端点表；
       - `sources.test_open_input` / `test_open_loopback` → 能打开、有波形的假结果；

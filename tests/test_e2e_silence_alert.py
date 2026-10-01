@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import time
 
+from tests import _helpers as helpers
 from tests._service import post_action, wait_until
 
 # ---------------------------------------------------------------------------
@@ -81,7 +82,8 @@ def test_silence_injection_raises_critical_alert(service_process, meeting_env):
     )
     proc.wait_ready()
 
-    started = post_action(proc.base_url, "start")
+    workspace = helpers.allocate_start_dir(meeting_env.out_root)
+    started = post_action(proc.base_url, "start", {"dir": workspace})
     assert started.status_code == 200, started.text
     # 先读一次 `/api/state`：把本用例自己那条 HTTP 连接建好（本机新建一个 `httpx.Client`
     # 要 0.83 秒），否则这笔构造代价会落进「等告警」那段轮询的时间预算里

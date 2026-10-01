@@ -8,8 +8,7 @@
       "version": "0.1.0",
       "port": "<port>",
       "url": "<url>",
-      "log_path": "<path>",
-      "out_root": "<path>"
+      "log_path": "<path>"
     },
     "top_state": "recording",
     "session": {
@@ -101,7 +100,6 @@
         "mic": null,
         "loopback": null
       }
-    },
-    "notice": null
+    }
   }
 }

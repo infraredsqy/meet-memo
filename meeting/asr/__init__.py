@@ -10,7 +10,7 @@
                  （torch / transformers / numpy / webrtcvad）一律在**函数体内**惰性 import，
                  因此 `import meeting.asr.glm` 不会把任何一条重依赖拖进 `sys.modules`。
 
-四层防护的顺序与各自的层（`docs/legacy-assets.md` 的 A1 / A2 / A3）：
+四层防护的顺序与各自的层（`docs/v1-lineage.md` 的 A1 / A2 / A3）：
 
     1. `no_repeat_ngram_size=8`（`glm.py`，字符级 tokenizer 下等价于禁 8 连字，首次失败自动降级）
     2. `_LoopGuard`（`guards.py`，挂 `logits_processor`，命中即压 EOS）

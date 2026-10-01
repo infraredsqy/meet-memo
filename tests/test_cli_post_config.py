@@ -1022,8 +1022,8 @@ def test_a_missing_config_file_keeps_the_entry_on_the_frozen_defaults(
     """家目录下没有 `config.json` → 生效值逐键就是默认值表那一份（改动前同形）。
 
     证据两条：① `config_module.load()` 交回的生效值**逐键等于**
-    `{key: default_for(key)}`（`log.dir` / `output.root` 这两格由 `default_for()` 按家目录
-    解析，因此比的是解析后的值）；② 这一趟照旧按默认的 `post.engine = auto` 取引擎 ——
+    `{key: default_for(key)}`（`log.dir` 这一格由 `default_for()` 按家目录解析，
+    因此比的是解析后的值；「输出根」那一格已随默认落点退场）；② 这一趟照旧按默认的 `post.engine = auto` 取引擎 ——
     本文件的假引擎**一次都没被构造**（`auto` 不会落到它身上），于是「没配置 = 走默认那一档」
     这条既有行为在补齐配置层之后一个字没变。`minutes.timeout_seconds` 也仍是默认那一档。
     """

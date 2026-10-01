@@ -3,7 +3,7 @@
 > 这个目录是 meeting 的界面工程：契约层（zod schema + 静态类型）、服务接口客户端（SSE / 动作 / 心跳），
 > 以及**会中主视图** —— 用户开着它开会，不用盯着屏幕也知道一切正常，出事时第一眼看出是哪一路死了。
 >
-> 契约正文在 `docs/contract.md`，可机读基准在 `contract/fixtures/`（29 个 golden 样本）。
+> 契约正文在 `docs/contract.md`，可机读基准在 `contract/fixtures/`（28 个 golden 样本）。
 > **契约层逐字段照它们写** —— schema 改了、样本再跑起来红了，说明契约漂了。
 > 界面这一侧的权威是 `docs/ui-design.md`（章 2 会中信息架构、章 4 状态机、章 7 类名契约、章 8 十一条硬门槛）。
 
@@ -12,7 +12,7 @@
 - **Node ≥ 20**（见 `package.json` 的 `engines`）。本机实测 node v26.9.0 / npm 11.18.0。
 - 包管理器是 **npm**，`package-lock.json` 一并入库。
 - 服务只监听 `127.0.0.1`、默认端口 `8765`（配置键 `web.port`；`web.port = 0` 时由系统挑，真实端口看快照的 `service.port`）。
-- **零外链、零依赖新增**：样式只有 `src/styles/` 下两份，字体全走系统字体栈，图标用 `clip-path` 画的 `glyph`，声音用 WebAudio 就地合成。
+- **零外链、零依赖新增**：样式只有 `src/styles/` 下三份（`tokens.css` / `console.css` / `live.css`），字体全走系统字体栈，图标用 `clip-path` 画的 `glyph`，声音用 WebAudio 就地合成。
 
 ## 命令
 
@@ -47,7 +47,8 @@ npm test             # vitest run（等价于 npx vitest run）
 **用例只跑 node 环境**（`vitest.config.ts` 里 `environment: 'node'`）。界面里带 DOM 的那一层
 （组件、滚动、WebAudio）不写 jsdom 用例 —— 本轮不新增任何 npm 依赖。纯逻辑一律抽到
 `src/live/` 下的函数里，由 `tests/live-*.test.ts` 覆盖；需要真 DOM 的那几条（可见性、矩形、
-灰度、发声次数）走 CDP 无头浏览器，脚本与证据在 `.work/070b31e0-phase2/`（不属于产品代码）。
+灰度、发声次数）当时用 CDP 无头浏览器量过一遍 —— 那些一次性脚本与证据不属于产品代码，
+不随仓库保留。
 
 ## 目录
 
@@ -58,7 +59,8 @@ npm test             # vitest run（等价于 npx vitest run）
 | `src/live/` | 会中视图的**纯逻辑**（组件里不夹业务判断） |
 | `src/App.tsx` | 会中主视图的组件树：外壳、两路通道、告警区、收尾区、实时转写、总结区（四档 / 主按钮 / 进行中 / 结果与失败面板 / 本场摘要记录回看） |
 | `src/styles/tokens.css` | **逐字节拷贝** `docs/ui/tokens.css`（除文件头那段注释）。设计 token 的唯一定义处是 `docs/ui/tokens.css`，这一份是它进构建的那一份 |
-| `src/styles/live.css` | 从 `docs/ui/ui.css` 抽出的会中视图样式（抽取口径见下） |
+| `src/styles/console.css` | **暗面 token 层**，也是主题开关所在：`:root` 给每个具名色一份暗面取值（`--t-*`），`[data-theme="light"]` 再给一套亮面覆盖。暗面的值单独写在这里，`tokens.css` 一个字符都不动 —— 那份文件自称设计 token 的唯一定义处，改它等于改设计稿 |
+| `src/styles/live.css` | 会中视图样式（**暗面一稿**，来路见下） |
 | `tests/` | vitest 用例（`npm test`，12 个文件 327 个用例）：契约层三份（拿 golden 样本过 schema、验 schema 咬得住、验动作信封与心跳三态）、失败分档一份（`app-failure.test.ts`）、会中视图逻辑**八份** `live-*.test.ts`（`live-format` / `live-status` / `live-alarm` / `live-heartbeat` / `live-transcript` / `live-sound` / `live-summary` / `live-summary-controller`）+ 用例自己的真值快照构造器 `live-fixtures.ts` |
 
 ### `src/live/` 里各管什么
@@ -77,32 +79,28 @@ npm test             # vitest run（等价于 npx vitest run）
 | `summary-controller.ts` | 总结区那台**请求状态机**的宿主：这一次请求的状态与当前档位、兜底超时、迟到的应答不覆盖已画出来的东西、本场记录那一份的取数 |
 | `view.ts` | 把一份快照摊成组件要摆的视图模型（**只读快照**） |
 
-## 样式的来源与抽取口径
+## 样式的来源
 
-两份样式都从 `docs/ui/` 来，`docs/ui/**` 是只读的设计稿，不进构建：
+三份样式各有来路，`src/main.tsx` 按 `tokens.css` → `console.css` → `live.css` 的顺序引入。
+`docs/ui/**`（设计稿本体）留在仓库里供人翻看，不进构建、不被服务引用。
 
-- **`src/styles/tokens.css`** —— `docs/ui/tokens.css` 的逐字节拷贝（文件头一段注释写出处与拷贝日期，正文一个字符都没改；拷贝脚本比对过 sha256）。
-- **`src/styles/live.css`** —— 由 `.work/070b31e0-phase2/tools/extract_live_css.py` 从
-  `docs/ui/ui.css` 里抽出来，脚本可重跑，末尾会打一份逐条审计清单
-  （`.work/070b31e0-phase2/live-css-audit.txt`）。口径三条：
+- **`src/styles/tokens.css`** —— `docs/ui/tokens.css` 的逐字节拷贝（文件头一段注释写出处与拷贝日期，正文一个字符都没改）。
+  间距、字号、时长、尺寸，以及亮面那六个具名色，都住在这里。它是设计 token 的唯一定义处，
+  `docs/ui-design.md` 第 7 章的名单与它逐字对齐。
+- **`src/styles/console.css`** —— **暗面 token 层**，主题开关也在这儿：`:root` 给每个具名色一份暗面取值（`--t-*`），
+  `[data-theme="light"]` 再给一套亮面覆盖。默认暗面；地址栏加 `?theme=light` 翻到亮面，
+  `?theme=dark` 显式钉回暗面（这一档只管配色，不落本地存储，刷新回默认）。
+  暗面的值单独写在这一份里，`tokens.css` 一个字符都不动 —— 那份文件自称设计 token 的唯一定义处、
+  还带着拷贝来源与日期，改它等于改设计稿，两个来源从此对不上。
+- **`src/styles/live.css`** —— 会中视图样式，**暗面一稿**。它的来路是 `src/App.tsx` 的组件树：
+  照着这棵树重画，**类名照旧**（类名契约在 `docs/ui-design.md` 章 7.10），换掉的是配色、字体、
+  层级与排版。取色与字体全部 `var()` 自 `console.css` 与 `tokens.css`；正文从底座第 1 节排到
+  宽度断点第 14 节，每一节顶上一条横线标题。
+  早先那一版是从 `docs/ui/ui.css` 抽出来的抽取物，已被这一稿整份取代 —— 抽取物与抽取脚本都不在仓库里了。
 
-  | 怎么处理 | 是什么 |
-  |---|---|
-  | **留** | 骨架（`.shell` / `.topbar` / `.band` / `.rail`）+ 通用控件（`.btn` / `.seg` / `.glyph` / `.readout` / `.tag` / `.kv` / `.codeblock` / `.spinner` / `.num`）+ 会中视图规则（`.page--live` / `.m-band` / `.m-ch` / `.m-grid` / `.m-meter` / `.m-env` / `.m-health` / `.m-chip` / `.alert` / `.heartbeat` / `.recovered-note` / `.statusline` / `.clock` / `.transcript` / `.sumbar` / `.meter-legend` / `.live-tools`）+ 两个宽度断点（720 / 400） |
-  | **剔** | 设计稿靠 `?state=` 切档的那一批规则（选择器里带 `.is-<state>` 状态类的：显隐与就地微调）。React 版由条件渲染负责显隐，这一批进 CSS 就是死代码。剔掉的地方在审计清单里逐条列出 |
-  | **改** | 四处把 `?state=` 作用域换成挂在部件自己身上的类：胶囊两档配色（`.statusline__caps--on` / `--alert`）、空闲时长的灰字（`.clock--faint`）、失联时顶栏让位（`.topbar--hb-lost`）、判据说明（`#hb-guidance` → `.hb-guidance`）；失联的冻结压灰那条作用域由 `<html>` 换到 `<body>` 的 `.is-heartbeat-lost` |
-
-  `[data-layout="a"]` / `[data-layout="b"]` 那几条**一个字都没改**：`src/main.tsx` 在
-  `<html>` 上恒挂 `data-layout="a"`（方向 A：两路左右并列、告警横幅插在采集带之外），
-  所以 A 的写法照原样生效；本轮不做方向 B，B 那几条留在样式里，它们是设计稿自己的开关。
-
-  **类名一个新造的都没有**（类名契约在 `docs/ui-design.md` 章 7.10）。文件末尾另有一块
-  「本单元新增」——产品侧自己需要的那几条规则单独成块，逐条写了理由，用的是既有 token
-  与既有类名。
-
-- **数据进 style 变量的分层照搬设计稿**：`--level`（当前电平）/ `--hold`（峰值保持）/
-  `--h`（包络一根柱）由组件写到元素上，高度怎么画在 CSS 里。**没有一处内联宽高**，也没有
-  一处「让电平看起来在动」的动画。
+- **数据进 style 变量的分层照设计章 7.7 的口径**：`--level`（当前电平）/ `--hold`（峰值保持）/
+  `--h`（包络一根柱）由组件写到元素上，高度怎么画在 `live.css` 里（`var(--level)` / `var(--hold)` /
+  `var(--h)` 三处）。**没有一处内联宽高**，也没有一处「让电平看起来在动」的动画。
 
 ## 会中视图的结构
 

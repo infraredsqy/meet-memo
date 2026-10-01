@@ -9,14 +9,9 @@
   - `detach_session_log()` 写失败**抛 `OSError`**；
   - **`EXIT_STARTUP_UNMET` 这一档的唯一断言处**：主 log 不可写（`log.dir = <普通文件>/sub/`）
     与 `config.json` 损坏（非法 JSON / 同名目录）各自的真子进程退出码断言；
-  - 启动扫描未收尾场次的 WARNING（只取最新的一场、每次启动最多一行、不建目录），
-    **以及 phase2 的同源替换**：扫描命中后那份 `session.json` 被改写成
-    `state: "draining"` + `interrupted: true`（`drain.steps` 原样保留、不伪造终态），
-    场次目录里其余文件逐字不变、不新建任何目录、不动别的场次
-    （phase2 §2.3 第 7 条：phase1 那条「内容一字未变」assertion 的唯一落点在本文件），
-    以及两类「最新一场未命中」的**条数口径**：`session.json` **不存在** → 一行警告都不落
-    （与「输出根下没有场次目录」同口径）；`session.json` **存在却读不出来**（含非 UTF-8
-    字节）→ 按未命中处理且恰落一行「读不出来」的 WARNING，服务照常起。
+  - **启动不再扫别的场次目录**：盘上放着未收尾的 `session.json`（甚至多场），
+    服务照常起、一行「启动扫描」WARNING 都不落、那份记录**逐字节原地不动**，
+    其余文件也不被碰 —— 「看住未收尾场次」归下一节点的注册表收编。
 """
 
 from __future__ import annotations
@@ -328,7 +323,7 @@ def test_config_json_is_a_directory_exits_startup_unmet(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# 子进程：启动扫描未收尾场次（只取最新的一场、每次启动最多一行）
+# 子进程：启动**不再**读 / 改写别的场次目录（上一节点的「启动扫描未收尾」已随默认输出根退场）
 # ---------------------------------------------------------------------------
 
 
@@ -352,15 +347,12 @@ def _session_record(state: str, *, interrupted: bool = False) -> str:
     )
 
 
-def test_scan_warns_once_for_the_latest_unfinished_session(tmp_path):
-    """最新一场未收尾 → 主 log 一行 WARNING；那份记录被改写成「收尾中 + 已打断」。
+def test_startup_leaves_an_unfinished_session_alone(tmp_path):
+    """盘上放一场未收尾（`recording`）→ 服务照常起，**不读、不改写、不碰**那一目录。
 
-    phase2 §2.3 第 5 / 7 条的同源替换（**这一条是本文件里唯一的落点**）：
-      - phase1 的那行 `WARNING`（含场次目录与 `state` / `interrupted`）**逐字保留**，
-        断言照旧（每次启动恰一行「发现未收尾的场次」）；
-      - 追加：该场次记录被改写成 `state: "draining"` + `interrupted: true`，
-        **原 `steps` 原样保留、不伪造终态**；
-      - 场次目录里**其余文件逐字不变、不新建任何目录**（扫描动作只该有这一处写盘）。
+    原「启动扫描：发现未收尾 → 改写成 draining + interrupted」这一整条已退场
+    （`docs/design-intent.md` 第 4 条：没有默认落点，启动不为找最近一场读任何别的目录）；
+    本用例把「退场」钉住：没有扫描 WARNING、`session.json` 逐字节未动、不出现场次开始行。
     """
     home = tmp_path / "home"
     home.mkdir()
@@ -368,91 +360,46 @@ def test_scan_warns_once_for_the_latest_unfinished_session(tmp_path):
     session_dir = out_root / "250906"
     session_dir.mkdir(parents=True)
     record_path = session_dir / "session.json"
-    original = json.loads(_session_record("recording"))
-    record_path.write_text(_session_record("recording"), encoding="utf-8")
-    # 场次目录里的另一个文件：扫描**不许**碰它（phase2 §2.3 第 7 条）
+    original = _session_record("recording")
+    record_path.write_text(original, encoding="utf-8")
     audio_path = session_dir / "meeting_audio_mic.pcm"
     audio_path.write_bytes(b"\x00" * 32)
-    helpers.write_config_json(home, {"web.port": 0, "output.root": str(out_root)})
+    helpers.write_config_json(home, {"web.port": 0})
 
     before_children = sorted(item.name for item in out_root.iterdir())
 
     proc = helpers.spawn_service(home)
     try:
         proc.wait_ready()
-        # 扫描的改写是**服务进程**在做：等盘上真的落到「收尾中 + 已打断」那一版再读
-        rewritten = helpers.wait_for_session_record(
-            session_dir, lambda data: data.get("state") == "draining"
-        )
         log_text = proc.log_text()
     finally:
         proc.terminate()
 
     warning_lines = helpers.lines_with(log_text, "WARNING")
-    unfinished = [line for line in warning_lines if "启动扫描：发现未收尾" in line]
-    assert len(unfinished) == 1, f"未收尾场次的 WARNING 应当只有一行：{unfinished}"
-    assert "250906" in unfinished[0]
-    assert "recording" in unfinished[0]
-
-    # 那份 session.json 被改写成「收尾中 + 已打断」，原 steps 原样保留、不伪造终态
-    assert rewritten["state"] == "draining"
-    assert rewritten["interrupted"] is True
-    assert rewritten["drain"]["steps"] == original["drain"]["steps"]
-    assert rewritten["ended_at"] is None
-    # 改写后的盘上内容仍是合法 JSON、字段全集与 schema 一致
-    assert set(rewritten) == set(original)
-
-    # 场次目录里其余文件逐字不变、不新建任何目录、不动别的场次
+    assert not [line for line in warning_lines if "启动扫描" in line], warning_lines
+    assert not [line for line in warning_lines if "未收尾" in line], warning_lines
+    # 盘上那一版一个字节都不动：既不改写成 draining、也不写 interrupted
+    assert record_path.read_text(encoding="utf-8") == original
     assert audio_path.read_bytes() == b"\x00" * 32
-    assert sorted(item.name for item in session_dir.iterdir()) == [
-        "meeting_audio_mic.pcm", "session.json",
-    ]
     assert sorted(item.name for item in out_root.iterdir()) == before_children
     # 不自动开始录音：没有场次开始行
     assert not helpers.lines_with(log_text, "场次开始")
 
 
-def test_scan_reports_only_the_newest_of_two_unfinished_sessions(tmp_path):
-    """同时放更早的未收尾场次 → WARNING 仍然只有一行，且路径是最新那一场。"""
+def test_startup_reads_none_of_two_older_sessions(tmp_path):
+    """多场未收尾并存 → 启动**不读任何一场**：两条记录都逐字节原地不动。"""
     home = tmp_path / "home"
     home.mkdir()
     out_root = tmp_path / "out"
     older = out_root / "260901"
     newer = out_root / "260902"
+    blobs: dict[Path, bytes] = {}
     for entry in (older, newer):
         entry.mkdir(parents=True)
-        (entry / "session.json").write_text(_session_record("recording"), encoding="utf-8")
-    helpers.write_config_json(home, {"web.port": 0, "output.root": str(out_root)})
-
-    proc = helpers.spawn_service(home)
-    try:
-        proc.wait_ready()
-        helpers.wait_for_session_record(newer, lambda data: data.get("state") == "draining")
-        log_text = proc.log_text()
-    finally:
-        proc.terminate()
-
-    unfinished = [
-        line for line in helpers.lines_with(log_text, "WARNING")
-        if "启动扫描：发现未收尾" in line
-    ]
-    assert len(unfinished) == 1, f"只取最新的一场，WARNING 应当只有一行：{unfinished}"
-    assert "260902" in unfinished[0]
-    assert "260901" not in unfinished[0]
-    # 只看最新那一场：更早那一场不会被改写（phase2 §2.3 第 7 条「不动别的场次」）
-    assert json.loads((older / "session.json").read_text(encoding="utf-8"))["state"] == "recording"
-    assert json.loads((newer / "session.json").read_text(encoding="utf-8"))["state"] == "draining"
-
-
-def test_scan_is_silent_when_nothing_is_unfinished(tmp_path):
-    """最新一场已收尾 / 输出根不存在 → 那一行不出现（也不趁机建目录）。"""
-    home = tmp_path / "home"
-    home.mkdir()
-    out_root = tmp_path / "out"
-    session_dir = out_root / "250906"
-    session_dir.mkdir(parents=True)
-    (session_dir / "session.json").write_text(_session_record("done"), encoding="utf-8")
-    helpers.write_config_json(home, {"web.port": 0, "output.root": str(out_root)})
+        blob = _session_record("recording").encode("utf-8")
+        (entry / "session.json").write_bytes(blob)
+        blobs[entry / "session.json"] = blob
+    helpers.write_config_json(home, {"web.port": 0})
 
     proc = helpers.spawn_service(home)
     try:
@@ -460,28 +407,25 @@ def test_scan_is_silent_when_nothing_is_unfinished(tmp_path):
         log_text = proc.log_text()
     finally:
         proc.terminate()
-    assert not [line for line in helpers.lines_with(log_text, "WARNING") if "启动扫描" in line]
 
-    # 输出根不存在时同样不出现，且不建目录
-    home2 = tmp_path / "home2"
-    home2.mkdir()
-    missing_root = tmp_path / "not_created_yet"
-    helpers.write_config_json(home2, {"web.port": 0, "output.root": str(missing_root)})
-    proc2 = helpers.spawn_service(home2)
+    warnings = helpers.lines_with(log_text, "WARNING")
+    assert not [line for line in warnings if "启动扫描" in line], warnings
+    for path, blob in blobs.items():
+        assert path.read_bytes() == blob, f"{path} 被启动读出来了"
+    # 更早那一场与新一场都未收尾，但服务都不认领（收编归注册表节点）
+    proc2 = helpers.spawn_service(home)
     try:
         proc2.wait_ready()
-        log_text2 = proc2.log_text()
+        assert json.loads((newer / "session.json").read_text(encoding="utf-8"))["state"] == "recording"
     finally:
         proc2.terminate()
-    assert not [line for line in helpers.lines_with(log_text2, "WARNING") if "启动扫描" in line]
-    assert not missing_root.exists()
 
 
-def test_scan_survives_non_utf8_session_json(tmp_path):
-    """最新一场的 `session.json` 是非 UTF-8 字节 → 按未命中处理，**服务照常起来**。
+def test_startup_is_unbothered_by_an_unreadable_session_json(tmp_path):
+    """某一场的 `session.json` 是非 UTF-8 字节 → 启动照常起，**一行关于它的警告都不落**。
 
-    非 UTF-8 字节会让 `json.load()` 抛 `UnicodeDecodeError`（它属于 `ValueError` 这一族，
-    跟 `JSONDecodeError` 同支）；这一条盯的正是「解码失败不许冒到启动序列」。
+    原行为「文件存在却读不出来 → 恰落一行『读不出来…按未命中处理』的 WARNING」也是
+    扫描链路上的，随整条退场：启动根本不去读那些目录。
     """
     home = tmp_path / "home"
     home.mkdir()
@@ -491,72 +435,22 @@ def test_scan_survives_non_utf8_session_json(tmp_path):
     record_path = session_dir / "session.json"
     blob = b'{"state": "recording", "\xff\xfe\x00": 1}'
     record_path.write_bytes(blob)
-    helpers.write_config_json(home, {"web.port": 0, "output.root": str(out_root)})
+    helpers.write_config_json(home, {"web.port": 0})
 
     proc = helpers.spawn_service(home)
     try:
         port = proc.wait_ready_by_heartbeat()  # 服务真的起来了（HTTP 答得上）
         assert port > 0
-        assert proc.poll() is None, "扫到读不出来的 session.json 只当未命中，不许把服务带崩"
-        log_text = proc.log_text()
-    finally:
-        proc.terminate()
-
-    # 按未命中口径：没有「未收尾场次」那行 WARNING
-    assert not [line for line in helpers.lines_with(log_text, "WARNING") if "启动扫描：发现未收尾" in line]
-    # 读不出来的事实照旧留痕（不许静默），每次启动最多一行
-    unreadable = [line for line in helpers.lines_with(log_text, "WARNING") if "读不出来" in line]
-    assert len(unreadable) == 1, f"读不出来的 WARNING 应当只有一行：{unreadable}"
-    assert "250906" in unreadable[0]
-    # 那份文件原样不动
-    assert record_path.read_bytes() == blob
-
-
-def test_scan_is_silent_when_session_json_is_absent(tmp_path):
-    """场次目录里**没有** `session.json` → 两条警告都不落，服务照常起（契约 §3.5 第 2 条）。
-
-    「最新一场未命中时不出现」含两种情形：**输出根下没有场次目录**（已由
-    `test_scan_is_silent_when_nothing_is_unfinished` 覆盖）与**场次目录里没有 `session.json`**
-    （本用例）。这一支与前一支的区别是定死的：
-
-      - `session.json` 根本不存在（`FileNotFoundError`）→ 与「没有场次目录」同口径，
-        **一行 WARNING 都不落**；
-      - 文件存在却读不出来 → 仍要落**恰一行**「读不出来…按未命中处理」的 WARNING
-        （`test_scan_survives_non_utf8_session_json` 钉住）。
-
-    两条断言都必须在位，否则「条数上限是 1」这条口径会被第二种警告突破。
-    """
-    home = tmp_path / "home"
-    home.mkdir()
-    out_root = tmp_path / "out"
-    session_dir = out_root / "250906"
-    session_dir.mkdir(parents=True)  # 场次目录在，里面**只有**一份音频归档，没有 session.json
-    (session_dir / "meeting_audio_mic.pcm").write_bytes(b"\x00" * 16)
-    assert not (session_dir / "session.json").exists()
-    helpers.write_config_json(home, {"web.port": 0, "output.root": str(out_root)})
-
-    before_children = sorted(item.name for item in out_root.iterdir())
-    before_files = sorted(item.name for item in session_dir.iterdir())
-
-    proc = helpers.spawn_service(home)
-    try:
-        port = proc.wait_ready_by_heartbeat()  # 服务照常起来（HTTP 答得上）
-        assert port > 0
-        assert proc.poll() is None, "最新一场没有 session.json 只当未命中，不许影响启动"
+        assert proc.poll() is None
         log_text = proc.log_text()
     finally:
         proc.terminate()
 
     warnings = helpers.lines_with(log_text, "WARNING")
-    assert not [line for line in warnings if "启动扫描" in line], (
-        f"场次目录里没有 session.json 时不该落任何启动扫描警告：{warnings}"
-    )
-    assert not [line for line in warnings if "读不出来" in line], (
-        f"「读不出来」这一类警告同样不该出现（它专指文件存在却读不出的情形）：{warnings}"
-    )
-    assert not [line for line in warnings if "未收尾" in line], f"不该报未收尾场次：{warnings}"
+    assert not [line for line in warnings if "启动扫描" in line], warnings
+    assert not [line for line in warnings if "读不出来" in line], warnings
+    # 那份文件原样不动
+    assert record_path.read_bytes() == blob
 
-    # 不趁机建目录、不补写 session.json、不改动已有的内容
-    assert sorted(item.name for item in out_root.iterdir()) == before_children
-    assert sorted(item.name for item in session_dir.iterdir()) == before_files
-    assert not (session_dir / "session.json").exists()
+
+

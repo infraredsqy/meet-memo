@@ -119,8 +119,7 @@ export const TRANSCRIPT_HEALTHS = ['normal', 'behind', 'stopped'] as const;
 /** 转写行的 `kind`：`line` 是正文、`gap` 是断口。 */
 export const TRANSCRIPT_LINE_KINDS = ['line', 'gap'] as const;
 
-/** `notice.kind` 现在只有这一种（`docs/contract.md` 第 2 章）。 */
-export const NOTICE_KINDS = ['restart_unfinished'] as const;
+/** （`notice` 槽位已随「默认输出根」退场，见 `docs/design-intent.md` 第 4 条。） */
 
 /** 包络柱数：最近 30 秒、15 根、一根 2 秒（`docs/contract.md` 第 2 章）。 */
 export const ENVELOPE_BAR_COUNT = 15;

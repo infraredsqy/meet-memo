@@ -2,7 +2,7 @@
 
 **一条都不加载真模型**（`tests/conftest.py` 的 5 秒看门狗 + 真模型加载远超它）：
 引擎那一段用假 processor / 假模型打在 `_load_models` 这个接缝上，音频解码也换成
-返回固定波形的假件。真引擎只走 `.work/scripts/mosstd_smoke.py` 那条冒烟。
+返回固定波形的假件。真引擎只走一条一次性 MOSSTD 冒烟脚本，跑完即弃。
 
 三块要盯的：
 

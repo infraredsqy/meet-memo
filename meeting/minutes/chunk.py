@@ -386,14 +386,14 @@ def _name_in(entry: object) -> str | None:
 def main(argv: Sequence[str] | None = None, *, prog: str = "python -m meeting.minutes.chunk") -> int:
     """`python -m meeting.minutes.chunk <场次目录> [--chunk-lines N]`。
 
-    **本入口不加载 `meeting.config`**：一个后端子命令不该把整条配置链（家目录、日志、
-    输出根）捆在自己身上，用户在一场会的目录里手动切一次块时也不必先有配置。
+    **本入口不加载 `meeting.config`**：一个后端子命令不该把整条配置链（家目录、日志）
+    捆在自己身上，用户在一场会的目录里手动切一次块时也不必先有配置。
     """
     parser = argparse.ArgumentParser(
         prog=prog,
         description="按行把场次目录里的转写切成块，并写出行号区间表。",
     )
-    parser.add_argument("session_dir", help="场次目录（<输出根>/YYMMDD）")
+    parser.add_argument("session_dir", help="场次目录（工作区目录，路径由人给）")
     parser.add_argument(
         "--chunk-lines",
         type=int,

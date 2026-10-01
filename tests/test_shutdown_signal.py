@@ -7,11 +7,9 @@
     `test_sigbreak_while_already_draining_exits_130` / `test_failed_drain_exits_one_and_prints_log_path` /
     `test_sigint_and_sigbreak_share_one_handler` —— 六个一个不少、各自独立；
   - **审查修复追加的 3 个函数**（名字与上面六个不相撞、也不顶替其中任何一条；出处写在各自的
-    docstring 里）：`test_restart_notice_first_sigbreak_exits_zero_without_rewriting_disk`
-    （C1 / M7：重启提示态下第一次按下走空闲退出档、盘上那一版一个字不改写）、
-    `test_clean_drain_then_sigbreak_exits_zero_without_rewriting_disk`（**C1 的另一格**：
-    `stop` 已收尾干净走完之后按下 → 同样走空闲退出档、盘上逐字节不变、重启后不再挂
-    `restart_unfinished`）、`test_web_startup_failure_exits_failure_and_says_so`
+    docstring 里）：`test_clean_drain_then_sigbreak_exits_zero_without_rewriting_disk`
+    （**C1 的另一格**：`stop` 已收尾干净走完之后按下 → 空闲退出档、盘上逐字节不变、
+    重启后能直接开新场）、`test_web_startup_failure_exits_failure_and_says_so`
     （M11：`server.run()` 之外那一路的意外同样以 `EXIT_FAILURE` 说话）、
     `test_drain_exit_code_matrix_including_the_server_crash_fallback`（M4：退出码逐档写死，
     含「收尾干净 + `server.run()` 抛异常」这个组合；它不起服务、直接调 `meeting/cli.py` 的
@@ -22,7 +20,8 @@
     连按两次信号，第二次带 `force=True`，落进 log 的是「本次是第 2 次按下」）、
     `test_drain_report_speaks_for_the_real_face_not_the_exit_code`（**M1**：终端那套「收尾有
     步骤失败」的文案只在现场真有 `failed` 步时出现；进程内纯函数级、不占墙钟）。
-    **合计 6 + 4 + 2 = 12 个测试函数**（本文件里没有参数化，pytest 收集到 12 条）。
+    **合计 6 + 3 + 2 = 11 个测试函数**（本文件里没有参数化；`notice.restart_unfinished`
+    那一条用例随启动扫描一并退场，见上一节）。
   - **第七轮审查再追加的 2 个函数**（同样不与上面任何一条相撞、各自独立）：
     `test_degraded_state_read_still_raises_when_the_service_answers_badly`
     （**m7b**：`_state_while_alive()` 只把「进程已收场」与「连接被断」这两种真时序读成
@@ -31,15 +30,13 @@
     `test_interrupted_report_speaks_for_the_forced_interrupt_not_the_failed_face`
     （**M11**：强制打断档 + 现场前面有 `failed` 步这一格的终端文案；进程内纯函数级、不占墙钟）。
     **本文件当前实测收集数**：`python -m pytest tests/test_shutdown_signal.py --collect-only -q`
-    = **14 条**（契约点名的六个一个不少、各自独立；其余为历次审查修复追加的条目，均不带参数化）。
+    = **13 条**（契约点名的六个一个不少、各自独立；其余为历次审查修复追加的条目，均不带参数化）。
 
-**本文件补上的那一格（审查问题 C1 / M7）**：`top_state == "idle"` 且启动扫描命中了未收尾场次
-（挂了 `notice.restart_unfinished`）时，**第一次** `Ctrl+C` 落在 §3.5 行为表的**第二行**
-（`idle` → 直接退出 → 空闲退出档），盘上那一版由启动扫描写下、此后**一个字都不再改写**。
-判据是「当场有没有收尾在跑 / 有没有失败现场」，盘上留没留未收尾场次只拦新场次的 `start`
-（§3.6）。这一格由 `test_restart_notice_first_sigbreak_exits_zero_without_rewriting_disk`
-盯住：它重起一个真服务、造出重启提示态、只发一次信号，断言退出码是 `EXIT_OK` 且
-`session.json` 逐字节未变。
+**「重启提示态」那一格已随默认输出根退场**（`docs/design-intent.md` 第 4 条）：启动不再扫
+最近一场、不再挂 `notice.restart_unfinished`、也不再把盘上的未收尾场次改写成
+`draining + interrupted`。原先盯那一格的
+`test_restart_notice_first_sigbreak_exits_zero_without_rewriting_disk` 因此整条删除；
+「相关行为归下一节点的注册表收编」（节点 spec 上下游一节）。
 
 **C1 的第二格（同一处判据的另一面）**：`stop` 已经把四步全部收尾干净（`ended.phase == "done"`、
 盘上 `state="done"` + `ended_at`）之后按一次 `Ctrl+C`，同样落在「当场没有收尾要管」这一格 ——
@@ -56,8 +53,8 @@
 **真服务子进程**：起停、发中断信号、读退出码、取 `base_url` 四项能力都在
 `tests/_service.py` 的 `ServiceProcess` 上（phase2 的夹具能力），**本文件不另起一套子进程管理**。
 子进程的环境变量与 `service_process` 夹具那一支**同一套**：家目录重定向（`HOME` +
-`USERPROFILE`）、`MEETING_PORT` / `MEETING_OUT_ROOT` / `MEETING_LOG_DIR` / `MEETING_NO_BROWSER`
-四项、`PYTHONPATH`；假件经临时目录 + `PYTHONPATH` + 既有配置键 `post.hook` 挂上（**本文件只
+`USERPROFILE`）、`MEETING_PORT` / `MEETING_LOG_DIR` / `MEETING_NO_BROWSER`
+三项、`PYTHONPATH`；假件经临时目录 + `PYTHONPATH` + 既有配置键 `post.hook` 挂上（**本文件只
 import `tests/_drain_fakes.py` 里的假件，不自行定义、不各写一份**）。**采集后端一律由本用例
 `config.json` 的 `capture.backend` 表达，子进程 env 里不写 `MEETING_CAPTURE`** —— 这正是
 `tests/test_drain.py` 那一支的同一口径（两条子进程路径的采集后端因此同源、也看得见），
@@ -274,7 +271,7 @@ def _spawn(
     环境变量与直接起 `meeting web` 的那一路**逐项相同**（家目录两项、`MEETING_*` 四项、
     `PYTHONPATH`），因此隔离手法与假件注入口径一处都没漂。
 
-    环境变量那一份由 `_spawn_env()` 单独给出：①b 条要在**同一个输出根**上重起第二个服务，
+    环境变量那一份由 `_spawn_env()` 单独给出：①c 条要在**同一个放置根**下重起第二个服务，
     它复用同一份构造（口径因此与这里逐项相同，不会两边各长一套）。
     """
     home = Path(home)
@@ -311,13 +308,11 @@ def _spawn_env(
     （本文件这一支与 `tests/test_drain.py` 那一支）的采集后端由此**同源**、也看得见。
     """
     home = Path(home)
-    out_root = home.parent / "out"
     env: dict[str, str] = {
         "HOME": str(home),
         "USERPROFILE": str(home),
         "MEETING_NO_BROWSER": "1",
         "MEETING_PORT": "0",
-        "MEETING_OUT_ROOT": str(out_root),
         "MEETING_LOG_DIR": str(helpers.log_dir_of(home)),
         "PYTHONPATH": (
             str(helpers.REPO_ROOT)
@@ -325,7 +320,9 @@ def _spawn_env(
             else plugin.pythonpath(helpers.REPO_ROOT)
         ),
     }
-    out_root.mkdir(parents=True, exist_ok=True)
+    # 场次放置根（`<家目录>/../out`，仅测试层 Os 落点用；本层没有「输出根」这个概念）
+    out_root = home.parent / "out"
+    out_root.mkdir(exist_ok=True)
     helpers.log_dir_of(home).mkdir(parents=True, exist_ok=True)
     if plugin is None:
         # 采集后端走配置键（点号扁平键），环境变量里一项都不多设
@@ -367,9 +364,16 @@ def _latest_session_dir(proc: Any) -> Path:
     return dirs[-1]
 
 
-def _start(proc: Any) -> None:
-    started = post_action(proc.base_url, "start")
+def _start(proc: Any) -> Path:
+    """给这个进程显式预建一个工作区目录并开一场：返回落点目录的路径。
+
+    产品代码不建目录、没有默认落点：start 的 `args.dir` 由**测试层**预建（`tests/_helpers.py`
+    的 `allocate_start_dir()`）后显式给上 —— 与真实使用「人从磁盘里挑一个已有目录」同一口径。
+    """
+    workspace = helpers.allocate_start_dir(proc.home.parent / "out")
+    started = post_action(proc.base_url, "start", {"dir": workspace})
     assert started.status_code == 200, started.text
+    return Path(workspace)
 
 
 def _finish_case(started: float, label: str) -> None:
@@ -685,88 +689,6 @@ def test_idle_sigbreak_exits_zero(service_process, case_env):
     _finish_case(case_started, "① 空闲态按一次")
 
 
-# ---------------------------------------------------------------------------
-# ①b 重启提示态（`idle` + `restart_unfinished`）第一次按 → 空闲退出档，盘上那一版一个字不改写
-#     —— 审查问题 C1 / M7
-# ---------------------------------------------------------------------------
-
-
-def test_restart_notice_first_sigbreak_exits_zero_without_rewriting_disk(
-    service_process, case_env
-):
-    """重启提示态下**第一次** `Ctrl+C` → 空闲退出档，且盘上那一版逐字节未变（C1）。
-
-    现场：起一个真服务、开一场、硬杀（模拟断电）→ **在同一输出根**上重起一个 → 新实例的启动
-    扫描把那一场改写成 `state == "draining"` + `interrupted: true` 并在空闲态挂上
-    `notice.restart_unfinished`（§3.6）。这时**只发一次** `CTRL_BREAK_EVENT`。
-
-    判据是「当场有没有收尾在跑 / 有没有失败现场」：这一刻 `_drain_task is None`、手上没有任何
-    要收的尾，因此落在 §3.5 行为表的**第二行**（`idle` → 直接退出 → 空闲退出档）。修 C1 之前
-    这里会把盘上那份未收尾场次当成「已停在 `ended·draining` 再按」那一档，落成强制打断档
-    （退出码 130）并往盘上补写 `interrupted` / 抹掉 `ended_at`。
-
-    「盘上未被改写」的读法：**发信号前**先把 `session.json` 逐字节读下来（启动扫描那一版），
-    进程退出之后再读一次，两次必须逐字节相同 —— 启动扫描写的那一版与这次关停的落盘是两件事，
-    这一条同时咬住「不写 `interrupted`」「不写 `ended_at`」「不动 `steps`」三件事。
-    """
-    case_started = time.monotonic()
-    proc = _spawn(service_process, case_env)
-    proc.wait_ready()
-    _start(proc)
-    session_dir = _latest_session_dir(proc)
-    assert read_session_json(session_dir)["state"] == "recording", "被杀之前的现场是「录音中」"
-
-    proc.kill()  # 被杀 / 断电：不发信号、不等收尾
-
-    # **同一输出根**上重起第二个服务：`_spawn_env()` 按 `<家目录>/../out` 算输出根，
-    # 因此把第二个家目录取成第一个的兄弟目录，两趟指向的输出根就是同一个。
-    restarted_home = case_env.parent / "home-restart-notice"
-    restarted = service_process(
-        home=restarted_home, capture=None, env=_spawn_env(restarted_home)
-    )
-    try:
-        restarted.wait_ready()
-        snapshot = restarted.snapshot()
-        # 现场就位（否则下面那条退出码断言验的并不是这一格）
-        assert snapshot["top_state"] == "idle", snapshot
-        assert (snapshot["notice"] or {}).get("kind") == "restart_unfinished", snapshot
-        assert (snapshot["notice"] or {}).get("session_dir") == str(session_dir), snapshot
-        assert snapshot["session"] is None, "重启后不自动续录"
-
-        session_json = session_dir / "session.json"
-        before = session_json.read_bytes()
-        assert read_session_json(session_dir)["interrupted"] is True, "启动扫描那一版已落稳"
-
-        # **只发这一次**信号
-        restarted.send_interrupt()
-        code = restarted.wait(timeout=PROCESS_EXIT_TIMEOUT_SECONDS)
-
-        assert code == EXIT_OK, f"重启提示态下第一次 Ctrl+C 该走空闲退出档：实测 {code}"
-        after = session_json.read_bytes()
-        assert after == before, (
-            "这一次关停不该改写盘上那份 session.json：\n"
-            f"发信号前 {before.decode('utf-8', 'replace')}\n"
-            f"退出之后 {after.decode('utf-8', 'replace')}"
-        )
-        record = read_session_json(session_dir)
-        assert record["state"] == "draining", record
-        assert record["interrupted"] is True, record
-        assert record["ended_at"] is None, record
-        assert "强制打断" not in _log_text(restarted), "这一格不该落强制打断那一行"
-        assert SIGBREAK_LINE in _log_text(restarted)
-        assert "退出原因与退出码：" in _log_text(restarted)
-        assert "EXIT_OK" in _log_text(restarted)
-        print(
-            f"[C1 证据] 重启提示态下第一次 Ctrl+C -> 退出码 {code}（EXIT_OK={EXIT_OK}）；"
-            f"盘上 session.json 逐字节未改写；"
-            f"notice.kind={(snapshot['notice'] or {}).get('kind')!r}；"
-            f"record.state={record['state']!r} / interrupted={record['interrupted']!r}"
-            f" / ended_at={record['ended_at']!r}"
-        )
-    finally:
-        restarted.terminate()
-    _finish_case(case_started, "①b 重启提示态第一次按")
-
 
 # ---------------------------------------------------------------------------
 # ①c 收尾干净走完之后按一次 → 空闲退出档，盘上那一版逐字节不改写（**C1 的第二格**）
@@ -797,9 +719,9 @@ def test_clean_drain_then_sigbreak_exits_zero_without_rewriting_disk(
       2. **盘上逐字节未变**：发信号前读一次 `session.json` 的原始字节，进程退出之后再读一次，
          两次必须**逐字节相同**（这一条同时咬住「不写 `interrupted`」「不删 `ended_at`」
          「不动 `steps`」三件事）；
-      3. **下一场能开起来**：在**同一输出根**上重起一个服务 —— 不再挂
-         `notice.restart_unfinished`（未收尾判据是 `state ∈ {recording, draining}`
-         **或** `interrupted: true`，这一版三样都不占），`POST start` 放行（200）。
+      3. **下一场能开起来**：在同一个放置根下重起一个服务 —— 启动不再去读 / 拦截任何
+         盘上的旧场次（启动扫「最近一场」那一格已随默认输出根退场），`POST start`
+         （`args.dir` 显式给一个新目录）放行（200）。
     """
     case_started = time.monotonic()
     proc = _spawn(service_process, case_env)
@@ -847,8 +769,8 @@ def test_clean_drain_then_sigbreak_exits_zero_without_rewriting_disk(
     assert record_after["interrupted"] is False, record_after
     assert record_after["ended_at"], record_after
 
-    # **下一场能开起来**：同一输出根上重起（`_spawn_env()` 按 `<家目录>/../out` 算输出根，
-    # 因此把第二个家目录取成第一个的兄弟目录，两趟指向的输出根就是同一个）
+    # **下一场能开起来**：同一个放置根上重起（`_spawn_env()` 按 `<家目录>/../out` 算放置根，
+    # 因此把第二个家目录取成第一个的兄弟目录，两趟指向的是同一个根）
     restarted_home = case_env.parent / "home-clean-drain-restart"
     restarted = service_process(
         home=restarted_home, capture=None, env=_spawn_env(restarted_home)
@@ -856,21 +778,20 @@ def test_clean_drain_then_sigbreak_exits_zero_without_rewriting_disk(
     try:
         restarted.wait_ready()
         snapshot = restarted.snapshot()
-        notice = snapshot["notice"] or {}
         assert snapshot["top_state"] == "idle", snapshot
-        assert notice.get("kind") != "restart_unfinished", (
-            f"收尾干净走完的场次不该被重启扫描认领：{notice}"
+        started = post_action(
+            restarted.base_url,
+            "start",
+            {"dir": helpers.allocate_start_dir(restarted_home.parent / "out")},
         )
-        started = post_action(restarted.base_url, "start")
         assert started.status_code == 200, (
-            f"同一输出根上该能直接开新场：{started.status_code} {started.text}"
+            f"收尾干净的场次之外该能直接开新场：{started.status_code} {started.text}"
         )
         print(
             f"[C1 证据] stop 收尾干净（record.state={record_before['state']!r} / "
             f"ended_at={record_before['ended_at']!r} / interrupted={record_before['interrupted']!r}）"
             f"之后按一次 Ctrl+C -> 退出码 {code}（EXIT_OK={EXIT_OK}）；"
-            f"session.json 逐字节未变；重启后 notice.kind={notice.get('kind')!r}"
-            f"（不再挂 restart_unfinished）；POST start -> {started.status_code}"
+            f"session.json 逐字节未变；重启后无需任何临终改写、POST start -> {started.status_code}"
         )
     finally:
         restarted.terminate()
@@ -1195,7 +1116,7 @@ def test_sigbreak_while_already_draining_exits_130(service_process, case_env):
 def test_failed_drain_exits_one_and_prints_log_path(service_process, case_env):
     """收尾有步骤 `failed` → 收尾失败档退出码，且终端上出现 log 路径与 `meeting post`。
 
-    同一趟顺带断言**服务级 log** 里可查到启动与端口 / URL / 输出根、以及退出原因与退出码
+    同一趟顺带断言**服务级 log** 里可查到启动与端口 / URL、以及退出原因与退出码
     （方案 §6.3 行 304 清单的服务级那半边）。失败手段是共用支持模块里的 `FailingPostHook`
     （`launch()` 抛错，经 `PYTHONPATH` + `post.hook` 配进子进程），`dev_inject` 那三档故障
     只改事实流、造不出收尾失败。
@@ -1268,9 +1189,9 @@ def test_failed_drain_exits_one_and_prints_log_path(service_process, case_env):
         f"以下行没在 log 里找到：{missing}"
     )
 
+    log_text = _log_text(proc)
     assert "绑定成功：127.0.0.1:" in log_text
     assert "http://127.0.0.1:" in log_text, "服务级 log 该写清选中的 URL"
-    assert "输出根" in log_text, "服务级 log 该写清输出根"
     assert "退出原因与退出码：" in log_text
     assert "EXIT_FAILURE" in log_text
     _finish_case(case_started, "⑤ 收尾失败档")
@@ -1418,7 +1339,6 @@ class _FakeLogger:
 class _FakeRuntime:
     """`cli.web()` 起步几步读的那几个运行时字段（快照里还没有收尾现场）。"""
 
-    out_root = "<临时输出根>"
     log_path = "<临时 log 路径>"
     url = "http://127.0.0.1:0"
 

@@ -23,7 +23,7 @@
 **模型加载那一环**走 phase1 的私有测试接缝 `meeting.asr.glm._load_models`（`glm.py:130-151`）：
 本节通过**模块对象**取用它（`glm_module.GlmAsrTranscriber()` / `_is_noise_segment`），
 别在别处写 `from meeting.asr.glm import _load_models` 那种绑到另一个模块对象的引用 ——
-那正是 V1 那个「测试一边通过一边什么都没验」的坑（`docs/legacy-assets.md` 的 C9 / E9）。
+那正是 V1 那个「测试一边通过一边什么都没验」的坑（`docs/v1-lineage.md` 的 C9 / E9）。
 """
 
 from __future__ import annotations
@@ -101,7 +101,7 @@ class TranscriberBackend:
     """真转写后端：游标尾读归档 PCM → VAD 切段 → 单 worker 顺序识别 → 落盘 + 行出口。
 
     两路各一条读线程（`meeting/asr/pipeline.py` 的 `tail_archive()`），一个 worker 顺序消费
-    两路的段 —— 采集与模型因此解耦到「模型停摆不影响落盘」（`docs/legacy-assets.md` 的 R2 / R3）。
+    两路的段 —— 采集与模型因此解耦到「模型停摆不影响落盘」（`docs/v1-lineage.md` 的 R2 / R3）。
     """
 
     def __init__(

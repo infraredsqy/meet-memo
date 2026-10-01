@@ -10,7 +10,7 @@
 `prompt` 与 `check` 两个子命令是给**手动排查**用的（提示词阶段 2 末尾那条
 `python -m meeting.minutes check working/segmentation.json` 走的就是 `check`）：phase2 的
 runner 直接调那三个模块的函数，不经过这里。两个入口都不加载 `meeting.config`
-（一个后端子命令不必把家目录、日志、输出根那条配置链捆在自己身上）。
+（一个后端子命令不必把家目录、日志那条配置链捆在自己身上）。
 """
 
 from __future__ import annotations

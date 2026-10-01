@@ -1,6 +1,8 @@
 {
   "action": "start",
-  "args": {},
+  "args": {
+    "dir": "<path>"
+  },
   "status": 503,
   "body": {
     "ok": false,

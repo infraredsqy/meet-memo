@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-#: 离线路径的采样率：与采集/会中转写同一档（`docs/legacy-assets.md` 的 B8）
+#: 离线路径的采样率：与采集/会中转写同一档（`docs/v1-lineage.md` 的 B8）
 SAMPLE_RATE = 16000
 
 #: 归档 PCM 的后缀（`meeting/offline/runner.py` 的静音门与切块按同一个后缀分流）

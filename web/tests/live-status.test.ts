@@ -169,7 +169,7 @@ describe('observeLosses：界面记下的那一份丢过的窗口', () => {
 
   it('看到 lost 就记下服务给的那一刻', () => {
     const next = observeLosses(emptyLossRecord(), startingLoss, T('20:58:00'));
-    expect(next.sessionId).toBe('260921');
+    expect(next.sessionId).toBe('跟老王聊周会');
     expect(next.windows.loopback).toEqual({
       everLost: true,
       lostSince: T('20:57:00'),

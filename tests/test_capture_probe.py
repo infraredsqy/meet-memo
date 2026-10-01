@@ -124,7 +124,7 @@ class FakeSources:
 
         `capture.create_capture_source()` / `create_loopback_source()` 是采集引擎的注入接缝：
         后端用的是「调用那一刻再取」的模块级查找，所以打在**模块对象**上照样生效
-        （`docs/legacy-assets.md` 的坑 C9）。
+        （`docs/v1-lineage.md` 的坑 C9）。
         """
         from tests.test_capture_engine import FakeCaptureSource
 

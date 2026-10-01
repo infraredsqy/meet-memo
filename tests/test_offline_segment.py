@@ -1,6 +1,6 @@
 """`meeting/offline/segment.py` 的契约用例：V1 切段接缝搬过来之后的数值与规则。
 
-`docs/legacy-assets.md` 纪律 9 明写 `replay._segment` **零测试覆盖**，V1 那 27 个用例
+`docs/v1-lineage.md` 纪律 9 明写 `replay._segment` **零测试覆盖**，V1 那 27 个用例
 对搬错、搬漏一个都不报警，所以这一层要自己补网。素材一律**现场合成的 PCM**
 （前面静音 + 一段音 + 长静音），不碰真实会议音频。
 
@@ -11,7 +11,7 @@
   - 丢掉 <**500ms** 的段；
   - 段长硬上限生效（长语音按上限切）。
 
-**切出来的段长怎么算（`legacy-assets` 纪律 11：数字要带口径）**：语音块用一条固定随机流
+**切出来的段长怎么算（`v1-lineage` 纪律 11：数字要带口径）**：语音块用一条固定随机流
 的高斯噪声（RMS 3000），`webrtcvad` 档位 1 会把它整块判成语音。V1 的规则是
 「静默**超过** 2.0s 才收段」，而 `cur` 在这 2.0s 里一直跟着涨，所以走静默这条路的段长
 一定 ≥ 2.0s。走**收尾**这条路的段（正文没被 2.0s 静默截断，段尾就在音频末尾附近）才可能短，
@@ -71,7 +71,7 @@ def spans_of(*parts: np.ndarray, cap: float = 600.0) -> list[tuple[float, float,
 
 
 def test_frame_bytes_is_960() -> None:
-    """30ms 帧 @ 16kHz 是 **960 字节 = 480 样本**（`legacy-assets` 的 B8 写死的那个数）。"""
+    """30ms 帧 @ 16kHz 是 **960 字节 = 480 样本**（`v1-lineage` 的 B8 写死的那个数）。"""
     assert seg.FRAME_MS == 30
     assert seg.SAMPLE_RATE == 16000
     assert FRAME_SAMPLES == 480
@@ -89,7 +89,7 @@ def test_min_segment_ms_is_500() -> None:
 
 
 def test_vad_mode_defaults_to_one() -> None:
-    """默认 VAD 档位是 **1**（`legacy-assets` 的 B8，实时与离线共用同一档）。"""
+    """默认 VAD 档位是 **1**（`v1-lineage` 的 B8，实时与离线共用同一档）。"""
     assert seg.VAD_MODE == 1
     params = inspect.signature(seg.segment_pcm).parameters
     assert params["vad_mode"].default == 1

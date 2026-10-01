@@ -39,9 +39,9 @@ FIXTURES_ROOT = REPO_ROOT / "contract" / "fixtures"
 
 #: ISO 时间戳（started_at / since / lost_since / last_line_at / server_time …）
 ISO_PLACEHOLDER = "<iso>"
-#: 路径 / 场次目录路径（`log_path` / `out_root` / `dir` / `session_dir`）
+#: 路径 / 场次目录路径（`log_path` / `dir` / `session_dir`；`out_root` 已随默认输出根退场）
 PATH_PLACEHOLDER = "<path>"
-#: 场次目录**名**（`session.id` 与失败 `detail.session_id`）：裸的 `YYMMDD` / `YYMMDD-N`
+#: 场次目录**名**（`session.id` 与失败 `detail.session_id`）：人给的工作区目录名，形状任意
 SESSION_ID_PLACEHOLDER = "<session-id>"
 #: 端口
 PORT_PLACEHOLDER = "<port>"
@@ -57,7 +57,7 @@ _ISO_RE = re.compile(
 #: 自由文本里内嵌的盘符绝对路径（Windows 形态；lookbehind 挡掉 `http:` 这类 scheme）
 #:
 #: **平台边界是有意的**：本项目的产物路径一律是 Windows 形态（`meeting/service/*` 给出的
-#: `log_path` / `out_root` / `dir` 都从 `Path` 来，本仓只在 Windows 上跑），因此只认
+#: `log_path` / `dir` 都从 `Path` 来，本仓只在 Windows 上跑），因此只认
 #: `<盘符>:/` 与 `<盘符>:\` 两种开端。POSIX 形态（`/home/...`）与 UNC（`\\server\...`）
 #: **不在判据里** —— 收进来只会让「内嵌路径」这条规则在非 Windows 上悄悄改口径，而 fixtures
 #: 是随仓库进版本控制的确定性产物，判据一旦随平台变，同一份代码在不同平台落盘的字节就不同。
@@ -72,7 +72,7 @@ ZERO_KEYS = frozenset({"elapsed_seconds", "duration_seconds", "seconds_since_las
 #: 这些键是电平（dBFS），值换占位
 LEVEL_KEYS = frozenset({"level_dbfs", "peak_dbfs", "dbfs", "peak", "bar"})
 #: 这些键是路径 / 场次目录路径（`session_id` **不在其中**：它是目录名，见 `SESSION_ID_KEYS`）
-PATH_KEYS = frozenset({"log_path", "out_root", "dir", "session_dir"})
+PATH_KEYS = frozenset({"log_path", "dir", "session_dir"})
 #: 这些键是**场次目录名**（裸 `YYMMDD` / `YYMMDD-N`）：`session.id` 的键名是 `id`、靠键路径判，
 #: 而动作失败 `detail.session_id` 直接以键名出现，两者掩成同一个形状诚实的占位符 `<session-id>`。
 SESSION_ID_KEYS = frozenset({"session_id"})
@@ -100,9 +100,9 @@ def normalize(value: Any, *, key: str = "", path: tuple[str, ...] = ()) -> Any:
         if key in PATH_KEYS:
             return PATH_PLACEHOLDER
         if key in SESSION_ID_KEYS:
-            return SESSION_ID_PLACEHOLDER  # 动作失败 detail.session_id：裸目录名
+            return SESSION_ID_PLACEHOLDER  # 动作失败 detail.session_id：工作区目录名
         if key == "id" and len(path) >= 2 and path[-2] == "session":
-            return SESSION_ID_PLACEHOLDER  # session.id 的 YYMMDD 场次目录名
+            return SESSION_ID_PLACEHOLDER  # session.id 的工作区目录名
         if key == "url":
             return URL_PLACEHOLDER
         if _ISO_RE.match(value):
@@ -201,7 +201,7 @@ class SummaryStub:
     """**假总结客户端**（会中总结的注入点 `runtime.summary_client` 收到的那一个）。
 
     只实现 `run_summary()` 用到的 `complete()`，答一份固定输出：样本里的三小段因此与窗口
-    内容无关、逐字确定（真端点那一档在本仓由 `.work/` 下的探针跑，契约样本记的是**形状**，
+    内容无关、逐字确定（真端点那一档由一次性探针跑，契约样本记的是**形状**，
     模型的话归那一档）。`calls` 只用于用例自检。
     """
 

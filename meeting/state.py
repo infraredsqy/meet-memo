@@ -66,8 +66,10 @@ SOURCE_HEALTH: tuple[str, ...] = (
     "stopped",
 )
 
-#: `notice.kind` 在本节点只有一种
-NOTICE_KIND: tuple[str, ...] = ("restart_unfinished",)
+# ---------------------------------------------------------------------------
+# （`notice` 槽位已随「默认输出根」整条退场，见 `docs/design-intent.md` 第 4 条；
+#   启动扫最近一场 / `notice.restart_unfinished` 的行为与形态不再保留，
+#   注册表回来时由收编节点重新定义这里的提示形态。）
 
 #: 告警文案：某一路的流中断（`SourceLost` 事实）
 SOURCE_LOST_MESSAGE = "这一路的采集流中断了"
@@ -122,14 +124,13 @@ class DrainStateError(RuntimeError):
 
 @dataclass
 class ServiceInfo:
-    """快照 `service` 六子键（启动时定一次，之后不变）。"""
+    """快照 `service` 五子键（启动时定一次，之后不变）。**没有 `out_root`**：落点由工作区给。"""
 
     started_at: str
     version: str
     port: int
     url: str
     log_path: str
-    out_root: str
 
 
 @dataclass
@@ -369,24 +370,6 @@ class SettingsView:
 
 
 @dataclass
-class Notice:
-    """快照 `notice`（本节点只有 `restart_unfinished` 一种）。"""
-
-    kind: str
-    text: str
-    session_dir: str
-    log_path: str
-
-    def encode(self) -> dict[str, Any]:
-        return {
-            "kind": self.kind,
-            "text": self.text,
-            "session_dir": self.session_dir,
-            "log_path": self.log_path,
-        }
-
-
-@dataclass
 class Snapshot:
     """内存里的那一份状态（**唯一状态权威由 `ServiceRuntime` 持有它**）。"""
 
@@ -398,7 +381,6 @@ class Snapshot:
     transcript: TranscriptState = field(default_factory=TranscriptState)
     ended: EndedState | None = None
     settings: SettingsView = field(default_factory=SettingsView)
-    notice: Notice | None = None
 
     # -- 读 ---------------------------------------------------------------
 
@@ -441,7 +423,6 @@ class Snapshot:
                 "port": int(service.port),
                 "url": service.url,
                 "log_path": service.log_path,
-                "out_root": service.out_root,
             },
             "top_state": self.top_state,
             "session": None if self.session is None else {
@@ -457,7 +438,6 @@ class Snapshot:
             "transcript": self.transcript.encode(),
             "ended": None if self.ended is None else self.ended.encode(),
             "settings": self.settings.encode(),
-            "notice": None if self.notice is None else self.notice.encode(),
         }
 
 
@@ -474,7 +454,6 @@ def new_snapshot(*, settings: SettingsView | None = None) -> Snapshot:
         transcript=TranscriptState(),
         ended=None,
         settings=settings if settings is not None else SettingsView(),
-        notice=None,
     )
 
 
@@ -507,7 +486,6 @@ def start_recording(
     snapshot.session = session
     snapshot.ended = None
     snapshot.alerts = AlertState()
-    snapshot.notice = None
     snapshot.top_state = "recording"
     for item in snapshot.sources:
         item.health = "capturing"
@@ -768,7 +746,6 @@ __all__ = [
     "ENVELOPE_BAR_SECONDS",
     "HEARTBEAT_MIN_WINDOW_SECONDS",
     "HEARTBEAT_WINDOW_FACTOR",
-    "NOTICE_KIND",
     "PROBE_STATUS",
     "REVISION_START",
     "SESSION_STATE",
@@ -783,7 +760,6 @@ __all__ = [
     "EndedState",
     "EnvelopeWindow",
     "InvalidTransitionError",
-    "Notice",
     "ServiceInfo",
     "SessionInfo",
     "SettingsView",

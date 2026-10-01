@@ -711,9 +711,6 @@ function LiveView(): ReactNode {
             : `${view.critical.source}|${view.critical.since}|${String(view.critical.muted)}`
         }
       >
-      {/* 服务重启过（章 4.5）：只在空闲态、且日志里有未收尾记录时出现 */}
-      {view.restartNote !== null && <p className="restart-note hint">{view.restartNote}</p>}
-
       <header className={`topbar ${lost ? 'topbar--hb-lost' : ''}`}>
         <div className="topbar__left">
           <div className="statusline">
@@ -1082,8 +1079,8 @@ function LiveView(): ReactNode {
           </span>
         </div>
         <div className="band__body">
-          {/* 类名契约（ui-design.md 章 7.10 / docs/ui/live.html L214–216）：这一行标签
-              用 `.sumbar` 内放两个 `.tag` —— 与设计稿同一条用法，不另造类名 */}
+          {/* 类名契约（ui-design.md 章 7.10；设计稿 `docs/ui/live.html` 的会中稿里是
+              同一条用法）：这一行标签用 `.sumbar` 内放两个 `.tag`，不另造类名 */}
           <div className="sumbar">
             <span className="tag">草稿 · 会后重建</span>
             <span className="tag">
@@ -1108,8 +1105,8 @@ function LiveView(): ReactNode {
                 ref={transcriptRef}
                 onScroll={onTranscriptScroll}
               >
-                {/* 断口行就是普通 transcript__line + transcript__gap（docs/ui/live.html
-                    L256–260 的用法）：不再挂自造的修饰类，视觉与语义都归契约类名 */}
+                {/* 断口行就是普通 transcript__line + transcript__gap（设计稿
+                    `docs/ui/live.html` 里同一条用法）：不挂自造的修饰类，视觉与语义都归契约类名 */}
                 {rows.map((row, index) => (
                   <div
                     className="transcript__line"

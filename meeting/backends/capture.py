@@ -76,7 +76,7 @@ class CaptureBackend:
         缺省写法用 lambda 把查找推到调用那一刻（构造时不抓函数对象）：测试里
         `monkeypatch.setattr(capture_module, "create_capture_source", fake)` 与
         `monkeypatch.setattr(sources_module, "list_input_endpoints", fake)` 因此照样生效
-        （`docs/legacy-assets.md` 的坑 C9：`from ... import f` 绑的是函数对象，改不动）。
+        （`docs/v1-lineage.md` 的坑 C9：`from ... import f` 绑的是函数对象，改不动）。
 
         后两个接缝是采集引擎的注入点：`source_factory(source, endpoint)` 造一路采集源
         （缺省走本模块的 `create_capture_source()` / `create_loopback_source()`），

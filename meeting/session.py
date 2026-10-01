@@ -1,18 +1,14 @@
-"""场次目录、`session.json` 的原子写与「扫未收尾场次」（phase2 §3.2）。
+"""场次目录与 `session.json` 的原子写。
 
-口径（phase2 冻结，phase3 只往盘上写值、不改字段名与形状）：
+口径（「没有默认落点」定稿，`docs/design-intent.md` 第 3、4 条）：
 
-  - 输出根 = 配置键 `output.root`，**根不存在时在 `start` 那一刻建**（递归 `mkdir`），
-    服务启动与扫描都不建目录；
-  - 场次目录名 = `YYMMDD`，同名已存在就 `YYMMDD-2`、`YYMMDD-3`……**让位不复用**
-    （`mkdir` 不带 `exist_ok`，靠文件系统的原子性裁决并发 `start`）；
-  - `session.id` **就是目录名**，`dir` 是场次目录路径；
+  - **没有输出根**：一场会的落点 = 它的**工作区目录**（一个已存在的目录），由 start 的
+    请求 / 命令行**显式**给出；本模块**不建目录、不解析目录名、不按日期命名**；
+  - `session.id` **就是目录名**，`dir` 是场次目录的绝对路径；
+  - 日期是每一场的**元信息**（`session.json` 的 `date` 字段，从开场的时刻取），
+    从目录名的语义里退出来（第 3 条：目录名只读）；
   - `session.json` **原子写**：同目录临时文件 + `os.replace` + `flush`；
-    每个阶段变更都写一次；
-  - 启动扫描**只取最新的一场**，判据只有一条：`state ∈ {recording, draining}` 或
-    `interrupted: true`；命中即挂 `notice.restart_unfinished`，并把那份记录**改写**成
-    `state: "draining"` + `interrupted: true`（原 `steps` 原样保留、不伪造终态），
-    **绝不自动续录、绝不把状态恢复成「录音中」**。
+    每个阶段变更都写一次。
 
 顶层四态与 `session.json` 的 `state` 是两套词汇，**映射只允许出现在本模块**
 （`state_for()`），不出现在 `state.py` / `routes.py` / `hub.py` / `/debug`。
@@ -26,37 +22,21 @@ import logging
 import os
 import shutil
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from meeting import config as config_module
 from meeting.backends.base import SOURCE_IDS
-from meeting.state import DRAIN_STEP_IDS, now_iso
+from meeting.state import DRAIN_STEP_IDS
 
 _log = logging.getLogger("meeting.session")
 
 #: `session.json` 的文件名
 SESSION_FILE_NAME = "session.json"
 
-#: 场次目录名的日期形状（`YYMMDD`）
-SESSION_DIR_DATE_FORMAT = "%y%m%d"
-
-#: 「未收尾」的判据：`state` 落在这两档里，或 `interrupted` 为真
-UNFINISHED_STATES: tuple[str, ...] = ("recording", "draining")
-
 
 def archive_name(source: str) -> str:
     """两路归档文件名 = `meeting_audio_<source>.pcm`（音频字节的写入归 `dca4539b`）。"""
     return f"meeting_audio_{source}.pcm"
-
-
-#: 重启未收尾场次的提示文案（照设计稿 4.5 的原文形状）
-RESTART_UNFINISHED_TEXT = "服务重启过。上一场的收尾没走完，音频在 {session_dir}，日志在 {log_path}。"
-
-
-def restart_unfinished_text(session_dir: str, log_path: str) -> str:
-    return RESTART_UNFINISHED_TEXT.format(session_dir=session_dir, log_path=log_path)
 
 
 def state_for(*, top_state: str, ended_phase: str | None = None, has_failed_step: bool = False) -> str:
@@ -92,26 +72,6 @@ class SessionRecord:
 
     data: dict[str, Any]
 
-    @property
-    def state(self) -> str | None:
-        return self.data.get("state")
-
-    @property
-    def interrupted(self) -> Any:
-        return self.data.get("interrupted")
-
-    @property
-    def steps(self) -> list[dict[str, Any]]:
-        drain = self.data.get("drain")
-        if not isinstance(drain, dict):
-            return []
-        steps = drain.get("steps")
-        return steps if isinstance(steps, list) else []
-
-    def unfinished(self) -> bool:
-        """判据只有这一条：`state ∈ {recording, draining}` 或 `interrupted: true`。"""
-        return self.state in UNFINISHED_STATES or self.interrupted is True
-
 
 def build_session_record(
     *,
@@ -127,7 +87,11 @@ def build_session_record(
     interrupted: bool = False,
     pid: int | None = None,
 ) -> dict[str, Any]:
-    """组装一份字段一个不省的 `session.json`（四步各一条、每条四键齐）。"""
+    """组装一份字段一个不省的 `session.json`（四步各一条、每条四键齐）。
+
+    `date` 是**元信息**字段（`docs/design-intent.md` 第 3、6 条）：日期仍是每一场的信息，
+    从开场的时刻取，只记录、不参与任何寻址与不参与任何校验。
+    """
     devices = devices or {}
     if steps is None:
         steps = [
@@ -137,6 +101,7 @@ def build_session_record(
     return {
         "session_id": session_id,
         "dir": session_dir,
+        "date": str(created_at)[:10],
         "mode": mode,
         "state": state,
         "created_at": created_at,
@@ -174,45 +139,31 @@ def steps_from_ended(ended: Any) -> list[dict[str, Any]]:
     return steps
 
 
+def resolve_workspace_dir(value: Any) -> str:
+    """把 start 请求 / 命令行给的目标工作区目录算成**绝对路径**（不建目录）。
+
+    校验三件事：必给、目录已存在、里面没有另一场的 `session.json`。
+    一条不符合就抛 `ValueError`（message 直接进动作层的 `invalid_setting`）。
+    """
+    text = None if value is None else str(value).strip()
+    if not text:
+        raise ValueError(
+            "缺目标工作区目录：start 必须显式给一个已存在的目录（args.dir），"
+            "本服务不设默认落点、也不建目录"
+        )
+    path = Path(text).expanduser()
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    path = Path(os.path.normpath(str(path)))
+    if not path.is_dir():
+        raise ValueError(f"目标工作区目录不存在（只接受已存在的目录，不自动建）：{path}")
+    if (path / SESSION_FILE_NAME).exists():
+        raise ValueError(f"目标工作区目录里已经有一场会的 {SESSION_FILE_NAME}：{path}")
+    return str(path)
+
+
 class SessionStore:
-    """输出根下的场次档案（分配目录名、原子写 / 读 `session.json`、扫未收尾）。"""
-
-    def __init__(self, out_root: str) -> None:
-        self.out_root = str(out_root)
-
-    # -- 目录分配 ---------------------------------------------------------
-
-    def preview_next_dir(self, *, today: datetime | None = None) -> str:
-        """算下一场的目录路径（**只算不建**：调用后目录必须不存在）。
-
-        与随后真正 `start` 时算出的名字规则一致（同名已存在就让位到 `-2`、`-3`…）。
-        """
-        base = (today or datetime.now()).strftime(SESSION_DIR_DATE_FORMAT)
-        index = 1
-        while True:
-            name = base if index == 1 else f"{base}-{index}"
-            candidate = Path(self.out_root) / name
-            if not candidate.exists():
-                return str(candidate)
-            index += 1
-
-    def create_session_dir(self, *, today: datetime | None = None) -> tuple[str, str]:
-        """建场次目录并返回 `(目录名, 目录路径)`；已存在就让位（不复用）。
-
-        **`mkdir` 不带 `exist_ok`**：靠文件系统的原子性裁决并发 `start`（算不出同一个名字）。
-        """
-        base = (today or datetime.now()).strftime(SESSION_DIR_DATE_FORMAT)
-        Path(self.out_root).mkdir(parents=True, exist_ok=True)
-        index = 1
-        while True:
-            name = base if index == 1 else f"{base}-{index}"
-            candidate = Path(self.out_root) / name
-            try:
-                candidate.mkdir()
-            except FileExistsError:
-                index += 1
-                continue
-            return name, str(candidate)
+    """一份场次的档案（原子写 / 读 `session.json`）；**落点由调用方给，本类不自知根**。"""
 
     # -- 读写 -------------------------------------------------------------
 
@@ -250,14 +201,13 @@ class SessionStore:
             return None
         return data if isinstance(data, dict) else None
 
-    # -- 扫未收尾 ---------------------------------------------------------
+    # -- 读 ---------------------------------------------------------------
 
     def load(self, session_dir: str) -> tuple[SessionRecord | None, str | None]:
         """读一份场次记录并回答两个问题：记录本身 + 「读不出来」的说明。
 
         条数口径（phase1 的观测面，phase2 照旧）：
-          - `session.json` **根本不存在** → 与「输出根下没有场次目录」同口径，
-            **算未命中且不落任何 log**（说明为 `None`）；
+          - `session.json` **根本不存在** → **算未命中且不落任何 log**（说明为 `None`）；
           - 文件存在却读不出来 / 解码失败 / 顶层不是对象 → 同样按未命中处理，
             但**必须留下一行「读不出来…按未命中处理」的 WARNING**（说明非 `None`）。
         """
@@ -275,55 +225,6 @@ class SessionStore:
         if not isinstance(data, dict):
             return None, "session.json 顶层不是 JSON 对象"
         return SessionRecord(data), None
-
-    def latest_session_dir(self) -> str | None:
-        """输出根下的最新一场（按目录名的字典序取最大者；`YYMMDD` 命名下与时间序一致）。"""
-        root = Path(self.out_root)
-        if not root.is_dir():
-            return None
-        try:
-            entries = [item for item in root.iterdir() if item.is_dir()]
-        except OSError:  # pragma: no cover - 输出根不可读时视为没有场次
-            return None
-        if not entries:
-            return None
-        return str(max(entries, key=lambda item: item.name))
-
-    def scan_unfinished(self) -> tuple[str | None, str | None]:
-        """扫未收尾场次，返回 `(命中的场次目录, 那行 WARNING 的内容)`。
-
-        不建目录、不自动录音、不自动续录；命中的改写由 `mark_unfinished()` 做。
-        """
-        latest = self.latest_session_dir()
-        if latest is None:
-            return None, None
-        record, error = self.load(latest)
-        if error is not None:
-            _log.warning(
-                "启动扫描：最新一场 %s 的 session.json 读不出来（%s），按未命中处理",
-                latest,
-                error,
-            )
-            return None, None
-        if record is None or not record.unfinished():
-            return None, None
-        return latest, (
-            f"启动扫描：发现未收尾的场次 {latest}"
-            f"（扫到的 state={record.state!r}，interrupted={record.interrupted!r}）"
-            "；本 Phase 不自动录音、不建目录"
-        )
-
-    def mark_unfinished(self, session_dir: str, record: SessionRecord) -> dict[str, Any]:
-        """把命中的那份记录改写成「收尾中 + 已打断」，**原 `steps` 原样保留**。
-
-        原子写（手法同 `write_session_json()`）；**只写这一处**：场次目录里其余文件逐字不变、
-        不新建任何目录、不动别的场次。
-        """
-        data = dict(record.data)
-        data["state"] = "draining"
-        data["interrupted"] = True
-        self.write_session_json(session_dir, data)
-        return data
 
     def mark_interrupted(self, session_dir: str, record: dict[str, Any]) -> str:
         """强制打断的**先落盘**入口：把 `state: "draining"` + `interrupted: true` 那一版写到盘上。
@@ -346,31 +247,25 @@ class SessionStore:
         return self.write_session_json(session_dir, data)
 
     def remove_session_dir(self, session_dir: str) -> None:
-        """`start` 写盘失败后把刚建的场次目录清掉（主 log 的留痕由调用方写）。"""
-        shutil.rmtree(session_dir, ignore_errors=True)
+        """`start` 写盘失败后把这一场刚写的东西清掉（主 log 的留痕由调用方写）。
 
-
-def output_root(config: Any = None) -> str:
-    """解析输出根（`output.root`）；相对路径按**当前工作目录**解析（与 `web.dist_dir` 同口径）。"""
-    if config is None:
-        config = config_module.current()
-    value = str(config.get("output.root")) if config is not None else str(
-        config_module.default_for("output.root")
-    )
-    return value if os.path.isabs(value) else os.path.abspath(value)
+        **场内**清：只删本场写入的 `session.json` 与它的临时副本，不动工作区目录本身；
+        目录是用户给的，软件不删它。
+        """
+        session_file = self.session_file(session_dir)
+        try:
+            session_file.unlink()
+        except OSError:
+            pass
 
 
 __all__ = [
-    "RESTART_UNFINISHED_TEXT",
     "SESSION_FILE_NAME",
-    "SESSION_DIR_DATE_FORMAT",
-    "UNFINISHED_STATES",
     "SessionRecord",
     "SessionStore",
     "archive_name",
     "build_session_record",
-    "output_root",
-    "restart_unfinished_text",
+    "resolve_workspace_dir",
     "state_for",
     "steps_from_ended",
 ]

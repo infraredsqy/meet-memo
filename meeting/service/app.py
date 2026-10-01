@@ -4,7 +4,7 @@
 
   - `ServiceRuntime` **已经搬到 `meeting/service/runtime.py`**（类名、构造语义、
     `startup()` / `shutdown()` / `to_dict()` 的名字与语义一字不改）；本模块只从那里导入。
-  - 工厂入口 `build_runtime()` **仍在本模块**（构造运行时对象 + 解析 `output.root`），
+  - 工厂入口 `build_runtime()` **仍在本模块**（构造运行时对象），
     形态与名字保持不变，`cli.py` 的调用点一个字不动。
   - **常驻本模块的四样**（不搬走、不在别处复制一份）：
     服务器子类 `ServiceServer`（重写 `capture_signals()`）、信号处理函数
@@ -439,17 +439,16 @@ def bind_http_socket(
 
 
 def build_runtime(config: Any = None) -> ServiceRuntime:
-    """公共工厂：构造 `ServiceRuntime` 对象并把 `output.root` 解析成路径字符串。
+    """公共工厂：构造 `ServiceRuntime` 对象。**不解析任何输出根**（落点由工作区给）。
 
-    `cli.py` **只经这个函数拿对象与解析后的输出根**，不直接 import `ServiceRuntime` 类。
+    `cli.py` **只经这个函数拿对象**，不直接 import `ServiceRuntime` 类。
     这一步**不启动任何异步物**（取事件循环、写关停目标、信号接管自检、解析后端、探测设备、
-    扫未收尾场次、打开浏览器全部由框架 startup 钩子触发）。
+    打开浏览器全部由框架 startup 钩子触发）。
     """
     if config is None:
         config = config_module.current() or config_module.load()
     config_module.set_current(config)
-    out_root = str(Path(str(config.get("output.root"))))
-    return ServiceRuntime(out_root, config)
+    return ServiceRuntime(config)
 
 
 def dist_dir_of(config: Any) -> str:

@@ -15,10 +15,9 @@
     alert / ended·done / ended·draining 的快照、两个心跳样本、成功动作、七类失败动作、
     resync 帧（`hub.py` 的真实广播路径：真订阅者队列灌满 512 后的下一次广播走 `resync()`）；
   - **真服务子进程**：SSE 帧样本（dev 采集替身 + `module:Class` 假转写后端，见
-    `tests/_contract.write_transcriber_stub()`）；idle+notice.restart_unfinished
-    （recording 中 `kill()` 留现场、再重启的真实启动扫描路径）。
+    `tests/_contract.write_transcriber_stub()`）。
 
-结构断言（在掩码前的原始载荷上做）：快照顶层十键、两路次序、录音态包络恰 15 根、
+结构断言（在掩码前的原始载荷上做）：快照顶层九键、两路次序、录音态包络恰 15 根、
 `bar == envelope[-1]`、levels 帧 `ts` 恒 null、resync 帧顶层额外 `resync` / `dropped` 两键。
 """
 
@@ -33,7 +32,7 @@ import pytest
 from meeting import config as config_module
 from meeting.backends.base import ReadOnlyConfig, TranscriptLine
 from meeting.service.hub import SUBSCRIBER_QUEUE_SIZE
-from meeting.state import ENVELOPE_BAR_COUNT, REVISION_START
+from meeting.state import ENVELOPE_BAR_COUNT
 from tests import _contract
 from tests import _drain_fakes as fakes
 from tests import _helpers as helpers
@@ -43,7 +42,7 @@ from tests._service import SseClient, parse_sse_frame, post_action, wait_until
 #: 结构断言与心跳样本共用的键全集（与 `Snapshot.to_dict()` 的产出逐字对应）
 TOP_LEVEL_KEYS = {
     "revision", "service", "top_state", "session", "sources",
-    "alerts", "transcript", "ended", "settings", "notice",
+    "alerts", "transcript", "ended", "settings",
 }
 SOURCE_KEYS = {
     "id", "label", "device_name", "health", "lost_since",
@@ -80,10 +79,13 @@ def make_client(tmp_path: Path):
         made += 1
         home = tmp_path / f"home{made}"
         home.mkdir(parents=True, exist_ok=True)
+        place_root = tmp_path / f"out{made}"
+        place_root.mkdir(parents=True, exist_ok=True)
         values = dict(values)
         values.setdefault("web.dist_dir", str(helpers.missing_dist_dir(home)))
-        values.setdefault("output.root", str(tmp_path / f"out{made}"))
-        return stack.enter_context(helpers.app_client(home, values=values))
+        client = stack.enter_context(helpers.app_client(home, values=values))
+        client.place_root = place_root
+        return client
 
     try:
         yield make
@@ -92,10 +94,10 @@ def make_client(tmp_path: Path):
 
 
 def _act(client, action: str, args: dict | None = None):
-    """进程内打一次动作（两个必需请求头由这里带全）。"""
+    """进程内打一次动作（两个必需请求头由这里带全；`start` 由测试层补缺省落点）。"""
     body: dict = {"action": action}
-    if args is not None:
-        body["args"] = args
+    if args is not None or action == "start":
+        body["args"] = helpers.start_args(action, args, client.place_root)
     return client.post("/api/actions", json=body, headers={"X-Meeting-Service": "1"})
 
 
@@ -156,14 +158,13 @@ def _assert_heartbeat_shape(heartbeat: dict) -> None:
 
 
 def test_capture_idle_baseline(tmp_path, make_client, contract_regen):
-    """idle（无 notice）快照 + 空闲心跳 + 空闲态的拒绝动作（dev 替身：两路 ready）。"""
+    """idle 快照 + 空闲心跳 + 空闲态的拒绝动作（dev 替身：两路 ready）。"""
     client = make_client({"capture.backend": "dev"})
 
     snapshot = client.get("/api/state").json()
     _assert_snapshot_shape(snapshot, top_state="idle", envelope_filled=False)
     assert snapshot["session"] is None
     assert snapshot["ended"] is None
-    assert snapshot["notice"] is None
     # 空闲态**不发提示级**（`docs/ui-design.md` 章 2.5 那张表：空闲态告警区不出现）。
     # 这一格与下面的 `transcript.health == "stopped"` 说的是两件事：那一格报的是「真转写
     # 后端还没起过场次」，提示级说的是「录音中转写跟不上了」。
@@ -260,7 +261,9 @@ def test_capture_action_failures_on_idle(tmp_path, make_client, monkeypatch, con
             "actions/fail-action-unavailable.json": _action_record(
                 unavailable, "dev_inject", {"source": "mic", "fault": "stall"}
             ),
-            "actions/fail-capture-unavailable.json": _action_record(capture_down, "start", {}),
+            "actions/fail-capture-unavailable.json": _action_record(
+                capture_down, "start", {"dir": "<path>"}
+            ),
             "actions/settings-update-ok.json": _action_record(
                 settings, "settings_update", {"asr.timeout_seconds": 30}
             ),
@@ -335,11 +338,13 @@ def test_capture_recording_group(tmp_path, make_client, contract_regen):
 
     emit(
         {
-            "actions/start-ok.json": _action_record(started, "start", {"mode": "both"}),
+            "actions/start-ok.json": _action_record(
+                started, "start", {"mode": "both", "dir": "<path>"}
+            ),
             "snapshot/recording.json": normalize(snapshot),
             "heartbeat/recording.json": normalize(heartbeat),
             "actions/fail-already-recording.json": _action_record(
-                duplicate, "start", {"mode": "both"}
+                duplicate, "start", {"mode": "both", "dir": "<path>"}
             ),
             "actions/mute-session-ok.json": _action_record(muted, "mute_session", {}),
             "sse/resync-snapshot.json": normalize_frame(resync),
@@ -434,8 +439,9 @@ def test_capture_ended_draining(tmp_path, make_client, monkeypatch, contract_reg
     monkeypatch.syspath_prepend(str(plugin.directory))
     values = dict(plugin.config)
     values.setdefault("web.dist_dir", str(helpers.missing_dist_dir(home)))
-    values.setdefault("output.root", str(tmp_path / "out-drain"))
     with helpers.app_client(home, values=values) as client:
+        client.place_root = tmp_path / "out-drain"
+        client.place_root.mkdir(parents=True, exist_ok=True)
         assert _act(client, "start", {"mode": "both"}).status_code == 200
         _wait_envelope_full(client)
         assert _act(client, "stop").status_code == 200
@@ -472,7 +478,9 @@ def test_capture_ended_draining(tmp_path, make_client, monkeypatch, contract_reg
     emit(
         {
             "snapshot/ended-draining.json": normalize(snapshot),
-            "actions/fail-draining.json": _action_record(refused, "start", {"mode": "both"}),
+            "actions/fail-draining.json": _action_record(
+                refused, "start", {"mode": "both", "dir": "<path>"}
+            ),
         },
         regen=contract_regen,
     )
@@ -612,36 +620,6 @@ def test_capture_summarize_group(tmp_path, make_client, contract_regen):
 
 
 # ---------------------------------------------------------------------------
-# idle + notice.restart_unfinished（真服务子进程：杀进程留现场再重启）
-# ---------------------------------------------------------------------------
-
-
-def test_capture_idle_notice_restart(service_process, meeting_env, contract_regen):
-    """recording 中被杀 → 同一输出根重启 → 空闲态挂 notice.restart_unfinished。"""
-    meeting_env.write_config({"capture.backend": "dev"})
-    proc = service_process(home=meeting_env.home, extra_env=meeting_env.env)
-    url = proc.wait_ready()
-    assert post_action(url, "start", {"mode": "both"}).status_code == 200
-    proc.kill()
-
-    restarted = service_process(home=meeting_env.home, extra_env=meeting_env.env)
-    restarted.wait_ready()
-    snapshot = restarted.snapshot()
-    assert snapshot["top_state"] == "idle"
-    assert snapshot["revision"] == REVISION_START
-    assert snapshot["session"] is None
-    assert snapshot["ended"] is None
-    notice = snapshot["notice"]
-    assert notice is not None
-    assert notice["kind"] == "restart_unfinished"
-    assert notice["text"].startswith("服务重启过。")
-    assert notice["session_dir"]
-    assert notice["log_path"] == snapshot["service"]["log_path"]
-
-    emit({"snapshot/idle-notice.json": normalize(snapshot)}, regen=contract_regen)
-
-
-# ---------------------------------------------------------------------------
 # SSE 帧样本（真服务子进程：dev 替身 + module:Class 假转写后端）
 # ---------------------------------------------------------------------------
 
@@ -691,7 +669,9 @@ def test_capture_sse_frames(tmp_path, service_process, meeting_env, contract_reg
         pythonpath=os.pathsep.join([str(helpers.REPO_ROOT), str(stub_dir)]),
     )
     url = proc.wait_ready()
-    assert post_action(url, "start", {"mode": "both"}).status_code == 200
+    assert post_action(
+        url, "start", {"mode": "both", "dir": helpers.allocate_start_dir(meeting_env.out_root)}
+    ).status_code == 200
 
     # 转写行与包络都落稳之后才连 SSE：首帧的 transcript.last_line_at 与包络长度因此确定
     wait_until(

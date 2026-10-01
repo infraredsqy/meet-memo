@@ -2043,12 +2043,11 @@ def web() -> None:
     logger.info("绑定成功：%s:%s（getsockname 实测）", actual_host, actual_port)
 
     print(f"URL：{url}", flush=True)
-    print(f"输出根：{runtime.out_root}", flush=True)
     print(f"log 路径：{runtime.log_path}", flush=True)
-    # 终端上这三样同样要落 log（§6.3 行 304 的「启动与选中的端口 / URL / 输出根」：
-    # 没在终端前面守着的人靠 log 复核时，这三行就是他要找的东西）
+    # 终端上这两样同样要落 log（「启动与选中的端口 / URL」：没在终端前面守着的人
+    # 靠 log 复核时，这两行就是他要找的东西）
     logger.info(
-        "启动就绪：URL：%s；输出根：%s；log 路径：%s", url, runtime.out_root, runtime.log_path
+        "启动就绪：URL：%s；log 路径：%s", url, runtime.log_path
     )
 
     # ⑥ 装信号处理函数，再把服务器跑起来，前台接收 Ctrl+C
@@ -2175,8 +2174,7 @@ def _report_drain_outcome(runtime, logger: logging.Logger, exit_code: int) -> No
             flush=True,
         )
         print(
-            "出路：看清现场后用 `meeting post <场次目录>` 收干净，或重启服务"
-            "（重启走 restart_unfinished 那一档）",
+            "出路：看清现场后用 `meeting post <场次目录>` 收干净，或重启服务。",
             file=sys.stderr,
             flush=True,
         )

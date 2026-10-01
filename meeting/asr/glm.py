@@ -1,8 +1,8 @@
 """GLM-ASR 的加载与**单段识别** —— 四层防护的挂载点。
 
-搬自 V1 `mnotes_core/recorder.py`（对照源 `.work/v1-src/recorder.py` **已按
-`docs/legacy-assets.md` 1.0 第 5 条删除**，原件见 V1 仓库
-`C:/Users/<user>/tools/meeting-notes/mnotes_core/recorder.py`）：
+搬自 V1 `mnotes_core/recorder.py`（原件见 V1 仓库
+`C:/Users/<user>/tools/meeting-notes/mnotes_core/recorder.py`；照 `docs/v1-lineage.md`
+第 11 章「原 1.0 第 5 条」，搬完那份工作副本就删掉了）：
 
   - `_NO_REPEAT_NGRAM_SUPPORTED` `:27-29`      → 降级记忆（四层防护的第 1 层）
   - `TranscribeResult` `:32-44`                → `TranscribeResult`
@@ -30,7 +30,7 @@ sounddevice / soundcard 那一半），V2 只搬识别那一半 —— 采集在
   3. `SAMPLE_RATE`（V1 从 `mnotes_core/config.py` import）→ 本模块的模块级常量（值同为 16000），
      好让 `_is_noise_segment` 的函数体逐字照搬；
   4. `_load_from_hub` 去掉 V1 的 `console=None` 形参与那两行 Rich 进度打印（`:293-294`）——
-     V2 没有终端界面（`docs/legacy-assets.md` 的 F6：Rich 终端配色不搬）；
+     V2 没有终端界面（`docs/v1-lineage.md` 的 F6：Rich 终端配色不搬）；
   5. 重依赖改为函数体内惰性 import（V1 是模块顶层 `import numpy as np` / `import torch`）；
   6. `transcribe_segment` 的形参注解去掉了 V1 的 `np.ndarray`：注解在
      `from __future__ import annotations` 下虽然不求值，留着它等于把一个未定义的名字写进签名。
@@ -58,7 +58,7 @@ MODEL_ID = "zai-org/GLM-ASR-Nano-2512"
 _NO_REPEAT_NGRAM_SUPPORTED = True
 
 # 搬自 V1 mnotes_core/config.py:35（`SAMPLE_RATE = 16000`，V1 的 `recorder.py` 从那里 import）
-# 采集与识别的采样率：16000 Hz / 单声道 / int16（`docs/legacy-assets.md` 的 B8）。
+# 采集与识别的采样率：16000 Hz / 单声道 / int16（`docs/v1-lineage.md` 的 B8）。
 SAMPLE_RATE = 16000
 
 
@@ -135,7 +135,7 @@ def _load_models():
     重依赖全在函数体内惰性 import。**这是本模块唯一的模型入口**，也是测试的接缝：
     用例用 `monkeypatch.setattr(meeting.asr.glm, "_load_models", fake)` 打在**同一份模块对象**上
     —— 别在别处写 `from meeting.asr.glm import _load_models` 那种绑到另一个模块对象的引用，
-    那正是 V1 那个「测试一边通过一边什么都没验」的坑（`docs/legacy-assets.md` 的 C9 / E9）。
+    那正是 V1 那个「测试一边通过一边什么都没验」的坑（`docs/v1-lineage.md` 的 C9 / E9）。
 
     处理器无额外 kwargs；模型 `dtype=torch.bfloat16, device_map="auto"`。
     """

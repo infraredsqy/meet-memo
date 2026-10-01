@@ -54,11 +54,11 @@ APPLIED_KEYS = {
     "asr.repeat_max_unit",
     "asr.repeat_min_coverage",
 }
-#: 三分表：其余 33 键（两个设备键位、`web.*` / `log.*` / `alert.*`、五个后端选择键、
+#: 三分表：其余 32 键（两个设备键位、`web.*` / `log.*` / `alert.*`、五个后端选择键、
 #: 会后离线那四个 `post.*`、会后纪要那五个 `minutes.*`，以及会中总结那七个 `summary.*`）。
-#: 三分表总共 39 个键 = `DEFAULT_VALUES` 的键全集。
+#: 三分表总共 38 个键 = `DEFAULT_VALUES` 的键全集（「输出根」那一格已退场）。
 PENDING_KEYS = {
-    "web.port", "web.dist_dir", "output.root", "log.level", "log.dir",
+    "web.port", "web.dist_dir", "log.level", "log.dir",
     "log.max_bytes", "log.backup_count", "alert.silence_dbfs", "alert.silence_seconds",
     "alert.recover_seconds", "alert.alarm_suppress_seconds",
     "heartbeat.interval_seconds", "capture.backend", "transcriber.backend", "post.hook",
@@ -73,22 +73,31 @@ PENDING_KEYS = {
 
 @contextlib.contextmanager
 def live(tmp_path: Path, values: dict | None = None):
-    """起一个进程内已启动的运行时；`yield (client, runtime, home, out_root)`。"""
+    """起一个进程内已启动的运行时；`yield (client, runtime, home, out_root)`。
+
+    `out_root` 沿用旧名，语义变了：它只是**测试层的场次放置根**（给 start 的 `args.dir`
+    预建工作区目录用），不再是任何配置键的值 —— 产品没有默认落点。
+    """
     home = tmp_path / "home"
     home.mkdir(parents=True, exist_ok=True)
     out_root = tmp_path / "out"
     out_root.mkdir(parents=True, exist_ok=True)
-    config = {"output.root": str(out_root), "capture.backend": "dev",
+    config = {"capture.backend": "dev",
               "web.dist_dir": str(helpers.missing_dist_dir(home))}
     config.update(values or {})
     with helpers.app_client(home, values=config) as client:
+        client.place_root = out_root
         yield client, client.app.state.runtime, home, out_root
 
 
 def post(client, action: str, args: dict | None = None):
     body = {"action": action}
-    if args is not None:
-        body["args"] = args
+    if args is not None or action == "start":
+        place_root = getattr(client, "place_root", None)
+        assert place_root is not None, (
+            "start 要显式给 dir：live() 给的 client 自带放置根（client.place_root）"
+        )
+        body["args"] = helpers.start_args(action, args, place_root)
     return client.post("/api/actions", json=body, headers={"X-Meeting-Service": "1"})
 
 
@@ -216,7 +225,8 @@ def test_start_rejects_an_illegal_mode_before_creating_anything(tmp_path):
         assert response.json()["code"] == "invalid_setting"
         assert response.json()["detail"]["key"] == "mode"
         assert snapshot_of(client)["top_state"] == "idle"
-        assert [item for item in out_root.iterdir() if item.is_dir()] == []
+        # 盘上没有本场写下的任何东西（没有 session.json、没有其余产物）
+        assert not any((item / "session.json").exists() for item in out_root.iterdir() if item.is_dir())
 
 
 def test_start_returns_already_recording_with_the_three_fields(tmp_path):
@@ -234,11 +244,10 @@ def test_start_returns_already_recording_with_the_three_fields(tmp_path):
         assert detail["elapsed_seconds"] > 0
         # 拒绝路径不产生第二次迁移
         assert snapshot_of(client)["revision"] == runtime.revision
-        assert len([item for item in Path(detail["dir"]).parent.iterdir() if item.is_dir()]) == 1
 
 
 def test_start_unavailable_on_the_explicit_null_backend_leaves_nothing_on_disk(tmp_path):
-    """显式配 `null` 替身：`capture_unavailable`(503) 带人话，**盘上不留任何场次目录**。"""
+    """显式配 `null` 替身：`capture_unavailable`(503) 带人话，**盘上没有 `session.json`**。"""
     with live(tmp_path, {"capture.backend": "null"}) as (client, _runtime, _home, out_root):
         response = post(client, "start")
         assert response.status_code == 503
@@ -247,7 +256,7 @@ def test_start_unavailable_on_the_explicit_null_backend_leaves_nothing_on_disk(t
         assert payload["message"]
         assert snapshot_of(client)["top_state"] == "idle"
         assert snapshot_of(client)["session"] is None
-        assert list(out_root.iterdir()) == []
+        assert not any((item / "session.json").exists() for item in out_root.iterdir() if item.is_dir())
 
 
 def test_start_is_rejected_while_draining(tmp_path):
@@ -428,7 +437,7 @@ def test_session_mute_recalculates_instead_of_stamping_true(tmp_path):
 
 
 def test_settings_update_splits_applied_and_pending_restart(tmp_path):
-    """`applied` = 热读六键（`asr.*` 五个 + `alarm.sound`）；`pending_restart` = 表里其余 21 键。"""
+    """`applied` = 热读六键（`asr.*` 五个 + `alarm.sound`）；`pending_restart` = 本次改的其余键。"""
     with live(tmp_path) as (client, _runtime, _home, _out):
         response = post(
             client,
@@ -438,7 +447,7 @@ def test_settings_update_splits_applied_and_pending_restart(tmp_path):
                 "asr.max_segment_seconds": 10,
                 "alarm.sound": False,
                 "alert.silence_seconds": 200,
-                "output.root": str(tmp_path / "another-out"),
+                "log.level": "DEBUG",
             },
         )
         assert response.status_code == 200, response.text
@@ -449,12 +458,12 @@ def test_settings_update_splits_applied_and_pending_restart(tmp_path):
             "alarm.sound", "asr.max_segment_seconds", "asr.timeout_seconds",
         ]
         assert sorted(body["pending_restart"]) == [
-            "alert.silence_seconds", "output.root",
+            "alert.silence_seconds", "log.level",
         ]
 
 
 def test_settings_key_groups_cover_the_whole_table(tmp_path):
-    """两个数组的键名与配置层的三分表逐键一致（39 个键一个不多、一个不少）。"""
+    """两个数组的键名与配置层的三分表逐键一致（38 个键一个不多、一个不少）。"""
     with live(tmp_path) as (client, _runtime, _home, _out):
         response = post(
             client,
@@ -470,10 +479,10 @@ def test_settings_key_groups_cover_the_whole_table(tmp_path):
         assert APPLIED_KEYS | PENDING_KEYS == set(config_module.SETTING_KEY_GROUPS)
         assert set(config_module.APPLIED_SETTING_KEYS) == APPLIED_KEYS
         assert set(config_module.PENDING_RESTART_SETTING_KEYS) == PENDING_KEYS
-        # 计数逐条钉住：6 + 33 = 39（三分表 = `DEFAULT_VALUES` 的键全集）
+        # 计数逐条钉住：6 + 32 = 38（三分表 = `DEFAULT_VALUES` 的键全集；「输出根」那一格退场）
         assert len(APPLIED_KEYS) == 6
-        assert len(PENDING_KEYS) == 33
-        assert len(config_module.SETTING_KEY_GROUPS) == 39 == len(config_module.DEFAULT_VALUES)
+        assert len(PENDING_KEYS) == 32
+        assert len(config_module.SETTING_KEY_GROUPS) == 38 == len(config_module.DEFAULT_VALUES)
         # 两个数组按定义就是这一档的补集关系（不是两张各自维护的名单）
         assert set(config_module.APPLIED_SETTING_KEYS) == set(config_module.HOT_KEYS)
         assert set(config_module.PENDING_RESTART_SETTING_KEYS) == (

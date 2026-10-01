@@ -177,7 +177,7 @@ async def _api_actions(request: Request) -> Response:
 
     try:
         if action == "start":
-            runtime.start_session(args.get("mode"))
+            runtime.start_session(args.get("mode"), args.get("dir"))
         elif action == "stop":
             runtime.stop_session("user")
         elif action == "mute_session":

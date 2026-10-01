@@ -1,8 +1,8 @@
 """token 级判环 / 墙钟超时 / 文本级重复剥离 —— 四层防护里**零重依赖**的三层。
 
-搬自 V1 `mnotes_core/recorder.py`（对照源 `.work/v1-src/recorder.py` **已按
-`docs/legacy-assets.md` 1.0 第 5 条删除**，原件见 V1 仓库
-`C:/Users/<user>/tools/meeting-notes/mnotes_core/recorder.py`）：
+搬自 V1 `mnotes_core/recorder.py`（原件见 V1 仓库
+`C:/Users/<user>/tools/meeting-notes/mnotes_core/recorder.py`；照 `docs/v1-lineage.md`
+第 11 章「原 1.0 第 5 条」，搬完那份工作副本就删掉了）：
 
   - token 级常量 `:20-25`             → 本文件「一、token 级判环」一节
   - `_LoopGuard` `:47-146`            → `_LoopGuard`（第 2 层：`logits_processor` 钩子）
@@ -11,7 +11,7 @@
   - `_loop_coverage` `:190-226`       → `_loop_coverage`
   - `_strip_repeat_loops` `:229-249`  → `_strip_repeat_loops`（第 4 层：文本兜底）
 
-职责分工（`docs/legacy-assets.md` 的 A1 / A2 两条）：
+职责分工（`docs/v1-lineage.md` 的 A1 / A2 两条）：
 
     本模块     —— 判定内核：纯标准库 + duck-typed 张量，**零 numpy / torch / transformers import**
     glm.py     —— 把上面两个钩子挂进 `generate()`，并在函数体内惰性 import 重依赖

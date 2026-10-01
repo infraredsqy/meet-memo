@@ -922,7 +922,7 @@ def test_the_session_dir_placeholder_fills_the_model_working_dir() -> None:
 # ---------------------------------------------------------------------------
 # 十、修复轮（真跑暴露的那条主线）
 #
-# 真跑了四遍真实素材（`.work/41465462-phase3/evidence/`）：提示词里那三条
+# 真跑了四遍真实素材（那一轮的一次性证据目录已清）：提示词里那三条
 # `python -m meeting.minutes…` 的命令**从场次目录里跑不起来**——子会话的 cwd 就是场次目录
 # （在仓库树外），`meeting` 包不在它的模块搜索路径上，裸跑必然 ModuleNotFoundError
 # （run3 实测：`Error while finding module specification for 'meeting.minutes'

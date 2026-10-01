@@ -1,26 +1,25 @@
 # contract/ —— 双端契约的 golden 样本
 
-> 这个目录是**服务与界面之间那份契约的可机读基准**：`fixtures/` 下的 29 个 JSON 样本一律出自真实服务路径，`tests/test_contract_fixtures.py` 每次跑测试都重走一遍采集、与盘上样本逐字比对，服务侧形状一漂移就红。
+> 这个目录是**服务与界面之间那份契约的可机读基准**：`fixtures/` 下的 28 个 JSON 样本一律出自真实服务路径，`tests/test_contract_fixtures.py` 每次跑测试都重走一遍采集、与盘上样本逐字比对，服务侧形状一漂移就红。
 >
 > 契约正文在 `docs/contract.md`（端点口径、快照 schema、SSE 帧形状、动作信封与 `code`/`detail` 表、心跳语义、客户端义务、保留登记）。这个 README 只讲三件事：**样本从哪儿来、掩码怎么打、怎么再生成**。
 >
 > 代码落点：掩码与采集辅助在 `tests/_contract.py`；比对与再生成在 `tests/test_contract_fixtures.py`；再生成开关 `--regen-contract` 注册在 `tests/conftest.py` 的 `pytest_addoption`。
 
-## 1. 样本清单（29 个）
+## 1. 样本清单（28 个）
 
 | 目录 | 文件 | 采集路径 | 固定的是什么 |
 |---|---|---|---|
-| `snapshot/` | `idle.json` | 进程内 TestClient（`capture.backend: dev`） | 空闲态：`session` / `ended` / `notice` 三处 `null`、两路 `ready`、包络空数组 |
-| | `idle-notice.json` | **真服务子进程**：`start` 之后 `kill()` 留现场，同一输出根再起一次 | 空闲态挂 `notice.restart_unfinished`、`revision` 回到起点 |
+| `snapshot/` | `idle.json` | 进程内 TestClient（`capture.backend: dev`） | 空闲态：`session` / `ended` 两处 `null`、两路 `ready`、包络空数组 |
 | | `recording.json` | 进程内 TestClient（dev 替身）+ 等两路包络长满 15 根 | 录音态：`session` 六键、两路 `capturing`、包络长度 15 |
 | | `alert.json` | 进程内 TestClient：配 `alert.silence_seconds: 1` + `dev_inject(loopback, silence)` | 告警态：`alerts.critical` 一条、告警路 `lost`、另一路 `capturing` |
 | | `ended-done.json` | 进程内 TestClient：`stop` 之后等 `ended.phase == done` | 成功档：四步 `skipped/skipped/done/skipped`、两路回 `unprobed`、`session.frozen` 为真 |
 | | `ended-draining.json` | 进程内 TestClient：换一个抛错的假 post 钩子（`tests/_drain_fakes.py`） | 失败停留档：`post` 步 `failed`、`ended.error` 有值、两路停 `stopped` |
-| `sse/` | `first-snapshot.json` | **真服务子进程**的 `/api/events` 首帧 | 首帧是 `snapshot`、带 `id`、`data` 就是十键快照 |
+| `sse/` | `first-snapshot.json` | **真服务子进程**的 `/api/events` 首帧 | 首帧是 `snapshot`、带 `id`、`data` 就是九键快照 |
 | | `state.json` | 同上，`mute_session` 触发一次广播 | `state` 是全量快照、`id == data.revision` |
 | | `levels.json` | 同上，`read_until("levels")` | 两路五键、`ts` 恒 `null`、包络 15、`bar == envelope[-1]` |
 | | `transcript.json` | 同上，假转写后端经 `module:Class` 挂进子进程 | `{revision, line}`、`line` 四键 |
-| | `resync-snapshot.json` | **进程内走 `hub.py` 的真实广播路径**：注册真订阅者 → 灌满 512 队列 → 下一次广播走 `resync()` | 带 `resync: true` / `dropped: 1`、顶层十二键、`id == data.revision` |
+| | `resync-snapshot.json` | **进程内走 `hub.py` 的真实广播路径**：注册真订阅者 → 灌满 512 队列 → 下一次广播走 `resync()` | 带 `resync: true` / `dropped: 1`、顶层十一键、`id == data.revision` |
 | `actions/` | `start-ok.json` / `stop-ok.json` / `mute-session-ok.json` | 进程内 TestClient 的真实动作端点 | 成功体 `{ok, revision}`；`revision` 是那一趟的真实提交号 |
 | | `summarize-ok.json` | 同上（注入假总结客户端 `_contract.SummaryStub` + 假转写后端，窗口里铺 12 行） | 成功体 = 通用信封 + `summary` **八格**（`window` / `window_label` / `at` / `elapsed_seconds` / `lines` / `what` / `where` / `lost`；`lines` 是窗口行数、三段来自假客户端的固定输出。**`GET /api/summaries` 那一条少一格 `lines`**，见下面 `summaries/after-one.json`） |
 | | `settings-update-ok.json` | 同上 | 成功体含 `applied` / `pending_restart` **两数组**、**没有 `message`** |
@@ -43,7 +42,7 @@
 ```json
 {
   "action": "start",
-  "args": {"mode": "both"},
+  "args": {"mode": "both", "dir": "<path>"},
   "status": 200,
   "body": {"ok": true, "revision": 2}
 }
@@ -66,13 +65,13 @@
 | 占位符 | 常量 | 掩什么 |
 |---|---|---|
 | `<iso>` | `ISO_PLACEHOLDER` | ISO 时间戳 |
-| `<path>` | `PATH_PLACEHOLDER` | 路径（`log_path` / `out_root` / `dir` / `session_dir`，以及自由文本里内嵌的绝对路径） |
-| `<session-id>` | `SESSION_ID_PLACEHOLDER` | **场次目录名**（`session.id` 与动作失败 `detail.session_id`，裸 `YYMMDD` / `YYMMDD-N`） |
+| `<path>` | `PATH_PLACEHOLDER` | 路径（`log_path` / `dir` / `session_dir`，以及自由文本里内嵌的绝对路径） |
+| `<session-id>` | `SESSION_ID_PLACEHOLDER` | **工作区目录名**（`session.id` 与动作失败 `detail.session_id`，人给的名字、形状任意） |
 | `<port>` | `PORT_PLACEHOLDER` | 端口 |
 | `<url>` | `URL_PLACEHOLDER` | 服务 URL |
 | `<dbfs>` | `LEVEL_PLACEHOLDER` | 电平类取值 |
 
-自描述的意思是**一眼看出这一格被人换过**：真值里不会出现 `<iso>` / `<path>` / `<session-id>` 这样的串（采集路径产出的是 ISO 时间戳、Windows 绝对路径、裸场次目录名、整数端口、数字电平），因此比对时不会把占位符与真值混淆。
+自描述的意思是**一眼看出这一格被人换过**：真值里不会出现 `<iso>` / `<path>` / `<session-id>` 这样的串（采集路径产出的是 ISO 时间戳、Windows 绝对路径、工作区目录名、整数端口、数字电平），因此比对时不会把占位符与真值混淆。
 
 **占位符要形状诚实**：`<path>` 与 `<session-id>` 分开是 phase2 复审抓出来的那一格 —— 早先 `session.id` 与 `dir` 同掩成 `<path>`，而真服务给的是**裸目录名**（`260921`，「掩码通过」于是冒充了「真值通过」：前端 schema 曾按路径形状写，线上三态快照整份解析失败）。两个占位符现在各说各的形状，读 fixtures 的人从占位符就能看出这一格该长什么样。
 
@@ -81,7 +80,7 @@
 | 对象 | 判据 | 换成 |
 |---|---|---|
 | ISO 时间戳 | 整串匹配 `^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z\|[+-]\d{2}:?\d{2})?$`（容忍带小数与 `Z` 的写法） | `<iso>` |
-| 路径类 | 键名在 `PATH_KEYS` = `{log_path, out_root, dir, session_dir}` | `<path>` |
+| 路径类 | 键名在 `PATH_KEYS` = `{log_path, dir, session_dir}` | `<path>` |
 | 场次目录名 | 键名在 `SESSION_ID_KEYS` = `{session_id}`（动作失败的 `detail`），**或**键名是 `id` 且父键是 `session`（靠键路径区分，见下） | `<session-id>` |
 | `url` | 键名是 `url`（字符串或数字都算） | `<url>` |
 | `port` | 键名是 `port` | `<port>` |
@@ -94,7 +93,7 @@
 
 `id` 这个键名在两处出现，处理**恰好相反**：
 
-- `session.id` 是**场次目录名**（`YYMMDD` 形状，例如 `250906`）→ **掩码 `<session-id>`**；
+- `session.id` 是**工作区目录名**（人给的名字，形状任意；目录名就是这一场会的名字，软件不按日期生成）→ **掩码 `<session-id>`**；
 - `sources[*].id` 是**取值域字面量**（`mic` / `loopback`）→ **原样保留**，掩掉就看不出快照的形状了。
 
 因此 `normalize()` 带着一条从根到当前格的 **键路径** `path`，判据是「键名是 `id` 且它上一级是 `session`」。动作失败 `detail.session_id` 那一格直接以键名 `session_id` 出现（`SESSION_ID_KEYS`），掩成同一个 `<session-id>` —— 服务在那两处给的是同一个值（`session.id`）。同理 `label`（`本地` / `远端`）、`health`、`mode`、`kind`、`phase`、`status`、`level` 这些取值域字面量**一律不掩**。
@@ -115,7 +114,7 @@
 
 有一类性质**掩码之后看不出来**（电平值都换成 `<dbfs>` 了），因此用例在**掩码前的原始载荷**上做这些断言：
 
-- 顶层十键（或重同步帧的十二键）恰好齐；
+- 顶层九键（或重同步帧的十一键）恰好齐；
 - `sources` 两项且次序是 `mic`、`loopback`；
 - 录音态两路 `envelope` 长度恰 `ENVELOPE_BAR_COUNT`（15）；
 - `levels` 帧每路 `ts is None`、`bar == envelope[-1]`；

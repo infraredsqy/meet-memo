@@ -11,7 +11,7 @@
 
 热读范围：**`asr.*` 那五个键每段重新读，`alarm.sound` 写盘那一刻就生效** —— 这六个合起来
 就是 `HOT_KEYS`（出声开关要在勾选那一刻起作用）；
-其余键（`web.*` / `output.root` / `log.*` / `alert.*` / `heartbeat.*` /
+其余键（`web.*` / `log.*` / `alert.*` / `heartbeat.*` /
 `capture.*` / `transcriber.*` / `post.*` / `devices.*`）都是**启动时读一次，改了要重启**。
 **环境变量一律在 import / 启动时求值**，改了不会热生效（B11 的坑）。
 
@@ -38,6 +38,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass
 from typing import Any
@@ -103,12 +104,11 @@ HOT_KEYS: tuple[str, ...] = (
     "asr.repeat_min_coverage",
 )
 
-#: `asr.*` 五个默认值沿用 `docs/legacy-assets.md` 的 B1（V1 `mnotes_core/config.py` 实测值），
+#: `asr.*` 五个默认值沿用 `docs/v1-lineage.md` 的 B1（V1 `mnotes_core/config.py` 实测值），
 #: 待 `9e5db89c` 落地时复核；**复核只许改值不许改口径**。
 DEFAULT_VALUES: dict[str, Any] = {
     "web.port": 8765,
     "web.dist_dir": "web/dist",
-    "output.root": None,  # 平台相关，见 default_output_root()
     "log.level": "INFO",
     "log.dir": None,  # 家目录相关，见 default_log_dir()
     "log.max_bytes": 5 * 1024 * 1024,  # 5 MiB
@@ -248,7 +248,6 @@ POST_DTYPE_VALUES = ("bfloat16", "bf16", "float16", "fp16", "float32", "fp32")
 #: 字符串键的合法取值说明（`None` = 任意非空字符串）
 STRING_LIMITS: dict[str, tuple[str, ...] | None] = {
     "web.dist_dir": None,
-    "output.root": None,
     "log.dir": None,
     "log.level": None,
     "capture.backend": BACKEND_SELECTORS,
@@ -315,7 +314,6 @@ ALL_NULLABLE_KEYS: tuple[str, ...] = (*NULLABLE_KEYS, *NULL_SENTINEL_KEYS)
 #: 于是机主宿主环境里的这个变量不会悄悄漏进任何子进程用例。
 ENV_KEYS: dict[str, str] = {
     "MEETING_PORT": "web.port",
-    "MEETING_OUT_ROOT": "output.root",
     "MEETING_LOG_DIR": "log.dir",
     "MEETING_CAPTURE": "capture.backend",
     "MEETING_SUMMARY_API_KEY": "summary.api_key",
@@ -530,18 +528,8 @@ def default_log_dir() -> str:
     return os.path.join(config_dir(), "logs")
 
 
-def default_output_root() -> str:
-    """`output.root` 的默认值：`%USERPROFILE%\\Documents\\meeting\\out`。
-
-    Windows 上用 `USERPROFILE` 展开；其它平台退化为用户主目录下的 `Documents/meeting/out`。
-    """
-    return os.path.join(home_dir(), "Documents", "meeting", "out")
-
-
 def default_for(key: str) -> Any:
     """取某个键的默认值（平台相关键在这里解析成具体值）。"""
-    if key == "output.root":
-        return default_output_root()
     if key == "log.dir":
         return default_log_dir()
     return DEFAULT_VALUES[key]
@@ -756,6 +744,11 @@ class Config:
 # ---------------------------------------------------------------------------
 
 
+#: 已退场键的字面键名：存量 config.json 里读到即忽略（见 `load()`）。
+#: 不是「未知键就忽略」——除此之外的未知键仍然严格拒绝。
+_RETIRED_KEYS = frozenset({"output.root"})
+
+
 def load(
     *,
     environ: dict[str, str] | None = None,
@@ -769,6 +762,17 @@ def load(
     config_file = config_path() if path is None else path
 
     file_values = _read_config_file(config_file)
+
+    # 「output.root」（默认输出根）在本节点已退场：存量 config.json 里残留的该键
+    # 读到即忽略 + 落一条 log，不再抛 ConfigValueError（不是影子默认根，不恢复行为）。
+    # 拼错键名的严格拒绝保留——这个豁免只认 `output.root` 这一个退场键的字面键名。
+    for retired in _RETIRED_KEYS:
+        if retired in file_values:
+            logging.getLogger("meeting.config").warning(
+                "config.json 里的已退场键 %r 已被忽略（该键已不再生效，可从配置文件删掉）",
+                retired,
+            )
+            file_values = {k: v for k, v in file_values.items() if k != retired}
 
     applied: dict[str, Any] = {}
     sources: dict[str, str] = {}
@@ -888,7 +892,6 @@ __all__ = [
     "current",
     "default_for",
     "default_log_dir",
-    "default_output_root",
     "env_name_for",
     "format_applied",
     "get",

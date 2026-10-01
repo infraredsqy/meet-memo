@@ -4,7 +4,6 @@ import {
   DRAIN_STEP_IDS,
   ENDED_PHASES,
   ERROR_CODES,
-  NOTICE_KINDS,
   SOURCE_HEALTHS,
   SOURCE_IDS,
   SOURCE_MODES,
@@ -44,9 +43,6 @@ export const transcriptLineKindSchema = z.enum(TRANSCRIPT_LINE_KINDS);
 
 /** 告警分级：致命级同时只留一条，提示级上限 3。 */
 export const alertLevelSchema = z.enum(['critical', 'hint']);
-
-/** `notice.kind`。 */
-export const noticeKindSchema = z.enum(NOTICE_KINDS);
 
 /** 七个动作名。 */
 export const actionNameSchema = z.enum(ACTION_NAMES);

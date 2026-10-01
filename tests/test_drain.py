@@ -122,7 +122,7 @@ from meeting.service.runtime import (
     DrainLimitExceeded,
     compute_drain_budget,
 )
-from meeting.session import SESSION_FILE_NAME, UNFINISHED_STATES
+from meeting.session import SESSION_FILE_NAME
 from meeting.state import DRAIN_STEP_IDS, DRAIN_STEP_STATUS
 from tests import _drain_fakes as fakes
 from tests import _helpers as helpers
@@ -314,10 +314,11 @@ DRAIN_OVERRUN_BACKLOG_LARGE = 10
 #: 于是「域里只有这两项」这件事有实测依据，不靠一句恒真的 `in ("draining", "done")`。
 ENDED_PHASE_DOMAIN = ("draining", "done")
 
-#: `session.json` 的 `state` **取值域**（phase2 冻结的四档）：未收尾两档取自
-#: `meeting/session.py` 的 `UNFINISHED_STATES`（**不重抄一份**），终态两档按同一处的规则补上。
+#: `session.json` 的 `state` **取值域**（phase2 冻结的四档）：四档逐字写死在这里
+#: （「未收尾」的判据原来取自 `meeting/session.py` 的 `UNFINISHED_STATES`；启动扫描已随
+#: 默认落点退场，没有别的消费点，这里不再引入中间常量）。
 #: ⑪ 条核结束标记里的 `state` 时按这份取值域断言成员关系。
-SESSION_STATE_DOMAIN = tuple(UNFINISHED_STATES) + ("done", "failed")
+SESSION_STATE_DOMAIN = ("recording", "draining", "done", "failed")
 
 
 # ---------------------------------------------------------------------------
@@ -521,14 +522,15 @@ def _all_steps_settled(snapshot: dict[str, Any]) -> bool:
 
 
 def _start(proc: Any) -> None:
-    started = post_action(proc.base_url, "start")
+    # 传进程对象本身（不是 base_url 字符串）：`post_action()` 靠它为 start 预建工作区目录
+    started = post_action(proc, "start")
     assert started.status_code == 200, started.text
 
 
 def _start_and_stop(proc: Any) -> None:
     """`start` → `stop`（两处都断言 200）。"""
     _start(proc)
-    stopped = post_action(proc.base_url, "stop")
+    stopped = post_action(proc, "stop")
     assert stopped.status_code == 200, stopped.text
 
 
@@ -539,11 +541,18 @@ def _session_dir_of_log(log_text: str) -> str:
     return match.group(1)
 
 
+def _new_workspace(tmp_path: Path, name: str) -> str:
+    """测试层给一次 `start` 预建一个**已存在**的工作区目录（产品没有默认落点、也不建目录，
+    `args.dir` 显式给 —— 真实使用是「人从磁盘里挑一个已有目录」，测试与它同一口径）。"""
+    d = tmp_path / f"ws-{name}"
+    d.mkdir(exist_ok=True)
+    return str(d)
+
+
 def _inprocess_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """进程内那一档的 `ServiceRuntime`（⑤d 条用：不起服务，直接调被断言的对象）。
-
-    与 phase2 的 `dev_runtime` 夹具同一档（家目录隔离 + 临时输出根），差别只在
-    **输出根由本用例另给**：同一个用例里要读的 log 落在这个临时目录下。
+    与 phase2 的 `dev_runtime` 夹具同一档（家目录隔离 + 临时日志根），差别只在
+    **服务级 log 的目录由本用例另给**：同一个用例里要读的 log 落在这个临时目录下。
     服务级日志按临时家目录重建、用完放回原样（走 `logging_setup` 的公开快照入口，
     不读被测模块的私有状态）。
     """
@@ -553,18 +562,18 @@ def _inprocess_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
     home = tmp_path / "home-inprocess-runtime"
     home.mkdir(parents=True, exist_ok=True)
-    out_root = tmp_path / "out-inprocess-runtime"
-    out_root.mkdir(parents=True, exist_ok=True)
+    log_root = tmp_path / "logs-inprocess-runtime"
+    log_root.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
     previous_handlers = logging_setup.handler_snapshot()
     logging_setup.reset_for_tests()
-    logging_setup.setup_service_logging(str(out_root / "logs"))
+    logging_setup.setup_service_logging(str(log_root / "logs"))
     try:
         loaded = config_module.load()
     finally:
         logging_setup.restore_handlers(previous_handlers)
-    return ServiceRuntime(str(out_root), loaded)
+    return ServiceRuntime(loaded)
 
 
 # ---------------------------------------------------------------------------
@@ -1141,7 +1150,7 @@ def test_drain_steps_share_one_deadline_with_shrinking_remaining_budget(tmp_path
     monkeypatch.setattr(runtime, "_drain_wait", recording_wait)
 
     async def one_pass() -> None:
-        runtime.start_session()
+        runtime.start_session(dir=_new_workspace(tmp_path, "deadline-share"))
         begin_drain(runtime.snapshot, reason="user")
         await runtime.drain()
 
@@ -1552,7 +1561,7 @@ def test_step_over_budget_still_leaves_later_steps_room(tmp_path, monkeypatch):
 
         beat = asyncio.ensure_future(ticker())
         try:
-            runtime.start_session()
+            runtime.start_session(dir=_new_workspace(tmp_path, "loop-pinned"))
             begin_drain(runtime.snapshot, reason="user")
             await runtime.drain()
         finally:
@@ -1653,7 +1662,6 @@ def _inprocess_config(
 
     applied = {
         **DEFAULT_VALUES,
-        "output.root": str(tmp_path / "out-inprocess-backends"),
         "log.dir": str(tmp_path / "out-inprocess-backends" / "logs"),
         "transcriber.backend": "auto",
         **({"post.hook": "null"} if post_hook_absent else {}),
@@ -1693,7 +1701,7 @@ def test_log_step_lands_failed_when_the_session_log_write_reports_a_problem(
     )
 
     async def one_pass() -> None:
-        runtime.start_session()
+        runtime.start_session(dir=_new_workspace(tmp_path, "log-write-problem"))
         begin_drain(runtime.snapshot, reason="user")
         await runtime.drain()
 
@@ -1772,7 +1780,7 @@ def test_post_step_lands_done_under_the_product_default_hook(tmp_path, monkeypat
     monkeypatch.setattr(post_module.PostProcessHook, "launch", fake_launch)
 
     async def one_pass() -> None:
-        runtime.start_session()
+        runtime.start_session(dir=_new_workspace(tmp_path, "post-default-hook"))
         begin_drain(runtime.snapshot, reason="user")
         await runtime.drain()
 
@@ -1886,10 +1894,11 @@ def test_later_steps_keep_a_worker_after_an_earlier_step_is_abandoned(tmp_path, 
     )
 
     still_flying = {"value": None}
+    ws_path = Path(_new_workspace(tmp_path, "abandoned-flush"))
     try:
 
         async def one_pass() -> None:
-            runtime.start_session()
+            runtime.start_session(dir=str(ws_path))
             begin_drain(runtime.snapshot, reason="user")
             await runtime.drain()
 
@@ -1912,11 +1921,7 @@ def test_later_steps_keep_a_worker_after_an_earlier_step_is_abandoned(tmp_path, 
         f"（log 的 detail={log_step.detail!r}、error={log_step.error!r}）"
     )
     # 这一步做的是真 IO，判据因此落在盘上：本场的场次目录与 `session.json` 都该在
-    session_dirs = sorted(
-        item for item in Path(runtime.output_root).iterdir() if item.is_dir()
-    )
-    assert session_dirs, f"输出根下该有本场的场次目录：{runtime.output_root}"
-    disk = session_dirs[-1] / SESSION_FILE_NAME
+    disk = ws_path / SESSION_FILE_NAME
     assert disk.exists(), f"log 那一步该把这一场写下来：{disk} 不存在"
     # 被放弃的那次调用在收尾收场那一刻还卡在闸门上，而整趟收尾已经结束 —— 墙钟因此只落在
     # `log` 那一步自己的预算之内；池里只有一条线程时它会顶到整份额度那一档。
@@ -2258,7 +2263,7 @@ def test_drain_whole_pass_upper_bound_grows_with_the_backlog(tmp_path, monkeypat
 
     async def one_pass(backlog: int) -> dict[str, Any]:
         transcriber._backlog = int(backlog)
-        session = runtime.start_session()
+        session = runtime.start_session(dir=_new_workspace(tmp_path, f"budget-{int(backlog)}"))
         begin_drain(runtime.snapshot, reason="user")
         task = asyncio.get_running_loop().create_task(runtime.drain())
         drain_started = time.monotonic()
@@ -2394,7 +2399,7 @@ def test_cancelled_drain_routes_through_the_frozen_accounting(tmp_path, monkeypa
     )
     monkeypatch.setattr(runtime, "_resolve_backends", lambda: None)
 
-    session = runtime.start_session()
+    session = runtime.start_session(dir=_new_workspace(tmp_path, "resolve-pinned"))
     assert runtime.capture_backend is backend, "解析结论该是本用例注入的那一份（没有被重算盖掉）"
     begin_drain(runtime.snapshot, reason="user")
     runtime._write_session(interrupted=True)  # 强制打断的**先落盘**那一版
@@ -2550,7 +2555,7 @@ def test_cancelled_drain_keeps_draining_even_with_a_failed_step_before_it(tmp_pa
     )
     monkeypatch.setattr(runtime, "_resolve_backends", lambda: None)
 
-    session = runtime.start_session()
+    session = runtime.start_session(dir=_new_workspace(tmp_path, "resolve-pinned"))
 
     async def interrupt_while_the_last_step_runs() -> None:
         # `begin_drain()` 与收尾协程都必须在事件循环这一侧（要在同一条循环上跑得起来）
@@ -2676,7 +2681,7 @@ def test_disk_has_no_ended_at_while_draining_only_at_the_terminal_version(tmp_pa
     monkeypatch.setattr(runtime.store, "write_session_json", recording_write)
 
     async def one_pass() -> None:
-        runtime.start_session()
+        runtime.start_session(dir=_new_workspace(tmp_path, "end-marker-versions"))
         begin_drain(runtime.snapshot, reason="user")
         await runtime.drain()
 
@@ -2847,7 +2852,11 @@ def test_failed_step_keeps_service_alive_and_start_conflicts(service_process, me
     assert record["state"] == "failed"
     assert record["ended_at"]
 
-    conflict = post_action(proc.base_url, "start")
+    conflict = post_action(
+        proc.base_url,
+        "start",
+        args={"dir": helpers.allocate_start_dir(proc.sessions_root)},
+    )
     assert conflict.status_code == 409
     payload = conflict.json()
     assert payload["code"] == "draining"
