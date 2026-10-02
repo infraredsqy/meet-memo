@@ -2,7 +2,7 @@
 
 > 这份文档写服务与后端之间的接缝：四个协议的成员、数据结构、缺省值，以及后端怎么被找到、怎么被注入。
 >
-> 现状：**协议本身已经定死，四个位置现在都有实现。** `capture.backend` 的默认值 `auto` 解析到真采集后端（`meeting.backends.capture:CaptureBackend`，真探测、真起两路、真落盘与真转码）；`transcriber.backend` 的默认值 `auto` 解析到真转写后端（`meeting.backends.transcribe:TranscriberBackend`，尾读归档 → VAD 切段 → 单 worker 顺序识别 → 每路一份会中临时稿 + 行出口）；`post.hook` 的默认值 `auto` 解析到 `meeting.backends.post:PostProcessHook`（起一条后台线程跑会后离线转写，返回即算启动成功），收尾第 4 步 `post` 因此从 `skipped` 翻成 `done`；`minutes.hook` 的默认值 `auto` 解析到 `meeting.backends.minutes:MinutesHook`（离线那一趟的尾巴上再起一条后台线程跑会后纪要生成，同样返回即算启动成功）。**只剩 `post.hook = null` 与 `minutes.hook = null` 这两档是缺席**（前者第 4 步记 `skipped`，后者离线跑完不产生纪要）。`meeting post` 已经接通（`65dd3e4c`）：它是**手动那条入口**，与开会结束时自动跑的那一遍走**同一段编排**（`meeting/cli.py` 的 `run_post()`），两处因此不会分叉。会后那条链自己的四个开关是 `post.engine` / `post.model` / `post.dtype` / `post.chunk_seconds`（见第 3 章末），会后纪要那一层的四个开关是 `minutes.hook` / `minutes.chunk_lines` / `minutes.max_segments` / `minutes.timeout_seconds`（见第 3 章末那一节）。另有一个只给开发与测试用的 dev 替身（默认关闭，**按 key 分流**：`capture.backend = dev` 落采集替身、`transcriber.backend = dev` 落转写替身）。
+> 现状：**协议本身已经定死，四个位置现在都有实现。** `capture.backend` 的默认值 `auto` 解析到真采集后端（`meeting.backends.capture:CaptureBackend`，真探测、真起两路、真落盘与真转码）；`transcriber.backend` 的默认值 `auto` 解析到真转写后端（`meeting.backends.transcribe:TranscriberBackend`，尾读归档 → VAD 切段 → 单 worker 顺序识别 → 每路一份会中稿 + 行出口）；`post.hook` 的默认值 `auto` 解析到 `meeting.backends.post:PostProcessHook`，`minutes.hook` 的默认值 `auto` 解析到 `meeting.backends.minutes:MinutesHook` —— 这两个实现现在**由人按按钮时才被拉起**（R26）：会后两个动作 `post_offline` / `post_minutes` 各起一条后台线程，起完即回，跑成什么样由场次目录里的状态文件回答。**收尾第 4 步 `post` 一个会后动作都不自动跑**：它做完该做的（让会中模型退出显存）就停在 `waiting`（＝等你动手），`ended.phase` 仍判 `done`。`post.hook = null` / `minutes.hook = null` 两档是缺席：对应的按钮当场回 404 `action_unavailable`（如实说这台机器上没接这一层）。`meeting post` 已经接通（`65dd3e4c`）：它是**命令行那条入口**，两层都跑（R15：命令行只有 `web` / `post` 两个词，不给分层开关）。会后那条链自己的四个开关是 `post.engine` / `post.model` / `post.dtype` / `post.chunk_seconds`（见第 3 章末），会后纪要那一层的五个开关是 `minutes.hook` / `minutes.chunk_lines` / `minutes.max_segments` / `minutes.timeout_seconds` / `minutes.dsh_url`（见第 3 章末那一节）。另有一个只给开发与测试用的 dev 替身（默认关闭，**按 key 分流**：`capture.backend = dev` 落采集替身、`transcriber.backend = dev` 落转写替身）。
 >
 > 协议与数据结构住在 `meeting/backends/base.py`（**只放协议与数据结构**，实现全在下游自己的模块里），替身住在 `meeting/backends/null.py` 与 `meeting/backends/dev.py`，解析的唯一入口是 `meeting/backends/registry.py`。
 
@@ -62,7 +62,7 @@
 - `stop()` 关读线程、把 VAD 手上的尾段送进队列，再在**收尾预算**内把队列里剩下的段尽量做完（预算按积压量自适应，公式见 `docs/state.md` 第 1 章）；
 - `health()` 三取值：已经 `stop()` 过、worker 没起来 / 已经停了、模型加载或识别出事 → `stopped`；积压段数压过 `BACKLOG_BEHIND_THRESHOLD`（20 段）→ `behind`；读线程出事、这一段再也不会长出新段也报 `behind`；其余情况 `normal`。**没起过场次时报 `stopped`** —— 快照空闲态那一格就是从它读来的真值；
 - `backlog_depth()` 是段队列里还没处理的段数（队列**无界**，不做 busy-drop），`segment_timeout()` 是配置里的 `asr.timeout_seconds`（默认 `20.0`）；
-- `release_gpu()` 由收尾第 4 步在**会后离线链加载 MOSSTD 之前**调一次（就是钩子的 `launch()` 之前那一刻），耗时算在 `post` 这一步的记账里。语义四条：**没加载过就 no-op**（一条日志都不写）、**幂等**、等在飞推理有 **5 秒上界**（后端自己的在飞计数 + `Condition`，事件驱动；到点照旧丢引用并记一条 warning）、**丢引用之后**才尽力清一次缓存。它抛错不拖垮整场 —— 调用方如实记一条 log，会后流程照常拉起。这一处交接的来由与本机数字见 `docs/asr-backends.md`。
+- `release_gpu()` 由收尾第 4 步调一次（那一步只做「让会中模型退出显存」这一件事，之后那一格停在 `waiting`；会后离线链与纪要层都由「生成会后精细稿」/「直接出纪要」按钮或 `meeting post` 另行拉起），耗时算在 `post` 这一步的记账里。语义四条：**没加载过就 no-op**（一条日志都不写）、**幂等**、等在飞推理有 **5 秒上界**（后端自己的在飞计数 + `Condition`，事件驱动；到点照旧丢引用并记一条 warning）、**丢引用之后**才尽力清一次缓存。它抛错不拖垮整场 —— 调用方如实记一条 log，`post` 那一格照常落 `waiting`。这一处交接的来由与本机数字见 `docs/asr-backends.md`。
 
 每一段落一份产物：`session_dir/meeting_transcript_<source>.md`，一行 `[HH:MM] 正文`（分钟级时间戳取**采集时刻**，追加写、逐行 flush）。识别失败的段落照落一行，正文是**占位符**（`[[识别失败: 超时 20s]]` 这一形状：双层方括号、裸文本、不带时间戳、不含 `**`）；真后端产出的 `kind` 一律是 `line`，失败段落也是 `line`，靠正文认出来。文件位置、行格式与占位符的几档见 `docs/state.md` 第 3 章，SSE 侧那一行见 `docs/contract.md` 第 3.3 节。
 
@@ -70,9 +70,9 @@
 
 | 成员 | 语义 |
 |---|---|
-| `launch(session_dir)` | 收尾第 4 步调它，**返回即算启动成功**（不等它跑完）。`post.hook = null` 那一档该步记 `skipped` |
+| `launch(session_dir)` | **返回即算启动成功**（不等它跑完）。收尾第 4 步不再调它（那一格做完释放显存就停在 `waiting`）；「生成会后精细稿」按钮（`post_offline`）走 `run_session(..., minutes=False)` 那条直路、不经它，`post.hook` 在那一侧只答「这一层接没接」（`null` → 按钮 404 `action_unavailable`） |
 
-真钩子住在 `meeting/backends/post.py`（`7c6952e5` 已落地，`post.hook` 的默认值 `auto` 解析到它）：服务侧一行都没改，收尾第 4 步自己就从 `skipped` 翻成了 `done`。
+真钩子住在 `meeting/backends/post.py`（`7c6952e5` 已落地，`post.hook` 的默认值 `auto` 解析到它）：收尾第 4 步不再拉起它（那一格停在 `waiting`），会后离线那条链由「生成会后精细稿」按钮按需直接跑。
 
 - `launch(session_dir)` 起一条 daemon 线程跑 `meeting.offline.runner.run_session(session_dir)`，随即返回 —— 收尾不等它跑完，它跑多久都不占收尾那条预算；
 - 线程里的异常落进场次目录的 `meeting_offline_status.json`（`error` 那一格），**不回收尾流程**；`session_dir` 是空值时当场抛错，那一步据实记 `failed`；
@@ -84,7 +84,8 @@
 
 | 成员 | 语义 |
 |---|---|
-| `launch(session_dir)` | 离线那一趟的尾巴调它，**返回即算启动成功**（不等它跑完）。`minutes.hook = null` 那一档不调它。真实现另收一格 `force`（`meeting post --force` 那一趟）：盘上已经停着一版 `running` 时**建线程之前**就抛 `AlreadyRunningError`（当场拒跑），带 `force` 时放行 |
+| `claim(session_dir)` | **可选成员**：**同步**把「这一层在飞」落到盘上（真实现里是 `meeting/minutes/status.py` 的 `mark_running()`），盘上已经停着一版 `running` 时当场抛 `AlreadyRunningError`。`post_minutes` 按钮那趟在起线程之前调它同步认账（runtime 用 `getattr` 找它，取不到就跳过同步认账这一步、照旧走线程体那条路） |
+| `launch(session_dir)` | `meeting post` 的离线尾巴与 `post_minutes` 按钮调它，**返回即算启动成功**（不等它跑完）。`minutes.hook = null` 那一档不调它（按钮当场 404，`meeting post` 补纪要那一路安静跳过）。真实现另收两格 keyword-only：`force`（`meeting post --force` 那一趟）—— 盘上已经停着一版 `running` 时**建线程之前**就抛 `AlreadyRunningError`（当场拒跑），带 `force` 时放行；`claimed` —— 按钮那趟在 `claim()` 认过账时带 `claimed=True` 调它（实现若接受 `claim()` 就应接受这个格，缺省 `False`）：这里不再重复认账，重复一次会读到自己刚落下的 `running`、把这一趟自己拒掉 |
 
 真钩子住在 `meeting/backends/minutes.py`（`41465462` 已落地，`minutes.hook` 的默认值 `auto` 解析到它）。形状与 `PostProcessHook` 同一条：
 
@@ -109,7 +110,7 @@
 
 转写这一档现在有两层：**默认取值 `auto`** 解析到真转写后端（`meeting.backends.transcribe:TranscriberBackend`，见第 1 章那一节）；`transcriber.backend = null`（或解析失败回退）才是**缺席**那一档 —— `NullTranscriberBackend` 恒 `health = normal`、`backlog_depth() = 0`、`segment_timeout() = 20.0`，收尾预算的输入因此取 `0` 段 / `20.0` 秒这两个缺省值，转写这一侧一行都不产。**缺席档的 `normal` 与真实现空闲态的 `stopped` 各说各的事**：`normal` 说的是「这个构建里没有转写这件事」，`stopped` 说的是「有转写、这一档没在跑」（真实现没起过场次时报的就是它）。
 
-`null` 替身**不长**合成电平或故障注入那类测试逻辑 —— 那是开发替身（`backends/dev.py`）的事。两个会后钩子的缺席占位各有一个：`registry.py` 的 `_AbsentPostHook`（`post.hook = null`）与 `_AbsentMinutesHook`（`minutes.hook = null`），两者的 `launch()` 都抛错，而缺席那一档根本不会被调用（调用方先问 `has_implementation`，是 `false` 就安静跳过，`post` 那一档记 `skipped`）。
+`null` 替身**不长**合成电平或故障注入那类测试逻辑 —— 那是开发替身（`backends/dev.py`）的事。两个会后钩子的缺席占位各有一个：`registry.py` 的 `_AbsentPostHook`（`post.hook = null`）与 `_AbsentMinutesHook`（`minutes.hook = null`），两者的 `launch()` 都抛错，而缺席那一档根本不会被调用（调用方先问 `has_implementation`，是 `false` 就安静跳过：界面上对应的按钮回 404 `action_unavailable`，`meeting post` 补纪要的那一路按缺席档记账）。
 
 ## 3. 后端怎么被找到
 
@@ -128,7 +129,7 @@
 |---|---|
 | `auto`（默认） | 按上面的约定路径找 |
 | `null` | 采集这一档用 `null` 替身；两个钩子没有替身可用，这一档就是**缺席** |
-| `dev` | 用开发替身，**按 key 分流**：`capture.backend` 落 `meeting.backends.dev:DevCaptureBackend`、`transcriber.backend` 落 `meeting.backends.dev:DevTranscriberBackend`。这条分流只认采集与转写两个键：`post.hook = dev` 或 `minutes.hook = dev` 都会落到采集替身上，那个对象没有 `launch()`，离线那一趟的尾巴如实记失败；要关掉整条会后链就写 `post.hook = null`，只关掉纪要那一层就写 `minutes.hook = null` |
+| `dev` | 用开发替身，**按 key 分流**：`capture.backend` 落 `meeting.backends.dev:DevCaptureBackend`、`transcriber.backend` 落 `meeting.backends.dev:DevTranscriberBackend`。这条分流只认采集与转写两个键：`post.hook = dev` 或 `minutes.hook = dev` 都会落到采集替身上，那个对象没有 `launch()`，离线那一趟的尾巴如实记失败；两个钩子键没有「可关的自动链」，各自答「对应那个按钮由哪个实现接」：`post.hook = null` → 「生成会后精细稿」按钮 404（`meeting post` 的离线段不受它管），`minutes.hook = null` → 「直接出纪要」按钮 404、`meeting post` 补纪要那一路安静跳过 |
 | `module:Class` | 显式指定 |
 
 `minutes.hook` 那一格多一层：**配置里写 JSON 的 `null` 也在缺席档**（不是「回退 `auto`」），它在 `resolve_minutes_hook()` 里提前返回，落 `has_implementation = false`、`selector = "null"`。写字符串 `"null"` 或不写这个键，走的仍是上面那张表。
@@ -163,16 +164,17 @@
 
 `post.dtype` 与 `post.chunk_seconds` 这两格的取值依据（模型自带的那份精度、官方 helper 在 CUDA 上的选择、块长标度曲线与越界判据）写在 `docs/asr-backends.md`，连同那台 3060 6GB 机器上还没量过的几项。
 
-### 会后纪要那一层的四个开关
+### 会后纪要那一层的五个开关
 
-`minutes.hook` 管这一层在不在（`auto` 落 `meeting.backends.minutes:MinutesHook`，`null` 是缺席：离线跑完不产生纪要），另外三个键管它跑起来什么样，都在启动时读一次（非热读，改了要重启）：
+`minutes.hook` 管这一层在不在（`auto` 落 `meeting.backends.minutes:MinutesHook`，`null` 是缺席：「直接出纪要」按钮当场 404 `action_unavailable`，`meeting post` 补纪要那一路安静跳过），另外四个键管它跑起来什么样，都在启动时读一次（非热读，改了要重启）：
 
 | 键 | 默认值 | 谁在读、怎么读 |
 |---|---|---|
-| `minutes.hook` | `auto` | `meeting/backends/registry.py` 的 `resolve_minutes_hook()`（离线那一趟的尾巴调它）。取值口径与 `post.hook` 同形，另加「配置里写 JSON `null` 也落缺席档」这一条 |
+| `minutes.hook` | `auto` | `meeting/backends/registry.py` 的 `resolve_minutes_hook()`（`meeting post` 的离线尾巴与 `post_minutes` 按钮经它拿实现；缺席档按钮当场 404、`meeting post` 补纪要那一路安静跳过）。取值口径与 `post.hook` 同形，另加「配置里写 JSON `null` 也落缺席档」这一条 |
 | `minutes.chunk_lines` | `100` | `meeting/minutes/runner.py` 的 `chunk_lines_of()` → `chunk.chunk_session()`，合法范围 `10–1000`（与 `chunk.MIN_CHUNK_LINES` / `MAX_CHUNK_LINES` 同值） |
 | `minutes.max_segments` | `8` | `runner.py` 的 `max_segments_of()` → 契约校验与提示词渲染各用一次，合法范围 `1–20`（默认值与 `contract.DEFAULT_MAX_SEGMENTS` 同值） |
 | `minutes.timeout_seconds` | `14400` | `runner.py` 的 `_timeout_seconds()` → 启动器那一次子进程的墙钟上限，合法范围 `60–86400` |
+| `minutes.dsh_url` | `http://127.0.0.1:3080` | `meeting/minutes/dsh_web.py` 的 `probe()` 在拉起之前探的那台 DSH web 服务端（非空字符串，本层不校验 URL 形状；探不通就落回 headless 分支）。默认值就是 `dsh web` 的默认监听地址 |
 
 **`minutes.hook` 是 `config.py` 里唯一一个「`null` 是取值、原样留着」的可空键**（`NULL_SENTINEL_KEYS`）：配置里写 `null` 就是「关掉这一步」，归一成空串或默认值都会把这件事吃掉，因此它不进两个设备键那一档（`NULLABLE_KEYS`）。两档合起来是 `ALL_NULLABLE_KEYS`。
 

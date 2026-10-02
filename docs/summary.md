@@ -4,7 +4,7 @@
 >
 > 内核在 `meeting/summary/`（`window.py` / `prompt.py` / `client.py` / `parse.py` / `settings.py` / `runner.py`）；服务接线在 `meeting/service/runtime.py` 的 `summarize()` 与 `summaries_dict()`。契约正文（逐档 `detail` 与成功体全文）在 `docs/contract.md` 第 4.7 节，HTTP 面的速查在 `docs/api.md` 第 3 章。
 >
-> 别跟会后纪要那一层混：那一层在 `docs/minutes.md`，跑的是会后那条离线链。
+> 别跟会后纪要那一层混：那一层在 `docs/minutes.md`，由「直接出纪要」按钮或 `meeting post` 拉起。
 
 ## 1. 它是什么、什么时候跑
 
@@ -16,8 +16,8 @@
 
   | | 会中总结（这份） | 会后纪要（`docs/minutes.md`） |
   |---|---|---|
-  | 什么时候跑 | 人按一下，随叫随到 | 会后那条离线链的尾巴上自动跑 |
-  | 吃什么 | 内存里的实时转写窗口 | 盘上的两条权威转写 |
+  | 什么时候跑 | 人按一下，随叫随到 | 人按才跑：「直接出纪要」按钮或 `meeting post` |
+  | 吃什么 | 内存里的实时转写窗口 | 盘上的两条稿子（会中稿 + 会后稿，都在时两份一起给） |
   | 模型怎么调 | 自己调 OpenAI 兼容端点 | 外包给一个 headless DSH 子会话 |
   | 预算 | 十到十五秒（默认 deadline 25 秒） | 四小时（`minutes.timeout_seconds`） |
   | 产物 | 几条，出现在应答体里，关掉即消失 | 一份 `meeting_final.md` 落在场次目录 |

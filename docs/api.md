@@ -47,17 +47,17 @@
 
 ## 3. 动作表与 `code` 表
 
-九个动作：`start` / `stop` / `mute_session` / `settings_update` / `reprobe` / `dev_inject` / `summarize` / `workspace_open` / `workspace_remove`。九个 `code`：
+十一个动作：`start` / `stop` / `mute_session` / `settings_update` / `reprobe` / `dev_inject` / `summarize` / `workspace_open` / `workspace_remove` / `post_offline` / `post_minutes`。末尾那两个是会后两个按钮（「生成会后精细稿」/「直接出纪要」，R26）：起一条后台线程即算启动成功，成功体在通用信封上多一个 `post: {kind, dir}`；跑成什么样由场次目录里的状态文件回答。九个 `code`：
 
 | `code` | HTTP | 意思 | 谁会回它 |
 |---|---|---|---|
 | `already_recording` | 409 | 已经有一场在录 | `start` / `reprobe` |
-| `draining` | 409 | 上一场还在收尾（或收尾失败后停留），这场不能开 | `start` |
+| `draining` | 409 | 上一场还在收尾（或收尾失败后停留），这场不能开；会后两个按钮拿它回「收尾没落定 / 有一趟会在飞」 | `start` / `post_offline` / `post_minutes` |
 | `capture_unavailable` | 503 | 采集后端不可用：没接入、或设备起不来 | `start` |
 | `not_recording` | 409 | 现在没有在录的场次 | `stop` / `mute_session` / `dev_inject` / `summarize` |
 | `invalid_setting` | 400 | 参数或键名非法（校验都在动手之前） | 各动作 |
 | `persist_failed` | 500 | 配置写盘失败，这次改动一处都没生效 | `settings_update` |
-| `action_unavailable` | 404 | 这个后端没有这个动作 | `dev_inject`（非 dev 后端） |
+| `action_unavailable` | 404 | 这个后端没有这个动作；会后两个按钮拿它回「这台机器上没接这一层」 | `dev_inject`（非 dev 后端）/ `post_offline`（`post.hook` 缺席）/ `post_minutes`（`minutes.hook` 缺席） |
 | `transcript_unavailable` | 503 | 转写没在跑（没起过，或者已经停了）；`detail = {"health": "stopped"}` | `summarize` |
 | `summary_failed` | 502 | 会中总结没拿到结果：`detail` 是 `{missing: [...]}`（端点没配齐）或 `{elapsed_seconds, attempts}`（预算用尽 / 端点报错 / 解析连试带败） | `summarize` |
 
@@ -74,6 +74,7 @@
 | `summarize` | 409 `not_recording` | 200：**只读**，结果在应答体的 `summary` 键里（转写没在跑 503、端点没配齐 502） | 200：同上 | 409 `not_recording` | 409 `not_recording` |
 | `workspace_open` | 200：写工作区注册表（缺 `dir` / 目录不存在 / 非空未确认 → 400） | 200 | 200 | 200 | 200 |
 | `workspace_remove` | 200：摘一行名单，文件不碰 | 200 | 200 | 200 | 200 |
+| `post_offline` / `post_minutes` | 带 `dir` 且那一行合法 → 200；不带 → 409 `draining`（手上没有可以跑后会的场次） | 409 `draining` | 409 `draining` | 200（这一层没接实现 → 404 `action_unavailable`；有一趟在飞 → 409 `draining`） | 收尾落定（`post` 停 `waiting` 算落定）→ 200；还没落定 → 409 `draining` |
 
 `settings_update` 写的是配置文件，与「这一场录到哪儿」无关，因此**任何状态下都可用**。`mute_session` 只在本场收尾之前可用 —— 收尾完成后本场已无可静音，复位发生在下一场 `start`。`reprobe` 只在**没有场次在跑**的时候可用（`recording` / `alert` 两态回 `already_recording`）：设备在开场前定下来，会中换设备是明文不做的那一档。`summarize` 只在**有场次在跑**的时候可用（它读的是这一场的实时转写）。
 
@@ -136,7 +137,17 @@
 
 **`workspace_remove`** —— 「删除」：`{"action": "workspace_remove", "args": {"dir": "…"}}`，成功体 `{ok, revision, workspace: {dir, removed}}`。**只把这一条从注册表摘掉**，工作区目录与文件一个字节不动（`docs/design-intent.md` 第 5 条）；没登记过这条也照样 200（`removed: false`）。
 
-**`GET /api/sessions` / `GET /api/dirs`** —— 两只纯读端点：前者给注册表 + `recent`，后者给选择器的一层子目录名目。**"最近一场"只从注册表读**：启动、请求都不扫任何场次目录（`docs/design-intent.md` 第 4 条）。
+**`post_offline` / `post_minutes`** —— 会后两个按钮（R26），判据与逐档 `detail` 见 `docs/contract.md` 4.3：
+
+```json
+{"action": "post_offline", "args": {"dir": "C:\\会议\\跟老王聊周会"}}
+```
+
+- `args.dir` **可省**：给了就跑它指定的那一场，且要过与 `GET /api/sessions` 同一套注册表 / 目录判读（不在注册表里、目录不在原地、盘上 `state` 还是 `recording` / `draining` → `invalid_setting`(400)）；省略时跑**收尾刚落定的那一场**（命令行与既有调用走这一路）。
+- 拒绝档固定三条：这一场还没结束 / 收尾还没落定，或已经有一趟会后活在飞 → 409 `draining`；`post_minutes` 那一层的账停在 `running`（纪要 claim 闸同步判）→ 409 `draining`，`detail` 带 `status_path`；这一层没接实现（`post.hook` / `minutes.hook` 缺席）→ 404 `action_unavailable`。
+- 成功体是通用信封 + `post: {kind: "offline"|"minutes", dir}`；回执只说「起没起、跑的哪一场」，跑成什么样由场次目录里的 `meeting_offline_status.json` / `meeting_minutes_status.json` 回答。
+
+**`GET /api/sessions` / `GET /api/dirs`** —— 两只纯读端点：前者给注册表 + `recent`（每行带 `has_offline`：这一场有没有会后精细稿），后者给选择器的一层子目录名目。**"最近一场"只从注册表读**：启动、请求都不扫任何场次目录（`docs/design-intent.md` 第 4 条）。
 
 ## 4. `settings_update`：写哪些键、什么时候生效
 
@@ -159,7 +170,7 @@
 
 - **`alarm.sound` 与 `asr.*` 一起当场生效**：写盘那一刻主 log 落一行「alarm.sound 收在热读档，本刻起出声开关 = …」，服务侧同时重取一次生效值视图并提交 —— 紧接着的 `GET /api/state` 里 `settings.alarm_sound` 就是新值，`revision` 涨一格，界面当场按新值决定响不响（设计稿 `docs/ui-design.md` 4.5 要的「勾选立即生效」在这里成立）。
 - **会后那四个键**（`post.engine` / `post.model` / `post.dtype` / `post.chunk_seconds`）也归 `pending_restart`：`post.engine` 与三个后端选择键同形（`auto` / `null` / `module:Class`），`post.model` 收 HF 仓库 id 或本地快照路径，`post.dtype` 只认 `bfloat16` / `bf16` / `float16` / `fp16` / `float32` / `fp32` 这几个档位名，`post.chunk_seconds` 是每块音频的长度上限（整数 `0`–`86400`，默认 `450`，`0` = 关掉分块、整段一次跑）。键名与取值范围的判据在 `meeting/config.py`，档位名要跟 `meeting/offline/engine.py` 的 `DTYPE_NAMES` 对得上，写错的名字在写盘前就被拦下。
-- **会后纪要那五个键**（`minutes.hook` / `minutes.chunk_lines` / `minutes.max_segments` / `minutes.timeout_seconds` / `minutes.dsh_url`）同样归 `pending_restart`：`minutes.hook` 与三个后端选择键同形（`auto` / `null` / `module:Class`），另外**收 JSON 的 `null`**（表示「离线跑完不产生纪要」）；`minutes.chunk_lines` 是每块行数（整数 `10`–`1000`）、`minutes.max_segments` 是每条 source 的分段上限（整数 `1`–`20`）、`minutes.timeout_seconds` 是一次生成的墙钟上限（整数 `60`–`86400`）、`minutes.dsh_url` 是 DSH web 服务端的地址（非空字符串，默认 `http://127.0.0.1:3080`）。键名与取值范围在 `meeting/config.py`。这一层怎么跑见 `docs/minutes.md`。
+- **会后纪要那五个键**（`minutes.hook` / `minutes.chunk_lines` / `minutes.max_segments` / `minutes.timeout_seconds` / `minutes.dsh_url`）同样归 `pending_restart`：`minutes.hook` 与三个后端选择键同形（`auto` / `null` / `module:Class`），另外**收 JSON 的 `null`**（＝这台机器不接纪要这一层：「直接出纪要」按钮当场回 404 `action_unavailable`，`meeting post` 补纪要那一路安静跳过）；`minutes.chunk_lines` 是每块行数（整数 `10`–`1000`）、`minutes.max_segments` 是每条 source 的分段上限（整数 `1`–`20`）、`minutes.timeout_seconds` 是一次生成的墙钟上限（整数 `60`–`86400`）、`minutes.dsh_url` 是 DSH web 服务端的地址（非空字符串，默认 `http://127.0.0.1:3080`）。键名与取值范围在 `meeting/config.py`。这一层怎么跑见 `docs/minutes.md`。
 - **配置文件本身的键形与请求同位**：`~/.config/meeting/config.json` 里也只有一层点号扁平键名，例如 `{"alert.silence_seconds": 3}`。嵌套形状不合法。
 - **只写用户配置文件里已有的键 + 本次改动的键**，不把代码里的默认值落盘 —— 一次 `settings_update` 不会凭空长出一份写着全部默认值的配置文件。
 - **校验在写盘之前**：至少落地方案点名的「超时必须大于段长」（`asr.timeout_seconds > asr.max_segment_seconds`），违规回 `invalid_setting`(400) 并说明是哪两个键。

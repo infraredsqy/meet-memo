@@ -104,7 +104,7 @@
 - **首发那一帧是 `false`**：一条**新起**的告警在广播出去的第一帧 `muted` 是 `false`（界面据此响一声），此后同一条是 `true`（不重复出声）；恢复后再次发生按新事件处理，首发又是 `false`。本场静音期间一律 `true`（那条「刚起、还没广播」的条目在静音期间同样算 `true`）。`contract/fixtures/snapshot/alert.json` 抓的就是首发那一帧（`"muted": false`）。
 - **心跳失联那条致命级由界面自己判、自己画**，服务侧不产生它。
 
-`transcript`：`health ∈ normal｜behind｜stopped`（直接来自转写后端。**空闲态是 `stopped`** —— 真实现没起过场次时报的就是它，`contract/fixtures/snapshot/idle.json` 那一格就是这个值；缺席档的缺省替身恒报 `normal`）；`last_line_at` 是 ISO \| null（**掩码 `<iso>`**，服务侧收到最近那一行时的墙钟）；`buffered_lines` 是积压段数、`failed_segments` 是累计识别失败段数 —— **这两个计数只进 log 与 `/debug`，产品界面不摆它们**，它们写进快照但不给 `revision` 投票（四格里只有 `health` 的迁移才提交）。刷新路径：开一场就地刷一次、每出一行刷一次，另有一条 0.5 秒的低频节拍兜住「worker 停摆、没有行可等」那一档；**读路径（`GET /api/state`、SSE 首帧）不碰后端，也不改状态**。同一批行逐行落在场次目录里的 `meeting_transcript_<source>.md`（会中临时稿，一行 `[HH:MM] 正文`，见 `docs/state.md` 第 3 章）；**会中这份是临时稿**，权威底本是会后那份 `meeting_offline_transcript_<source>.md`（每路一份、两路不合并，第 7 章）。
+`transcript`：`health ∈ normal｜behind｜stopped`（直接来自转写后端。**空闲态是 `stopped`** —— 真实现没起过场次时报的就是它，`contract/fixtures/snapshot/idle.json` 那一格就是这个值；缺席档的缺省替身恒报 `normal`）；`last_line_at` 是 ISO \| null（**掩码 `<iso>`**，服务侧收到最近那一行时的墙钟）；`buffered_lines` 是积压段数、`failed_segments` 是累计识别失败段数 —— **这两个计数只进 log 与 `/debug`，产品界面不摆它们**，它们写进快照但不给 `revision` 投票（四格里只有 `health` 的迁移才提交）。刷新路径：开一场就地刷一次、每出一行刷一次，另有一条 0.5 秒的低频节拍兜住「worker 停摆、没有行可等」那一档；**读路径（`GET /api/state`、SSE 首帧）不碰后端，也不改状态**。同一批行逐行落在场次目录里的 `meeting_transcript_<source>.md`（会中临时稿，一行 `[HH:MM] 正文`，见 `docs/state.md` 第 3 章）；**会中这份是临时稿**，会后那份带说话人编号的稿（`meeting_offline_transcript_<source>.md`）另落一份，两份平级放在一起对拍（每路一份、两路不合并，第 7 章）。
 
 `ended`：`phase ∈ draining｜done`（**`failed` 不是这个字段的取值** —— 它属于盘上 `session.json` 的 `state`，在快照里没有对应位置）；`steps` 是四步各一条，次序恒为 `flush` / `transcode` / `log` / `post`；`error` 是 string \| null。
 
@@ -273,12 +273,12 @@ X-Meeting-Service: 1
 
 **请求体本身的毛病**（不是 JSON / 不是对象 / `args` 不是对象）也走这个信封：`code = invalid_setting`、`status = 400`、`detail = {}`。
 
-### 4.3 九个动作的语义
+### 4.3 十一个动作的语义
 
 | 动作 | 语义 | `args` |
 |---|---|---|
 | `start` | 开一场：校验落点 → 写第一版 `session.json` → 起采集 → 进 `recording`（`idle` 与 `ended` 都能出发） | `dir`：**必给** —— 一条**已存在**的目录的路径，这一场的工作区与落点（服务**不建目录、不设默认落点、不按日期命名**，`docs/design-intent.md` 第 3、4 条；目录里已有另一场的 `session.json` 时拒）；`mode`：`both` / `mic` / `loopback`，**缺省 `both`** |
-| `stop` | 结束本场：冻结时长 → 进 `ended·draining` → 服务按四步收尾跑到终态 | 无 |
+| `stop` | 结束本场：冻结时长 → 进 `ended·draining` → 服务按四步收尾跑到终态。**第 4 步 `post` 不自动拉起任何会后流程**（R26）：它做完该做的（让会中模型退出显存）就停在 `waiting`（＝等你动手），会后归下面两个动作 | 无 |
 | `mute_session` | 本场不再出声：`alerts.*.muted` 立刻变 `true`。**不改**持久化开关 `alarm.sound`，**下一场 `start` 自动复位** | 无 |
 | `settings_update` | 写配置文件（原子写），键态两分见 4.6 | 「配置点号键名 → 值」的扁平映射 |
 | `reprobe` | 重新枚举并试开设备，结果落进快照两路（`revision +1`）。**只在没有场次在跑的时候可用**：`recording` / `alert` 回 `already_recording`(409) | 无 |
@@ -286,12 +286,25 @@ X-Meeting-Service: 1
 | `summarize` | 会中一键总结：把最近这段时间的实时转写读一遍，给回三小段（见 4.7）。**只读**：不写快照、不动 `revision` | `window`：`5m` / `15m` / `30m` / `full`，**缺省取配置的 `summary.default_window`**（`15m`） |
 | `workspace_open` | 打开/收编一个**已存在**的目录，登记进工作区注册表（4.8）。空目录当新会、有会议材料（含疑似会议目录）当收编、**非空且无材料**要 `confirm: true` 才登记。**任何状态下都可用**（清单维护不碰快照） | `dir`：**必给**，已存在目录的路径；`confirm`：非空无材料那一档确认收编时为 `true` |
 | `workspace_remove` | **只把这一条从注册表摘掉**：工作区目录与里面所有文件一个字节不动（`docs/design-intent.md` 第 5 条）。没登记过这一条也照样 200（`removed: false`，重复删除安全） | `dir`：必给 |
+| `post_offline` | **「生成会后精细稿」**：只跑会后**离线**那一条链（走离线模型，慢，出带说话人编号的那份稿），**纪要不碰**。起一条后台线程即算启动成功（回执只说跑了哪一场）；跑成什么样由场次目录里的 `meeting_offline_status.json` 回答 | `dir`：**可省** —— 要跑的那一场（工作台里选中并按下按钮的那一行，界面那一格 `has_offline` 说的也是它）。该路径与 `GET /api/sessions` 同一套注册表 / 目录判读：不在注册表里、目录不在原地、或盘上 `state` 是 `recording` / `draining` → `invalid_setting`(400)。**省略时跑收尾刚落定的那一场**（命令行与既有调用走这一路） |
+| `post_minutes` | **「直接出纪要」**：把这一场**手上有的稿子**交给 DSH 出纪要（会后稿在就两份一起给，缺它按现有档位降级）。**不补跑离线那一层**（R9：那一条是可选的）。起一条后台线程即算启动成功 | 同上（`dir` 的校验与省略语义一致） |
+
+**这两个会后动作的三档拒绝**（都落在既有的 `code` 上，不加新 `code`）：
+
+- **这一场还没结束 / 收尾还没落定**，或**已经有一趟会后活没跑完** → `draining`(409)；
+- **`post_minutes` 那一层的账停在 `running`**（纪要那一层还在飞：`meeting_minutes_status.json`
+  读得出 `state = "running"`）→ `draining`(409)，`detail` 带 `status_path` 与那一版的原因
+  —— 这一格在**动作本体**里同步判（复用 `meeting/minutes/status.py` 那把 claim 闸），
+  因此重复按「直接出纪要」拿到的是拒跑档，不会拿到一个「已起」的假回执；
+- 这台机器上**没接这一层的实现**（`post.hook = null` / `minutes.hook = null`）→ `action_unavailable`(404)；
+- 成功体是通用信封 + 一个 `post` 键：`{ok, revision, post: {kind: "offline"｜"minutes", dir}}`
+  —— 回执里**没有**「跑完了没有」这一格，那一趟可能跑一小时。
 
 **`start` 的失败顺序是固定的**：先判态（`already_recording` / `draining`）→ 再校验 `args`（`dir` 缺失 / 目录不存在 / 目录里已有另一场的记录、`mode` 非法 → `invalid_setting`）→ 再判后端可用性（`capture_unavailable`）→ 最后才写第一版文件。**态不对或后端不可用时盘上不落这个目录里的任何新东西（目录本身是用户给的，软件也不删它）。**
 
 **`reprobe` 的 `detail` 形状**：成功体就是通用的 `{ok, revision}`（**没有额外字段**），挑不到设备不构成动作失败 —— 那一档如实落进快照两路的 `health = probe_failed` 与 `probe()` 的 `detail` 里。
 
-**`stop` 成功后 `revision` 会继续往上走**（收尾四步各自提交一次），`ended.phase` 最终落在 `done`（四步全部 `done` / `skipped`、无 `failed`）或**保持 `draining`**（有 `failed` 步，或收尾被取消）。**`ended` 不回到 `idle`**：下一场的 `start` 从 `ended` 直接进 `recording`。
+**`stop` 成功后 `revision` 会继续往上走**（收尾四步各自提交一次），`ended.phase` 最终落在 `done`（前三步 `done` / `skipped`、第 4 步停在 `waiting`、无 `failed`）或**保持 `draining`**（有 `failed` 步，或收尾被取消）。**`ended` 不回到 `idle`**：下一场的 `start` 从 `ended` 直接进 `recording`。
 
 **`dev_inject` 的三档故障**：`silence`（这一路电平落到阈值以下）/ `stall`（两路事实帧整体停发，HTTP 照常应答）/ `lost`（直接来一条 `SourceLost`）。`after_seconds` 到点生效（可为 0），`duration_seconds` 到点恢复（正数，可省，**缺省 30.0 秒**）。非 dev 后端回 `action_unavailable`(404)；没有正在进行的场次回 `not_recording`(409)。
 
@@ -302,12 +315,12 @@ X-Meeting-Service: 1
 | `code` | HTTP | 意思 | 谁会回它 |
 |---|---|---|---|
 | `already_recording` | 409 | 已经有一场在录 | `start` / `reprobe` |
-| `draining` | 409 | 上一场还在收尾（或收尾失败后停留），这场不能开 | `start` |
+| `draining` | 409 | 上一场还在收尾（或收尾失败后停留），这场不能开；会后两个按钮拿它回「收尾没落定 / 有一趟会在飞」 | `start` / `post_offline` / `post_minutes` |
 | `capture_unavailable` | 503 | 采集后端不可用：没接入、或设备起不来 | `start` |
 | `not_recording` | 409 | 现在没有在录的场次 | `stop` / `mute_session` / `dev_inject` / `summarize` |
 | `invalid_setting` | 400 | 参数或键名非法（校验都在动手之前） | 各动作 |
 | `persist_failed` | 500 | 配置写盘失败，这次改动一处都没生效 | `settings_update` |
-| `action_unavailable` | 404 | 这个后端没有这个动作 | `dev_inject`（非 dev 后端） |
+| `action_unavailable` | 404 | 这个后端没有这个动作；会后两个按钮拿它回「这台机器上没接这一层」 | `dev_inject`（非 dev 后端）/ `post_offline`（`post.hook` 缺席）/ `post_minutes`（`minutes.hook` 缺席） |
 | `transcript_unavailable` | 503 | 转写没在跑（没起过，或者已经停了）：会中总结吃的是实时转写，现在没有可用的那一路 | `summarize` |
 | `summary_failed` | 502 | 会中总结没拿到结果：模型端点没配齐，或预算用尽 / 端点报错 / 解析连试带败 | `summarize` |
 
@@ -316,10 +329,10 @@ X-Meeting-Service: 1
 | `code` | `detail` 形状 | golden 样本 |
 |---|---|---|
 | `already_recording` | `{session_id, dir, elapsed_seconds}` —— 场次目录名 / 场次目录路径 / 已录秒数（掩码 0） | `actions/fail-already-recording.json` |
-| `draining` | `{session_id, dir, failed_steps: [{id, error}], log_path}` —— 没有失败步时 `failed_steps` 是**空数组** | `actions/fail-draining.json` |
+| `draining` | **四档**：`{session_id, dir, failed_steps: [{id, error}], log_path}`（`start` 那一档；没有失败步时 `failed_steps` 是**空数组**）；或 `{kind, dir, status_path, reason}`（纪要那一层的账停在 `running`：重复按「直接出纪要」拿到的是这一档，见 4.3）；或 `{kind, dir, started_at}`（已经有一趟会后活在跑，再按两个按钮中的任何一个）；或 `{top_state, session_id, dir}`（还在录 / 收尾还没落定） | `actions/fail-draining.json`（`start` 那一档；会后按钮那三档由 `tests/test_post_actions.py` 覆盖） |
 | `capture_unavailable` | **三档**：空对象；或 `{session_id, dir, error}`（第一版 `session.json` 写不进去）；或 `{session_id, dir, reason}`（采集起不来） | `actions/fail-capture-unavailable.json` |
 | `not_recording` | 空 | `actions/fail-not-recording.json` |
-| `invalid_setting` | **三档**：`{key, value, legal}`（值非法；`legal` 是合法取值数组）；或 `{source, fault, error}`（`dev_inject` 的取值非法）；或空。**未知动作名是第四档**：`{action, known}`（`known` 是九个动作名的数组） | `actions/fail-invalid-setting.json`、`actions/fail-invalid-setting-unknown-action.json` |
+| `invalid_setting` | **三档**：`{key, value, legal}`（值非法；`legal` 是合法取值数组）；或 `{source, fault, error}`（`dev_inject` 的取值非法）；或空。**未知动作名是第四档**：`{action, known}`（`known` 是十一个动作名的数组） | `actions/fail-invalid-setting.json`、`actions/fail-invalid-setting-unknown-action.json` |
 | `persist_failed` | `{error}` | `actions/fail-persist-failed.json` |
 | `action_unavailable` | 空 | `actions/fail-action-unavailable.json` |
 | `transcript_unavailable` | `{health: "stopped"}` —— 恒这一格（转写没在跑就是这一档，健康度只有一个取值） | `actions/fail-transcript-unavailable.json` |
@@ -344,8 +357,10 @@ X-Meeting-Service: 1
 | `summarize` | 409 `not_recording` | 200（转写没在跑 503 `transcript_unavailable`、端点没配齐 502 `summary_failed`） | 200（同上两档 503 / 502） | 409 `not_recording` | 409 `not_recording` |
 | `workspace_open` | 200（写注册表，不碰快照；缺 `dir` / 目录不存在 / 非空未确认 → 400 `invalid_setting`） | 200 | 200 | 200 | 200 |
 | `workspace_remove` | 200（摘一行名单；文件不碰） | 200 | 200 | 200 | 200 |
+| `post_offline` | 带 `dir` 且那一行合法 → 200；不带 → 409 `draining`（手上没有可以跑后会的场次） | 409 `draining` | 409 `draining` | 200（`post.hook` 缺席 → 404 `action_unavailable`；有一趟在飞 → 409 `draining`） | 收尾落定（四步都到终态，`post` 停 `waiting` 算）→ 200；还没落定 → 409 `draining` |
+| `post_minutes` | 同 `post_offline` | 409 `draining` | 409 `draining` | 200（`minutes.hook` 缺席 → 404；纪要层的账停在 `running` → 409 `draining`，claim 同步判） | 同 `post_offline` |
 
-`settings_update` 写的是配置文件，与「这一场录到哪儿」无关，因此**任何状态下都可用**。`mute_session` 只在本场收尾之前可用 —— 收尾完成后本场已无可静音，复位发生在下一场 `start`。`reprobe` 只在**没有场次在跑**的时候可用（`recording` / `alert` 两态回 `already_recording`）：设备在开场前定下来，会中换设备是明文不做的那一档。`summarize` 只在**有场次在跑**的时候可用（它读的是这一场的实时转写），两档失败 503 / 502 的判据见 4.7。
+`settings_update` 写的是配置文件，与「这一场录到哪儿」无关，因此**任何状态下都可用**。`mute_session` 只在本场收尾之前可用 —— 收尾完成后本场已无可静音，复位发生在下一场 `start`。`reprobe` 只在**没有场次在跑**的时候可用（`recording` / `alert` 两态回 `already_recording`）：设备在开场前定下来，会中换设备是明文不做的那一档。`summarize` 只在**有场次在跑**的时候可用（它读的是这一场的实时转写），两档失败 503 / 502 的判据见 4.7。会后那两个按钮反过来，只在**这一场收完了**的时候可用：判据不是 `ended.phase` 而是「收尾四步是否都落定」（`post` 停 `waiting` 算落定），因为收尾里有失败步时 `phase` 停在 `draining`、而那一场的会后照样该由人按 —— 拒绝档见 4.3 末尾那张三档清单。
 
 ### 4.6 `settings_update`：38 键清单与两档
 
@@ -361,14 +376,14 @@ X-Meeting-Service: 1
 {"ok": true, "revision": 3, "applied": ["asr.timeout_seconds"], "pending_restart": []}
 ```
 
-**合法键名是逐条列出的 39 个**（不按前缀归组、没有前缀白名单）。表外的任何键名一律 `invalid_setting`(400) 且 `detail = {key, value, legal}`。
+**合法键名是逐条列出的 38 个**（不按前缀归组、没有前缀白名单）。表外的任何键名一律 `invalid_setting`(400) 且 `detail = {key, value, legal}`。
 
 | 归类 | 键（个数） | 为什么 |
 |---|---|---|
 | `applied` | `alarm.sound` / `asr.max_segment_seconds` / `asr.timeout_seconds` / `asr.max_new_tokens` / `asr.repeat_max_unit` / `asr.repeat_min_coverage`（**6 个**） | 这六个是**热读键**，写盘成功就立刻生效。`alarm.sound` 收在这一档，于是勾选出声开关**当场**改运行期行为 |
 | `pending_restart` | `web.port` / `web.dist_dir` / `log.level` / `log.dir` / `log.max_bytes` / `log.backup_count` / `alert.silence_dbfs` / `alert.silence_seconds` / `alert.recover_seconds` / `alert.alarm_suppress_seconds` / `heartbeat.interval_seconds` / `capture.backend` / `transcriber.backend` / `post.hook` / `post.engine` / `post.model` / `post.dtype` / `post.chunk_seconds` / `minutes.hook` / `minutes.chunk_lines` / `minutes.max_segments` / `minutes.timeout_seconds` / `minutes.dsh_url` / `summary.base_url` / `summary.api_key` / `summary.model` / `summary.extra_body_json` / `summary.deadline_seconds` / `summary.max_attempts` / `summary.default_window` / `devices.mic` / `devices.loopback`（**32 个**） | 这些值在**启动时读一次**，写盘成功但要重启才生效 |
 
-六个热读键都在 `asr.*` 与 `alarm.sound` 这一档，其余 **33 个**全归 `pending_restart` —— 两者合起来正好是 `meeting/config.py` 的 `DEFAULT_VALUES` 键全集（**39 个**），判定由 `SETTING_KEY_GROUPS` 一处给出（守卫用例 `tests/test_api_actions.py::test_settings_key_groups_cover_the_whole_table` 逐条钉住 `6 + 33 = 39`）。
+六个热读键都在 `asr.*` 与 `alarm.sound` 这一档，其余 **32 个**全归 `pending_restart` —— 两者合起来正好是 `meeting/config.py` 的 `DEFAULT_VALUES` 键全集（**38 个**），判定由 `SETTING_KEY_GROUPS` 一处给出（守卫用例 `tests/test_api_actions.py::test_settings_key_groups_cover_the_whole_table` 逐条钉住 `6 + 32 = 38`）。
 
 **会中总结那七个 `summary.*` 键**（`1987cb20` phase1 加进来的）也归 `pending_restart`：`summary.base_url` / `summary.model` / `summary.extra_body_json` / `summary.default_window` 收字符串（`default_window` 只认 `5m` / `15m` / `30m` / `full` 四档），`summary.api_key` 是**可空键**（`null` = 没配，与两个设备键位同形），`summary.deadline_seconds` 收 `1.0`–`3600.0` 秒、`summary.max_attempts` 收 `1`–`10`。键名与取值范围的判据在 `meeting/config.py`，用法见第 4.7 节。
 
@@ -473,12 +488,14 @@ X-Meeting-Service: 1
 {"sessions": [{"dir": "<path>", "session_id": "<session-id>|null", "dir_exists": true,
                "kind": "empty|meeting|unknown|missing", "suspected": false,
                "state": "recording|draining|done|failed|null", "date": "<YYYY-MM-DD>|null",
-               "mode": "both|mic|loopback|null", "added_at": "<iso>", "last_opened_at": "<iso>"}],
+               "mode": "both|mic|loopback|null", "has_offline": false,
+               "added_at": "<iso>", "last_opened_at": "<iso>"}],
  "recent": "<path>|null"}
 ```
 
 - 清单是**软件自己记的那一份**（住在服务侧配置目录 `workspaces.json`，按路径去重）；**列表从登记来** —— 本端点不列任何没登记过的目录，`start` 与 `workspace_open` 是仅有的两个登记入口。
 - 每行的"目录还在不在、里面是什么"由服务**现场判**（注册表条目只记两个时刻）：`dir_exists: false` 的那一行如实等着界面写「路径已不在」；`state` 只在盘上 `session.json` 读得出来时带值、四档之外如实 `null`（读盘那份**只判集合成员关系**，不反查映射、不读成 `top_state`）。
+- **`has_offline` = 这一场有没有会后精细稿**（R29）：判据是场次目录里在不在 `meeting_offline_transcript_<source>.md`（只判名目、不读内容、不猜）。「出纪要」那个按钮上那一格按它渲染 —— 界面因此一眼看得出 AI 手上有没有那份更细的稿。**这一格走本端点，不进快照**（推送出去的东西只认那九个顶层键）。
 - `recent` = **最近一次被打开/切换**的那一条的目录（`workspace_open` 与开成一场的 `start` 都刷新这一格）；**只从注册表读，服务与界面都不扫任何场次目录**（`docs/design-intent.md` 第 4 条的退场判据仍在）。
 
 **`GET /api/dirs`**（目录选择器的一个现场；**任何状态下都 200**；纯读）：
@@ -580,10 +597,10 @@ X-Meeting-Service: 1
 | 快照键 `summary` | **不做**：会中总结的结果**不进快照**，结果走 `summarize` 动作的应答体、记录走 `GET /api/summaries`（正文见 4.7） | 手动总结节点（`1987cb20`，已定论） | **明确不做，也不留位**。理由有两条：结果是一过性的视图产物（设计章 2.3「关掉即消失、不落文件」），而快照是**会议的**权威状态；前端契约层的两道硬门（`web/src/contract/snapshot.ts` 的 `.strict()` 与 `contract.test.ts` 的「顶层恰好九键、不许多 `summary`」）正是照这条口径立的。`to_dict()` 不产出这个键，顶层键集合恰好是第 2 章那张表 |
 | `GET /api/sessions` | **已落地**（工作台收编节点 e2f6166b）：形状与现行口径在 4.8 —— 载的是工作区注册表；会后视图的会议选择器建立在这只端点之上，不再把它列作未实现 | 本节点（会后节点沿用，不另开形状） | **路由已注册**：`GET /api/sessions` 在 `all_routes()` 里；`?dir=` 的现场形状也是 4.8 |
 | `GET /api/sessions/{id}` | 单场状态（会后视图的进度区） | 会后节点 | 未注册：`all_routes()` 有七条 `/api/*` + `/debug`，这个路径落到末端 404（回 `Not Found`） |
-| 转写历史回看 | 中途订阅能不能拿到已经出过的转写行 | **待下游决断（`9e5db89c` / `070b31e0`）** | **现状是拿不到**：`transcript` 通道只发「订上之后新出的行」，连接时的首帧 `snapshot` 也不带转写正文（`transcript.last_line_at` 只是个时间戳、`buffered_lines` 是计数）。界面在会话中途打开时，**只能显示从那一刻起的新行**，拿不到已有行。会中这些行落在场次目录的 `meeting_transcript_<source>.md` 里，会后那份权威转写也住在同一个目录，两样都没有读它们的端点 |
+| 转写历史回看 | 中途订阅能不能拿到已经出过的转写行 | **待下游决断（`9e5db89c` / `070b31e0`）** | **现状是拿不到**：`transcript` 通道只发「订上之后新出的行」，连接时的首帧 `snapshot` 也不带转写正文（`transcript.last_line_at` 只是个时间戳、`buffered_lines` 是计数）。界面在会话中途打开时，**只能显示从那一刻起的新行**，拿不到已有行。会中这些行落在场次目录的 `meeting_transcript_<source>.md` 里，会后那份带说话人编号的稿也住在同一个目录，两样都没有读它们的端点 |
 | 说话人名字落盘 / 跳过编号 | 用户给某个编号起名、或标记「这个编号不认领」 | **会后管线（`41465462` / `7c6952e5`）** | **本契约不覆盖**：这是会后产物那一侧的事，服务侧的会中契约里没有对应字段。会后离线这一层（`7c6952e5`）落地之后仍然没有承载它的字段：`meeting_offline_speakers_<source>.json` 里只有类编号（`mic:S01` 这种限定名）与每段的起止秒数，**名字既不推断、也没有可写的位置**，「不认领」这个标记同样无处安放 |
 
-**会后产物不在本契约里**：会后离线转写与说话人聚类（`7c6952e5`）已经落地，四份产物住在**场次目录里的文件**上 —— `meeting_offline_transcript_<source>.md`（每路一份的权威转写，一行 `[HH:MM] **S01**: 正文`）、`meeting_offline_speakers_<source>.json`（类编号与区间对照表）、`meeting_offline_report.md`、`meeting_offline_status.json`。它们**没有 HTTP 端点、快照里也没有对应字段**（本章那两条 `GET /api/sessions` / `GET /api/sessions/{id}` 仍未注册），本契约的端点口径、快照 schema 与 SSE 帧形状都管不到；要读就按场次目录里的文件读，字段契约的正文在 `meeting/offline/artifacts.py` 的模块说明里。**两路各落一份、两路不合并**（文件名与限定名 `mic:S01` 里始终带着 `source`）。这一场跑成什么样由 `meeting_offline_status.json` 回答：收尾第 4 步的 `post` 在会后钩子在场时记 `done`（钩子起线程即返回，启动成功就算完成），跑不跑得成、缺没缺一段写在状态文件与运行报告里。
+**会后产物不在本契约里**：会后离线转写与说话人聚类（`7c6952e5`）已经落地，四份产物住在**场次目录里的文件**上 —— `meeting_offline_transcript_<source>.md`（每路一份的会后精细稿，一行 `[HH:MM] **S01**: 正文`）、`meeting_offline_speakers_<source>.json`（类编号与区间对照表）、`meeting_offline_report.md`、`meeting_offline_status.json`。它们**没有 HTTP 端点、快照里也没有对应字段**（`GET /api/sessions` 已随工作台收编落地（4.8），本章那条 `GET /api/sessions/{id}` 仍未注册），本契约的端点口径、快照 schema 与 SSE 帧形状都管不到；要读就按场次目录里的文件读，字段契约的正文在 `meeting/offline/artifacts.py` 的模块说明里。**两路各落一份、两路不合并**（文件名与限定名 `mic:S01` 里始终带着 `source`）。这一场跑成什么样由 `meeting_offline_status.json` 回答：收尾第 4 步的 `post` 不再拉起会后钩子，做完释放显存就如实停在 `waiting`（＝等你动手）；会后离线由「生成会后精细稿」按钮或 `meeting post` 拉起，跑不跑得成、缺没缺一段写在状态文件与运行报告里。
 
 **「暂停」不做，不留位。** 需求锚里没有任何一条要暂停，而「暂停」恰好就是 R2/R4 要消灭的那种「看起来在录、实际没录」的状态（`docs/ui-design.md` 第 5 章明文）。因此本契约里**没有** `pause` / `resume` 动作、**没有**快照里的 `paused` 之类字段，**也不为将来留占位**。同理，**不做会中的音频源切换**：要录哪几路在开始前定（`mode`），录音期间不切。
 
@@ -644,7 +661,7 @@ python -m pytest tests/test_contract_fixtures.py --regen-contract -q
 1. **抽一个快照 fixtures 与 `Snapshot.to_dict()` 逐字段对照**：`meeting/state.py` 的 `to_dict()` 是唯一产出形态，顶层九键、`session` 六子键、`sources` 九键、`DrainStep` 四键都能逐行对上。`ended` / `session` 两个 `null` 档都能在 `idle` 样本里看一次。
 2. **故意改坏一个键名跑比对测试，确认会红**（验完还原）：例如把 `contract/fixtures/snapshot/recording.json` 里的 `"top_state"` 改成 `"topState"`，`python -m pytest tests/test_contract_fixtures.py -q` 应当报出「与实时采集不一致」。
 3. **任选两条 `detail` 与 `meeting/service/runtime.py` 的实际路径对照**：`already_recording` 三键在 `_already_recording_error()`、`draining` 四键在 `_draining_error()` / `_draining_error_for_dir()`（后者从盘上那一版读 `failed_steps`）。
-4. **确认保留登记章里没有任何端点被顺手实现**：`python -c "from meeting.service.routes import all_routes; print([r.path for r in all_routes()])"` 应当只打出八条路径（七条 `/api/*` + `/debug`：`/api/state` / `/api/events` / `/api/heartbeat` / `/api/actions` / `/api/summaries` / `/api/sessions` / `/api/dirs` / `/debug`）；`ACTION_NAMES` 应当有九个名字（`start` / `stop` / `mute_session` / `settings_update` / `reprobe` / `dev_inject` / `summarize` / `workspace_open` / `workspace_remove`），会中总结那一个的正文在第 4.7 节、收编那两个的正文在第 4.8 节。
+4. **确认保留登记章里没有任何端点被顺手实现**：`python -c "from meeting.service.routes import all_routes; print([r.path for r in all_routes()])"` 应当只打出八条路径（七条 `/api/*` + `/debug`：`/api/state` / `/api/events` / `/api/heartbeat` / `/api/actions` / `/api/summaries` / `/api/sessions` / `/api/dirs` / `/debug`）；`ACTION_NAMES` 应当有十一个名字（`start` / `stop` / `mute_session` / `settings_update` / `reprobe` / `dev_inject` / `summarize` / `workspace_open` / `workspace_remove` / `post_offline` / `post_minutes`），会中总结那一个的正文在第 4.7 节、收编那两个在第 4.8 节、会后两个按钮在第 4.3 节。
 
 ## 10. 相关文档
 

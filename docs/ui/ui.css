@@ -2126,12 +2126,7 @@ blockquote {
   color: var(--color-ink-mid);
 }
 
-/* 权威那条：字 + 图形，不靠颜色 */
-.src__tag--auth {
-  color: var(--color-signal);
-  border-bottom-color: var(--color-signal);
-}
-
+/* 两条转写的标签平级：字 + 图形，不靠颜色 */
 .src__body {
   padding: var(--space-4);
   background: var(--color-sunk);

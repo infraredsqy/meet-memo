@@ -44,11 +44,11 @@
 | 1 | `flush` | 停采集、把归档落盘（后端 `finalize()`：停流 + join + 关文件 + `fsync`） | `dca4539b`（真采集后端已落地） |
 | 2 | `transcode` | 收尾转换（后端 `transcode()`：两份 PCM → 64k MP3，**转完保留 PCM**） | `dca4539b`（真采集后端已落地） |
 | 3 | `log` | 写这一场的结束标记（`session.json` + 服务级主日志） | 本服务（永远在场，永远 `done`） |
-| 4 | `post` | 拉起会后流程（**启动即算完成，不等它跑完**）：起一条后台线程跑会后离线转写，钩子返回就记 `done` | `7c6952e5`（`meeting.backends.post:PostProcessHook` 已落地） |
+| 4 | `post` | 让会中模型退出显存（转写后端的可选成员 `release_gpu()`；释放失败只记一条 log）。**会后一个动作都不自动跑**：这一格如实停在 `waiting`（＝等你动手），两趟会后活由「生成会后精细稿」/「直接出纪要」按钮或 `meeting post` 拉起 | 本服务（释放那一步，`796bbff` 起；`7c6952e5` 的 `PostProcessHook` 不再由这一步拉起） |
 
 每步的 `status` 取五档之一：`waiting` / `running` / `done` / `failed` / `skipped`。
 
-- **`skipped` = 这个构建里没有真实实现**（采集替身不写真实音频、`post.hook = null` 那一档的钩子缺席）。它不阻塞 `done`，只留一行 warning。
+- **`skipped` = 这个构建里没有真实实现**（采集替身不写真实音频）。它不阻塞 `done`，只留一行 warning。收尾四步里眼下只有第 1、2 步会出现它 —— 第 4 步 `post` 对任何构建都落在 `waiting`，不再有「钩子缺席记 `skipped`」那一档。
 - **`failed` = 有实现，但这次调用抛错**。它带 `error`。
 - 判「缺席」只看后端的解析结果（`meeting/backends/registry.py`），不看调用时抛了什么异常。
 
@@ -58,12 +58,12 @@
 
 | 四步结果 | `ended.phase` | `top_state` | `session` | 新的 `start` |
 |---|---|---|---|---|
-| 四步全部落定（`done` / `skipped`）且无 `failed` | `done` | 停在 `ended` | 保留（时长冻结，界面画「已结束·已完成」） | 放行，从 `ended` 直接进 `recording` |
+| 四步全部落定（`done` / `skipped`；`post` 那一格的终态是 `waiting`，也算落定）且无 `failed` | `done` | 停在 `ended` | 保留（时长冻结，界面画「已结束·已完成」） | 放行，从 `ended` 直接进 `recording` |
 | 有任一步 `failed`，或四步没全落定就走到了出口 | 保持 `draining` | 停在 `ended` | 保留 | `draining`(409)，`detail` 带失败步与场次 log 路径 |
 
-骨架构建（`null` 替身或 dev 替身 + `post.hook = null`）跑一场会的预期终态是固定的：`flush: skipped` / `transcode: skipped` / `log: done` / `post: skipped`，于是 `ended.phase == "done"`。
+骨架构建（`null` 替身或 dev 替身 + `post.hook = null`）跑一场会的预期终态是固定的：`flush: skipped` / `transcode: skipped` / `log: done` / `post: waiting`（第 4 步对任何构建都停在 `waiting`），于是 `ended.phase == "done"`。
 
-**真采集那一场**（`capture.backend` 取默认值 `auto`，解析到 `meeting.backends.capture:CaptureBackend`）的终态是 `flush: done` / `transcode: done` / `log: done` / `post: done`（`post.hook` 取默认值 `auto`，解析到 `meeting.backends.post:PostProcessHook`）；收尾跑完之后场次目录里躺着两路归档：`meeting_audio_mic.pcm` + `.mp3`、`meeting_audio_loopback.pcm` + `.mp3`（未选中的那一路是 0 字节的 `.pcm`，不产 `.mp3`），会后那条链接着往同一目录里落会后产物（见第 3 章）。第 1 步落盘失败（例如磁盘满）与第 2 步转码失败（例如 `ffmpeg` 不在 PATH 上）各记 `failed`，**PCM 一个字节都不删**。第 4 步记 `done` 说的是**钩子启动成功**，会后那一趟跑成什么样由场次目录里的 `meeting_offline_status.json` 回答。
+**真采集那一场**（`capture.backend` 取默认值 `auto`，解析到 `meeting.backends.capture:CaptureBackend`）的终态是 `flush: done` / `transcode: done` / `log: done` / `post: waiting`；收尾跑完之后场次目录里躺着两路归档：`meeting_audio_mic.pcm` + `.mp3`、`meeting_audio_loopback.pcm` + `.mp3`（未选中的那一路是 0 字节的 `.pcm`，不产 `.mp3`）；会后那两趟（离线链与纪要层）不自动跑，由「生成会后精细稿」/「直接出纪要」按钮或 `meeting post` 拉起，产物才往同一目录里落（见第 3 章）。第 1 步落盘失败（例如磁盘满）与第 2 步转码失败（例如 `ffmpeg` 不在 PATH 上）各记 `failed`，**PCM 一个字节都不删**。第 4 步停在 `waiting` 说的是**这一格等你动手**（`ended.phase` 仍判 `done`），释放显存那一步自身出事只记一条 log、不改这一格；会后那一趟跑成什么样由场次目录里的 `meeting_offline_status.json` 与 `meeting_minutes_status.json` 回答。
 
 ### 收尾怎么跑：触发、共享预算、超时与中断
 
@@ -155,7 +155,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 - **没有默认落点**（`docs/design-intent.md` 第 4 条）：一场会落在 start 请求 / 命令行**显式给的已存在目录**里；服务不建目录、不按日期命名，目录名就是这场会的名字。日期仍是每一场的元信息（`session.json` 的 `date` 字段，取开场时刻），只是它不再写进目录名。
 - 一次只接受一个新场次：目标目录里已经有另一场的 `session.json` 时 `start` 拒绝（`invalid_setting`）。
 - 一场会一个目录，目录里只有一份 `session.json` 是服务现在写的。**两路音频归档也落在这里**（`dca4539b` 已落地）：`meeting_audio_mic.pcm` 与 `meeting_audio_loopback.pcm`，16k / 单声道 / int16 小端裸 PCM、无头，**边采边写**（无缓冲追加写，服务被强杀最多丢最后一个块的尾巴）；收尾第 2 步在同目录同名换扩展名产出 `.mp3`（64k），**转码成功之后 PCM 照样留着**（`sources[*].archive` 声明的就是它）。未选中的那一路也建出文件，内容是 0 字节。
-- **两路转写各自落一本会中临时稿**（`9e5db89c` 已落地）：`meeting_transcript_mic.md` 与 `meeting_transcript_loopback.md`，追加写、逐行 flush，每行 `[HH:MM] 正文` —— 时间戳取**分钟级**的采集时刻：段一入队就盖上，识别慢也不会把后面几行的时间戳挤到一起。某一段识别不出来也照落一行，正文是**占位符**：`[[识别失败: 超时 20s]]` / `[[识别失败: 重复循环]]` / `[[识别失败: 无输出]]`（双层方括号、裸文本、不带时间戳、**不含 `**`**；识别过程抛错那一档落 `[[识别失败: 错误]]`）；纯噪声的段落一行都不写，连占位符也不写。同一行同时经 SSE 的 `transcript` 通道推给界面（第 6 章）。它是**临时稿**：会后那条离线转写才作准，界面上也照这么标（`docs/ui-design.md`）。
+- **两路转写各自落一本会中临时稿**（`9e5db89c` 已落地）：`meeting_transcript_mic.md` 与 `meeting_transcript_loopback.md`，追加写、逐行 flush，每行 `[HH:MM] 正文` —— 时间戳取**分钟级**的采集时刻：段一入队就盖上，识别慢也不会把后面几行的时间戳挤到一起。某一段识别不出来也照落一行，正文是**占位符**：`[[识别失败: 超时 20s]]` / `[[识别失败: 重复循环]]` / `[[识别失败: 无输出]]`（双层方括号、裸文本、不带时间戳、**不含 `**`**；识别过程抛错那一档落 `[[识别失败: 错误]]`）；纯噪声的段落一行都不写，连占位符也不写。同一行同时经 SSE 的 `transcript` 通道推给界面（第 6 章）。它是**临时稿**：会后那条带说话人编号的稿另落一份，两份平级放在一起对拍、谁也不顶掉谁（R11，`docs/ui-design.md` 第 3 章的标签口径）。
 - `session.json` **原子写**：同目录临时文件 + `os.replace` + `flush`。**每个阶段变更都写一次**（`start` 的第一版、进收尾中、每一步的 `status`/`detail`、终态那一版），被打断不留半截文件、工作区目录里不留 `.tmp` 残骸。
 
 字段全貌（**字段名与字段个数是冻结项**，示例里的取值只是某一版的示意）：
@@ -187,11 +187,11 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 
 ### 会后离线产物
 
-收尾第 4 步把会后离线那一套拉起来之后（`7c6952e5` 已落地），一场会在场次目录里多出四类文件（转写与对照表按路各落一份，两路的场次一共六份）。写盘与字段契约在 `meeting/offline/artifacts.py`。这一层用哪个模型、按什么块长切、精度档与显存读数的来由，见 `docs/asr-backends.md`：
+会后离线那一套跑过之后（`7c6952e5` 已落地；由「生成会后精细稿」按钮或 `meeting post` 拉起 —— 收尾第 4 步不再自动跑它，那一格停在 `waiting`），一场会在场次目录里多出四类文件（转写与对照表按路各落一份，两路的场次一共六份）。写盘与字段契约在 `meeting/offline/artifacts.py`。这一层用哪个模型、按什么块长切、精度档与显存读数的来由，见 `docs/asr-backends.md`：
 
 | 文件 | 内容 | 读者 |
 |---|---|---|
-| `meeting_offline_transcript_<source>.md` | 权威转写，每行 `[HH:MM] **S01**: 正文`（**分钟级**） | 人 + 下游对账 |
+| `meeting_offline_transcript_<source>.md` | 会后精细稿（带说话人编号），每行 `[HH:MM] **S01**: 正文`（**分钟级**） | 人 + 下游对账 |
 | `meeting_offline_speakers_<source>.json` | 类编号 → 每段区间的对照表（`start` / `end` 是**秒级浮点**） | 下游程序 |
 | `meeting_offline_report.md` | 运行报告：逐路的秒数 / 段数 / 类数 / 墙钟 / 实时率、段耗时分布、失败原因分布、缺了哪几段、没声跳过了哪几段、零时长的段有几段 | 人 |
 | `meeting_offline_status.json` | 状态文件：`running` / `done` / `failed`，外加 `partial` / `silent` / `silent_spans` / `error` | 下游程序 + 将来的界面 |
@@ -219,9 +219,9 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 音频从采集层到会后这一层可能**整段是零**（实测那一档见下面）。这种输入送进引擎，引擎会**编出正文**：`250906` 那次验收里，环回那一路的 19 块有 5 块是全零样本，引擎在它们身上吐了 20 690 字，占那一路整份输出的 **69.32%**（四块各一句 `[S01][S01][S01]I'm sorry, I can't assist with that request.`、末块把 `The.` 重复 4091 遍），而那一趟每一块都报 `state: done`、`error: null`。会后离线这一层因此**在调引擎之前**过一道门：
 
 - **判据只有一条**：这一段音频的**峰值够不着半格**（按 16 bit 满量程折算成格数；半格是一条开区间规则，正好落在半格上的样本算有声。边界的由来与两种波形形态的折算见下），并且样本数不少于 0.1 秒。实现里那一行是 `peak < SILENT_PEAK_FLOOR`、`SILENT_PEAK_FLOOR = 0.5`，与这里写的「够不着半格」逐字对应。实测那一档的五块正是 `volumedetect` 读出 `-91.0 dB` 的全零样本，这条判据一条不漏地拦下它；
-- **安静但有声的段落照跑**：峰值为 ±1 的样本（16 bit 满量程的 -90.3 dB，也就是 1 格）照样送进引擎。会后这条链产出的是下游的权威底本，按能量阈值误杀一段真语音，比留着一段噪声更坏，所以这里取的是最严的一档 —— 只要有一个够得着半格的样本，这一块就照跑。会中那条链的 `_is_noise_segment` 另有一档口径（VAD + RMS + 语音帧三条 AND），它服务于逐段预筛，与会后这一层各管各的；
+- **安静但有声的段落照跑**：峰值为 ±1 的样本（16 bit 满量程的 -90.3 dB，也就是 1 格）照样送进引擎。会后这条链出的稿要跟会中稿放在一起对拍、还要交给纪要那一层，按能量阈值误杀一段真语音，比留着一段噪声更坏，所以这里取的是最严的一档 —— 只要有一个够得着半格的样本，这一块就照跑。会中那条链的 `_is_noise_segment` 另有一档口径（VAD + RMS + 语音帧三条 AND），它服务于逐段预筛，与会后这一层各管各的；
 - **两种波形形态同一个分界**：归档 PCM 上读出来的是 int16 整数样本，`decode_audio()` 解出来的是 `[-1, 1]` 的 float32。判据把两者都折算成「满量程的几格」再比，而且**不截断**成整数。半格这个分界是一条**开区间**规则：`peak < 0.5` 格算静音，`peak = 0.5` 格算有声。于是 float 的 `3.0e-5`（0.983 格）与 `3.05e-5`（0.999 格）都算有声，int16 的 ±1（1 格）与 float 的 `1/32767`（1 格）落在同一侧，同一个样本在两种形态上给同一个答案；截断成整数会把那两个 float 读数一起抹成 0，那才是两种形态分家；
-- **单趟与分块两条路都过这道门**：判据按成本从低到高挑一条路 —— 归档 PCM 上按字节扫那一段（见到第一个非零字节就出结果）、已经解好的波形切片判（分块跑的 mp3 与单趟跑的 mp3 都用它）、实在没有波形时才现解一次音频文件。**短于 `post.chunk_seconds` 的录音走单趟**（默认块长 450 秒，也就是每一场短会议），那一条路原先不经过门，一段全零的短录音因此会在权威底本里整段留下假正文；现在它也过门，代价是那一段音频多解一次（短会议的几秒到几十秒）；
+- **单趟与分块两条路都过这道门**：判据按成本从低到高挑一条路 —— 归档 PCM 上按字节扫那一段（见到第一个非零字节就出结果）、已经解好的波形切片判（分块跑的 mp3 与单趟跑的 mp3 都用它）、实在没有波形时才现解一次音频文件。**短于 `post.chunk_seconds` 的录音走单趟**（默认块长 450 秒，也就是每一场短会议），那一条路原先不经过门，一段全零的短录音因此会在会后那份稿里整段留下假正文；现在它也过门，代价是那一段音频多解一次（短会议的几秒到几十秒）；
 - **跳过的那几段一个字都不写**，也没花那一次引擎调用，于是这一路更快（实测那一趟 19 块里有 5 块不必调）。
 
 #### 没声、缺段、跑成、跑成而段全零时长：四档分得开
@@ -267,7 +267,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 
 ### 会后纪要生成
 
-离线那一趟把三份产物与 `meeting_offline_status.json` 的终态都落完之后，`minutes.hook` 那一层接着跑一次纪要生成（`41465462` 已落地）：`meeting/offline/runner.py` 的 `run_session()` 在**最后**通知一次 `meeting/backends/minutes.py` 的 `MinutesHook`（起一条 daemon 线程，返回即算启动成功，它跑多久都不占收尾预算）。这一趟的产物分两处：
+纪要那一层由「直接出纪要」按钮（`post_minutes`）或 `meeting post` 拉起（`41465462` 已落地）——后者在离线链的尾巴上通知一次（`run_session()` 的 `_announce_minutes()`），或离线段已是终态时只补这一层；「生成会后精细稿」按钮那一趟（`run_session(..., minutes=False)`）**不**拉起它，纪要归另一个按钮。拉起点起一条 daemon 线程跑 `MinutesHook`，返回即算启动成功，它跑多久都不占收尾预算。这一趟的产物分两处：
 
 | 文件 | 内容 | 读者 |
 |---|---|---|
@@ -275,7 +275,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 | `meeting_minutes_status.json` | 状态文件：`running` / `done` / `failed` / `delivered`，外加 `mode` / `branch` / `started_at` / `finished_at` / `error` / `artifacts` / `dsh` | 下游程序 |
 | `meeting_minutes_status.lock` | **瞬态**的 claim 锁：只盖住「读一遍现状 + 写一版 `running`」那一小段，写完就删掉。**它不是产物**（进程被强杀时可能留一份残锁，下一趟按有界等待兜住）；上面那张产物清单里因此没有它的位置 | 拉起方自己 |
 | `working/inputs.json` | 输入清单：这一场有哪几条转写、每条几行、走的是哪一档 | 程序 + 人 |
-| `working/<source>/chunks/chunk_NN.md` + `working/<source>/00_index.md` | 按行切出来的块（默认 100 行一块）与行号区间表（`total_lines` / `chunk_size` / `chunk_count` 与每块的闭区间） | DSH 子会话 |
+| `working/<source>/<kind>/chunks/chunk_NN.md` + `working/<source>/<kind>/00_index.md` | 按行切出来的块（默认 100 行一块）与行号区间表（`total_lines` / `chunk_size` / `chunk_count` 与每块的闭区间） | DSH 子会话 |
 | `working/segment-*.md`、`working/segmentation.json` | 逐段总结与分段方案（子会话产出，一份方案覆盖一到两条输入、每条段带 `source`） | DSH 子会话 |
 | `working/run_prompt.md`、`working/minutes-run.log` | 那一次运行的提示词正文，以及这一趟留下的账：headless 那一趟是子进程的 stdout / stderr，web 那一趟是三步 RPC 的请求与应答摘要 | 排查现场 |
 
@@ -286,7 +286,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 - **状态文件拉起 DSH 之前先落一份 `running`**（`finished_at` 是空串）：这一版由拉起方在建线程**之前**同步落（`meeting/minutes/status.py` 的 `mark_running()`），终局那一趟覆盖它，进程被杀时钩子把它补成 `failed`，这一格不会永远停在 `running`。盘上已经停着一版 `running` 时，`launch()` 当场抛 `AlreadyRunningError`、不拉起第二个子会话（`--force` 是出路）—— 这一版里的 `branch` 记的是**配置里写的那个词**（那一刻还没探 DSH web 服务端），实际走的那一条由终局那一版覆盖；那一版落盘用一把 **claim 锁**（瞬态文件 `meeting_minutes_status.lock`）把「读现状 + 写 running」裹成跨进程原子的一段，**锁不在产物清单里**，见 `docs/minutes.md` 第 1.1 节。
 - **再入闸那一趟不写状态文件**：环境里有 `MEETING_MINUTES_CHILD=1`（这一趟是 DSH 子会话自己）时 `runner.run()` 当场返回 `skipped`，盘上那份状态文件归父进程那一趟所有。
 - **读方对不认识的 `schema_version`、缺 `state`、`state` 不在四档里一律拒收**，不猜；写盘与离线那一份同档：原子替换。（再入闸那一趟的 `skipped` 只出现在返回值里，它不落盘，读方那四档因此一个字不动。）
-- **输入四档**：两条都在（`both`）/ 只有会中临时稿（`live_only`）/ 只有会后权威稿（`offline_only`）都照常出纪要；两个来源一条都没有（`none`）那一档**不启动 DSH**、状态记 `failed` + 原因。附录只写有依据的话：某一路缺了带聚类编号的那份稿时，如实写「这一路分不出个人」，不为任何人名给出推断。
+- **输入四档**：两份都在（`both`）/ 只有会中稿（`live_only`）/ 只有会后稿（`offline_only`）都照常出纪要；两个来源一条都没有（`none`）那一档**不启动 DSH**、状态记 `failed` + 原因。切块与提示词清单都**逐份稿**各留一份（`working/<source>/<kind>/`），**两份平级、谁也不叫"权威"、两路永不合并**；附录只写有依据的话：某一路缺了带聚类编号的那份稿时，如实写「这一路分不出个人」，不为任何人名给出推断。
 - **产物四条判据只归 headless 那一趟**：纪要文件非空、写着 `## 说话人附录`、写着 `### 猜不出的`、附录那一节里有一张真有数据行的表 —— 缺一条这一趟就是 `failed`，退出码 0 不算数（见 `docs/minutes.md` 第 5 节）。web 分支交付即完事，这四条一条都不跑，终态记 `delivered`。
 
 那一层吃什么、经哪几步出一份纪要、怎么手动跑一遍，见 `docs/minutes.md`。

@@ -13,8 +13,8 @@
 | `snapshot/` | `idle.json` | 进程内 TestClient（`capture.backend: dev`） | 空闲态：`session` / `ended` 两处 `null`、两路 `ready`、包络空数组 |
 | | `recording.json` | 进程内 TestClient（dev 替身）+ 等两路包络长满 15 根 | 录音态：`session` 六键、两路 `capturing`、包络长度 15 |
 | | `alert.json` | 进程内 TestClient：配 `alert.silence_seconds: 1` + `dev_inject(loopback, silence)` | 告警态：`alerts.critical` 一条、告警路 `lost`、另一路 `capturing` |
-| | `ended-done.json` | 进程内 TestClient：`stop` 之后等 `ended.phase == done` | 成功档：四步 `skipped/skipped/done/skipped`、两路回 `unprobed`、`session.frozen` 为真 |
-| | `ended-draining.json` | 进程内 TestClient：换一个抛错的假 post 钩子（`tests/_drain_fakes.py`） | 失败停留档：`post` 步 `failed`、`ended.error` 有值、两路停 `stopped` |
+| | `ended-done.json` | 进程内 TestClient：`stop` 之后等 `ended.phase == done` | 成功档：四步 `skipped/skipped/done/waiting`（第 4 步照实停 `waiting` 等人按按钮）、两路回 `unprobed`、`session.frozen` 为真 |
+| | `ended-draining.json` | 进程内 TestClient：换一个抛错的假场次 log（`tests/_drain_fakes.py`） | 失败停留档：`log` 步 `failed`、`ended.error` 有值、第 4 步照常停 `waiting`、两路停 `stopped` |
 | `sse/` | `first-snapshot.json` | **真服务子进程**的 `/api/events` 首帧 | 首帧是 `snapshot`、带 `id`、`data` 就是九键快照 |
 | | `state.json` | 同上，`mute_session` 触发一次广播 | `state` 是全量快照、`id == data.revision` |
 | | `levels.json` | 同上，`read_until("levels")` | 两路五键、`ts` 恒 `null`、包络 15、`bar == envelope[-1]` |
@@ -29,13 +29,13 @@
 | | `fail-capture-unavailable.json` | 进程内 TestClient（显式配 `capture.backend: null` 替身；默认 `auto` 已接真采集，`start` 会真开一场） | 503 + `detail` 三键（`{session_id, dir, reason}` 那一档） |
 | | `fail-not-recording.json` | 空闲态 `stop` | 409 + **空对象** `detail` |
 | | `fail-invalid-setting.json` | `start` 带 `mode: "burst"` | 400 + `detail` 三键（`{key, value, legal}`） |
-| | `fail-invalid-setting-unknown-action.json` | 打一个不认识的动作名 | 400 + `detail` 两键（`{action, known}`，`known` 是**九个动作名**） |
+| | `fail-invalid-setting-unknown-action.json` | 打一个不认识的动作名 | 400 + `detail` 两键（`{action, known}`，`known` 是**十一个动作名**） |
 | | `fail-persist-failed.json` | `monkeypatch` 把 `write_config_values` 换成抛 `OSError` | 500 + `detail = {error}` |
 | | `fail-action-unavailable.json` | 空闲态 `dev_inject`（非 dev 后端） | 404 + **空对象** `detail` |
 | | `fail-transcript-unavailable.json` | 录音中把转写后端拿掉再 `summarize` | 503 + `detail = {health: "stopped"}` |
 | | `fail-summary-failed-missing.json` | 录音中把只读配置视图换成一份缺端点的再 `summarize` | 502 + `detail = {missing: [...]}` |
 | `summaries/` | `after-one.json` | 进程内 TestClient：按过一次 `summarize` 之后读 `GET /api/summaries` | `{session_id, entries}`、记录那一条七键（不含 `lines`）、时刻与那次应答逐字同值 |
-| `sessions/` | `empty.json` / `after-open.json` | 进程内 TestClient（工作台收编节点 e2f6166b）：空注册表一份；再往临时根下造的三个目的目录（空 / 带 `session.json` / 只有音频归档名的疑似档）逐个走 `workspace_open` 之后读 `GET /api/sessions` | `{sessions, recent}`、每行十键（`dir` / `session_id` / `dir_exists` / `kind` / `suspected` / `state` / `date` / `mode` / `added_at` / `last_opened_at`）；路径与目录名掩成 `<path>` / `<session-id>` |
+| `sessions/` | `empty.json` / `after-open.json` | 进程内 TestClient（工作台收编节点 e2f6166b）：空注册表一份；再往临时根下造的三个目的目录（空 / 带 `session.json` / 只有音频归档名的疑似档）逐个走 `workspace_open` 之后读 `GET /api/sessions` | `{sessions, recent}`、每行十一键（`dir` / `session_id` / `dir_exists` / `kind` / `suspected` / `state` / `date` / `mode` / `has_offline` / `added_at` / `last_opened_at`）；路径与目录名掩成 `<path>` / `<session-id>` |
 | `heartbeat/` | `idle.json` | 进程内 TestClient（dev 替身） | 六字段、两字段 `null` |
 | | `recording.json` | 同上，等 `recording_alive is True` | 六字段、`recording_alive` 为 `true` |
 

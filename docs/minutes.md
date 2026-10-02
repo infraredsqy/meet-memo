@@ -6,7 +6,7 @@
 
 ## 1. 谁在什么时候拉起它
 
-离线那一趟跑完之后，`meeting/offline/runner.py` 的 `run_session()` 在**最后**通知一次这一层（`_announce_minutes()`）。顺序不能反：离线那条转写就是这一层的输入，先出纪要就永远只有降级档。
+`meeting post` 那条链上，离线那一趟跑完之后，`meeting/offline/runner.py` 的 `run_session()` 在**最后**通知一次这一层（`_announce_minutes()`）。顺序不能反：离线那条转写就是这一层的输入之一，先出纪要就永远只有降级档。工作台上「生成会后精细稿」按钮那一趟走的是 `run_session(..., minutes=False)`——**不**通知这一层，纪要归「直接出纪要」那个按钮。
 
 钩子住在 `meeting/backends/minutes.py` 的 `MinutesHook`：`launch(session_dir)` 起一条 daemon 线程跑 `meeting/minutes/runner.py` 的 `run()`，**返回即算启动成功**。离线那一趟不等它跑完，它跑多久都不占收尾预算；它炸了也不带走离线那三份产物、不改 `meeting_offline_status.json`（全程 `try/except BaseException` 兜住，只在主 log 记一条）。
 
@@ -16,7 +16,7 @@
 |---|---|---|
 | 0 | 再入闸 → 先落一份 `state: "running"` 的状态 | `meeting_minutes_status.json`（拉起方在**建线程之前**先落一版，见 1.1） |
 | 1 | 找两条转写、判档位 | `working/inputs.json` |
-| 2 | 按行切块 | `working/<source>/chunks/chunk_NN.md` + `working/<source>/00_index.md` |
+| 2 | 按行切块 | `working/<source>/<kind>/chunks/chunk_NN.md` + `working/<source>/<kind>/00_index.md` |
 | 3 | 渲染编排提示词 → **探一次 DSH web 服务端**：在跑就把这一场交付给它（终态 `delivered`），没在跑就拉起 `dsh --profile headless`（终态 `done` / `failed`） | `working/run_prompt.md`、`working/minutes-run.log` |
 | 4 | 覆盖成终态（headless 那一趟先按四条判据校验产物，过了才记 `done`；web 分支交付成功即记 `delivered`，不跑那四条） | `meeting_minutes_status.json` |
 
@@ -26,7 +26,7 @@
 
 ### 1.1 在飞标记：同一场挂不上两个子会话
 
-拉起这一层的地方有两处 —— 离线那一趟的尾巴（`_announce_minutes()`），以及 `meeting post` 在「离线段已是终态、只补纪要」时自己经同一个拉起点补上那一层。两处都可能被用户敲的 `meeting post` 与开会结束时自动跑的那一遍**同时**走到，因此「这一场已经在飞」这件事必须有盘上的落点：
+拉起这一层的地方有三处 —— 离线那一趟的尾巴（`_announce_minutes()`，`meeting post` 首跑走它）、`meeting post` 在「离线段已是终态、只补纪要」时自己经同一个拉起点补上的那一趟，以及工作台的「直接出纪要」按钮（`post_minutes`，按 `minutes.hook` 解析出的实现直接 `launch()`）。三处走的是同一条拉起契约，也都可能被用户敲的 `meeting post` 与按下的按钮**同时**走到，因此「这一场已经在飞」这件事必须有盘上的落点：
 
 - `MinutesHook.launch()` 在**建线程之前**同步调一次 `meeting/minutes/status.py` 的 `mark_running()`：方法返回时盘上的 `meeting_minutes_status.json` 已经读得出 `state = "running"`，那一趟起线程的动作在它**之后**；
 - `mark_running()` 把「读一遍现状 + 写一版 `running`」这段用一把 `O_CREAT | O_EXCL` 的 **claim 锁**（场次目录根的瞬态文件 `meeting_minutes_status.lock`）裹住，跨进程只有一个进得来：拿不到锁就等 `0.05` 秒再读一遍（最多三次），读到 `running` 就抛 `AlreadyRunningError`、**不覆盖另一趟的账**；
@@ -43,14 +43,16 @@
 
 | 稿 | 文件名 | 行形 |
 |---|---|---|
-| 会中临时稿（`meeting/asr/pipeline.py` 写） | `meeting_transcript_<source>.md` | `[HH:MM] 正文`，无说话人标签 |
-| 会后权威稿（`meeting/offline/artifacts.py` 写） | `meeting_offline_transcript_<source>.md` | `[HH:MM] **S01**: 正文` |
+| 会中稿（`meeting/asr/pipeline.py` 写） | `meeting_transcript_<source>.md` | `[HH:MM] 正文`，无说话人标签 |
+| 会后稿（`meeting/offline/artifacts.py` 写） | `meeting_offline_transcript_<source>.md` | `[HH:MM] **S01**: 正文` |
 
 两种行形由 `meeting/minutes/lines.py` 的同一个正则一起吃掉（`[HH:MM:SS]` 也认）。
 
-- **档位逐 source 判、整体取公共档位**：每一路自己有哪几条稿是 `both` / `live_only` / `offline_only`；两路不同时整体取 `both`（至少有一条真·离线稿在场上，不把整场说成降级）。逐 source 那一层事实由提示词的说明段逐条写出来。
-- **切块读的是会后那份权威稿**，它缺席时退回会中稿。
-- **行数一律 `lines.count_lines()`**（`splitlines()`，空行计入）：行号区间表与分段契约的分母都是这一个数。
+- **档位逐 source 判、整体取公共档位**：每一路自己有哪几份稿是 `both` / `live_only` / `offline_only`；两路不同时整体取 `both`（至少有一份真·会后稿在场上，不把整场说成降级）。逐 source 那一层事实由提示词的说明段逐条写出来。
+- **两份稿平级、一起切、一起喂**（`docs/design-intent.md` 第 11 条、R11）：两条都在时**两份各切一套块**，
+  落在 `working/<source>/live/` 与 `working/<source>/offline/`（各带自己的 `chunks/` 与 `00_index.md`），
+  提示词清单里逐份写清在不在、在哪一份 —— **谁也不叫"权威"，两路永不合并**。
+- **行数一律 `lines.count_lines()`**（`splitlines()`，空行计入），但**每份稿各算各的分母**：行号区间表用自己那一份稿的总行数；分段契约那一层的分母跟「在场那份稿」走 —— 两份都在按会中稿，只有会后稿的场次按会后稿（`meeting/minutes/contract.py` 的 `expected_lines_from_inputs()` 与提示词阶段 2 同一条口径）。
 - **两个来源一条都没有** → 不启动 DSH、不渲染提示词，状态落 `failed` + 原因。一份没有输入的纪要会以「这场会什么都没定」的样子交出去，这一档不许静默出空产物。
 
 ## 3. 提示词与五个阶段
@@ -64,7 +66,7 @@
 
 | 阶段 | 谁做 | 读什么 | 产出 |
 |---|---|---|---|
-| 1 分割 | **不用做** —— 块已经切好了 | `working/<source>/00_index.md` | 认下盘上的分块产物 |
+| 1 分割 | **不用做** —— 块已经切好了 | `working/<source>/<kind>/00_index.md` | 认下盘上的分块产物 |
 | 2 分割方案 | sub agent A | 每一条输入的区间表与全部块 | `working/segmentation.json` |
 | 3 逐段总结 | sub agent B1…Bn（每段一个） | 这一段覆盖的块，两条稿都读 | `working/segment-<id>.md` |
 | 4 合并 | sub agent C | `segmentation.json` + 全部 `segment-*.md` | 场次目录根的 `meeting_final.md` |
@@ -127,13 +129,13 @@
 
 | 键 | 默认值 | 合法范围 | 谁在用 |
 |---|---|---|---|
-| `minutes.hook` | `auto` | `auto` / `null` / `dev` / `module:Class`，或 JSON `null` | 解析层：`auto` 落 `meeting.backends.minutes:MinutesHook`；`null` 是**缺席**（离线跑完不产生纪要，安静跳过） |
+| `minutes.hook` | `auto` | `auto` / `null` / `dev` / `module:Class`，或 JSON `null` | 解析层：`auto` 落 `meeting.backends.minutes:MinutesHook`；`null` 是**缺席**（「直接出纪要」按钮当场回 404 `action_unavailable`，这一场不出纪要） |
 | `minutes.chunk_lines` | `100` | 整数 `10–1000` | 每块行数（与 V1 那套切块口径同值） |
 | `minutes.max_segments` | `8` | 整数 `1–20` | 每条 source 的分段上限，契约校验与提示词都用它 |
 | `minutes.timeout_seconds` | `14400` | 整数 `60–86400` | 一次生成的墙钟上限（默认四小时：会后时间宽裕换质量，但它仍然要有一个上限） |
 | `minutes.dsh_url` | `http://127.0.0.1:3080` | 任意非空字符串 | 拉起之前探的那台 DSH web 服务端的地址（与 `summary.base_url` 同一条口径：本层不校验 URL 形状，探不通就落回 headless 分支）。默认值就是 `dsh web` 的默认监听地址 |
 
-`minutes.hook` 是一个**可空键**，而且 `null` 在它身上是一个**取值**：配置文件里写 JSON 的 `null` 就是「关掉自动跑」，解析层看到它直接落缺席档，不会退回 `auto`。（写字符串 `"null"` 同解；空字符串不合法。）这一档与两个设备键的「没配」各走各的一支。
+`minutes.hook` 是一个**可空键**，而且 `null` 在它身上是一个**取值**：配置文件里写 JSON 的 `null` 就是「这台机器不接纪要这一层」，解析层看到它直接落缺席档，不会退回 `auto` —— 「直接出纪要」按钮在这一档当场回 404，`meeting post` 补纪要的那一路安静跳过。（写字符串 `"null"` 同解；空字符串不合法。）这一档与两个设备键的「没配」各走各的一支。
 
 ## 7. 手动跑一遍
 
@@ -147,7 +149,7 @@ python -m meeting.minutes check  <segmentation.json> [--max-segments N] [--input
 
 - `chunk`：场次目录不存在退 `2`；一条转写都没有退 `1`（提示语里写出找的是哪两个文件名）。
 - `prompt`：渲染不出来（模板读不动、占位符对不上、一条输入都没有）退 `1`。
-- `check`：方案文件不在退 `2`；契约不过退 `1`，消息里点出是哪一条 source 的哪一段不对。它顺带在方案旁边找 `working/inputs.json`（先看方案自己那一层、再看 `working/` 那一层），**读得到就拿逐 source 的真实行数当判据**，读不到才退回方案自己声明的 `total_lines`。
+- `check`：方案文件不在退 `2`；契约不过退 `1`，消息里点出是哪一条 source 的哪一段不对。它顺带在方案旁边找 `working/inputs.json`（先看方案自己那一层、再看 `working/` 那一层），**读得到就拿逐 source 的真实行数当判据**（分母跟「在场那份稿」走：会中稿在按会中稿，只有会后稿的那一路按会后稿），读不到才退回方案自己声明的 `total_lines`。
 
 提示词正文里让子会话自己跑的那一条是 `python -m meeting.minutes check working/segmentation.json`（阶段 2 末尾的自检）。
 

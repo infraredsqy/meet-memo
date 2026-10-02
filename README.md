@@ -8,9 +8,11 @@
 PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcriber.backend` 同样取 `auto`，解析到真转写后端：
 它从盘上的归档尾读、按静默切段、单 worker 顺序识别，把两路各写一本会中临时稿
 （`meeting_transcript_mic.md` / `meeting_transcript_loopback.md`，行形如 `[HH:MM] 正文`），
-同一批行也经 SSE 的 `transcript` 通道推给界面 —— 它是**临时稿**，会后那份重建。
+同一批行也经 SSE 的 `transcript` 通道推给界面 —— 它是**临时稿**；会后那条带说话人编号的稿
+另落一份，两份平级放在一起对拍，谁也不顶掉谁。
 **会中总结已经接通**（跟丢时按一下，十到十五秒拿回「刚才在讲什么 / 讲到哪儿了 / 丢掉了什么」）；
-会后那一头，收尾第 4 步拉起的离线转写与纪要生成也已经跑起来了，
+会后那一头，收尾不自动跑任何会后动作（第 4 步那一格停在 `waiting`，等你动手）：
+「生成会后精细稿」与「直接出纪要」两个按钮各拉起各自那一趟，
 手动的 `meeting post <场次目录>` 入口同样接通（跑完就退，可反复重跑）。
 服务在空闲态落地**工作区首页**：左侧清单列出工作区注册表（`~/.config/meeting/workspaces.json`）里
 登记的那几场，点「开始录音」落在最近一场的那个目录；没有一场时空态给 logo 与开场指引，
@@ -83,13 +85,16 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 改完要重启才生效。**配置是「你的意图」，快照 `sources[*].device_name` 是「实际落到的那个
 设备」** —— 配了却没命中时不会报错，只按回退顺序挑一条并在主 log 留一行 `WARNING`。
 
-**会后纪要**：离线转写那一趟跑完（三份产物 + `meeting_offline_status.json` 落到终态）之后，
-`minutes.hook` 那一层会自动接着跑一次纪要生成 —— 产物是**场次目录根**的 `meeting_final.md`
+**会后纪要**：按「结束录音」之后**会后那一套不自动跑**（`docs/design-intent.md` 第 10 条）——
+工作台上那一场的详情里有两个按钮：**生成会后精细稿**（走离线模型，慢，出带说话人编号的那份稿）
+与 **直接出纪要**（拿这一场手上有的稿子交给 DSH；缺会后稿就按现有档位来）。两个都不按，
+这一场就什么都不跑。纪要的产物是**场次目录根**的 `meeting_final.md`
 （纪要正文 + 说话人附录，附录里写清每个人名的依据与把握，猜不出的单列一节），
 状态在 `meeting_minutes_status.json`（`running` / `done` / `failed` / `delivered` + 原因 + 档位 +
-实际走的启动分支），中间产物与那一次运行的账在 `working/` 下（`inputs.json`、`<source>/chunks/`、
-`run_prompt.md`、`minutes-run.log`）。这一层跑砸了不影响离线那三份产物。
-不想要它自动跑就把 `minutes.hook` 写成 `null`（改完要重启）；每块行数、分段上限、
+实际走的启动分支），中间产物与那一次运行的账在 `working/` 下（`inputs.json`、
+`<source>/<kind>/chunks/`、`run_prompt.md`、`minutes-run.log`）。这一层跑砸了不影响离线那三份产物。
+`minutes.hook` 决定这一层**由哪个实现接**（`auto` / `dev` / `module:Class`；写成 `null` 时
+「直接出纪要」那个按钮当场回 404，如实说这台机器上没接这一层）；每块行数、分段上限、
 一次运行的墙钟上限与那一台 `dsh web` 服务端的地址分别由 `minutes.chunk_lines` /
 `minutes.max_segments` / `minutes.timeout_seconds` / `minutes.dsh_url` 定
 （五个键都收在 `settings_update` 的 `pending_restart` 那一档里）。
@@ -181,7 +186,7 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 
 | 退出码 | 什么时候 |
 |---|---|
-| `0` | 空闲态按 `Ctrl+C`；或者收尾干净（四步都走到 `done` / `skipped`） |
+| `0` | 空闲态按 `Ctrl+C`；或者收尾干净（前三步走到 `done` / `skipped`，`post` 那一格停 `waiting` 也算收尾干净） |
 | `1` | **收尾有步骤 `failed`**（这时终端上会打 log 路径与最后几行）；或者 **`meeting post` 那一趟没做成**（音频转不动、离线那一层 `failed`、纪要落 `failed` 或等它落终态等过了 `minutes.timeout_seconds`）；或者**服务起步这一步出意外**（组装应用 / 构造服务器对象的路上抛异常，终端上会打一行「服务起步失败」与 log 路径） |
 | `2` | 端口被占（已有 meeting 服务 / 别的程序占着）；用法错误；配置值非法 |
 | `3` | 启动前提不成立（`config.json` 损坏、主 log 不可写） |
@@ -271,7 +276,7 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 自检：
 
     cd web
-    npm test           # vitest run，14 个文件 340 个用例
+    npm test           # vitest run，14 个文件 360 个用例
     npm run typecheck  # 两条 tsc --noEmit -p，各查各的 project
 
 `npm run build` 里已经含 `npm run typecheck`，所以构建过一次就不必再单独跑；只改类型不看产物时跑 `typecheck` 更快。契约正文在 `docs/contract.md`，可机读基准（32 个 golden 样本与掩码规则）在 `contract/`，前端工程的五个脚本（`dev` / `typecheck` / `build` / `preview` / `test`）与其余说明在 `web/README.md`。
