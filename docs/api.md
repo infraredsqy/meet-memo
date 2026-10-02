@@ -49,7 +49,7 @@
 
 ## 3. 动作表与 `code` 表
 
-十四个动作：`start` / `stop` / `mute_session` / `settings_update` / `reprobe` / `dev_inject` / `summarize` / `workspace_open` / `workspace_remove` / `post_offline` / `post_minutes` / `pause` / `resume` / `set_source`。`post_offline` / `post_minutes` 是会后两个按钮（「生成会后精细稿」/「直接出纪要」，R26）：起一条后台线程即算启动成功，成功体在通用信封上多一个 `post: {kind, dir}`；跑成什么样由场次目录里的状态文件回答。`pause` / `resume` 是暂停与继续，`set_source` 是会中关掉某一路 / 重新打开某一路（R24 / R25，语义见 `docs/contract.md` 4.3）。九个 `code`：
+十五个动作：`start` / `stop` / `mute_session` / `settings_update` / `reprobe` / `dev_inject` / `summarize` / `workspace_open` / `workspace_remove` / `post_offline` / `post_minutes` / `pause` / `resume` / `set_source` / `speaker_rename`。`post_offline` / `post_minutes` 是会后两个按钮（「生成会后精细稿」/「直接出纪要」，R26）：起一条后台线程即算启动成功，成功体在通用信封上多一个 `post: {kind, dir}`；跑成什么样由场次目录里的状态文件回答。`pause` / `resume` 是暂停与继续，`set_source` 是会中关掉某一路 / 重新打开某一路（R24 / R25）；`speaker_rename` 把一个说话人编号的名字写进这一场目录根的人名表（R10 第四条 / R30，成功体多一个 `speaker: {dir, key, name}`）。语义见 `docs/contract.md` 4.3 / 4.11。九个 `code`：
 
 | `code` | HTTP | 意思 | 谁会回它 |
 |---|---|---|---|
@@ -58,7 +58,7 @@
 | `capture_unavailable` | 503 | 采集后端不可用：没接入、或设备起不来；`set_source` 那一档的 `detail` 是 `{source, error}` | `start` / `set_source` |
 | `not_recording` | 409 | 现在没有在录的场次 | `stop` / `mute_session` / `pause` / `resume` / `set_source` / `dev_inject` / `summarize` |
 | `invalid_setting` | 400 | 参数或键名非法（校验都在动手之前） | 各动作 |
-| `persist_failed` | 500 | 配置写盘失败，这次改动一处都没生效 | `settings_update` |
+| `persist_failed` | 500 | 配置写盘失败，这次改动一处都没生效；`speaker_rename` 的人名表写不进去也回它（`detail = {error}`） | `settings_update` / `speaker_rename` |
 | `action_unavailable` | 404 | 这个后端没有这个动作；会后两个按钮拿它回「这台机器上没接这一层」 | `dev_inject`（非 dev 后端）/ `post_offline`（`post.hook` 缺席）/ `post_minutes`（`minutes.hook` 缺席） |
 | `transcript_unavailable` | 503 | 转写没在跑（没起过，或者已经停了）；`detail = {"health": "stopped"}` | `summarize` |
 | `summary_failed` | 502 | 会中总结没拿到结果：`detail` 是 `{missing: [...]}`（端点没配齐）或 `{elapsed_seconds, attempts}`（预算用尽 / 端点报错 / 解析连试带败） | `summarize` |
@@ -79,6 +79,7 @@
 | `workspace_open` | 200：写工作区注册表（缺 `dir` / 目录不存在 / 非空未确认 → 400） | 200 | 200 | 200 | 200 |
 | `workspace_remove` | 200：摘一行名单，文件不碰 | 200 | 200 | 200 | 200 |
 | `post_offline` / `post_minutes` | 带 `dir` 且那一行合法 → 200；不带 → 409 `draining`（手上没有可以跑后会的场次） | 409 `draining` | 409 `draining` | 200（这一层没接实现 → 404 `action_unavailable`；有一趟在飞 → 409 `draining`） | 收尾落定（`post` 停 `waiting` 算落定）→ 200；还没落定 → 409 `draining` |
+| `speaker_rename` | `dir` / `key` / `name` 齐且那一行合法 → 200（写这一场目录里的人名表） | 400 `invalid_setting`（盘上 `state` 是 `recording`，会中不提供改名） | 400 `invalid_setting`（同左） | 200 | 400 `invalid_setting`（盘上 `state` 是 `draining`） |
 
 `settings_update` 写的是配置文件，与「这一场录到哪儿」无关，因此**任何状态下都可用**。`mute_session` 只在本场收尾之前可用 —— 收尾完成后本场已无可静音，复位发生在下一场 `start`。`reprobe` 只在**没有场次在跑**的时候可用（`recording` / `alert` 两态回 `already_recording`）：设备在开场前定下来，会中换设备是明文不做的那一档。`summarize` 只在**有场次在跑**的时候可用（它读的是这一场的实时转写）。
 
@@ -173,9 +174,19 @@
 - 拒绝档固定三条：这一场还没结束 / 收尾还没落定，或已经有一趟会后活在飞 → 409 `draining`；`post_minutes` 那一层的账停在 `running`（纪要 claim 闸同步判）→ 409 `draining`，`detail` 带 `status_path`；这一层没接实现（`post.hook` / `minutes.hook` 缺席）→ 404 `action_unavailable`。
 - 成功体是通用信封 + `post: {kind: "offline"|"minutes", dir}`；回执只说「起没起、跑的哪一场」，跑成什么样由场次目录里的 `meeting_offline_status.json` / `meeting_minutes_status.json` 回答；**跑到哪一档**（第几块 / 共几块、正在跑哪一路、已经跑了多久）由 `GET /api/sessions/{id}` 回答。
 
+**`speaker_rename`** —— 给一个说话人编号起名（R10 第四条 / R30），形状全文见 `docs/contract.md` 4.11：
+
+```json
+{"action": "speaker_rename", "args": {"dir": "C:\\会议\\跟老王聊周会", "key": "mic:S01", "name": "老王"}}
+```
+
+- 三格 `args` **都必给**：`dir` 过与 `post_offline` 同一套注册表 / 目录判读（**没有省略语义**）；`key` 是 `mic` / `loopback` 或 `mic:S01` 这种带路前缀的限定名；`name` 非空。同一键再改一次就是改名；两个键写同一个名字合法——编号是分开的，可以重名。
+- **只写这一场目录根的人名表** `meeting_speaker_names.json`：不拉离线、不拉纪要、不改已生成的 `meeting_final.md`、不动快照（`revision` 保持现值）。名字落下去之后，下一次出纪要的提示词里带上这张表。
+- 成功体是通用信封 + `speaker: {dir, key, name}`；界面当场生效走 `GET /api/sessions/{id}` 的 `speakers` 一格（改名后重问一次即可）。人名表读不出时那一格的名字如实 `null`，读侧只做结构解析、不报错。
+
 **`GET /api/sessions` / `GET /api/dirs`** —— 两只纯读端点：前者给注册表 + `recent`（每行带 `has_offline`：这一场有没有会后精细稿；带 `segments`：这一场各段的时长与时间），后者给选择器的一层子目录名目。**"最近一场"只从注册表读**：启动、请求都不扫任何场次目录（`docs/design-intent.md` 第 4 条）。
 
-**`GET /api/sessions/{id}`** —— 单场状态（会后视图的进度区）：`{id}` 是这一场的目录路径（URL 编码的绝对路径），应答体见 `docs/contract.md` 4.9。会后离线那条链每跑完一块就往场次目录里那份 `meeting_offline_progress.jsonl` 上补一行（这一块的文字 + 这一块的落点），这只端点把「第几块 / 共几块、正在跑哪一路、已经跑了多久」按路各交一份回来。**纯读**：不涨 `revision`、不广播。
+**`GET /api/sessions/{id}`** —— 单场状态（会后视图的进度区）：`{id}` 是这一场的目录路径（URL 编码的绝对路径），应答体见 `docs/contract.md` 4.9。会后离线那条链每跑完一块就往场次目录里那份 `meeting_offline_progress.jsonl` 上补一行（这一块的文字 + 这一块的落点），这只端点把「第几块 / 共几块、正在跑哪一路、已经跑了多久」按路各交一份回来；`speakers` 一格带这一场盘上的身份集（限定键 / 路 / 人话标签 / 现名或 `null` / 可得的次数读数，4.11）。**纯读**：不涨 `revision`、不广播。
 
 ## 4. `settings_update`：写哪些键、什么时候生效
 

@@ -99,7 +99,11 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 **会后纪要**：按「结束录音」之后**会后那一套不自动跑**（`docs/design-intent.md` 第 10 条）——
 工作台上那一场的详情里有两个按钮：**生成会后精细稿**（走离线模型，慢，出带说话人编号的那份稿）
 与 **直接出纪要**（拿这一场手上有的稿子交给 DSH；缺会后稿就按现有档位来）。两个都不按，
-这一场就什么都不跑。纪要的产物是**场次目录根**的 `meeting_final.md`
+这一场就什么都不跑。详情里还有一行**说话人名字…**入口：点开弹窗，这一场盘上每个
+说话人身份一行，输入名字、按确认就写进这场目录的 `meeting_speaker_names.json`（当场生效；
+两个编号叫同一个名不拦，编号是分开的）。下次出纪要，确认过的名字随提示词带进附录照抄，
+没起名的编号照旧由模型推断；改名字不改已生成的纪要。
+纪要的产物是**场次目录根**的 `meeting_final.md`
 （纪要正文 + 说话人附录，附录里写清每个人名的依据与把握，猜不出的单列一节），
 状态在 `meeting_minutes_status.json`（`running` / `done` / `failed` / `delivered` + 原因 + 档位 +
 实际走的启动分支），中间产物与那一次运行的账在 `working/` 下（`inputs.json`、
@@ -293,7 +297,7 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 自检：
 
     cd web
-    npm test           # vitest run，20 个文件 469 个用例
+    npm test           # vitest run，21 个文件 480 个用例
     npm run typecheck  # 两条 tsc --noEmit -p，各查各的 project
 
 `npm run build` 里已经含 `npm run typecheck`，所以构建过一次就不必再单独跑；只改类型不看产物时跑 `typecheck` 更快。契约正文在 `docs/contract.md`，可机读基准（34 个 golden 样本与掩码规则）在 `contract/`，前端工程的五个脚本（`dev` / `typecheck` / `build` / `preview` / `test`）与其余说明在 `web/README.md`。
