@@ -29,7 +29,7 @@
 | | `fail-capture-unavailable.json` | 进程内 TestClient（显式配 `capture.backend: null` 替身；默认 `auto` 已接真采集，`start` 会真开一场） | 503 + `detail` 三键（`{session_id, dir, reason}` 那一档） |
 | | `fail-not-recording.json` | 空闲态 `stop` | 409 + **空对象** `detail` |
 | | `fail-invalid-setting.json` | `start` 带 `mode: "burst"` | 400 + `detail` 三键（`{key, value, legal}`） |
-| | `fail-invalid-setting-unknown-action.json` | 打一个不认识的动作名 | 400 + `detail` 两键（`{action, known}`，`known` 是**十一个动作名**） |
+| | `fail-invalid-setting-unknown-action.json` | 打一个不认识的动作名 | 400 + `detail` 两键（`{action, known}`，`known` 是**十四个动作名**） |
 | | `fail-persist-failed.json` | `monkeypatch` 把 `write_config_values` 换成抛 `OSError` | 500 + `detail = {error}` |
 | | `fail-action-unavailable.json` | 空闲态 `dev_inject`（非 dev 后端） | 404 + **空对象** `detail` |
 | | `fail-transcript-unavailable.json` | 录音中把转写后端拿掉再 `summarize` | 503 + `detail = {health: "stopped"}` |

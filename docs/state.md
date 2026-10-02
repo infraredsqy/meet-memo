@@ -44,13 +44,14 @@
 | 1 | `flush` | 停采集、把归档落盘（后端 `finalize()`：停流 + join + 关文件 + `fsync`） | `dca4539b`（真采集后端已落地） |
 | 2 | `transcode` | 收尾转换（后端 `transcode()`：各段 PCM 逐段转 64k MP3，**转完保留 PCM**） | `dca4539b`（真采集后端已落地） |
 | 3 | `log` | 写这一场的结束标记（`session.json` + 服务级主日志） | 本服务（永远在场，永远 `done`） |
-| 4 | `post` | 让会中模型退出显存（转写后端的可选成员 `release_gpu()`；释放失败只记一条 log）。**会后一个动作都不自动跑**：这一格如实停在 `waiting`（＝等你动手），两趟会后活由「生成会后精细稿」/「直接出纪要」按钮或 `meeting post` 拉起 | 本服务（释放那一步，`796bbff` 起；`7c6952e5` 的 `PostProcessHook` 不再由这一步拉起） |
+| 4 | `post` | 让会中模型退出显存（转写后端的可选成员 `release_gpu()`；释放失败只记一条 log）。**会后一个动作都不自动跑**：这一格如实停在 `waiting`（＝等你动手），两趟会后活由「生成会后精细稿」/「直接出纪要」按钮或 `meeting post` 拉起。**暂停 / 继续这两个动作也各走同一对方法**（`10770b41`：暂停提交 `release_gpu()`、继续提交配对的 `acquire_gpu()`，都异步提交到后台，不等它们做完才应答） | 本服务（释放那一步，`796bbff` 起；`7c6952e5` 的 `PostProcessHook` 不再由这一步拉起） |
 
 每步的 `status` 取五档之一：`waiting` / `running` / `done` / `failed` / `skipped`。
 
 - **`skipped` = 这个构建里没有真实实现**（采集替身不写真实音频）。它不阻塞 `done`，只留一行 warning。收尾四步里眼下只有第 1、2 步会出现它 —— 第 4 步 `post` 对任何构建都落在 `waiting`，不再有「钩子缺席记 `skipped`」那一档。
 - **`failed` = 有实现，但这次调用抛错**。它带 `error`。
 - 判「缺席」只看后端的解析结果（`meeting/backends/registry.py`），不看调用时抛了什么异常。
+- **今天调这两个方法的只有两处**：收尾链第 4 步，与暂停 / 继续那一对动作。强制打断（第二次 `Ctrl+C`，或已停在 `ended·draining` 再按）与关停走的是另外两条路，**都不调** `release_gpu()` —— 前者把收尾 task 取消掉（第 4 步若还没开跑就轮不到），后者只调 `TranscriberBackend.stop()`；这两格归管收尾 / 关停的节点，来由见 `docs/asr-backends.md` 第 6 章。
 
 **第 1、2 步的闸门**（`meeting/service/runtime.py` 的 `_drain_flush()` / `_drain_transcode()`）：两步都只看**采集侧**——解析结论**与** `capture_capabilities["finalize"]` / `capture_capabilities["transcode"]`，后者由 `registry.capabilities_of()` 按「实现在不在场」回答：真采集后端（`meeting.backends.capture:CaptureBackend`）两项都是 `True`，`null` / `dev` 两个替身都是 `False`。因此**真采集那一场**这两步记 `done`、产物是场次目录里的两份 `.mp3`；替身那一场照旧 `skipped`。transcode 是采集后端的能力，转写后端在不在场与这道闸门无关（转写缺席不影响第 2 步记账，解析结论与 `run_ok` 也记在采集侧）。
 
@@ -103,7 +104,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 | `revision` | int，进程内单调递增；每次服务启动从同一个起点重新计，不跨进程延续、不落盘 |
 | `service` | 五子键：`started_at` / `version`（非空字符串）/ `port` / `url` / `log_path`；启动时定一次 |
 | `top_state` | 四态之一 |
-| `session` | `null`，或 `{id, dir, started_at, mode, elapsed_seconds, frozen}` |
+| `session` | `null`，或**七子键** `{id, dir, started_at, mode, elapsed_seconds, frozen, paused}`（`paused` 是「暂停中」的**唯一**落点，顶层四态不新增第五个） |
 | `sources` | **恰好两项**（`mic` / `loopback`），见下表 |
 | `alerts` | `{critical: Alert\|null, hints: [Alert]}` |
 | `transcript` | `{health, last_line_at, buffered_lines, failed_segments}` |
@@ -119,7 +120,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 
 - `id` 就是工作区目录名（人给的那一个，形状任意 —— 目录名就是这一场会的名字，软件不按日期生成、不解析它；`docs/design-intent.md` 第 3 条），`dir` 是工作区目录的绝对路径 —— 这两个名字全链路统一，与 `session.json` 里的字段名逐字一致。
 - `mode ∈ both / mic / loopback`，开场前定死，录音期间不切。
-- `elapsed_seconds` 在 `recording` / `alert` 态走秒，进 `ended` 就冻结。
+- `elapsed_seconds` 在 `recording` / `alert` 态走秒，进 `ended` 就冻结。**这一格说的是「这一场录到了多少」：录到的秒数，扣掉暂停那几段 —— 暂停期间它停在原地**（`docs/design-intent.md` 第 7 条：权威长度是实际录到的音频时长，不含暂停）。
 - 一个容易看错的点：**`top_state` 停在 `ended` 而那场的 `session` 还留着**（成功档与失败档都留）。界面据此画「已结束·已完成」，直下一场 `start` 才清。
 
 `ended` 的语义：
@@ -155,7 +156,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 
 - **没有默认落点**（`docs/design-intent.md` 第 4 条）：一场会落在 start 请求 / 命令行**显式给的已存在目录**里；服务不建目录、不按日期命名，目录名就是这场会的名字。日期仍是每一场的元信息（`session.json` 的 `date` 字段，取开场时刻），只是它不再写进目录名。
 - 一次只接受一个新场次：目标目录里已经有另一场的 `session.json` 时 `start` 拒绝（`invalid_setting`）。
-- 一场会一个目录，目录里只有一份 `session.json` 是服务现在写的。**两路音频归档也落在这里**（`dca4539b` 落地采集、`6ea32d8d` 落地分段）：`meeting_audio_<source>_<NNN>.pcm`（NNN 三位零填充、从 1 起；**一段 = 一次录制**，本节点内每场每路恰好一段），16k / 单声道 / int16 小端裸 PCM、无头，**边采边写**（无缓冲截断写，服务被强杀最多丢最后一个块的尾巴）；收尾第 2 步在同目录同名换扩展名**逐段**产出 `.mp3`（64k），**转码成功之后 PCM 照样留着**（`sources[*].archives` 段文件名表声明的就是它们）。**暂停、会中关掉某一路、某一路没开都不切段**：那一路写数字静音 —— 暂停窗的真音频在写侧被等长替换成数字零（内容到不了盘上），暂停只进段账的 `pauses` 区间，两路时间轴始终等长。
+- 一场会一个目录，目录里只有一份 `session.json` 是服务现在写的。**两路音频归档也落在这里**（`dca4539b` 落地采集、`6ea32d8d` 落地分段）：`meeting_audio_<source>_<NNN>.pcm`（NNN 三位零填充、从 1 起；**一段 = 一次录制**，本节点内每场每路恰好一段），16k / 单声道 / int16 小端裸 PCM、无头，**边采边写**（无缓冲截断写，服务被强杀最多丢最后一个块的尾巴）；收尾第 2 步在同目录同名换扩展名**逐段**产出 `.mp3`（64k），**转码成功之后 PCM 照样留着**（`sources[*].archives` 段文件名表声明的就是它们）。**暂停、会中关掉某一路、某一路没开都不切段**：那一路写数字静音 —— 暂停窗的真音频在写侧被等长替换成数字零（内容到不了盘上），暂停只进段账的 `pauses` 区间，两路时间轴始终等长。这些事都由动作驱动（`pause` / `resume` / `set_source`，`10770b41`）：快照 `session` 的第七子键 `paused` 就是「暂停中」的落点（顶层四态一个字不动），关掉某一路落在那一路上现成的 `health = stopped` 档；**关掉与重新打开都是用户按的按钮**，不报 `SourceLost`、不进告警（重开时设备打不开才如实回一条 `capture_unavailable`(503)）。
 - **两路转写各自落一本会中临时稿**（`9e5db89c` 已落地）：`meeting_transcript_mic.md` 与 `meeting_transcript_loopback.md`，追加写、逐行 flush，每行 `[HH:MM] 正文` —— 时间戳取**分钟级**的采集时刻：段一入队就盖上，识别慢也不会把后面几行的时间戳挤到一起。某一段识别不出来也照落一行，正文是**占位符**：`[[识别失败: 超时 20s]]` / `[[识别失败: 重复循环]]` / `[[识别失败: 无输出]]`（双层方括号、裸文本、不带时间戳、**不含 `**`**；识别过程抛错那一档落 `[[识别失败: 错误]]`）；纯噪声的段落一行都不写，连占位符也不写 —— 暂停窗（归档里那一段数字静音）同样一行都不产。同一行同时经 SSE 的 `transcript` 通道推给界面（第 6 章）。它是**临时稿**：会后那条带说话人编号的稿另落一份，两份平级放在一起对拍、谁也不顶掉谁（R11，`docs/ui-design.md` 第 3 章的标签口径）。
 - `session.json` **原子写**：同目录临时文件 + `os.replace` + `flush`。**每个阶段变更都写一次**（`start` 的第一版、进收尾中、每一步的 `status`/`detail`、终态那一版），被打断不留半截文件、工作区目录里不留 `.tmp` 残骸。
 
@@ -334,6 +335,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 
 分级与合并：
 
+- **暂停的那几段不进这两条累计**（`10770b41`）：暂停期间电平帧照发（那是 `recording_alive` 与界面电平的输入，停发会把「暂停」误报成「采集已停」），但判定器一帧都不判 —— 安静房间里暂停三分钟本来就什么内容都没录，不该因此弹一条「这一路静默已达 180 秒」（`docs/design-intent.md` 第 17 条：告警要能一眼看见，但不许一惊一乍）。接线是 `AlertJudge.pause_session()` / `resume_session()`，由动作 `pause` / `resume` 驱动；**恢复之后的第一帧从零起算**（`resume_session()` 把每条计数的基准清掉，否则那一整段会以「一帧跨了几分钟」的形式补记进去）。
 - **致命级**（某路采不到）进 `alerts.critical`，**同时只留一条**。
 - **提示级**进 `alerts.hints`，**同类合并、上限 3**。合并的键是 `(level, source, message)` 三元组，同一个键再次出现时沿用原来那一条的 `since`、把 `duration_seconds` 刷新到当下；到上限后又来新的键，就留下 `since` 最早的三条，**多出来的那个键在合并那一刻就从判定器的记账里回收**（`hints()` 与记账本因此恒同长；被挤掉的那条只进 log），同一个键后来重新进榜算新起的那一条。两条提示级都定在 `source = transcript` 上，靠 `message`（也就是故障类型文案）区分。
 - 判定器里那两条提示级的入口：`AlertJudge.on_transcript_health()`（`transcript.health` 从 `normal` 掉到 `behind` / `stopped`）与 `AlertJudge.on_backlog_depth()`（待转写段数 ≥ 20 段，`BACKLOG_HINT_THRESHOLD` 写死在代码里、不加配置键）。**两处都在 `ServiceRuntime._refresh_transcript_snapshot()` 里接线**，而那个函数是转写刷新的唯一落点（启动、开场、每行、0.5 秒节拍四条路径都经过它），所以接一次就覆盖四条路径。

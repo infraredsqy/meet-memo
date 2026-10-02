@@ -25,7 +25,7 @@
 - `probe()` 用 `sounddevice` 枚举输入端点、用 `soundcard` 枚举 render 端点，按配置与策略挑选，**以 16k 试开并读回一小段样本**（「能打开 ≠ 有波形」那一档就是这一步加出来的），结果如实报成两路 `ready` / `probe_failed`；
 - `start()` 起两路**各自独立**的采集：mic 走 `sd.InputStream` 回调、loopback 走 `soundcard` 的 recorder（专用线程 + `CoInitializeEx`），把 16k / 单声道 / int16 的裸 PCM 写进 `meeting_audio_<source>_<NNN>.pcm`（NNN 三位零填充、从 1 起；**一段 = 一次录制**，本节点内每场每路恰好一段；`buffering=0` 的截断写，强杀最多丢最后一个块的尾巴），每 `frame_interval` 秒**无条件**发一帧 `LevelFrame`（静音时发 `-120 dBFS` 的那一帧）+ 一条 `SourceFacts`；
 - 两路各有一条写线程（一路卡在磁盘上不会把另一路拖住）；一路的源读崩时该路报一条 `SourceLost`，另一路照常写；
-- 暂停与「关一路」的服务层出口（`6ea32d8d`；不在上面那张协议表里 —— HTTP 动作入口归下游节点）：`pause()` / `resume()` 让所有路从这一刻起写数字静音（**不录内容**，真音频在写侧被等长替换成数字零），暂停不切段、只记进段账的 `pauses` 区间；`deactivate_source()` 是用户主动关掉某一路 —— 那一路改写静音，**不报 `SourceLost`、不进告警**（与「这一路真死了」是两回事）；`mode` 没选中的那一路整段写静音填充。三种静音都单独记进写侧的 `silence_bytes` 账，两路时间轴始终等长；
+- 暂停与「关一路」的服务层出口（`6ea32d8d`；不在上面那张协议表里 —— HTTP 动作入口是 `pause` / `resume` / `set_source`，`10770b41`）：`pause()` / `resume()` 让所有路从这一刻起写数字静音（**不录内容**，真音频在写侧被等长替换成数字零），暂停不切段、只记进段账的 `pauses` 区间；`deactivate_source()` 是用户主动关掉某一路 —— 那一路改写静音，**不报 `SourceLost`、不进告警**（与「这一路真死了」是两回事）；`mode` 没选中的那一路整段写静音填充。三种静音都单独记进写侧的 `silence_bytes` 账，两路时间轴始终等长；**同一对动作在转写那一侧还牵一件事** —— 暂停把会中模型放出显存、继续再把它拉回来（可选成员 `acquire_gpu()`，见下面转写那一节 `release_gpu()` 那一条，`10770b41`）；
 - `finalize()` / `transcode()` / `stop()` 见上表；转码成功之后**保留 PCM**（`session.json` 的 `sources[*].archives` 段文件名表声明的是它们）。
 
 后端往里送的事实（**只报原始事实，不判告警、不带阈值语义**）：
@@ -50,7 +50,7 @@
 | `start(mode, session_dir)` / `stop()` | 起停转写。起步失败**不阻塞录音**（转写坏了可以重跑） |
 | `health()` | `normal` / `behind` / `stopped`，直接进快照的 `transcript.health` |
 | `backlog_depth()` / `segment_timeout()` | 积压段数与单段超时（秒），供收尾预算与提示级用；数值本身只进 log 与 `/debug` |
-| `release_gpu()` | **可选成员**：把会中模型移出显存。调用方（收尾第 4 步）用**防御式取法**（`getattr(..., None)` + 可调用才调），替身后端省掉这一格照样跑得通 —— 这条宽松是有意留的 |
+| `release_gpu()` / `acquire_gpu()` | **可选成员**（两个都不在协议强制那一份里）：把会中模型移出显存 / 再把它拉回来。调用方（收尾第 4 步、暂停 / 继续两个动作）用**防御式取法**（`getattr(..., None)` + 可调用才调），替身后端省掉这两格照样跑得通 —— 这条宽松是有意留的 |
 
 行事实是 `TranscriptLine`：`ts` / `source` / `text` / `kind`（`line` 或 `gap`）。
 
@@ -63,7 +63,7 @@
 - `stop()` 关读线程、把 VAD 手上的尾段送进队列，再在**收尾预算**内把队列里剩下的段尽量做完（预算按积压量自适应，公式见 `docs/state.md` 第 1 章）；
 - `health()` 三取值：已经 `stop()` 过、worker 没起来 / 已经停了、模型加载或识别出事 → `stopped`；积压段数压过 `BACKLOG_BEHIND_THRESHOLD`（20 段）→ `behind`；读线程出事、这一段再也不会长出新段也报 `behind`；其余情况 `normal`。**没起过场次时报 `stopped`** —— 快照空闲态那一格就是从它读来的真值；
 - `backlog_depth()` 是段队列里还没处理的段数（队列**无界**，不做 busy-drop），`segment_timeout()` 是配置里的 `asr.timeout_seconds`（默认 `20.0`）；
-- `release_gpu()` 由收尾第 4 步调一次（那一步只做「让会中模型退出显存」这一件事，之后那一格停在 `waiting`；会后离线链与纪要层都由「生成会后精细稿」/「直接出纪要」按钮或 `meeting post` 另行拉起），耗时算在 `post` 这一步的记账里。语义四条：**没加载过就 no-op**（一条日志都不写）、**幂等**、等在飞推理有 **5 秒上界**（后端自己的在飞计数 + `Condition`，事件驱动；到点照旧丢引用并记一条 warning）、**丢引用之后**才尽力清一次缓存。它抛错不拖垮整场 —— 调用方如实记一条 log，`post` 那一格照常落 `waiting`。这一处交接的来由与本机数字见 `docs/asr-backends.md`。
+- `release_gpu()` 由收尾第 4 步调一次（那一步只做「让会中模型退出显存」这一件事，之后那一格停在 `waiting`；会后离线链与纪要层都由「生成会后精细稿」/「直接出纪要」按钮或 `meeting post` 另行拉起），耗时算在 `post` 这一步的记账里。语义四条：**没加载过就 no-op**（一条日志都不写）、**幂等**、等在飞推理有 **5 秒上界**（后端自己的在飞计数 + `Condition`，事件驱动；到点照旧丢引用并记一条 warning）、**丢引用之后**才尽力清一次缓存。它抛错不拖垮整场 —— 调用方如实记一条 log，`post` 那一格照常落 `waiting`。**配对那一半是 `acquire_gpu()`**（`10770b41`）：由动作 `pause` / `resume` 经服务层提交，走**同一条拉起路径**（`_transcriber_or_create()`，同一个 factory、同一把 `_model_lock`）。语义四条：**已经在手就安静 no-op**（不重造第二份权重）、释放之后经同一个 factory 造一份新的并复位释放标记（下一轮释放照样管得着）、**造不出来只记一条 warning** 且这次动作照常（R1 的立场：转写坏了不挡录音）、不碰 `_stopped` 与 `health()`。**权重真正的加载仍在继续之后的第一段转写时**（`GlmAsrTranscriber` 自己那条加载路径）—— 「继续」这一刻拿回来的是识别器。这一处交接的来由与本机数字见 `docs/asr-backends.md`。
 
 每一段落一份产物：`session_dir/meeting_transcript_<source>.md`，一行 `[HH:MM] 正文`（分钟级时间戳取**采集时刻**，追加写、逐行 flush）。识别失败的段落照落一行，正文是**占位符**（`[[识别失败: 超时 20s]]` 这一形状：双层方括号、裸文本、不带时间戳、不含 `**`）；真后端产出的 `kind` 一律是 `line`，失败段落也是 `line`，靠正文认出来。文件位置、行格式与占位符的几档见 `docs/state.md` 第 3 章，SSE 侧那一行见 `docs/contract.md` 第 3.3 节。
 

@@ -49,14 +49,14 @@
 
 ## 3. 动作表与 `code` 表
 
-十一个动作：`start` / `stop` / `mute_session` / `settings_update` / `reprobe` / `dev_inject` / `summarize` / `workspace_open` / `workspace_remove` / `post_offline` / `post_minutes`。末尾那两个是会后两个按钮（「生成会后精细稿」/「直接出纪要」，R26）：起一条后台线程即算启动成功，成功体在通用信封上多一个 `post: {kind, dir}`；跑成什么样由场次目录里的状态文件回答。九个 `code`：
+十四个动作：`start` / `stop` / `mute_session` / `settings_update` / `reprobe` / `dev_inject` / `summarize` / `workspace_open` / `workspace_remove` / `post_offline` / `post_minutes` / `pause` / `resume` / `set_source`。`post_offline` / `post_minutes` 是会后两个按钮（「生成会后精细稿」/「直接出纪要」，R26）：起一条后台线程即算启动成功，成功体在通用信封上多一个 `post: {kind, dir}`；跑成什么样由场次目录里的状态文件回答。`pause` / `resume` 是暂停与继续，`set_source` 是会中关掉某一路 / 重新打开某一路（R24 / R25，语义见 `docs/contract.md` 4.3）。九个 `code`：
 
 | `code` | HTTP | 意思 | 谁会回它 |
 |---|---|---|---|
 | `already_recording` | 409 | 已经有一场在录 | `start` / `reprobe` |
 | `draining` | 409 | 上一场还在收尾（或收尾失败后停留），这场不能开；会后两个按钮拿它回「收尾没落定 / 有一趟会在飞」 | `start` / `post_offline` / `post_minutes` |
-| `capture_unavailable` | 503 | 采集后端不可用：没接入、或设备起不来 | `start` |
-| `not_recording` | 409 | 现在没有在录的场次 | `stop` / `mute_session` / `dev_inject` / `summarize` |
+| `capture_unavailable` | 503 | 采集后端不可用：没接入、或设备起不来；`set_source` 那一档的 `detail` 是 `{source, error}` | `start` / `set_source` |
+| `not_recording` | 409 | 现在没有在录的场次 | `stop` / `mute_session` / `pause` / `resume` / `set_source` / `dev_inject` / `summarize` |
 | `invalid_setting` | 400 | 参数或键名非法（校验都在动手之前） | 各动作 |
 | `persist_failed` | 500 | 配置写盘失败，这次改动一处都没生效 | `settings_update` |
 | `action_unavailable` | 404 | 这个后端没有这个动作；会后两个按钮拿它回「这台机器上没接这一层」 | `dev_inject`（非 dev 后端）/ `post_offline`（`post.hook` 缺席）/ `post_minutes`（`minutes.hook` 缺席） |
@@ -70,6 +70,8 @@
 | `start` | 200：写 `session.json`、进 `recording`（落点是 `args.dir` 显式给的 **已存在** 目录） | 409 `already_recording` | 409 `already_recording` | 200：从 `ended` 直接进 `recording`，顺手清掉上一场的 `ended` 摘要 | 409 `draining` |
 | `stop` | 409 `not_recording` | 200：进 `ended·draining`，时长冻结 | 200：同上（进 `ended` 不必先回 `recording`） | 409 `not_recording` | 409 `not_recording` |
 | `mute_session` | 409 `not_recording` | 200：`alerts.*.muted` 立刻变 `true` | 200：同上 | 409 `not_recording` | 409 `not_recording` |
+| `pause` / `resume` | 409 `not_recording` | 200：`session.paused` 翻过来（暂停那一截改写静音、不切段、时长停住；暂停顺带让会中模型退出显存、继续再把它拉回来） | 200：同上 | 409 `not_recording` | 409 `not_recording` |
+| `set_source` | 409 `not_recording` | 200：关掉 / 重新打开那一路（重开时设备打不开 → 503 `capture_unavailable`；`source` / `active` 非法、或本场没采这一路 → 400 `invalid_setting`） | 200：同上 | 409 `not_recording` | 409 `not_recording` |
 | `settings_update` | 200 | 200 | 200 | 200 | 200 |
 | `reprobe` | 200：重新枚举并试开设备，两路快照随之更新（`revision +1`） | 409 `already_recording` | 409 `already_recording` | 200：同上 | 200：同上（采集已经停了，重新探测不干扰在飞的东西） |
 | `dev_inject` | 409 `not_recording` | 200（非 dev 后端 404） | 200（非 dev 后端 404） | 409 `not_recording` | 409 `not_recording` |
@@ -92,6 +94,28 @@
 **`stop`** —— 进 `ended·draining`，时长就地冻结，然后服务按四步收尾跑到终态（四步与终态规则见 `docs/state.md` 第 1 章）。收尾成功档下 `top_state` 停在 `ended`、`ended.phase == "done"`、`session` 保留。
 
 **`mute_session`** —— 本场不再出声：`alerts.*.muted` 与横幅上那句「本场已静音」一起变，`revision +1`。它**不改**持久化开关 `alarm.sound`，**下一场 `start` 自动复位**。静音期间新起的告警同样继承静音。
+
+**`pause` / `resume`** —— 暂停与继续（R24）：
+
+```json
+{"action": "pause"}
+```
+
+- 无 `args`。暂停期间那一截**不录内容**（两路的归档改写数字静音，`docs/design-intent.md` 第 8 条），快照 `session.paused` 变 `true`，段**不**切（第 9 条），`session.elapsed_seconds` 停在原地（第 7 条：权威长度是实际录到的音频时长，不含暂停）。
+- 暂停的那几段时间**不计入静默判定**：安静房间里暂停多久都不会冒出一条「这一路静默已达 N 秒」的致命级（第 17 条）。电平帧照发，心跳的 `recording_alive` 照旧为真。
+- 暂停那一刻顺带让**会中模型退出显存**，继续时再把它拉回来（可选成员 `release_gpu()` / `acquire_gpu()`，`10770b41`）：两次调用都**异步提交**到后台的单线程执行器，应答不等它们做完 —— 直接跑在事件循环上，这按钮就得等完释放（等在飞推理，上界 5 秒）与拉起（秒级），那几秒里心跳与三条 SSE 一起停摆，界面会判成「心跳失联」。继续那一刻拿回来的是识别器，权重的加载落在继续之后第一段转写时。
+- 两个动作都幂等；只在 `recording` / `alert` 两态可用，其余态回 `not_recording`(409)。顶层四态一个字不动（「暂停中」落在 `session.paused` 这一格上）。
+
+**`set_source`** —— 会中关掉某一路 / 重新打开某一路（R25）：
+
+```json
+{"action": "set_source", "args": {"source": "mic", "active": false}}
+```
+
+- `source` 取 `mic` / `loopback`，`active` 是 bool（`false` 关掉、`true` 打开），两个都必给。
+- 关掉：那一路停流、改写静音，**不报 `SourceLost`、不进告警**（用户按的按钮与「这一路真死了」是两件事），快照里那一路落 `health = stopped`（复用现成的档位，取值域不进第八个）。
+- 重新打开：重新挑设备、重开流，成功回 `capturing`（关掉之前那一路还挂着致命级时回 `lost`，让有信号时的恢复路照常走）。**打不开**（设备又被别的程序占着）回 503 `capture_unavailable`，`detail = {source, error}`，那一路照旧停在 `stopped` —— 悄悄不打开会让屏幕写着「在录」而其实没录（第 1 条）。
+- `source` / `active` 非法、或这一场根本没采这一路（`mode` 开场就定死了）→ 400 `invalid_setting`。两个方向都不切段。
 
 **`reprobe`** —— 重新枚举并试开设备，把结果落进快照两路（无 `args`）：
 
