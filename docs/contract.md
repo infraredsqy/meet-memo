@@ -536,7 +536,7 @@ X-Meeting-Service: 1
  "post": {"running": false, "kind": "offline|minutes", "started_at": "<iso>",
           "finished_at": "<iso>|null"},
  "offline": {"ledger": "meeting_offline_progress.jsonl",
-             "state": "running|done|idle|ledger", "in_process": false,
+             "state": "running|done|partial|failed|idle|ledger", "in_process": false,
              "started_at": "<iso>|null", "finished_at": "<iso>|null",
              "elapsed_seconds": 12.5,
              "current_source": "mic|loopback|null",
@@ -553,11 +553,12 @@ X-Meeting-Service: 1
   - `done` = 这一路跑过几块，`total` = 这一路共几块（切块计划定下来的，**不因某一块失败或跳过而增减**），`remaining` = 还差几块，`current_chunk` = 此刻在跑第几块（这一路跑完、或还没轮到它时是 `null`）。
   - `counts` 四档：`transcribed`（跑成了）/ `silent`（数字静音、跳过引擎）/ `failed`（这一块没成）/ `unjudged`（跑成了，但门没在这一块上做成判断）。**四档都算"跑过了一块"**。
   - `state` 与 `in_process` 回答的是**两件事**，判据分开写死：
-    - **`state`**（`running` / `done` / `idle` / `ledger`）照**盘上那份**如实答 —— 状态文件
-      落在 `done` / `failed` 就答 `done`，状态文件写着别的（`running`）就答 `running`，
-      这一趟不在本进程里、盘上也没有状态文件时答 `ledger`（那份账在，成没成没人回答），
-      账与状态文件都不在时答 `idle`。**它不替盘上的话做二次解读**：进程崩在半路的那一场
-      （进程没了、状态文件停在上一次落的那版 `running`）如实答 `running`。
+    - **`state`**（`running` / `done` / `partial` / `failed` / `idle` / `ledger`）照**盘上那份**
+      如实答 —— 状态文件落 `done` 答 `done`、落 `partial` 答 `partial`、落 `failed` 答 `failed`，
+      状态文件写着别的（`running`）就答 `running`；这一趟不在本进程里、盘上也没有状态文件时答
+      `ledger`（那份账在，成没成没人回答），账与状态文件都不在时答 `idle`。**盘上那几档都不折成
+      `done`**，它也不替盘上的话做二次解读：进程崩在半路的那一场（进程没了、状态文件停在上一次
+      落的那版 `running`）如实答 `running`。
     - **`in_process`**（布尔）答「**本进程里此刻有没有这一趟离线活**」：判据是会后那条
       线程手里的现场（这一趟的路是 `offline`、跑的是这一场、**那条线程还活着**，与
       `post.running` 同源）。**跑完那一刻它翻回 `false`**，此后读的是盘上那份账。它答
@@ -568,7 +569,7 @@ X-Meeting-Service: 1
 - **它是给人看的读数，不带校验性质的含义**：块数、已跑时长这一类错了就错了，任何代码不许拿它们对账、报错、改结论（`docs/design-intent.md` 第 6、7 条；唯一权威是实际录到的音频时长）。这一场跑成什么样**仍由 `meeting_offline_status.json` 与那四份产物回答**，这张应答不替它们下结论。
 - **它不进快照**：推送出去的东西只认第 2 章那九个顶层键，`GET /api/sessions` 每一行照旧十一键（快照九键与列表十一键这两处一个字都没动）。
 
-**逐块账**：会后离线每跑完一块，就往场次目录里那份 `meeting_offline_progress.jsonl` 上补一行 —— **这一块的文字 + 这一块的落点**（JSON Lines：第一行表头 `{kind: "ledger", schema_version, session_id, sources}`，之后一行一块，带 `source` / `chunk` / `chunks_total` / `span` / `state` / `text` / `segments` / `wall_seconds` / `error`）。**正式稿 `meeting_offline_transcript_<source>.md` 的写时机不变**（整路跑完一次写），那份账是另一份文件、另一个名字，`has_offline` 那一格不受它影响。这份账不参与任何判定（`meeting/cli.py` 的幂等闸读的仍是状态文件），字段契约的正文在 `meeting/offline/progress.py` 的模块说明里。
+**逐块账**：会后离线每跑完一块，就往场次目录里那份 `meeting_offline_progress.jsonl` 上补一行 —— **这一块的文字 + 这一块的落点**（JSON Lines：第一行表头 `{kind: "ledger", schema_version, session_id, sources}`，之后一行一块，带 `source` / `chunk` / `chunks_total` / `span` / `state` / `text` / `segments` / `wall_seconds` / `error`）。**引擎加载失手那一档也留一行**（`state = failed`、`error` 里带 `engine_load_error`）：不然这一路在盘上只剩表头，进程不在场的读方从上面 `sources[].total` 上看到的是 `null`，而现在读到的仍是这一路切出来的块数。**正式稿 `meeting_offline_transcript_<source>.md` 的写时机不变**（整路跑完一次写），那份账是另一份文件、另一个名字，`has_offline` 那一格不受它影响。这份账不参与任何判定（`meeting/cli.py` 的幂等闸读的仍是状态文件），字段契约的正文在 `meeting/offline/progress.py` 的模块说明里。
 
 **这一档的失败体**（回的是通用失败信封 `{ok, code, message, detail}`，HTTP **404**）：
 

@@ -204,8 +204,8 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 | `meeting_offline_transcript_<source>.md` | 会后精细稿（带说话人编号），每行 `[HH:MM] **S01**: 正文`（**分钟级**） | 人 + 下游对账 |
 | `meeting_offline_speakers_<source>.json` | 类编号 → 每段区间的对照表（`start` / `end` 是**秒级浮点**） | 下游程序 |
 | `meeting_offline_report.md` | 运行报告：逐路的秒数 / 段数 / 类数 / 墙钟 / 实时率、段耗时分布、失败原因分布、缺了哪几段、没声跳过了哪几段、零时长的段有几段 | 人 |
-| `meeting_offline_status.json` | 状态文件：`running` / `done` / `failed`，外加 `partial` / `silent` / `silent_spans` / `error` | 下游程序 + 界面（这一场跑成什么样） |
-| `meeting_offline_progress.jsonl` | **逐块进度账**（`a9affaa8` 已落地）：每跑完一块补一行 —— 这一块的文字与这一块的落点（`source` / `chunk` / `chunks_total` / `span` / `state` / `text` / `segments` / `wall_seconds` / `error`），第一行是表头 | 人 + `GET /api/sessions/{id}`（这一场跑到第几块） |
+| `meeting_offline_status.json` | 状态文件：**四档** `running` / `done` / `partial` / `failed`，外加 `partial` / `silent` / `silent_spans` / `error` / `gate`，以及**逐路那一整格** `artifacts.<source>`（`state` / `reason` / `error` / `segments` / `speaker_count` / `audio_seconds` / `partial` / `missing_spans` / `silent` / `silent_spans` / `gate` + 三个产物名，**每一路都有**、跑成与没跑成字段同形；`reason` 跑成的那一路是 `null`、没跑成的那一路按次序挑一个词、兜底那一版给还没轮到的那几路留 `not_run`，取值域见下面「没声、缺段、跑成、跑成而段全零时长：四档分得开」那一节） | 下游程序 + 界面（这一场跑成什么样） |
+| `meeting_offline_progress.jsonl` | **逐块进度账**（`a9affaa8` 已落地）：每跑完一块补一行 —— 这一块的文字与这一块的落点（`source` / `chunk` / `chunks_total` / `span` / `state` / `text` / `segments` / `wall_seconds` / `error`），第一行是表头；**引擎加载失手那一档也留一行**（`state = failed`、`error` 里带 `engine_load_error`）—— 少了这一行，进程不在场的读方从那只端点的 `sources[].total` 上看到的是 `null` | 人 + `GET /api/sessions/{id}`（这一场跑到第几块） |
 
 - **每路各一份，两路不合并**：转写与对照表的文件名里都带 `<source>`，说话人的限定名一律是 `${source}:${local}`（`mic:S01` 这种形状）。两路的编号互不相认，混成一份就说不出某一行的出处了。进度账是一份、按 `source` 分节，**分母按路各算一份**（这一路切了几块）。
 - **进度账与正式稿是两份东西**：正式稿整路跑完一次写（时机没变），进度账一块跑完补一行；后者的文件名与 `meeting_offline_transcript_` 那个前缀对不上，`GET /api/sessions` 的 `has_offline` 那一格因此不受它影响。它是给人看的读数（块数、已跑时长都不是判据），字段契约在 `meeting/offline/progress.py` 的模块说明里。
@@ -234,7 +234,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 - **安静但有声的段落照跑**：峰值为 ±1 的样本（16 bit 满量程的 -90.3 dB，也就是 1 格）照样送进引擎。会后这条链出的稿要跟会中稿放在一起对拍、还要交给纪要那一层，按能量阈值误杀一段真语音，比留着一段噪声更坏，所以这里取的是最严的一档 —— 只要有一个够得着半格的样本，这一块就照跑。会中那条链的 `_is_noise_segment` 另有一档口径（VAD + RMS + 语音帧三条 AND），它服务于逐段预筛，与会后这一层各管各的；
 - **两种波形形态同一个分界**：归档 PCM 上读出来的是 int16 整数样本，`decode_audio()` 解出来的是 `[-1, 1]` 的 float32。判据把两者都折算成「满量程的几格」再比，而且**不截断**成整数。半格这个分界是一条**开区间**规则：`peak < 0.5` 格算静音，`peak = 0.5` 格算有声。于是 float 的 `3.0e-5`（0.983 格）与 `3.05e-5`（0.999 格）都算有声，int16 的 ±1（1 格）与 float 的 `1/32767`（1 格）落在同一侧，同一个样本在两种形态上给同一个答案；截断成整数会把那两个 float 读数一起抹成 0，那才是两种形态分家；
 - **单趟与分块两条路都过这道门**：判据按成本从低到高挑一条路 —— 归档 PCM 上按字节扫那一段（见到第一个非零字节就出结果）、已经解好的波形切片判（分块跑的 mp3 与单趟跑的 mp3 都用它）、实在没有波形时才现解一次音频文件。**短于 `post.chunk_seconds` 的录音走单趟**（默认块长 450 秒，也就是每一场短会议），那一条路原先不经过门，一段全零的短录音因此会在会后那份稿里整段留下假正文；现在它也过门，代价是那一段音频多解一次（短会议的几秒到几十秒）；
-- **跳过的那几段一个字都不写**，也没花那一次引擎调用，于是这一路更快（实测那一趟 19 块里有 5 块不必调）。
+- **跳过的那几段一个字都不写**，也没花那一次引擎调用，于是这一路更快（实测那一趟 19 块里有 5 块不必调）。**整路都是数字静音**时一块都不必送引擎，模型因此一次都不被拉起来（`docs/design-intent.md` 第 21 条）：那一场照旧落 `done` + `silent: true`，不会因为「加载会失手」翻成 `failed`。**`engine_load_error` 这一档只在真有块要送引擎时才现形** —— 加载探针推迟到第一块真要送引擎的那一刻，且只探一次。
 
 #### 没声、缺段、跑成、跑成而段全零时长：四档分得开
 
@@ -244,21 +244,23 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 |---|---|---|---|---|
 | 跑成 | `done`，`partial: false`，`silent: false` | `state: done` | 无 | `transcribed` |
 | **没声跳过** | `done`，`partial: false`，**`silent: true`** | `state: done`、`audio.silent_spans` | `silent_spans`（状态文件顶层与逐路 `artifacts.<source>` 各一份）+ `audio.silent_spans` | `digital_silence` |
-| 引擎失败 / 缺段 | `failed`，或 `done` + `partial: true` | `state: failed` / `audio.partial` | `missing_spans` + `error` 里那句话 | `engine_error`（抛错）或 `no_segments`（一段都没交回） |
+| 引擎失败 / 缺段 | **三档**：`done`（每一路都交回）/ `partial`（至少一路跑成、也至少一路整条没交回）/ `failed`（每一路都没交回） | `state: failed` / `audio.partial`；缺的是哪一路看 `artifacts.<source>.state` | `missing_spans` + `error` 里那句话 | 逐块那一行是 `engine_error`（抛错）或 `no_segments`（一段都没交回）；逐路那一格的 `reason` 另有 `engine_load_error`（引擎没起来，只在真有块要送引擎时才现形）与 `not_run`（兜底那一版给还没轮到的那几路现开的那一格，取值域见下面两条） |
 | **跑成而段全零时长** | `done`，`partial: false` | `state: done`、`audio.zero_span_segments > 0` | 无（正文在这里） | `zero_span_segments` |
 
 - **逐块那一行自带结论词**（`chunks[].reason`，机器可读）：下游原先只能从整场的那几格反推「这一段为什么没有字」，现在每一块自己说得出来。同一行还带 `gate`（门在这一块上的结论：`silent` / `not_silent` / `unjudged`）、`gate_method`（门凭什么判的，见下）、`gate_detail` 与 `zero_span_segments`（这一块里零时长段的条数）。**门判不了**那几段时，`gate` 是 `unjudged`，而 `reason` 说的是引擎那一边的结果（跑成了就叫 `gate_unjudged`、一段没交回就是 `no_segments`）——两个结论各说一件事；
 - **`gate_method` 的取值是四加一**：`pcm_bytes`（在归档 PCM 上按字节扫）、`waveform`（在已经解好的波形上切片判）、`decode_at_plan`（量长度那一步就没解开，结论是「判不了」）、`decode_now`（门现解一次音频文件），另加一个 `unjudged`（这一段门没做成判断，与逐块 `gate` 那一格同名的那个词）。产品路径上读得到的是前三条与 `unjudged`：**单趟跑的 MP3 记的是 `waveform`** —— `_plan_for_source()` 为了量长度已经把整份音频解成了波形，门切片用掉的就是那一段，门口不会现解第二遍；`decode_now` 那一支只对直接调用 `measure_span()`、自己注入波形或另给路径的调用方存在，产品路径到不了它（非 PCM 的音频要么在量长度那一步解开了、要么在那里就没解开）。两处记法各有一格：**逐路**那一格的 `method` 只由判过的块构成（判过的块按它们各自那把尺子拼起来，多把就写成 `a/b`），一块都没判成、或这一路压根没有可判的音频时它是 `null`，**门判不了的那一段在那里读不到尺子名**；**逐块**那一行的 `gate_method` 记的是这一块原本打算用的那把尺子，`gate` 是 `unjudged` 的块同样带着它（解不开那一档因此读得到 `decode_at_plan`），「没判成」这件事由 `gate` 与 `gate_detail` 说；
 - **转写文件第一行多一条注释**（`<!-- ... -->` 形状，与缺段那条并列、各说一件事）：写明这一段没声、没有送进引擎。读方按行格式读正文时两条注释都会跳过，段号不受影响；
 - `silent_spans` 的长度 = **跳过的块数**：分块跑时一块一个区间；整段一次跑时要么空、要么就是**整段音频**那一个区间（一次引擎调用对应一块）。它与 `missing_spans` **不相交**；
-- 报告开头因此会多一行「这一场有没声而跳过的音频」——它**不**报「这一场的转写不完整」，那一句话留给真正的缺段。
+- 报告开头因此会多一行「这一场有没声而跳过的音频」——它**不**报「这一场的转写不完整」，那一句话留给真正的缺段；
+- **逐路那一格的 `reason`（`artifacts.<source>.reason`）另有一套词**（逐块那一行的 `chunks[].reason` 用的是上面那一套）：跑成的那一路它是 `null`（`state` 那一格已经把这件事说完了）；一块产物都没落的那一路按取值次序挑**第一个**出现的词 —— `engine_load_error` > `no_audio` > `empty_pcm` > `engine_error` > `no_segments` > `all_chunks_failed`（`meeting/offline/runner.py` 的 `_REASON_PRIORITY`），这一格只说一句话，挑到第一个就算；落了产物而这一路仍落 `failed` 的那一档（分块跑而每一块都没成）取兜底词 `engine_error`；**`not_run` 说的是「这一路压根没跑」**，只出现在兜底那一版状态文件给还没轮到的那几路现开的那一格上 —— 那一格 `error` 是 `null`（引擎一次都没被喊过，原话在顶层 `error` 上），它不进逐块账、也不进 `reasons` 这个分布；
+- **`partial` 这个词在两处各说一件事**：顶层 `state = "partial"` 说的是「至少一路跑成、也至少一路整条没交回」；`partial: true` 那个键只剩「有一路缺了区间（分块跑某块没成）」这一种含义 —— 一路整条没交回而另一路缺了区间的那一场两件事同时立着，读得清。
 
 #### 门做成没做成判断（`gate`）
 
 这道闸自己也要交代清楚：音频解不开、要的那一段读不全（文件比区间短）时，那一段**照常送引擎**（读不到就按可能有声处理），而这一趟必须在产物里与一次健康的运行分得开 —— 少了这一格，一段没人判过静音的音频与一次正常的运行在产物里长得一样。三层都记：
 
 - **逐块**那一行的 `gate = "unjudged"`、`gate_method` 与 `gate_detail`（为什么判不了）；
-- **逐路**的 `gate`：`applied` / `method` / `spans_total` / `spans_judged` / `spans_unjudged` / `unjudged_spans` / `unjudged_reason` / `detail`（对照表 `audio.gate`、状态文件 `artifacts.<source>.gate`）；
+- **逐路**的 `gate`：`applied` / `method` / `spans_total` / `spans_judged` / `spans_unjudged` / `unjudged_spans` / `unjudged_reason` / `detail` —— 对照表里它在 `audio.gate`，状态文件里它在 `artifacts.<source>` 那一整格的 `gate` 上（那一格跑成与没跑成都有一份、字段同形，其余键见上面「四档分得开」那一节）；
 - **整场**的 `gate`（状态文件顶层，按路列出判不了的那几段）+ 报告开头那一行与单列的一节。
 
 `applied: false` 说的就是「这一趟的门在哪几段上没做成判断」，读方按它决定要不要把这一场的转写当可疑件看。
@@ -269,13 +271,13 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 
 #### 缺了一段的时候
 
-分成多块跑之后，某一块就可能没成（显存不够、单块抛错、一段都没交回）。这一路缺的那几段音频因此没有转写，**产物照落、整场仍落 `done`**，而这件事在三处同时留痕（与「没声跳过」那一档分开记，见上一节）：
+分成多块跑之后，某一块就可能没成（显存不够、单块抛错、一段都没交回）。这一路缺的那几段音频因此没有转写，**产物照落**；整场那一档还要看另一路交没交回 —— **另一路也交回了才落 `done`**，另一路整条没交回的那一场整场落 `partial`（`meeting/offline/runner.py` 的三选一），而「缺了区间」这件事仍只在 `partial: true` 那个键上。这件事在三处同时留痕（与「没声跳过」那一档分开记，见上一节）：
 
-- 状态文件落 `done` 加 `partial: true`，`error` 写明缺的是哪几段区间（秒级，落在原录音时间轴上）；
+- 状态文件落 `done` 加 `partial: true` **（另一路也交回了的那一场）**；一路缺段 + 另一路整条没交回的那一场，顶层那一档是 `partial`、`partial: true` 照旧立着（两件事各占一格）。`error` 写明缺的是哪几段区间（秒级，落在原录音时间轴上）；
 - 转写文件的**第一行**是一条注释行（`<!-- ... -->` 形状），写明缺了哪一段 —— 读方按行格式读正文时会跳过它，它不占段号；
 - 对照表的 `audio` 那一格带 `partial` 与 `missing_spans`，`chunks` 数组逐块记成功与失败；运行报告单列一节列出缺失区间。
 
-**每一块都没跑成的那一路落 `failed`**：那一路的转写只剩那一条注释行、对照表是一份空表，终态与原因写在对照表的 `state` / `error` 两格上。整场的终态看两路：有一路跑成就是 `done`（失败那一路的原因进状态文件与报告），两路都失败才落 `failed`。**整段一次跑**的失败不落产物（没有「哪几块没成」可说），失败原因只在状态文件与报告里；没声那一档走的是另一条线（上面「没声的那几段」那一节），它连整段一次跑都照落产物。
+**每一块都没跑成的那一路落 `failed`**：那一路的转写只剩那一条注释行、对照表是一份空表，终态与原因写在对照表的 `state` / `error` 两格上，**同时也写在状态文件的 `artifacts.<source>` 那一格（`state` / `reason` / `error`）—— 这一格每一路都有**。整场的终态看两路，**三档**：每一路都交回落 `done`；至少一路跑成、也至少一路整条没交回，落 `partial`（缺的是哪一路从 `artifacts.<source>.state` 上读得到，失败那一路的原因也进状态文件与报告）；每一路都没交回才落 `failed`。**引擎加载失败**是「整条没交回」里的一档：模型没起来、一份产物都不落、逐路 `reason` 是 `engine_load_error`（触发条件见上面「没声的那几段」末一条），逐块账上照留一行 —— 读方从 `docs/contract.md` 4.9 的 `sources[].total` 上读到的仍是这一路切出来的块数。**整段一次跑**的失败不落产物（没有「哪几块没成」可说），失败原因只在状态文件与报告里；没声那一档走的是另一条线（上面「没声的那几段」那一节），它连整段一次跑都照落产物。
 
 ### 会后纪要生成
 
