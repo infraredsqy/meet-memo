@@ -675,7 +675,10 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
 
     PATH 守卫这一半兜的是「漏网那一笔落在最后一条用例收场之后」那一档：用例级的复查已经
     没有下一条用例可挂了，只有会话收场这一步还在。真家目录守卫这一半兜的是同一件事
-    （最后一条用例收场之后才写进去的那一笔也算）。
+    （最后一条用例收场之后才写进去的那一笔也算）。并行档（`pytest-xdist`）下这两道守卫只在
+    各 worker 进程里成立，本函数在 controller 上对它们空转 —— 那一半由
+    `_xdist_sessionfinish_bridge()` 搬运：worker 的红账写成 run 级共享文件、controller 汇总
+    打红线并整趟判红（红线必须到主终端）。
     """
     reporter = session.config.pluginmanager.get_plugin("terminalreporter")
 
@@ -699,7 +702,130 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
             session.exitstatus = pytest.ExitCode.TESTS_FAILED
             report(_real_home_violation(home_guard, changed, when="（会话收场复查）"))
 
+    _xdist_sessionfinish_bridge(session)
+
     _drop_pending_isolated_homes()
+
+
+# ---------------------------------------------------------------------------
+# `pytest-xdist` 并行档的收场复查搬运：worker 写 run 级共享文件，controller 汇总判红
+#
+# xdist 下两道会话级守卫只在各 worker 进程里开工（controller 里它们恒为 `None`），上面
+# `pytest_sessionfinish` 的收场复查因此在 controller 上空转；worker 里查出的红只到得了
+# worker 自己的终端、改的也是 worker 自己的 `session.exitstatus`（定不了整趟退出码）——
+# 正是「红而不可见」。搬运的办法：controller 开趟时建一个 run 级共享目录（临时目录，
+# 环境变量传给各 worker），worker 的收场复查查出红账就往里写一份上报文件；controller 的
+# 收场复查把上报文件逐份打红线并把整趟判红。**串行趟不建目录、环境变量不存在，这一整块
+# 零动作**，行为与从前逐字节一致。目录名带 `MEETING_` 前缀只是习惯：`service_env()` 按名单
+# 剔除本服务变量，这份它不认——但它只是个临时目录路径，子进程拿到也无语义。
+# ---------------------------------------------------------------------------
+
+#: controller 建的 run 级共享目录经这个环境变量传给各 worker（worker 进程从控制器继承）。
+XDIST_GUARD_DIR_ENV = "MEETING_XDIST_GUARD_DIR"
+
+#: worker 上报文件的文件名模式（`<共享目录>/worker-<worker 名>.txt`，按文件名排序汇总）。
+XDIST_GUARD_REPORT_GLOB = "worker-*.txt"
+
+
+def _xdist_dist_active(config: pytest.Config) -> bool:
+    """这一趟是不是带着并行参数起的（controller 侧判据；没装 `pytest-xdist` 时恒 `False`）。"""
+    if not config.pluginmanager.hasplugin("xdist"):
+        return False
+    try:
+        numprocesses = config.getoption("numprocesses", None)
+        dist_mode = config.getoption("dist", None)
+    except (ValueError, KeyError):  # pragma: no cover - 选项没注册的布局
+        return False
+    return bool(numprocesses) or dist_mode not in (None, "no")
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """并行趟的 controller 建 run 级共享目录（worker 从控制器进程继承环境变量，不自己建）。"""
+    if hasattr(config, "workerinput"):
+        return
+    if not _xdist_dist_active(config):
+        return
+    shared = Path(tempfile.mkdtemp(prefix="meeting-xdist-guards-"))
+    config._meeting_xdist_guard_dir = shared  # type: ignore[attr-defined]
+    os.environ[XDIST_GUARD_DIR_ENV] = str(shared)
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    """并行趟收摊：摘掉环境变量、删掉 run 级共享目录（worker 上报文件已经汇总进主终端）。"""
+    shared = getattr(config, "_meeting_xdist_guard_dir", None)
+    if shared is not None:
+        os.environ.pop(XDIST_GUARD_DIR_ENV, None)
+        shutil.rmtree(shared, ignore_errors=True)
+
+
+def _xdist_sessionfinish_bridge(session: pytest.Session) -> None:
+    """并行档收场复查的搬运口：worker 写上报文件，controller 汇总判红；串行趟零动作。"""
+    shared = os.environ.get(XDIST_GUARD_DIR_ENV)
+    if shared is None:
+        return
+    if hasattr(session.config, "workerinput"):
+        _xdist_report_worker_violations(Path(shared))
+    else:
+        _xdist_collect_worker_reports(session, Path(shared))
+
+
+def _xdist_worker_violation_messages() -> list[str]:
+    """本进程两道会话级守卫的红账（各一段完整话术；没红就空列表）。"""
+    messages: list[str] = []
+    guard = _ACTIVE_DSH_GUARD
+    if guard is not None:
+        leftovers = guard.unreported()
+        if leftovers:
+            messages.append(
+                _dsh_guard_violation(guard, leftovers, when="（用例收场之后才落进账本）")
+            )
+    home_guard = _ACTIVE_REAL_HOME_GUARD
+    if home_guard is not None:
+        changed = home_guard.changed()
+        if changed:
+            messages.append(_real_home_violation(home_guard, changed, when="（会话收场复查）"))
+    return messages
+
+
+def _xdist_report_worker_violations(shared: Path) -> bool:
+    """worker 侧：红账写成上报文件（红到不了主终端，落盘给 controller 汇总）。
+
+    文件名带 worker 名（`PYTEST_XDIST_WORKER`，缺席时退 `worker`），一个 worker 一份、
+    互不覆盖。交回 `True` = 写了红账（给探针与单测一个明确的读数）。
+    """
+    messages = _xdist_worker_violation_messages()
+    if not messages:
+        return False
+    shared.mkdir(parents=True, exist_ok=True)
+    worker = os.environ.get("PYTEST_XDIST_WORKER", "worker")
+    (shared / f"worker-{worker}.txt").write_text(
+        "\n\n".join(messages) + "\n", encoding="utf-8"
+    )
+    return True
+
+
+def _xdist_collect_worker_reports(session: pytest.Session, shared: Path) -> None:
+    """controller 侧：worker 上报文件逐份打红线并整趟判红 —— 红必须到主终端。"""
+    reports = sorted(shared.glob(XDIST_GUARD_REPORT_GLOB))
+    if not reports:
+        return
+    reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+
+    def report(message: str) -> None:
+        if reporter is not None:
+            reporter.write_line(message, red=True)
+        else:  # pragma: no cover - 没有终端上报器时至少留一行
+            print(message)
+
+    report(
+        f"xdist 收场复查：{len(reports)} 个 worker 上报了漏网"
+        f"（run 级共享目录 {shared}）"
+    )
+    for path in reports:
+        text = path.read_text(encoding="utf-8", errors="replace").rstrip()
+        if text:
+            report(text)
+    session.exitstatus = pytest.ExitCode.TESTS_FAILED
 
 
 # ---------------------------------------------------------------------------
@@ -1196,8 +1322,28 @@ def sse_client(service_process: Callable[..., Any]) -> Iterator[Callable[..., Ss
 # `pytest_addoption` 只是登记一个开关，这一条只汇总 pytest 自己的三段耗时。
 # ---------------------------------------------------------------------------
 
-#: 单条用例（setup + call + teardown 三段合计）的墙钟上限（秒）
+#: 单条用例（setup + call + teardown 三段合计）的墙钟上限（秒）。
+#: 这是**串行趟的缺省值，逐字节不动**；并行档（`pytest-xdist`）的放宽口径走下面的环境变量。
 CASE_WALL_CLOCK_LIMIT_SECONDS = 5.0
+
+#: 看门阈值的环境变量覆盖口径（并行档在命令行上设它，如
+#: `$env:MEETING_CASE_WALL_CLOCK_LIMIT_SECONDS = "8"`）：不设 = 缺省 5.0 秒，串行趟因此与
+#: 从前完全一致；设了必须是正数，读不出来（名字拼错 / 非数字 / ≤ 0 / 空串）一律退回
+#: 缺省 5.0 —— 宁可从严，不让看门悄悄失明。
+CASE_WALL_CLOCK_LIMIT_SECONDS_ENV = "MEETING_CASE_WALL_CLOCK_LIMIT_SECONDS"
+
+
+def case_wall_clock_limit() -> float:
+    """本趟生效的看门阈值（秒）：环境变量覆盖口径，缺省 `CASE_WALL_CLOCK_LIMIT_SECONDS`。"""
+    raw = os.environ.get(CASE_WALL_CLOCK_LIMIT_SECONDS_ENV)
+    if raw:
+        try:
+            limit = float(raw)
+        except ValueError:
+            return CASE_WALL_CLOCK_LIMIT_SECONDS
+        if limit > 0:
+            return limit
+    return CASE_WALL_CLOCK_LIMIT_SECONDS
 
 #: 本用例三段耗时（`nodeid` -> `{段名: 秒}`）；`pytest_runtest_logreport` 逐段填，
 #: `pytest_runtest_makereport` 在最后一段（`teardown`）之后汇总判红。
@@ -1213,12 +1359,13 @@ def pytest_runtest_logreport(report: pytest.TestReport) -> None:
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo):
-    """最后一段（`teardown`）之后汇总三段耗时：**合计超过 5.0 秒就把这条用例判红**。
+    """最后一段（`teardown`）之后汇总三段耗时：**合计超过本趟阈值就把这条用例判红**。
 
-    判红方式是在 `teardown` 的 report 上打一条 `longrepr`（报出用例名与三段各自的耗时），
-    于是这条超时用例会以「失败」出现在 `pytest -q` 的统计里、挂在自己的名字下，谁都能一眼
-    看到是哪一条慢了。耗时数据只从 pytest 自己的 report 里取（不额外计时、不加 fixture），
-    因此看门本身对被测用例零影响。
+    阈值取 `case_wall_clock_limit()`（缺省 5.0 秒，并行档可经环境变量放宽）。判红方式是在
+    `teardown` 的 report 上打一条 `longrepr`（报出用例名与三段各自的耗时），于是这条超时
+    用例会以「失败」出现在 `pytest -q` 的统计里、挂在自己的名字下，谁都能一眼看到是哪一条
+    慢了。耗时数据只从 pytest 自己的 report 里取（不额外计时、不加 fixture），因此看门本身
+    对被测用例零影响。
     """
     outcome = yield
     report = outcome.get_result()
@@ -1227,13 +1374,14 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo):
     durations = _CASE_DURATIONS.pop(item.nodeid, None)
     if not durations:
         return
+    limit = case_wall_clock_limit()
     total = sum(durations.values())
-    if total <= CASE_WALL_CLOCK_LIMIT_SECONDS:
+    if total <= limit:
         return
     report.outcome = "failed"
     report.longrepr = (
         f"{item.nodeid} 单条用例合计耗时 {total:.2f}s，超过上限 "
-        f"{CASE_WALL_CLOCK_LIMIT_SECONDS:.1f}s"
+        f"{limit:.1f}s"
         f"（setup {durations.get('setup', 0.0):.2f}s / "
         f"call {durations.get('call', 0.0):.2f}s / "
         f"teardown {durations.get('teardown', 0.0):.2f}s）"

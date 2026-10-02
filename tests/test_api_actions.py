@@ -797,3 +797,21 @@ def test_dev_inject_works_on_the_dev_backend(tmp_path):
         assert ok.status_code == 200, ok.text
         assert runtime.capture_backend.active_faults().get("loopback") == "silence"
         assert snapshot_of(client)["top_state"] in ("recording", "alert")
+
+
+def test_pause_action_flips_session_paused_and_back(tmp_path):
+    """`pause` / `resume` 动作入口的接线（`68927c27` 收编自 test_pause_actions 的快测部分）。
+
+    引擎层的暂停语义（暂停窗逐样本静音、段不切、权威时长不含暂停）由
+    `tests/test_capture_engine.py` 的引擎直测覆盖；这里只钉动作入口这一格：
+    按下之后快照的 `session.paused` 翻面、顶层停在 `recording`（暂停是第五态之外的一格）。
+    """
+    with live(tmp_path) as (client, _runtime, _home, _out):
+        assert post(client, "start").status_code == 200
+        wait_until(lambda: snapshot_of(client)["top_state"] == "recording", what="进入录音")
+        assert post(client, "pause").status_code == 200
+        paused = snapshot_of(client)
+        assert paused["session"]["paused"] is True
+        assert paused["top_state"] == "recording"
+        assert post(client, "resume").status_code == 200
+        assert snapshot_of(client)["session"]["paused"] is False

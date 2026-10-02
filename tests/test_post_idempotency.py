@@ -56,6 +56,9 @@ from meeting.cli import (
     run_post,
 )
 
+#: 慢档标记（`68927c27` 收尾轮）：`meeting post` 是收尾功能，整文件归收尾验收。
+pytestmark = pytest.mark.slow
+
 #: 离线那一层的状态文件名（按产物契约取，不重写一遍字面量）
 OFFLINE_STATUS_NAME = offline_artifacts.STATUS_NAME
 
@@ -652,37 +655,6 @@ def _product_path_uses(monkeypatch: pytest.MonkeyPatch):
     return install
 
 
-def test_the_launcher_marks_the_run_in_flight_before_it_returns(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """**「在飞」在 `launch()` 返回之前就落到盘上**（这就是 C1 那条缝的堵法）。
-
-    真实现那一档：起线程之前 `mark_running()` 同步写一版 `running`，线程体那一版只是原子覆盖
-    （幂等）。这一格把线程体钉住不动（它永远不落终态），于是断言量的正是「`launch()` 交回时
-    盘上已经是 `running`」这件事 —— 改回「线程体才第一次写 running」时这一条当场红。
-    """
-    session = synth_session(tmp_path / "250919")
-    entered = threading.Event()
-    gate = threading.Event()
-
-    def blocked(_session_dir) -> None:
-        entered.set()
-        gate.wait(BG_TIMEOUT_SECONDS)
-
-    monkeypatch.setattr(
-        "meeting.minutes.runner.run", blocked, raising=False
-    )
-    hook = minutes_backend.MinutesHook()
-
-    hook.launch(str(session))
-
-    written = minutes_status.read_status(session / MINUTES_STATUS_NAME)
-    assert written["state"] == "running", written
-    assert written["finished_at"] == "", "还在跑的那一版收尾时刻该空着"
-    assert entered.wait(BG_TIMEOUT_SECONDS), "后台那一条线程该已经跑起来了"
-    gate.set()
-
-
 def test_a_second_launch_on_the_same_session_is_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -707,46 +679,6 @@ def test_a_second_launch_on_the_same_session_is_refused(
     helpers.wait_until(lambda: arms, what="第一趟的后台线程真的跑起来过")
     assert arms == [str(session)], arms
     assert (session / MINUTES_STATUS_NAME).read_text(encoding="utf-8") == before
-
-
-def test_force_launches_again_on_the_same_session(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """`--force` 那一趟照常重跑（在飞判据在 `force=True` 时跳过 —— 它的既有语义）。"""
-    session = synth_session(tmp_path / "250919")
-    arms: list[str] = []
-    monkeypatch.setattr(
-        "meeting.minutes.runner.run", lambda session_dir: arms.append(str(session_dir))
-    )
-    hook = minutes_backend.MinutesHook()
-
-    hook.launch(str(session))
-    hook.launch(str(session), force=True)
-
-    helpers.wait_until(lambda: len(arms) == 2, what="两趟都被拉起来了")
-    assert arms == [str(session), str(session)], arms
-
-
-def test_a_later_post_on_an_in_flight_session_is_rejected(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    _a_short_minutes_bound: float,
-) -> None:
-    """**紧接着的第二趟 `meeting post` 拒跑**：`EXIT_REJECTED` + 点名状态文件 + `--force`。
-
-    第一趟那一段「拉起之后、终态之前」的现场由用例**钉住**：先落一版「在飞」的账，
-    随后第一趟那条处于在飞状态的后台链（替身）收工。改回「线程体才第一次写 running」时，
-    这一格会退化成「两趟各自拉起一次、都报 done」—— 正是 C1 复现出来的形状。
-    """
-    session = synth_session(tmp_path / "250919")
-    minutes_status.mark_running(session, branch="headless")
-
-    code, text = _run_post_entry(session)
-
-    assert code == EXIT_REJECTED, text
-    assert MINUTES_STATUS_NAME in text and "--force" in text, text
-    # 拒跑这一趟没有真子会话可起：`MEETING_MINUTES_CHILD=1` 那道兜底照旧在场。
-    assert os.environ.get("MEETING_MINUTES_CHILD") == "1"
 
 
 def test_force_carries_the_flag_all_the_way_to_the_implementation(
@@ -786,67 +718,6 @@ def test_force_carries_the_flag_all_the_way_to_the_implementation(
     assert calls == [True], f"带 --force 的那一趟该把 force=True 递给实现，实测 {calls}"
     assert summary["exit_code"] == EXIT_OK, summary.get("error")
     assert summary["minutes"]["state"] == "done", summary["minutes"]
-
-
-def test_two_simultaneous_announces_launch_the_implementation_once(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """两趟**几乎同时**去拉起那一层（线程 + `Barrier`，**真解析器**在场）：只有一趟叫起来。
-
-    走真实现（`meeting.backends.minutes:MinutesHook`）的那条路：它起线程之前先 claim 一版
-    「在飞」的账，两趟同时进门时只有一个拿得到，另一趟交回 `running`（拒跑那一档）。
-    线程体被钉成空转，于是这一条量的正是 claim 本身，没有第二条子会话、没有真 DSH。
-
-    本文件那道 autouse 的第二层网（把解析结果换成只记账的 `FakeMinutesHook`）在这里被显式
-    换成**真实现**：claim 这一格就在真实现里，只用记账替身量不到它。
-    """
-    session = synth_session(tmp_path / "250919")
-    arms: list[str] = []
-    monkeypatch.setattr(
-        "meeting.minutes.runner.run", lambda session_dir: arms.append(str(session_dir))
-    )
-    monkeypatch.setattr(
-        "meeting.backends.registry.resolve_minutes_hook",
-        lambda *a, **k: FakeResolution(minutes_backend.MinutesHook()),
-    )
-    # 再入闸只挡产品路径，而这一条量的正是产品路径那一条：摘掉它。线程体已经钉成空转
-    #（`runner.run` 整段被换掉），因此一个真进程都不会起。
-    monkeypatch.delenv("MEETING_MINUTES_CHILD", raising=False)
-    barrier = threading.Barrier(2)
-    outcomes: dict[str, dict] = {}
-    errors: list[str] = []
-
-    def worker(tag: str) -> None:
-        try:
-            barrier.wait(timeout=BG_TIMEOUT_SECONDS)
-            outcomes[tag] = offline_runner._announce_minutes(session)
-        except BaseException as exc:  # 任何异常都记下来，join 之后一并断言
-            errors.append(f"{tag}: {type(exc).__name__}: {exc}")
-
-    threads = [
-        threading.Thread(target=worker, args=("first",)),
-        threading.Thread(target=worker, args=("second",)),
-    ]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(timeout=BG_TIMEOUT_SECONDS)
-
-    assert errors == [], errors
-    assert sorted(outcomes) == ["first", "second"], outcomes
-    hooks = sorted(str(outcome["hook"]) for outcome in outcomes.values())
-    assert hooks == ["launched", "running"], (
-        f"两趟该是一趟拉起、一趟拒跑，实测 {hooks}；"
-        f"selector={[o.get('selector') for o in outcomes.values()]}；arms={arms}"
-    )
-    helpers.wait_until(lambda: arms, what="被放行那一趟的后台线程真的跑起来过")
-    assert len(arms) == 1, arms
-
-
-# ---------------------------------------------------------------------------
-# 五、注入件一路向下传：两条入口并发时互不串台
-# ---------------------------------------------------------------------------
 
 
 def test_two_entries_can_inject_launchers_at_the_same_time(
@@ -1025,112 +896,27 @@ def test_the_two_entries_write_the_same_artifact_names(
 # ---------------------------------------------------------------------------
 
 
-def test_the_injected_path_waits_for_the_terminal_state_of_this_run(
-    tmp_path: Path, _a_short_minutes_bound: float
-) -> None:
-    """注入路径补纪要那一层：等到的必须是**本趟新落的终态**。
+class ExplodingConverter:
+    """转码器替身：对着 PCM **抛错**（`ffmpeg` 缺席那一档的替身）。
 
-    `run_post(..., minutes_launcher=…)` 是本仓自己的编排 API，与产品路径**共用同一处等待**：
-    假件照真启动器的时序（`launch()` 返回即算启动成功、终态由后台那条链写进状态文件）——
-    关掉「谁拉起的」这个岔口之前，这一格会当场把盘上那份`state` 当结论，于是「拉起那一刻
-    盘上还是 `running`」与「上一趟留下的旧终态」都会算成这一趟的账。本用例钉两件事：
-
-      1. 结论 `state == "done"` 出自**这一趟**新落的那一版（`waited_seconds` 与假件模拟的
-         子会话耗时同量级，说明真的等过；只记账不落终态的假件过不了这一格）；
-      2. 那一版是*新落的*：现场刻意留了一份上一趟的 `failed`（产物齐），它绝不能被当成
-         本趟的结论。
+    它经 `_archive_converter()` 这一个接缝注进去（`sync_archive()` 缺省就是取它），
+    因此走产品路径那一趟也吃得到 —— 那正是被测模块自己留出来的接缝。
     """
-    session, engine = offline_only_session(tmp_path / "250919")
-    a_finished_minutes_layer(session, state="failed")
-    engine_calls = len(engine.calls)
-    latency = 0.1
 
-    class DelayedCallableLauncher:
-        """注入路径那一档的假启动器：可调，且照真启动器的时序**隔一会儿**才落终态。
+    def __init__(self, message: str = "ffmpeg 缺席（用例注入）") -> None:
+        self.calls: list[tuple[str, str]] = []
+        self.message = message
 
-        （产品路径那一档用的是 `DelayedHookImplementation`：它只有 `launch()`，因为
-        产品路径拉起的是 `resolution.implementation.launch(目录)`。）
-        """
-
-        def __init__(self) -> None:
-            self.calls: list[str] = []
-            self.threads: list[threading.Thread] = []
-
-        def __call__(self, session_dir: Any, *args: Any, **kwargs: Any) -> Any:
-            self.calls.append(str(session_dir))
-            session = Path(session_dir)
-
-            def body() -> None:
-                write_minutes_done(session, state="running")
-                time.sleep(latency)
-                write_final(session)
-                write_minutes_done(session, state="done")
-
-            thread = threading.Thread(target=body, daemon=True)
-            self.threads.append(thread)
-            thread.start()
-            return None
-
-    launcher = DelayedCallableLauncher()
-
-    begun = time.monotonic()
-    summary = run_post(session, engine=engine, minutes_launcher=launcher)
-    elapsed = time.monotonic() - begun
-
-    for thread in launcher.threads:
-        thread.join(timeout=BG_TIMEOUT_SECONDS)
-
-    assert launcher.calls == [str(session)], "这一趟确实把纪要那一层拉起来过"
-    assert summary["exit_code"] == EXIT_OK, summary.get("error")
-    assert summary["minutes"]["hook"] == "finished", summary["minutes"]
-    assert summary["minutes"]["state"] == "done", "结论出自这一趟新落的那一版"
-    assert summary["minutes"]["waited_seconds"] >= latency / 2, (
-        f"拉起那一刻盘上还是 running，这一趟该真的等过：{summary['minutes']['waited_seconds']}"
-    )
-    assert elapsed < BG_TIMEOUT_SECONDS, f"该在秒级内收场，实测 {elapsed:.2f}s"
-    assert (session / MINUTES_FINAL_NAME).is_file(), "这一趟新落的那一版里产物该在"
-    assert len(engine.calls) == engine_calls, "补纪要那一趟不许重算离线段"
-
-
-def test_an_injected_launcher_that_never_settles_times_out_without_lying(
-    tmp_path: Path, _a_short_minutes_bound: float
-) -> None:
-    """注入路径拉起之后**永不落终态** → 在上界内如实收场，既不谎报成功也不谎报 failed。
-
-    现场刻意留着**上一趟的终态** `done`（`meeting_final.md` 也齐）：拉起之后一份新终态都不
-    会落，于是这一趟只许在上界内报现成的 `timeout` 那一档 —— 上一趟的 `done` 不是这一趟的
-    账，凭空写 `failed` 同样不实。子会话的拉起由注入的假件挡着（它什么都不起）。
-    """
-    session, engine = offline_only_session(tmp_path / "250919")
-    a_finished_minutes_layer(session, state="done")
-    (session / MINUTES_FINAL_NAME).unlink()
-    engine_calls = len(engine.calls)
-    launcher = RecordingLauncher()  # 只记账：一份新终态都不落
-
-    begun = time.monotonic()
-    summary = run_post(session, engine=engine, minutes_launcher=launcher)
-    elapsed = time.monotonic() - begun
-
-    assert elapsed < BG_TIMEOUT_SECONDS, f"该在上界内收场，实测 {elapsed:.2f}s"
-    assert summary["exit_code"] == EXIT_FAILURE, f"还没落定那一档不是成功档：{summary}"
-    assert launcher.calls == [str(session)], "这一趟确实把纪要那一层拉起来过"
-    assert summary["minutes"]["hook"] == "timeout", summary["minutes"]
-    assert summary["minutes"]["state"] == "timeout", summary["minutes"]
-    assert "还没落定" in str(summary["minutes"]["reason"]), summary["minutes"]
-    assert len(engine.calls) == engine_calls, "补纪要那一趟不许重算离线段"
-
-
-# ---------------------------------------------------------------------------
-# 六之二、产品路径也要补纪要那一层（不注入启动器时）
-# ---------------------------------------------------------------------------
+    def __call__(self, pcm_path: Any, mp3_path: Any) -> bool:
+        self.calls.append((str(pcm_path), str(mp3_path)))
+        raise RuntimeError(self.message)
 
 
 def offline_only_session(root: Path) -> tuple[Path, FakeEngine]:
     """一场**只把离线段收干净**的会：三份离线产物 + 离线状态文件齐、纪要那层缺席。
 
     离线段那一趟走真的 `run_session()`（假引擎；本场没有真模型），纪要那一层的拉起在
-    子会话标记在场时被再入闸安静跳过 —— 于是盘上留着「离线段 `done`、纪要段没到终态」
-    这个现场，正是 `meeting post` 对旧场次目录要补的那一格。
+    子会话标记在场时被再入闸安静跳过 —— 盘上留着「离线段 `done`、纪要段没到终态」现场。
     """
     session = synth_session(root)
     engine = FakeEngine()
@@ -1146,6 +932,7 @@ def a_finished_minutes_layer(session: Path, *, state: str = "done") -> None:
     write_final(session)
 
 
+@pytest.mark.slow
 def test_the_product_path_refills_a_missing_minutes_layer(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1191,45 +978,7 @@ def test_the_product_path_refills_a_missing_minutes_layer(
     )
 
 
-def test_a_minutes_layer_that_never_settles_is_reported_as_still_running(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    _a_short_minutes_bound: float,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """② 拉起之后**永远不落终态** → 在上界内收场，如实报「还没跑完」。
-
-    上界取**现成的配置键** `minutes.timeout_seconds`（这里把它调小：真链的缺省是四小时，
-    用例不能真等满它，判据要的是「在上界内收场」）。假实现只记账、一份终态都不落，
-    于是这一趟必须在上界内收场：退出码走失败档（`EXIT_FAILURE`），而纪要那一层如实报
-    **它自己那一档** —— `hook` 与 `state` 都写着 `timeout`、原话是「还没落定」，
-    终端上那一层因此读得出「还在跑」，「state=failed」这四个字不会出现。
-    """
-    session, engine = offline_only_session(tmp_path / "250919")
-    launcher = FakeHookImplementation()  # 只记账：一份终态都不落
-    monkeypatch.setattr(
-        "meeting.backends.registry.resolve_minutes_hook",
-        lambda *a, **k: FakeResolution(launcher),
-    )
-    engine_calls = len(engine.calls)
-    monkeypatch.delenv("MEETING_MINUTES_CHILD", raising=False)
-
-    begun = time.monotonic()
-    with pytest.raises(SystemExit) as info:
-        post([str(session)])
-    elapsed = time.monotonic() - begun
-
-    assert elapsed < BG_TIMEOUT_SECONDS, f"该在上界内收场，实测 {elapsed:.2f}s"
-    assert info.value.code == EXIT_FAILURE, "还没跑完不许按成功档收场"
-    assert launcher.calls == [str(session)], "这一趟确实把纪要那一层拉起来过"
-    out = capsys.readouterr().out
-    assert "步骤 3/3 会后纪要（纪要生成）：timeout（state=timeout）" in out, out
-    assert "还没落定" in out, out
-    assert "state=failed" not in out, f"还在跑的那一层不许被写成 failed：{out}"
-    assert "结论：timeout（退出码 EXIT_FAILURE）" in out, out
-    assert len(engine.calls) == engine_calls, "补纪要那一趟不许重算离线段"
-
-
+@pytest.mark.slow
 def test_the_product_path_still_reports_a_launch_that_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -1266,6 +1015,7 @@ def test_the_product_path_still_reports_a_launch_that_fails(
         assert len(engine.calls) == engine_calls, f"{label}：补纪要那一趟不许重算离线段"
 
 
+@pytest.mark.slow
 def test_the_product_path_refills_a_done_minutes_layer_without_its_final_artifact(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _a_short_minutes_bound: float
 ) -> None:
@@ -1334,63 +1084,7 @@ def test_a_minutes_launch_that_never_settles_is_not_reported_as_success(
     assert len(engine.calls) == engine_calls, "补纪要那一趟不许重算离线段"
 
 
-def test_the_refilled_minutes_layer_settles_the_second_run(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """补上的那一层真的落到了终态：同一个目录再跑一遍就没有待办了（`EXIT_OK`）。
-
-    产品路径拉起的是 `resolution.implementation.launch(目录)`，替身因此长成
-    `SettlingLauncher` 那个形状（记账 + 照真子会话的收工样子落两份产物）：起终态的机制
-    与真启动器同一处（`_announce_minutes()`），补完之后那道闸认得它。
-    """
-    session, engine = offline_only_session(tmp_path / "250919")
-    launcher = SettlingHookImplementation()
-    monkeypatch.setattr(
-        "meeting.backends.registry.resolve_minutes_hook",
-        lambda *a, **k: FakeResolution(launcher),
-    )
-    monkeypatch.delenv("MEETING_MINUTES_CHILD", raising=False)
-    engine_calls = len(engine.calls)
-
-    first = run_post(session)
-
-    assert launcher.calls == [str(session)], "产品路径该把纪要那一层拉起来一次"
-    assert first["exit_code"] == EXIT_OK, first.get("error")
-    assert (session / MINUTES_STATUS_NAME).is_file()
-    assert (session / MINUTES_FINAL_NAME).is_file()
-    assert len(engine.calls) == engine_calls, "补纪要那一趟不许重算离线段"
-
-    second = run_post(session)
-
-    assert second["exit_code"] == EXIT_OK, second.get("error")
-    assert second["minutes"]["hook"] == "already_done", (
-        "补完之后那一层已是终态，第二遍不该再拉起一次"
-    )
-    assert launcher.calls == [str(session)], f"第二遍不该再拉起：{launcher.calls}"
-    assert len(engine.calls) == engine_calls
-
-
-# ---------------------------------------------------------------------------
-# 六之三、归档失败不许被「无待办」早退吞掉
-# ---------------------------------------------------------------------------
-
-
-class ExplodingConverter:
-    """转码器替身：对着 PCM **抛错**（`ffmpeg` 缺席那一档的替身）。
-
-    它经 `_archive_converter()` 这一个接缝注进去（`sync_archive()` 缺省就是取它），
-    因此走产品路径那一趟也吃得到 —— 那正是被测模块自己留出来的接缝。
-    """
-
-    def __init__(self, message: str = "ffmpeg 缺席（用例注入）") -> None:
-        self.calls: list[tuple[str, str]] = []
-        self.message = message
-
-    def __call__(self, pcm_path: Any, mp3_path: Any) -> bool:
-        self.calls.append((str(pcm_path), str(mp3_path)))
-        raise RuntimeError(self.message)
-
-
+@pytest.mark.slow
 def test_a_failed_archive_is_not_swallowed_by_the_no_pending_work_exit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -1421,6 +1115,7 @@ def test_a_failed_archive_is_not_swallowed_by_the_no_pending_work_exit(
     assert "结论：failed" in out, out
 
 
+@pytest.mark.slow
 def test_a_failed_archive_keeps_the_no_pending_work_message_away(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

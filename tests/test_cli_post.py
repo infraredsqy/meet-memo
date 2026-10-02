@@ -66,6 +66,9 @@ from meeting.cli import (
     sync_archive,
 )
 
+#: 慢档标记（`68927c27` 收尾轮）：`meeting post` 是收尾功能，整文件归收尾验收。
+pytestmark = pytest.mark.slow
+
 #: 假启动器那一档的秒数（假的纪要钩子不起任何东西）
 FAKE_SECONDS = 0.01
 

@@ -16,11 +16,15 @@
 from __future__ import annotations
 
 import time
-
 import pytest
+
+
 
 from tests import _helpers as helpers
 from tests._service import SseClient
+
+#: 慢档标记（68927c27 收尾轮）：真流式/真后端的收尾验收，不进每次迭代圈。
+pytestmark = pytest.mark.slow
 
 #: 用例的显式等待上限（秒）
 MULTI_TIMEOUT_SECONDS = 15.0

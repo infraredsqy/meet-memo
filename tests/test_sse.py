@@ -20,9 +20,10 @@
 from __future__ import annotations
 
 import time
+import pytest
+
 
 import httpx
-import pytest
 
 from tests import _helpers as helpers
 from meeting.service.hub import (
@@ -33,6 +34,9 @@ from meeting.service.hub import (
     encode_ping,
 )
 from tests._service import SseClient, parse_sse_frame
+
+#: 慢档标记（68927c27 收尾轮）：真流式/真后端的收尾验收，不进每次迭代圈。
+pytestmark = pytest.mark.slow
 
 #: 用例的显式等待与读帧上限（秒）
 SSE_TIMEOUT_SECONDS = 15.0

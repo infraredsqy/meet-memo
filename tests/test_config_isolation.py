@@ -165,6 +165,7 @@ def test_the_next_case_starts_from_no_effective_config() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_the_affected_cases_stay_green_under_a_host_config_with_a_null_hook(
     tmp_path: Path,
 ) -> None:

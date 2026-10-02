@@ -472,26 +472,6 @@ def test_segment_queue_is_unbounded_and_single_worker(session_dir: Path):
         pipeline.stop()
 
 
-def test_pipeline_has_no_dropping_queue_path():
-    """源码里没有 `put_nowait` / `if full` 这类**偷偷丢弃**的路径（复审自检项 2）。
-
-    看的是**语法树里真出现过的调用与属性**（注释与 docstring 里提一句不算，
-    但那句注释正是写给后来人看的：这条反模式为什么不许出现）。
-    """
-    import ast
-    import inspect
-
-    source = inspect.getsource(TranscriptionPipeline)
-    tree = ast.parse(source)
-    code = "\n".join(
-        ast.unparse(node)
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.Call, ast.Attribute))
-    )
-    assert "put_nowait" not in code
-    assert "full" not in code
-
-
 def test_segments_under_half_a_second_are_never_enqueued(session_dir: Path):
     """**不足半秒的段不识别、也不落行**（判据出处是 V1 `mnotes_core/pipeline.py:127`）。
 

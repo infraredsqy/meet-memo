@@ -164,6 +164,7 @@ def test_probe_calls_a_rejected_auth_by_its_name(credentials: Path) -> None:
     assert "401" in detail, detail
 
 
+@pytest.mark.slow
 def test_probe_reports_a_dead_port_with_the_address(credentials: Path) -> None:
     """端口没人听时说明里带上那个地址。"""
     import socket

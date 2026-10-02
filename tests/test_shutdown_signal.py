@@ -726,6 +726,7 @@ def test_idle_sigbreak_exits_zero(service_process, case_env):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_clean_drain_then_sigbreak_exits_zero_without_rewriting_disk(
     service_process, case_env
 ):
@@ -834,6 +835,7 @@ def test_clean_drain_then_sigbreak_exits_zero_without_rewriting_disk(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_recording_sigbreak_drains_and_exits_zero(service_process, case_env):
     """录音中按一次 `CTRL_BREAK_EVENT` → 收尾真跑完，收尾干净档退出码。
 
@@ -934,6 +936,7 @@ def test_recording_sigbreak_drains_and_exits_zero(service_process, case_env):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_second_sigbreak_during_drain_exits_130(service_process, case_env):
     """收尾进行中再按一次 → `interrupted: true`、`state == "draining"`、强制打断档退出码。
 
@@ -1008,6 +1011,7 @@ def test_second_sigbreak_during_drain_exits_130(service_process, case_env):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_second_press_in_the_same_process_carries_force_true(service_process, case_env):
     """**同一个进程连按两次** → 第二次按下带 `force=True`，强制打断档收场（C1）。
 
@@ -1114,6 +1118,7 @@ def test_second_press_in_the_same_process_carries_force_true(service_process, ca
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_sigbreak_while_already_draining_exits_130(service_process, case_env):
     """已经停在收尾失败现场再按一次 → 与 ③ 同结果（**不为它单开第三条路径**）。
 
@@ -1153,6 +1158,7 @@ def test_sigbreak_while_already_draining_exits_130(service_process, case_env):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_failed_drain_exits_one_and_prints_log_path(service_process, case_env):
     """收尾有步骤 `failed` → 收尾失败档退出码，且终端上出现 log 路径与 `meeting post`。
 
@@ -1243,6 +1249,7 @@ def test_failed_drain_exits_one_and_prints_log_path(service_process, case_env):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_sigint_and_sigbreak_share_one_handler(service_process, case_env):
     """`SIGBREAK` 与 `SIGINT` 走**同一个处理函数**，两边的结果字段与退出码逐项一致。
 

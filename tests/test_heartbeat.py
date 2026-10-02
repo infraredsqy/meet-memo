@@ -26,6 +26,8 @@ import textwrap
 import time
 from pathlib import Path
 
+import pytest
+
 
 from tests import _helpers as helpers
 from meeting.backends.base import SourceFacts, SourceLost
@@ -132,6 +134,7 @@ def test_heartbeat_stays_200_in_every_state(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_heartbeat_reports_a_stalled_recorder(tmp_path):
     """② `stall` → 心跳仍 200、`recording_alive is False`、`seconds_since_last_tick > 2.0`。"""
     with live(tmp_path) as (client, runtime, _home):
@@ -196,6 +199,7 @@ def test_heartbeat_interval_setting_does_not_participate(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_heartbeat_gives_a_boolean_while_in_alert(tmp_path):
     """⑤ `alert` 态照常给布尔值（`silence` + 用例里显式调小阈值）。"""
     with live(tmp_path, {"alert.silence_seconds": 1, "alert.recover_seconds": 30}) as (

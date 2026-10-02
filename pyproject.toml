@@ -68,9 +68,14 @@ post = [
     "av",
 ]
 # 测试层：httpx 只服务测试层的真服务子进程；运行时的端口探针走标准库 socket。
+# pytest-xdist / execnet 服务并行档（`-n auto --dist loadfile` 走命令行，不进 addopts），
+# 只进测试 extra（`68927c27` spec 判定 6：运行时依赖零增加）；本机实测
+# pytest-xdist 3.8.0 + execnet 2.1.2 与 pytest 9.0.3 兼容（并行趟全绿，下限按它取）。
 test = [
     "pytest",
     "httpx",
+    "pytest-xdist>=3.6",
+    "execnet>=2.1",
 ]
 
 [tool.setuptools]
@@ -109,7 +114,7 @@ pythonpath = ["."]
 testpaths = ["tests"]
 markers = [
     # 慢档：起真服务子进程 / 真墙钟等待 / 注入慢模型 / 单条实测 > 2.0s 的用例（文件粒度）。
-    # 归位判据、九个文件与三条命令的实测耗时见 `docs/service.md` 第 7 章「快慢分档」。
+    # 归位判据、23 个文件与三条命令的实测耗时见 `docs/service.md` 第 7 章「快慢分档」。
     "slow: 需要真子进程或真实墙钟等待；未改动核心代码时可跳过",
 ]
 # `--strict-markers` 管的是代码里 `pytest.mark.xxx` 那一侧：标记名必须已在 markers 里注册，

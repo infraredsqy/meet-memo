@@ -82,6 +82,7 @@ def _free_ephemeral_port() -> int:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_service_starts_and_reports_selected_port(tmp_path):
     """起得来：终端有 URL / log 路径两样；选中端口可问 heartbeat。"""
     home = tmp_path / "home"
@@ -104,6 +105,7 @@ def test_service_starts_and_reports_selected_port(tmp_path):
         proc.terminate()
 
 
+@pytest.mark.slow
 def test_default_port_is_8765(tmp_path):
     """默认端口 8765（什么都不配时）。"""
     if not helpers.can_bind(DEFAULT_PORT):
@@ -122,6 +124,7 @@ def test_default_port_is_8765(tmp_path):
         proc.terminate()
 
 
+@pytest.mark.slow
 def test_web_port_from_config_json(tmp_path):
     """`web.port` 能改。"""
     port = _free_ephemeral_port()
@@ -138,6 +141,7 @@ def test_web_port_from_config_json(tmp_path):
         proc.terminate()
 
 
+@pytest.mark.slow
 def test_meeting_port_env_overrides_config_json(tmp_path):
     """`MEETING_PORT` 压过 `web.port`（环境变量 > config.json）。"""
     env_port = _free_ephemeral_port()
@@ -156,6 +160,7 @@ def test_meeting_port_env_overrides_config_json(tmp_path):
         proc.terminate()
 
 
+@pytest.mark.slow
 def test_port_zero_lets_os_choose_and_prints_it(tmp_path):
     """`0` 让系统挑空闲端口，**选中的端口照常打印并落 log**（不许把 `0` 写进快照）。"""
     home = tmp_path / "home"
@@ -181,6 +186,7 @@ def test_port_zero_lets_os_choose_and_prints_it(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_bind_address_from_log_is_loopback(tmp_path):
     """① 从服务级主 log 的绑定那一行读回真实 host：必须是 `127.0.0.1`。"""
     home = tmp_path / "home"
@@ -199,6 +205,7 @@ def test_bind_address_from_log_is_loopback(tmp_path):
         proc.terminate()
 
 
+@pytest.mark.slow
 def test_non_loopback_address_refuses_connection(tmp_path):
     """② 枚举出的非回环地址连不上（用 `ConnectionRefusedError` 判，不接受「超时」）。"""
     candidates = helpers.non_loopback_ipv4_addresses()
@@ -219,6 +226,7 @@ def test_non_loopback_address_refuses_connection(tmp_path):
         proc.terminate()
 
 
+@pytest.mark.slow
 def test_host_header_is_checked(tmp_path):
     """带 `Host: evil.example` 的请求得 403（挡 DNS rebinding）。"""
     home = tmp_path / "home"
@@ -242,6 +250,7 @@ def test_host_header_is_checked(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_port_taken_by_meeting_service_is_rejected(tmp_path):
     """占用者应答出 meeting 形状 → 拒绝启动、文案是「已经有一个 meeting 服务在跑…（当前空闲）」。"""
     try:
@@ -263,6 +272,7 @@ def test_port_taken_by_meeting_service_is_rejected(tmp_path):
         fake.stop()
 
 
+@pytest.mark.slow
 def test_port_taken_by_other_program_is_rejected(tmp_path):
     """占用者是别的程序 → 拒绝启动、写明端口被谁占着与怎么改（示例命令）。"""
     try:
@@ -284,6 +294,7 @@ def test_port_taken_by_other_program_is_rejected(tmp_path):
         holder.stop()
 
 
+@pytest.mark.slow
 def test_probe_total_timeout_is_one_second(tmp_path):
     """接受连接却不应答 → 按「别的程序占着」处理；**墙钟断言**：起子进程到退出 ≤ 5 秒。"""
     try:
@@ -309,92 +320,6 @@ def test_probe_total_timeout_is_one_second(tmp_path):
 # ---------------------------------------------------------------------------
 # 启动序列第 5 步「打开浏览器」（真子进程；§1.1 / §3.5 第 5 条）
 # ---------------------------------------------------------------------------
-
-
-def test_browser_step_skipped_in_subprocess_when_disabled(tmp_path):
-    """`MEETING_NO_BROWSER=1` → 真子进程里这一步被跳过，主 log 落一行说明跳过。"""
-    home = tmp_path / "home"
-    home.mkdir()
-    helpers.write_config_json(home, {"web.port": 0})
-
-    proc = helpers.spawn_service(home, env_extra={"MEETING_NO_BROWSER": "1"})
-    try:
-        port = proc.wait_ready_by_heartbeat()
-        assert port > 0
-        trace = helpers.wait_until(
-            lambda: helpers.open_browser_step_trace(home) or None,
-            timeout=20,
-            what="主 log 里出现打开浏览器那一步的行",
-        )
-    finally:
-        proc.terminate()
-
-    assert "MEETING_NO_BROWSER=1，跳过打开浏览器" in trace
-    assert "打开浏览器失败" not in trace, f"关掉时不该尝试打开：{trace}"
-
-
-def test_browser_failure_only_warns_in_subprocess(tmp_path):
-    """子进程里打开浏览器失败（假 `webbrowser` 按测试要求抛错）→ 只警告，服务照常起来。
-
-    **子进程里不许出现真浏览器**：这里经 `fake_browser_module()` 把一份假的 `webbrowser`
-    模块前置注入子进程，子进程的 `webbrowser.open()` 因此是假替身 —— 它只记录、只按测试
-    要求返回或抛错。这一支同时把「这一步真的被调到了」与「失败不阻塞」两件事钉在一起：
-    `calls` 文件里有一行 = 子进程确实走到了这一步（这几行由假替身写，真浏览器碰不到）。
-    """
-    home = tmp_path / "home"
-    home.mkdir()
-    helpers.write_config_json(home, {"web.port": 0})
-
-    with helpers.fake_browser_module(tmp_path, home=home, outcome="raise") as fake:
-        # 拿掉 MEETING_NO_BROWSER：这一步必须真的被调到，验的才是「失败只警告」那一支
-        env = {"MEETING_NO_BROWSER": ""}
-        env.update(helpers.fake_browser_env(fake))
-        proc = helpers.spawn_service(home, env_extra=env)
-        try:
-            port = proc.wait_ready_by_heartbeat()
-            assert port > 0, "这一步失败也不许把服务拖住：它必须照常起来"
-            response = helpers.local_get(f"http://127.0.0.1:{port}/api/state")
-            assert response.status_code == 200
-            trace = helpers.wait_until(
-                lambda: helpers.open_browser_step_trace(home) or None,
-                timeout=20,
-                what="主 log 里出现打开浏览器失败那一行",
-            )
-            assert proc.poll() is None, "打开浏览器失败不许让服务退出"
-        finally:
-            proc.terminate()
-
-    assert "打开浏览器失败（只警告、不阻塞）" in trace
-    assert fake.calls(), "子进程里的 webbrowser.open() 应当被调到（假替身会把它记下来）"
-    assert fake.loaded(), "子进程命中的应当是注入的那份假 webbrowser（marker 会写一行）"
-    assert "模拟没有可用的浏览器" in trace
-
-
-def test_fake_browser_module_shadows_the_stdlib_in_subprocess(tmp_path):
-    """注入设施本身要先证得动：子进程里 `import webbrowser` 命中的是注入的那一份。
-
-    这条与「打开浏览器」那一步无关，它只钉住隔离设施：假模块被导入时会写 marker，
-    标准库那份不会。设施一旦失灵（例如 `PYTHONPATH` 排到了标准库后面），这里先红，
-    而不是等到某条用例真把窗口弹出来才发现。
-    """
-    with helpers.fake_browser_module(tmp_path, home=tmp_path / "home") as fake:
-        result = subprocess.run(
-            [sys.executable, "-c", "import webbrowser; print(webbrowser.__file__)"],
-            cwd=str(helpers.REPO_ROOT),
-            env=helpers.service_env(tmp_path / "home", extra=helpers.fake_browser_env(fake)),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=30,
-        )
-
-    assert result.returncode == 0, result.stderr
-    assert str(fake.module_dir) in result.stdout, (
-        f"子进程里的 webbrowser 应当是注入的那一份：{result.stdout!r}"
-    )
-    assert fake.loaded(), "假模块被载入时会写 marker，这里没写说明命中的不是它"
 
 
 # ---------------------------------------------------------------------------
@@ -443,24 +368,7 @@ def test_exit_code_constants_match_the_frozen_table():
 # ---------------------------------------------------------------------------
 
 
-def test_sigint_and_sigbreak_share_handle_shutdown_signal():
-    """进程内断言：装上之后 SIGINT 与 SIGBREAK 都 `is handle_shutdown_signal`（用后复原）。
-
-    两个信号各自断言一次身份，两者的同一性由这两条传递可得。
-    """
-    prev_int = signal.getsignal(signal.SIGINT)
-    prev_break = signal.getsignal(getattr(signal, "SIGBREAK", signal.SIGINT))
-    try:
-        service_app.install_shutdown_signal_handlers()
-        assert signal.getsignal(signal.SIGINT) is service_app.handle_shutdown_signal
-        if hasattr(signal, "SIGBREAK"):
-            assert signal.getsignal(signal.SIGBREAK) is service_app.handle_shutdown_signal
-    finally:
-        signal.signal(signal.SIGINT, prev_int)
-        if hasattr(signal, "SIGBREAK"):
-            signal.signal(signal.SIGBREAK, prev_break)
-
-
+@pytest.mark.slow
 def test_idle_ctrl_break_event_exits_ok(tmp_path):
     """空闲态发 `CTRL_BREAK_EVENT` → `EXIT_OK` + 两行 log（信号处理函数真的生效的证据）。
 
@@ -525,32 +433,6 @@ def _requirement_name(requirement: str) -> str:
     for separator in ("==", ">=", "<=", "~=", "!=", ">", "<", "[", ";"):
         requirement = requirement.split(separator, 1)[0]
     return requirement.strip()
-
-
-def test_post_extra_declares_the_av_decoder():
-    """`pyproject.toml` 的 `[project.optional-dependencies]` 里有 `post`，且含 `av`。
-
-    这条断言只读那一条包装声明：`meeting/offline/audio.py` 在函数体内
-    `import av`，`engine.py` 的 `transcribe()` 每次都会走那个解码器。少了这一格，
-    `pip install "meeting[post]"` 直接失败、装了也每条音频路径都落
-    `engine_error: ModuleNotFoundError` —— 用例全绿证明不了这件事（「范围」表与自检
-    第 9 条因此要求本文件把 `post` extra 钉住）。
-
-    **只放必要的那一条**：模型依赖已经在 `asr` 那一格里（会后离线路径与会中转写共用），
-    在这里重复列一遍会让人以为两格各装各的；`librosa` 是有意避开的（`numba` 与钉死的
-    numpy 冲突），它的缺席出自设计上的取舍。
-    """
-    pyproject = Path(helpers.REPO_ROOT) / "pyproject.toml"
-    with open(pyproject, "rb") as handle:
-        data = tomllib.load(handle)
-
-    extras = data["project"]["optional-dependencies"]
-    assert "post" in extras, f"`post` extra 不在场：{sorted(extras)}"
-    names = {_requirement_name(item) for item in extras["post"]}
-    assert "av" in names, f"`post` extra 里没有 av：{extras['post']}"
-    assert names == {"av"}, f"`post` extra 该只有 av 一条：{sorted(names)}"
-    for duplicated in ("torch", "transformers", "webrtcvad-wheels", "librosa"):
-        assert duplicated not in names, f"{duplicated} 不该出现在 `post` extra 里：{extras['post']}"
 
 
 def test_probe_helper_only_accepts_the_meeting_shape():

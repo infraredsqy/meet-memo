@@ -17,9 +17,10 @@
 from __future__ import annotations
 
 import time
+import pytest
+
 from pathlib import Path
 
-import pytest
 
 from meeting.backends import capture as capture_module
 from meeting.backends.base import ReadOnlyConfig, SourceLost
@@ -29,6 +30,9 @@ from meeting.capture.devices import DeviceEndpoint, OpenAttempt
 from meeting.session import archive_name
 from tests.test_api_actions import live, post, snapshot_of, wait_until
 from tests.test_capture_engine import CHUNK_BYTES, FakeCaptureSource
+
+#: 慢档标记（68927c27 收尾轮）：真流式/真后端的收尾验收，不进每次迭代圈。
+pytestmark = pytest.mark.slow
 
 #: 假端点表（形状照本机实测：同名端点在不同 host API 下并存）
 FAKE_MIC = DeviceEndpoint("假-麦克风 (Focusrite)", "MME", "input", index=1, is_default=True)

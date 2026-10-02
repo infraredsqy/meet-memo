@@ -31,6 +31,9 @@ import pytest
 
 from meeting.offline import artifacts
 from meeting.offline.engine import OfflineSegment
+
+#: 慢档标记（68927c27 收尾轮）：会后离线链的契约验收，归收尾跑。
+pytestmark = pytest.mark.slow
 from meeting.offline.runner import (
     CHUNK_DIR_NAME,
     REASON_ALL_CHUNKS_FAILED,

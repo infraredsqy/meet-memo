@@ -326,6 +326,7 @@ def test_rejected_request_does_not_touch_disk_when_recording(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_alert_does_not_stop_recording_and_shows_both_healths(tmp_path):
     """铁律 1：进 `alert` 不等于停录 —— 快照同时看得见 `capturing` 与 `lost`、时长继续走。"""
     stack, client, runtime = build_live_client(
@@ -414,6 +415,7 @@ def test_heartbeat_fields_do_not_drive_any_transition(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_elapsed_seconds_runs_then_freezes(tmp_path):
     """`elapsed_seconds` 在 `recording` / `alert` 走秒、进 `ended` 冻结。"""
     stack, client, runtime = build_live_client(tmp_path, {"capture.backend": "dev"})

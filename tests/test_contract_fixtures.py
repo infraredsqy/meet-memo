@@ -30,6 +30,9 @@ from urllib.parse import quote
 
 import pytest
 
+#: 慢档标记（68927c27 收尾轮）：真服务/真样本采集的收尾验收，不进每次迭代圈。
+pytestmark = pytest.mark.slow
+
 from meeting import config as config_module
 from meeting.backends.base import ReadOnlyConfig, TranscriptLine
 from meeting.service import runtime as runtime_module

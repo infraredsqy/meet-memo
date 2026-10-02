@@ -15,8 +15,12 @@ from __future__ import annotations
 
 import time
 
+import pytest
 from tests import _helpers as helpers
 from tests._service import post_action, wait_until
+
+#: 慢档标记（68927c27 收尾轮）：真服务/真样本采集的收尾验收，不进每次迭代圈。
+pytestmark = pytest.mark.slow
 
 # ---------------------------------------------------------------------------
 # 本文件的具名常量（§3.8 末「测试侧常量」那张表；用例里不留裸秒数）
