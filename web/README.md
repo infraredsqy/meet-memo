@@ -4,7 +4,7 @@
 > **工作区首页**（空闲态与收尾落定后的那一屏：清单、目录选择器、会后两个按钮）与**会中主视图** ——
 > 用户开着它开会，不用盯着屏幕也知道一切正常，出事时第一眼看出是哪一路死了。
 >
-> 契约正文在 `docs/contract.md`，可机读基准在 `contract/fixtures/`（33 个 golden 样本）。
+> 契约正文在 `docs/contract.md`，可机读基准在 `contract/fixtures/`（34 个 golden 样本）。
 > **契约层逐字段照它们写** —— schema 改了、样本再跑起来红了，说明契约漂了。
 > 界面这一侧的权威是 `docs/ui-design.md`（章 2 会中信息架构、章 4 状态机、章 7 类名契约、章 8 十一条硬门槛）。
 
@@ -55,15 +55,15 @@ npm test             # vitest run（等价于 npx vitest run）
 
 | 路径 | 是什么 |
 |---|---|
-| `src/contract/` | 契约层：zod schema 为源，`z.infer` 出静态类型。掩码占位符（`<iso>` / `<path>` / `<session-id>` / `<port>` / `<url>` / `<dbfs>`）在 parse 层照实放行；动作信封（`actions.ts`：九个 `code`、逐档 `detail`、`summarize` 那份带 `summary` 的成功体、收编两动作那份带 `workspace` 的成功体、会后两按钮那份带 `post` 的成功体）、本场记录端点（`summaries.ts`：`GET /api/summaries` 的 `{session_id, entries}`）与工作区清单 / 目录现场（`sessions.ts`：`GET /api/sessions` 的 `{sessions, recent}` 逐行十一键、`GET /api/dirs` 的一层现场）各一份 |
-| `src/api/` | 服务接口：`events.ts`（SSE 四事件 + 快照重同步）、`actions.ts`（动作信封与两个必需头）、`summaries.ts`（本场摘要记录那条 GET）、`sessions.ts`（工作区清单与目录现场两只 GET）、`heartbeat.ts`（可配周期轮询与三态判定 `judgeHeartbeat`） |
+| `src/contract/` | 契约层：zod schema 为源，`z.infer` 出静态类型。掩码占位符（`<iso>` / `<path>` / `<session-id>` / `<port>` / `<url>` / `<dbfs>`）在 parse 层照实放行；动作信封（`actions.ts`：九个 `code`、逐档 `detail`、`summarize` 那份带 `summary` 的成功体、收编两动作那份带 `workspace` 的成功体、会后两按钮那份带 `post` 的成功体）、本场记录端点（`summaries.ts`：`GET /api/summaries` 的 `{session_id, entries}`）、工作区清单 / 目录现场（`sessions.ts`：`GET /api/sessions` 的 `{sessions, recent}` 逐行十一键、`GET /api/dirs` 的一层现场）与设备清单（`devices.ts`：`GET /api/devices` 的 `{mic, loopback}` 每项六格，`311f84f5`）各一份 |
+| `src/api/` | 服务接口：`events.ts`（SSE 四事件 + 快照重同步）、`actions.ts`（动作信封与两个必需头）、`summaries.ts`（本场摘要记录那条 GET）、`sessions.ts`（工作区清单与目录现场两只 GET）、`devices.ts`（设备清单那只 GET）、`heartbeat.ts`（可配周期轮询与三态判定 `judgeHeartbeat`） |
 | `src/home/` | **工作区首页**（e2f6166b；`05a48b6a` 补两会后按钮）：`HomeGate` 按闸分流（判据在 `gate.ts`）——`idle` 且没有场次、或 `ended` 且收尾四步都落定（`post` 停 `waiting` 算落定）→ 开 `WorkspaceHome`，其余给会中主视图（收尾落定那一刻页面自己回到工作台）；`WorkspaceHome` 左侧清单（`GET /api/sessions`，按 `recent` 定选中行）+ 空态（logo + 开场指引）+ 目录选择器弹窗（`GET /api/dirs`，起点 `~/`、非空父目录「进这一层」）+ 非空收编与删除确认弹窗 + Windows 大小写并一行 + **选中那一场详情里的会后两个按钮**（`post_offline` / `post_minutes`，那一格按 `has_offline` 渲染）；纯逻辑抽在 `gate.ts`、`post.ts`（两个按钮的可用性 / 禁用原因 / 那一格文案）、`model.ts`（选中判据 `startWhy` / 空态文案 / 初始选择）与 `confirmWorkspaceOpen.ts`（`workspace_open` 的非空确认二段式） |
 | `src/live/` | 会中视图的**纯逻辑**（组件里不夹业务判断） |
 | `src/App.tsx` | 会中主视图的组件树：外壳、两路通道、告警区、收尾区、实时转写、总结区（四档 / 主按钮 / 进行中 / 结果与失败面板 / 本场摘要记录回看） |
 | `src/styles/tokens.css` | **逐字节拷贝** `docs/ui/tokens.css`（除文件头那段注释）。设计 token 的唯一定义处是 `docs/ui/tokens.css`，这一份是它进构建的那一份 |
 | `src/styles/console.css` | **暗面 token 层**，也是主题开关所在：`:root` 给每个具名色一份暗面取值（`--t-*`），`[data-theme="light"]` 再给一套亮面覆盖。暗面的值单独写在这里，`tokens.css` 一个字符都不动 —— 那份文件自称设计 token 的唯一定义处，改它等于改设计稿 |
 | `src/styles/live.css` | 会中视图样式（**暗面一稿**，来路见下） |
-| `tests/` | vitest 用例（`npm test`，14 个文件 360 个用例）：契约层三份（拿 golden 样本过 schema、验 schema 咬得住、验动作信封与心跳三态）、失败分档一份（`app-failure.test.ts`）、**工作区首页两份**（`home.test.ts` 纯逻辑与端点取数，含会后两个按钮的可用性与那一格文案、`gate.ts` 的分流判据；`home-mount.test.tsx` 首页挂载与分流）、会中视图逻辑**八份** `live-*.test.ts`（`live-format` / `live-status` / `live-alarm` / `live-heartbeat` / `live-transcript` / `live-sound` / `live-summary` / `live-summary-controller`）+ 用例自己的真值快照构造器 `live-fixtures.ts` |
+| `tests/` | vitest 用例（`npm test`，16 个文件 391 个用例）：契约层三份（拿 golden 样本过 schema、验 schema 咬得住、验动作信封与心跳三态）、失败分档一份（`app-failure.test.ts`）、**工作区首页两份**（`home.test.ts` 纯逻辑与端点取数，含会后两个按钮的可用性与那一格文案、`gate.ts` 的分流判据；`home-mount.test.tsx` 首页挂载与分流）、**设置抽屉两份**（`live-settings.test.ts` 纯逻辑：抽屉行清单（ASR 五参数一个都不在）、心跳 1–60 判读、设备格会中闸、下拉摆法与缺省档归一；`settings-drawer.test.tsx` 挂载：四项都在、ASR 五参数一个都不出现、设备选完 `settings_update`+`reprobe`、越界当场拒，`311f84f5`）、会中视图逻辑**八份** `live-*.test.ts`（`live-format` / `live-status` / `live-alarm` / `live-heartbeat` / `live-transcript` / `live-sound` / `live-summary` / `live-summary-controller`）+ 用例自己的真值快照构造器 `live-fixtures.ts` |
 
 ### `src/live/` 里各管什么
 
@@ -78,7 +78,8 @@ npm test             # vitest run（等价于 npx vitest run）
 | `levels.ts` | 两路电平的取数（`levels` 帧优先、快照兜底、陈旧帧挡住）与包络逐根映射 |
 | `sound.ts` | WebAudio 一声（单次短促、非循环）+ 自动播放策略的授权补齐 |
 | `summary.ts` | 总结区那份纯逻辑：四档窗口与取值、可用性与禁用原因、三小段的取值与空态、五档失败的分派（按 `code` + `detail` 的键）、结果面板与记录条目的排版、一次请求的往返与**客户端那条 30 秒兜底线** |
-| `summary-controller.ts` | 总结区那台**请求状态机**的宿主：这一次请求的状态与当前档位、兜底超时、迟到的应答不覆盖已画出来的东西、本场记录那一份的取数 |
+| `summary-controller.ts` | 总结区那台**请求状态机**的宿主：这一次请求的状态与当前档位、兜底超时、迟到的应答不覆盖已画出来的东西、本场记录那一份的取数、**缺省档随快照走**（`applyDefaultWindow`，用户显式挑过的档不被覆盖） |
+| `settings.ts` | 设置抽屉那份纯逻辑（`311f84f5`）：抽屉的全部行清单（**ASR 五参数一个都不在**）、心跳 1–60 的判读与那句拒绝文案、设备格的会中闸、设备下拉的摆法（按默认策略挑恒在第一）、缺省档归一，以及 change 事件的两条**结构式读法**（`stringValueOf` / `checkedOf` —— 组件会被 node 线 tsconfig 顺着用例 import，那一侧没有 lib.dom） |
 | `view.ts` | 把一份快照摊成组件要摆的视图模型（**只读快照**） |
 
 ## 样式的来源
@@ -116,7 +117,12 @@ npm test             # vitest run（等价于 npx vitest run）
 6. **收尾区** —— 已结束时的那条横幅（`正在落盘，先别关机` / `可以关机` / `收尾出事了`）与四项明细
 7. **实时转写** —— 草稿、`[HH:MM] 本地/远端 · 正文`、识别失败缺口、心跳中断断口、约 200 行窗口、不自动跳回底部 +「回到最新」
 
-**不在这一轮的范围里**（契约章 7 的保留登记：不探测、不留死代码分支）：设置抽屉、转写历史回看、设备重探的界面。
+**设置抽屉已落地**（`311f84f5`）：会中顶栏右上角的「设置」展开 `drawer` / `scrim`（类名契约
+章 7.10 的预留），四项设置就地写进 config —— 换设备（`GET /api/devices` 的清单 + 选完
+`reprobe`；会中那两格禁用）、告警提示音、心跳频率（1–60 秒，越界当场拒）、快速总结默认
+窗口（四档预选随 `settings.summary_default_window` 走）。**ASR 那五个参数一个都不进这扇窗**
+（设计意图第 14 条；`web/tests/settings-drawer.test.tsx` 拿渲染结果逐个查）。仍在保留登记里
+的：转写历史回看。
 
 ## 两条铁律
 

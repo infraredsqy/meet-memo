@@ -73,7 +73,8 @@
 
 ## 5. 配置：七个键
 
-七个键都是**启动时读一次**、归 `pending_restart`（与 `minutes.*` 同档），改了要重启：
+六个键是**启动时读一次**、归 `pending_restart`（与 `minutes.*` 同档），改了要重启；缺省档
+`summary.default_window` 收在热读档（`311f84f5`，写盘那一刻快照 `settings.summary_default_window` 就换过去）：
 
 | 键 | 默认值 | 合法范围 / 形状 | 谁在用 |
 |---|---|---|---|

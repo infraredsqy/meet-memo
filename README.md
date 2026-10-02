@@ -82,9 +82,11 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 - 停下来的收尾：第 1 步停流落盘，第 2 步同目录同名**逐段**转出 `.mp3`（64k）。**转码成功之后
   PCM 照样留着** —— `session.json` 里 `sources[*].archives` 段文件名表声明的就是它们。
 
-录哪一路用哪个设备由两个配置键定（`devices.mic` / `devices.loopback`，不配就按默认策略挑）；
-改完要重启才生效。**配置是「你的意图」，快照 `sources[*].device_name` 是「实际落到的那个
-设备」** —— 配了却没命中时不会报错，只按回退顺序挑一条并在主 log 留一行 `WARNING`。
+录哪一路用哪个设备由两个配置键定（`devices.mic` / `devices.loopback`，不配就按默认策略挑）。
+页面上那个「设置」抽屉就能换（`311f84f5`）：清单来自只读的 `GET /api/devices`（只枚举、
+不开设备），选完写进 config、当场生效，空闲态再打一次 `reprobe` 就按新设备挑（会中
+不换设备，那两格禁用）。**配置是「你的意图」，快照 `sources[*].device_name` 是「实际落到
+的那个设备」** —— 配了却没命中时不会报错，只按回退顺序挑一条并在主 log 留一行 `WARNING`。
 
 **会后纪要**：按「结束录音」之后**会后那一套不自动跑**（`docs/design-intent.md` 第 10 条）——
 工作台上那一场的详情里有两个按钮：**生成会后精细稿**（走离线模型，慢，出带说话人编号的那份稿）
@@ -112,7 +114,8 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 刚才在讲什么 / 讲到哪儿了 / 丢掉了什么。范围由人挑四档（最近 5 / 15 / 30 分钟、整场，缺省 15 分钟），
 读的是**内存里那份实时临时稿**（不读盘、也不动快照），结果是一过性的：关掉即消失、不落文件。
 本场按过的、成功产出的那几次可以从 `GET /api/summaries` 取回来回看（记录只活在内存里，
-新的一场 `start` 清空）。模型端点由七个 `summary.*` 键配（改完要重启），
+新的一场 `start` 清空）。模型端点由七个 `summary.*` 键配（缺省档 `summary.default_window`
+写完即生效，其余六键改完要重启），
 密钥那一格可以走环境变量 `MEETING_SUMMARY_API_KEY`；没配齐就当场说清缺哪几个键。
 这一层怎么切窗口、提示词与模型输出是什么形状、超时与重试的预算落在哪，见 `docs/summary.md`。
 
@@ -139,18 +142,22 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 
 ## 3. 热读键有哪些
 
-**`asr.*` 那五个键每段重新读，`alarm.sound` 写盘那一刻就生效** —— 这六个合起来是热读键：
+**`asr.*` 那五个键每段重新读，`alarm.sound` 勾选那一刻就生效；设置抽屉那四项
+（`311f84f5`：两个设备键位、`heartbeat.interval_seconds`、`summary.default_window`）
+写盘那一刻快照就换新值 —— 这十个合起来是热读键**：
 
-    alarm.sound
+    alarm.sound / heartbeat.interval_seconds / summary.default_window
+    devices.mic / devices.loopback
     asr.max_segment_seconds / asr.timeout_seconds / asr.max_new_tokens /
     asr.repeat_max_unit / asr.repeat_min_coverage
 
 `alarm.sound`（本场出不出声的持久化开关）收在热读档，是为了让钩子上的「出声开关」勾选即生效：
 `settings_update` 写盘成功那一刻快照里的 `settings.alarm_sound` 就换过去了。
+设置抽屉那四项同理：设备写完 `reprobe` 按新值挑，心跳与缺省档的快照格当场换。
 
-其余键（`web.*` / `log.*` / `alert.*` / `heartbeat.*` /
-`capture.*` / `transcriber.*` / `post.*` / `minutes.*` / `summary.*`）**改完要重启**。这份「其余键」清单以
-`meeting/config.py` 的键全集为准。**没有 `output.root` 键**：一场会放哪由它的工作区目录给
+其余键（`web.*` / `log.*` / `alert.*` / `capture.*` / `transcriber.*` / `post.*` / `minutes.*`
+与其余六个 `summary.*`）**改完要重启**。两档的划分以
+`meeting/config.py` 的 `SETTING_KEY_GROUPS` 为准（热读 10 键 + 重启 28 键 = 键全集 38）。**没有 `output.root` 键**：一场会放哪由它的工作区目录给
 （start 显式传 `args.dir`），配置清空也照样能开会。
 
 **环境变量一律在启动时求值**，改了不会热生效。本服务的环境变量一共四个：
@@ -280,7 +287,7 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
     npm test           # vitest run，14 个文件 360 个用例
     npm run typecheck  # 两条 tsc --noEmit -p，各查各的 project
 
-`npm run build` 里已经含 `npm run typecheck`，所以构建过一次就不必再单独跑；只改类型不看产物时跑 `typecheck` 更快。契约正文在 `docs/contract.md`，可机读基准（33 个 golden 样本与掩码规则）在 `contract/`，前端工程的五个脚本（`dev` / `typecheck` / `build` / `preview` / `test`）与其余说明在 `web/README.md`。
+`npm run build` 里已经含 `npm run typecheck`，所以构建过一次就不必再单独跑；只改类型不看产物时跑 `typecheck` 更快。契约正文在 `docs/contract.md`，可机读基准（34 个 golden 样本与掩码规则）在 `contract/`，前端工程的五个脚本（`dev` / `typecheck` / `build` / `preview` / `test`）与其余说明在 `web/README.md`。
 
 ---
 

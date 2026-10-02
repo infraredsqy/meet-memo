@@ -27,7 +27,7 @@
 
 **单一契约声明**：服务对外只有**一个**契约面，就是这一份。`GET /api/state` 的 body、SSE 的 `snapshot` 帧、SSE 的 `state` 帧**三者是同一个函数出的同一份东西**（`ServiceRuntime.to_dict()` → `Snapshot.to_dict()`），不存在「快照有两套形状」这回事。界面拿到哪一份都可以按第 2 章逐键读。
 
-**口径一句话**：**八条 `/api/*` + `/debug` + 静态挂载**（`sessions` / `dirs` 两只读端点来自工作台收编节点 e2f6166b，单场状态 `sessions/{id}` 来自会后进度读数节点 `a9affaa8`，形状分别在 4.8 与 4.9）。
+**口径一句话**：**九条 `/api/*` + `/debug` + 静态挂载**（`sessions` / `dirs` 两只读端点来自工作台收编节点 e2f6166b，单场状态 `sessions/{id}` 来自会后进度读数节点 `a9affaa8`，设备清单 `devices` 来自设置抽屉节点 `311f84f5`，形状分别在 4.8、4.9 与 4.10）。
 
 | 路径 | 方法 | 给什么 |
 |---|---|---|
@@ -39,6 +39,7 @@
 | `/api/sessions` | GET | 工作区注册表（第 4.8 章），**任何状态下都 200** |
 | `/api/sessions/{id}` | GET | 单场状态：这一场此刻跑到哪一档、会后离线跑到第几块（第 4.9 章），**任何状态下都 200**；路径打不到已登记的工作区时 404 |
 | `/api/dirs` | GET | 目录选择器的一层现场（第 4.8 章），**任何状态下都 200** |
+| `/api/devices` | GET | 两路各自的候选设备端点表（第 4.10 章），**任何状态下都 200** |
 | `/debug` | GET | 骨架自检页。从**包内**读取，不依赖 `web/dist`，与产物在不在无关。页面内显式标注非产品界面、不承担任何告警职责 |
 | `/`（静态挂载） | GET | **三档**：产物目录有内容 → 整棵 `/` 子树交给 `StaticFiles(html=True)`；目录不存在 → 一页说明（`GET/HEAD /` 本身给说明页，其余路径回 404）；**目录在、里面是空的 → 404**。**存在性按每请求判定**：产物一建好刷新即可见，又被删掉刷新回说明页 |
 
@@ -66,7 +67,7 @@
 
 **排障说明（`[::1]` 的 403）**：这条规则是**有意为之**的现状，行为符合预期。浏览器打 `http://127.0.0.1:8765` 或 `http://localhost:8765` 都会给出允许的 `Host`；只有手工指定 `http://[::1]:8765` 才会撞上 403。撞上时的正确处置是**换成 `127.0.0.1` 或 `localhost` 再访问**，不要去改 Host 校验的允许集合 —— 服务只绑在 IPv4 回环上，`[::1]` 本来也连不上这个监听 socket。
 
-**这一档的 fixtures**：`contract/fixtures/snapshot/*.json`（五档快照）、`contract/fixtures/sse/*.json`（五帧）、`contract/fixtures/actions/*.json`（十七个：成功七档 `start-ok` / `stop-ok` / `mute-session-ok` / `settings-update-ok` / `summarize-ok` / `workspace-open-ok` / `workspace-remove-ok`；失败十档 = 九个 `code` 各一 + 未知动作名那一档，其中 `summary_failed` 这份是**缺键**那一档）、`contract/fixtures/heartbeat/*.json`（两个）、`contract/fixtures/summaries/*.json`（一个）、`contract/fixtures/sessions/*.json`（三个）。
+**这一档的 fixtures**：`contract/fixtures/snapshot/*.json`（五档快照）、`contract/fixtures/sse/*.json`（五帧）、`contract/fixtures/actions/*.json`（十七个：成功七档 `start-ok` / `stop-ok` / `mute-session-ok` / `settings-update-ok` / `summarize-ok` / `workspace-open-ok` / `workspace-remove-ok`；失败十档 = 九个 `code` 各一 + 未知动作名那一档，其中 `summary_failed` 这份是**缺键**那一档）、`contract/fixtures/heartbeat/*.json`（两个）、`contract/fixtures/summaries/*.json`（一个）、`contract/fixtures/sessions/*.json`（三个）、`contract/fixtures/devices/*.json`（一个）。
 
 ## 2. 快照 schema
 
@@ -82,7 +83,7 @@
 | 6 | `alerts` | object | `{critical: Alert｜null, hints: [Alert]}` |
 | 7 | `transcript` | object | `{health, last_line_at, buffered_lines, failed_segments}` |
 | 8 | `ended` | object \| null | `null`，或 `{phase, steps: [DrainStep], error}` |
-| 9 | `settings` | object | `{alarm_sound, heartbeat_interval_seconds, asr{…}, devices{mic, loopback}}` |
+| 9 | `settings` | object | `{alarm_sound, heartbeat_interval_seconds, summary_default_window, asr{…}, devices{mic, loopback}}` |
 
 `service` 五子键：`started_at`（ISO，**掩码 `<iso>`**）/ `version`（非空字符串）/ `port`（int，**掩码 `<port>`**）/ `url`（**掩码 `<url>`**）/ `log_path`（**掩码 `<path>`**）。`port` 与 `url` **只能由监听 socket 的 `getsockname()` 读回值产生**，绑定之前取快照一律抛错 —— 不留退化的空值、不拿配置值或字面量顶替。**没有 `out_root`**：会放哪由工作区给，服务不设定默认落点（`docs/design-intent.md` 第 4 条）。
 
@@ -116,7 +117,7 @@
 - 收尾失败后 `phase` **保持 `draining`**、`ended.error` 是那一刻的原因（与失败步的 `error` 同文），这份摘要与 `session` 一起留在快照里。
 - 成功档收尾的副作用会把两路 `health` 从 `stopped` 带回 `unprobed`；失败停留档**保留 `stopped` 现场**。
 
-`settings` 四键：`alarm_sound`（bool）、`heartbeat_interval_seconds`（int，界面发心跳的周期）、`asr`（五子键，与配置键 `asr.*` **逐字同名**、只去掉前缀）、`devices`（两子键 `mic` / `loopback`，与配置键 `devices.mic` / `devices.loopback` **逐字同名**、只去掉前缀，见第 7 章）。
+`settings` 五键：`alarm_sound`（bool）、`heartbeat_interval_seconds`（int，界面发心跳的周期）、`summary_default_window`（四档取值 `5m` / `15m` / `30m` / `full`，快速总结的缺省档，`311f84f5`）、`asr`（五子键，与配置键 `asr.*` **逐字同名**、只去掉前缀）、`devices`（两子键 `mic` / `loopback`，与配置键 `devices.mic` / `devices.loopback` **逐字同名**、只去掉前缀，见第 7 章）。
 
 - `asr` 五子键：`max_segment_seconds` / `timeout_seconds` / `max_new_tokens` / `repeat_max_unit` / `repeat_min_coverage`。
 - `devices` 两个子键的取值是**设备名字符串**；没配就是 `null`（按默认策略挑设备）。空值形状两端一致：配置文件里也写 `null`，**空字符串与纯空白串按没配处理**（`meeting/config.py` 的 `validate_value()` 把两个设备键位上的空串与纯空白串归一成 `null`）——`settings_update` 写 `"devices.mic": ""` 或 `"   "` 会照常落盘、落成 `null`。
@@ -124,7 +125,7 @@
   - `mic`：按配置的名字找端点（精确名先行，找不到再按前缀兜一次）；候选为空时**回落到系统默认输入端点**（`sd.default.device[0]`，读不出来再退 `sd.query_devices(kind="input")`），主 log 一行 `WARNING`；
   - `loopback`：精确名命中即用；没命中就按「名字含 `CABLE Input` 且不含 `16ch`」挑；再没有就取**系统默认输出**（`sc.default_speaker()`），主 log 一行 `WARNING`（`meeting/capture/devices.py` 的 `loopback_candidates()`，搬自 V1 `recorder.py:451-465` 的原行为）；
   - 于是快照里的 `settings.devices.mic` 仍是用户写下的那个名字，而 `sources[0].device_name` 是**真正在采的那条端点**。判断「这一场到底在录哪个设备」时看 `device_name`。
-- 这里读到的是**运行期生效值**。非热读的键改了要重启才在快照里可见（第 4 章）。
+- 这里读到的是**运行期生效值**。非热读的键改了要重启才在快照里可见（第 4 章）；热读键（`alarm.sound`、`asr.*` 五个与设置抽屉那四项：两个设备键位、`heartbeat.interval_seconds`、`summary.default_window`）写盘那一刻就换过来。
 
 **`notice` 槽位已退场**（`docs/design-intent.md` 第 4 条）：原「启动扫最近一场 → 空闲态挂 `restart_unfinished` 提示」整条随「默认输出根」一并拆掉，快照顶层不再有这个键；**工作区的登记与"最近一场"已由收编节点落地**（`GET /api/sessions` 的 `recent`，形状见 4.8）——启动序列对场次目录照旧一个字不读。
 
@@ -383,17 +384,17 @@ X-Meeting-Service: 1
 
 | 归类 | 键（个数） | 为什么 |
 |---|---|---|
-| `applied` | `alarm.sound` / `asr.max_segment_seconds` / `asr.timeout_seconds` / `asr.max_new_tokens` / `asr.repeat_max_unit` / `asr.repeat_min_coverage`（**6 个**） | 这六个是**热读键**，写盘成功就立刻生效。`alarm.sound` 收在这一档，于是勾选出声开关**当场**改运行期行为 |
-| `pending_restart` | `web.port` / `web.dist_dir` / `log.level` / `log.dir` / `log.max_bytes` / `log.backup_count` / `alert.silence_dbfs` / `alert.silence_seconds` / `alert.recover_seconds` / `alert.alarm_suppress_seconds` / `heartbeat.interval_seconds` / `capture.backend` / `transcriber.backend` / `post.hook` / `post.engine` / `post.model` / `post.dtype` / `post.chunk_seconds` / `minutes.hook` / `minutes.chunk_lines` / `minutes.max_segments` / `minutes.timeout_seconds` / `minutes.dsh_url` / `summary.base_url` / `summary.api_key` / `summary.model` / `summary.extra_body_json` / `summary.deadline_seconds` / `summary.max_attempts` / `summary.default_window` / `devices.mic` / `devices.loopback`（**32 个**） | 这些值在**启动时读一次**，写盘成功但要重启才生效 |
+| `applied` | `alarm.sound` / `asr.max_segment_seconds` / `asr.timeout_seconds` / `asr.max_new_tokens` / `asr.repeat_max_unit` / `asr.repeat_min_coverage` / `devices.mic` / `devices.loopback` / `heartbeat.interval_seconds` / `summary.default_window`（**10 个**） | 这十个是**热读键**，写盘成功就立刻生效。`alarm.sound` 收在这一档，于是勾选出声开关**当场**改运行期行为；设置抽屉那四项（`311f84f5`）收在这一档，改完无需重启 |
+| `pending_restart` | `web.port` / `web.dist_dir` / `log.level` / `log.dir` / `log.max_bytes` / `log.backup_count` / `alert.silence_dbfs` / `alert.silence_seconds` / `alert.recover_seconds` / `alert.alarm_suppress_seconds` / `capture.backend` / `transcriber.backend` / `post.hook` / `post.engine` / `post.model` / `post.dtype` / `post.chunk_seconds` / `minutes.hook` / `minutes.chunk_lines` / `minutes.max_segments` / `minutes.timeout_seconds` / `minutes.dsh_url` / `summary.base_url` / `summary.api_key` / `summary.model` / `summary.extra_body_json` / `summary.deadline_seconds` / `summary.max_attempts`（**28 个**） | 这些值在**启动时读一次**，写盘成功但要重启才生效 |
 
-六个热读键都在 `asr.*` 与 `alarm.sound` 这一档，其余 **32 个**全归 `pending_restart` —— 两者合起来正好是 `meeting/config.py` 的 `DEFAULT_VALUES` 键全集（**38 个**），判定由 `SETTING_KEY_GROUPS` 一处给出（守卫用例 `tests/test_api_actions.py::test_settings_key_groups_cover_the_whole_table` 逐条钉住 `6 + 32 = 38`）。
+热读键那十键里，`alarm.sound` 与 `asr.*` 五个是原来那一档；设置抽屉节点（`311f84f5`）把四项收了进来：两个设备键位写盘成功后内存生效值当场换掉，紧接着的 `reprobe` 就按**新设备值**挑（会中换设备仍然不做，`reprobe` 在 `recording` / `alert` 态照旧回 `already_recording`）；`heartbeat.interval_seconds` 与 `summary.default_window` 的消费方（前端轮询、每次 `summarize` 取缺省档）都不持有运行期旧值，写盘即生效。其余 **28 个**全归 `pending_restart` —— 两档合起来正好是 `meeting/config.py` 的 `DEFAULT_VALUES` 键全集（**38 个**），判定由 `SETTING_KEY_GROUPS` 一处给出（守卫用例 `tests/test_api_actions.py::test_settings_key_groups_cover_the_whole_table` 逐条钉住 `10 + 28 = 38`）。
 
-**会中总结那七个 `summary.*` 键**（`1987cb20` phase1 加进来的）也归 `pending_restart`：`summary.base_url` / `summary.model` / `summary.extra_body_json` / `summary.default_window` 收字符串（`default_window` 只认 `5m` / `15m` / `30m` / `full` 四档），`summary.api_key` 是**可空键**（`null` = 没配，与两个设备键位同形），`summary.deadline_seconds` 收 `1.0`–`3600.0` 秒、`summary.max_attempts` 收 `1`–`10`。键名与取值范围的判据在 `meeting/config.py`，用法见第 4.7 节。
+**会中总结那七个 `summary.*` 键**（`1987cb20` phase1 加进来的）：缺省档 `summary.default_window` 收在热读档（`311f84f5`），其余六键归 `pending_restart`：`summary.base_url` / `summary.model` / `summary.extra_body_json` 收字符串，`summary.api_key` 是**可空键**（`null` = 没配，与两个设备键位同形），`summary.deadline_seconds` 收 `1.0`–`3600.0` 秒、`summary.max_attempts` 收 `1`–`10`。`summary.default_window` 只认 `5m` / `15m` / `30m` / `full` 四档，写盘那一刻快照 `settings.summary_default_window` 就换过去。键名与取值范围的判据在 `meeting/config.py`，用法见第 4.7 节。
 
 两个数组里也是同一套点号键名，次序**照本次请求里的键逐条走**。
 
 - **两个数组的判据只有一条**：该键在键态表里归哪一档。**「写盘成功」是前提** —— 写盘失败整笔回 `persist_failed`(500)，一处都不生效。
-- **`alarm.sound` 与 `asr.*` 一样当场生效**：写盘成功那一刻主 log 落一行「alarm.sound 收在热读档，本刻起出声开关 = …」，服务侧同时重取一次生效值视图并提交，于是紧接着的 `GET /api/state` 里 `settings.alarm_sound` 就是新值，界面当场按新值决定响不响（设计稿 `docs/ui-design.md` 4.5 要的「勾选立即生效」在这里成立）。
+- **`alarm.sound` 与 `asr.*` 一样当场生效**：写盘成功那一刻主 log 落一行「alarm.sound 收在热读档，本刻起出声开关 = …」，服务侧同时重取一次生效值视图并提交，于是紧接着的 `GET /api/state` 里 `settings.alarm_sound` 就是新值，界面当场按新值决定响不响（设计稿 `docs/ui-design.md` 4.5 要的「勾选立即生效」在这里成立）。设置抽屉那四项同路：写盘成功即重取生效值视图并提交，`settings.devices.*` / `heartbeat_interval_seconds` / `summary_default_window` 三格当场换新值。
 - **只写用户配置文件里已有的键 + 本次改动的键**，不把代码默认值落盘 —— 一次 `settings_update` 不会凭空长出一份写着全部默认值的配置文件。
 - **校验在写盘之前**：至少落地方案点名的「超时必须大于段长」（`asr.timeout_seconds > asr.max_segment_seconds`，没改到的那一半取生效配置的当前值），违规回 `invalid_setting`(400) 且 `detail = {key, value, legal}`。
 - **被环境变量压着的键不改分类**：`asr.*` 照样进 `applied`；「被环境变量压着」这件事只在主 log 留一条 warning（键名 + 写盘的值 + 压住它的环境变量名），运行期仍由环境变量说话。
@@ -568,6 +569,37 @@ X-Meeting-Service: 1
 
 **这一档的 fixtures**：`contract/fixtures/sessions/status-after-run.json`。
 
+### 4.10 设备清单：`GET /api/devices`
+
+**任何状态下都 200**；纯读：不提交、不涨 `revision`、不广播（与 4.7 / 4.8 / 4.9 同一档）。
+设置抽屉的两个设备下拉读它（`311f84f5`）。**只读、纯枚举、不开任何设备**：
+枚举走 `meeting/capture/sources.py` 的 `list_input_endpoints()` / `list_render_endpoints()`
+（只读端点表），`probe()` 那条会短暂试开的路不在它身上 —— 「本节点不真开设备」这条
+在清单端点上同样成立。
+
+```json
+{"mic": [{"name": "Analogue 1 + 2 (2- Focusrite US", "host_api": "MME",
+          "role": "input", "index": 1, "channels": 2, "is_default": true}],
+ "loopback": [{"name": "CABLE Input (VB-Audio Virtual Cable)", "host_api": "",
+               "role": "render", "index": 0, "channels": 0, "is_default": false}]}
+```
+
+- 每项**六格**照 `DeviceEndpoint` 原样给：`name`（端点名，`settings_update` 里配的就是它）/
+  `host_api`（render 端点没有 host API，恒空串）/ `role`（`input` / `render`）/
+  `index`（`sounddevice` 的设备序号；render 端点是枚举序）/ `channels` / `is_default`
+  （只有 mic 侧会标，种子是只读的 `sd.default.device[0]`）。
+- **两路的键就是两路的 id**（`mic` / `loopback`）；同名端点在多个 host API 下会重复出现，
+  界面按 `name` 去重摆（配置按名字挑）。
+- 「按默认策略挑」永远可选：`settings_update` 把设备键位写成 `null` 就是这一档，
+  本端点不必（也不该）替界面摆这个选项。
+- 端点表读不出来时回 **503 `capture_unavailable`**（复用冻结 `code`，`detail = {error}`）。
+- **会中打开抽屉时清单照给**（枚举端点表不碰任何在飞的东西）；换不换得了由界面按第 7 章
+  在 `recording` / `alert` 态禁用设备格 —— 服务侧的 `reprobe` 在这两态本来就回
+  `already_recording`。
+
+**这一档的 fixtures**：`contract/fixtures/devices/all.json`（设备枚举在采集里走假件，
+名字与 `is_default` 是确定值）。
+
 
 ## 5. 心跳
 
@@ -666,7 +698,7 @@ X-Meeting-Service: 1
 
 ## 8. fixtures 与掩码（附录）
 
-契约的**可机读基准**是 `contract/fixtures/` 下的 33 个 golden 样本。它们一律**出自真实服务路径**，不是手写的。规则、出处与再生成办法写在 `contract/README.md`；这里给读者一份速查。
+契约的**可机读基准**是 `contract/fixtures/` 下的 34 个 golden 样本。它们一律**出自真实服务路径**，不是手写的。规则、出处与再生成办法写在 `contract/README.md`；这里给读者一份速查。
 
 | 目录 | 样本 | 对应本文件 |
 |---|---|---|
@@ -675,6 +707,7 @@ X-Meeting-Service: 1
 | `actions/` | 成功七档 `start-ok` / `stop-ok` / `mute-session-ok` / `settings-update-ok` / `summarize-ok` / `workspace-open-ok` / `workspace-remove-ok`；失败十档 = 九个 `code` 各一 + 未知动作名那一档，其中 `summary_failed` 这份是**缺键**那一档（预算用尽那一档要一个真等满预算的假端点，由 `tests/test_summary_action.py` 实测）（**17**） | 第 4 章 |
 | `summaries/` | `after-one`（按过一次之后的本场总结记录，**1**） | 第 4.7 节 |
 | `sessions/` | `empty`（空注册表） / `after-open`（登记三档目录之后的清单 + `recent`） / `status-after-run`（单场状态：两份块账 + 状态文件落好之后的那一读）（**3**） | 第 4.8 / 4.9 节 |
+| `devices/` | `all`（两路各一份候选端点表；枚举走假件，名字与 `is_default` 是确定值）（**1**） | 第 4.10 节 |
 | `heartbeat/` | `idle` / `recording`（**2**） | 第 5 章 |
 
 **掩码（`tests/_contract.py` 的 `normalize()`）**：fixtures 由真实服务采集，采集里的墙钟、路径、端口、电平每次都不同，落盘前一律换成**自描述占位符**：
@@ -721,7 +754,7 @@ python -m pytest tests/test_contract_fixtures.py --regen-contract -q
 1. **抽一个快照 fixtures 与 `Snapshot.to_dict()` 逐字段对照**：`meeting/state.py` 的 `to_dict()` 是唯一产出形态，顶层九键、`session` 六子键、`sources` 九键、`DrainStep` 四键都能逐行对上。`ended` / `session` 两个 `null` 档都能在 `idle` 样本里看一次。
 2. **故意改坏一个键名跑比对测试，确认会红**（验完还原）：例如把 `contract/fixtures/snapshot/recording.json` 里的 `"top_state"` 改成 `"topState"`，`python -m pytest tests/test_contract_fixtures.py -q` 应当报出「与实时采集不一致」。
 3. **任选两条 `detail` 与 `meeting/service/runtime.py` 的实际路径对照**：`already_recording` 三键在 `_already_recording_error()`、`draining` 四键在 `_draining_error()` / `_draining_error_for_dir()`（后者从盘上那一版读 `failed_steps`）。
-4. **确认保留登记章里没有任何端点被顺手实现**：`python -c "from meeting.service.routes import all_routes; print([r.path for r in all_routes()])"` 应当只打出九条路径（八条 `/api/*` + `/debug`：`/api/state` / `/api/events` / `/api/heartbeat` / `/api/actions` / `/api/summaries` / `/api/sessions` / `/api/sessions/{dir:path}` / `/api/dirs` / `/debug`）；`ACTION_NAMES` 应当有十一个名字（`start` / `stop` / `mute_session` / `settings_update` / `reprobe` / `dev_inject` / `summarize` / `workspace_open` / `workspace_remove` / `post_offline` / `post_minutes`），会中总结那一个的正文在第 4.7 节、工作台那三个在第 4.8 节、会后两个按钮在第 4.3 节、单场状态那一只在第 4.9 节。
+4. **确认保留登记章里没有任何端点被顺手实现**：`python -c "from meeting.service.routes import all_routes; print([r.path for r in all_routes()])"` 应当只打出十条路径（九条 `/api/*` + `/debug`：`/api/state` / `/api/events` / `/api/heartbeat` / `/api/actions` / `/api/summaries` / `/api/sessions` / `/api/sessions/{dir:path}` / `/api/dirs` / `/api/devices` / `/debug`）；`ACTION_NAMES` 应当有十一个名字（`start` / `stop` / `mute_session` / `settings_update` / `reprobe` / `dev_inject` / `summarize` / `workspace_open` / `workspace_remove` / `post_offline` / `post_minutes`），会中总结那一个的正文在第 4.7 节、工作台那三个在第 4.8 节、会后两个按钮在第 4.3 节、单场状态那一只在第 4.9 节、设备清单那一只在第 4.10 节。
 
 ## 10. 相关文档
 
