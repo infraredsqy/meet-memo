@@ -23,9 +23,10 @@
 真采集后端（`dca4539b` 的 `meeting.backends.capture:CaptureBackend`，`capture.backend` 的默认值 `auto` 解析到它）把上面四条都落到了实处：
 
 - `probe()` 用 `sounddevice` 枚举输入端点、用 `soundcard` 枚举 render 端点，按配置与策略挑选，**以 16k 试开并读回一小段样本**（「能打开 ≠ 有波形」那一档就是这一步加出来的），结果如实报成两路 `ready` / `probe_failed`；
-- `start()` 起两路**各自独立**的采集：mic 走 `sd.InputStream` 回调、loopback 走 `soundcard` 的 recorder（专用线程 + `CoInitializeEx`），把 16k / 单声道 / int16 的裸 PCM 写进 `meeting_audio_<source>.pcm`（`buffering=0` 的追加写，强杀最多丢最后一个块的尾巴），每 `frame_interval` 秒**无条件**发一帧 `LevelFrame`（静音时发 `-120 dBFS` 的那一帧）+ 一条 `SourceFacts`；
+- `start()` 起两路**各自独立**的采集：mic 走 `sd.InputStream` 回调、loopback 走 `soundcard` 的 recorder（专用线程 + `CoInitializeEx`），把 16k / 单声道 / int16 的裸 PCM 写进 `meeting_audio_<source>_<NNN>.pcm`（NNN 三位零填充、从 1 起；**一段 = 一次录制**，本节点内每场每路恰好一段；`buffering=0` 的截断写，强杀最多丢最后一个块的尾巴），每 `frame_interval` 秒**无条件**发一帧 `LevelFrame`（静音时发 `-120 dBFS` 的那一帧）+ 一条 `SourceFacts`；
 - 两路各有一条写线程（一路卡在磁盘上不会把另一路拖住）；一路的源读崩时该路报一条 `SourceLost`，另一路照常写；
-- `finalize()` / `transcode()` / `stop()` 见上表；转码成功之后**保留 PCM**（`session.json` 的 `sources[*].archive` 声明的是它）。
+- 暂停与「关一路」的服务层出口（`6ea32d8d`；不在上面那张协议表里 —— HTTP 动作入口归下游节点）：`pause()` / `resume()` 让所有路从这一刻起写数字静音（**不录内容**，真音频在写侧被等长替换成数字零），暂停不切段、只记进段账的 `pauses` 区间；`deactivate_source()` 是用户主动关掉某一路 —— 那一路改写静音，**不报 `SourceLost`、不进告警**（与「这一路真死了」是两回事）；`mode` 没选中的那一路整段写静音填充。三种静音都单独记进写侧的 `silence_bytes` 账，两路时间轴始终等长；
+- `finalize()` / `transcode()` / `stop()` 见上表；转码成功之后**保留 PCM**（`session.json` 的 `sources[*].archives` 段文件名表声明的是它们）。
 
 后端往里送的事实（**只报原始事实，不判告警、不带阈值语义**）：
 
@@ -58,7 +59,7 @@
 真转写后端（`9e5db89c` 的 `meeting.backends.transcribe:TranscriberBackend`，`transcriber.backend` 的默认值 `auto` 解析到它）把上面这几条都落到了实处：
 
 - `bind(line_sink, *, config)` 记下出口与只读配置视图。runtime 在 `probe()` 之前先 `bind()` 一次、会话起来之后再 `bind()` 一次，两处都接得住：出口经一层间接层**现取**，于是「绑定时刻」与「产出时刻」谁先谁后都不影响那一行被送出去；
-- `start(mode, session_dir)` 起 `meeting/asr/pipeline.py` 那条流水线：两路各一条读线程**游标尾读** `session_dir/meeting_audio_<source>.pcm`（只看新字节、不碰采集层的对象、不要求采集给它开旁路出口）、VAD 按 16k / 单声道 / int16 切段（帧长 30ms、静默 2.0 秒出段、单段硬上限 `asr.max_segment_seconds`）、段**入队时就盖上采集时刻**、**一个** worker 顺序消费两路的段（显存只有一份）。**起步失败不阻塞录音**：异常收成一条 error 日志、`health()` 落 `stopped`，采集照跑；
+- `start(mode, session_dir)` 起 `meeting/asr/pipeline.py` 那条流水线：两路各一条读线程**按段序号尾读** `session_dir/meeting_audio_<source>_<NNN>.pcm`（段 1、段 2、…逐段接续，按序号拼起来 = 连续时间轴；只看新字节、不碰采集层的对象、不要求采集给它开旁路出口）、VAD 按 16k / 单声道 / int16 切段（帧长 30ms、静默 2.0 秒出段、单段硬上限 `asr.max_segment_seconds`）、段**入队时就盖上采集时刻**、**一个** worker 顺序消费两路的段（显存只有一份）。**起步失败不阻塞录音**：异常收成一条 error 日志、`health()` 落 `stopped`，采集照跑；
 - `stop()` 关读线程、把 VAD 手上的尾段送进队列，再在**收尾预算**内把队列里剩下的段尽量做完（预算按积压量自适应，公式见 `docs/state.md` 第 1 章）；
 - `health()` 三取值：已经 `stop()` 过、worker 没起来 / 已经停了、模型加载或识别出事 → `stopped`；积压段数压过 `BACKLOG_BEHIND_THRESHOLD`（20 段）→ `behind`；读线程出事、这一段再也不会长出新段也报 `behind`；其余情况 `normal`。**没起过场次时报 `stopped`** —— 快照空闲态那一格就是从它读来的真值；
 - `backlog_depth()` 是段队列里还没处理的段数（队列**无界**，不做 busy-drop），`segment_timeout()` 是配置里的 `asr.timeout_seconds`（默认 `20.0`）；

@@ -478,7 +478,7 @@ X-Meeting-Service: 1
 
 - 先判名目（`meeting/workspace.py` 的 `classify_workspace_dir()`），**三档三条路**（R20）：
   - `kind: "empty"` —— 空目录当一场新会，直接登记；
-  - `kind: "meeting"` —— 有会议材料（`session.json` 或 `meeting_audio_<source>.pcm` 两名之一）就收编；**`suspected: true` = 有音频归档名但没有 `session.json` 的疑似会议目录**（兜底档：照收编处理，不当杂物目录）；
+  - `kind: "meeting"` —— 有会议材料（`session.json` 或任一 `meeting_audio_*.pcm`：名目判据是 `meeting_audio_` 前缀 + `.pcm` 后缀，段文件的命名 `meeting_audio_<source>_<NNN>.pcm` 也落在里面）就收编；**`suspected: true` = 有音频归档名但没有 `session.json` 的疑似会议目录**（兜底档：照收编处理，不当杂物目录）；
   - `kind: "unknown"` —— 非空、没有会议材料：`confirm` 缺失时回 **400 `invalid_setting`**（`detail = {key: "confirm", value: null, legal: [...]}`；**目录与盘面一个字节没动**），带 `confirm: true` 重发才登记。
 - `dir` 给到不存在的路径回 **400 `invalid_setting`**（已存在是硬前提，本服务不建目录）；注册表写盘失败回 **500 `persist_failed`**。
 - 去重判据是**规范化后的绝对路径**：同一个目录选两次（拖尾分隔符之类的写法差也算同一处）只占一行；已登记过的路径只更新这一行的 `last_opened_at`（`first_time: false`）。**任何状态下都可用**；它不碰快照、`revision` 不因登记涨。
@@ -662,7 +662,7 @@ X-Meeting-Service: 1
 
 **会后产物不在本契约里**：会后离线转写与说话人聚类（`7c6952e5`）已经落地，产物住在**场次目录里的文件**上 —— 四份产物：`meeting_offline_transcript_<source>.md`（每路一份的会后精细稿，一行 `[HH:MM] **S01**: 正文`）、`meeting_offline_speakers_<source>.json`（类编号与区间对照表）、`meeting_offline_report.md`、`meeting_offline_status.json`；另一份是**逐块进度账** `meeting_offline_progress.jsonl`（`a9affaa8` 落地的读数文件，名字与 `meeting_offline_transcript_` 那个前缀对不上，与那四份产物并列平放）。**它们没有各自的 HTTP 端点，快照里也没有对应字段**（要看这一场跑到哪一档、会后离线跑到第几块，读 4.9 那只单场状态端点；那条路走的是那份逐块账与状态文件的起止时刻），本契约的端点口径、快照 schema 与 SSE 帧形状都管不到；要读产物本身，就按场次目录里的文件读，四份产物的字段契约正文在 `meeting/offline/artifacts.py` 的模块说明里、逐块账的在 `meeting/offline/progress.py` 的模块说明里。**两路各落一份、两路不合并**（文件名与限定名 `mic:S01` 里始终带着 `source`）。这一场跑成什么样由 `meeting_offline_status.json` 回答：收尾第 4 步的 `post` 不再拉起会后钩子，做完释放显存就如实停在 `waiting`（＝等你动手）；会后离线由「生成会后精细稿」按钮或 `meeting post` 拉起，跑不跑得成、缺没缺一段写在状态文件与运行报告里。
 
-**「暂停」不做，不留位。** 需求锚里没有任何一条要暂停，而「暂停」恰好就是 R2/R4 要消灭的那种「看起来在录、实际没录」的状态（`docs/ui-design.md` 第 5 章明文）。因此本契约里**没有** `pause` / `resume` 动作、**没有**快照里的 `paused` 之类字段，**也不为将来留占位**。同理，**不做会中的音频源切换**：要录哪几路在开始前定（`mode`），录音期间不切。
+**「暂停」的动作面还没进契约，能力已经落地。** R24 / R25（`docs/design-intent.md` 第 8、9 条）要的暂停与「段只表达录了几次」，引擎与服务层已经实现（`6ea32d8d`）：暂停期间写数字静音、**不录内容**、不切段（暂停只进 `session.json` 段账的 `pauses` 区间），会中关掉某一路写静音、**不报 `SourceLost`**。但 `ACTION_NAMES` 本版未动：本契约里**仍没有** `pause` / `resume` / `deactivate_source` 动作、**没有**快照里的 `paused` 之类字段、fixtures 也未动 —— HTTP 动作入口与界面按钮归下游节点，落地时「先做进代码、再回写进本文件第 1–6 章」。**会中的音频源切换仍不做**：要录哪几路在开始前定（`mode`），录音期间不切。
 
 ## 8. fixtures 与掩码（附录）
 

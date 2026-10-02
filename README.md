@@ -76,10 +76,11 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
   一条结论（`ready` / `probe_failed`，没探测过是 `unprobed`）；
 - 两路**各自独立**地读、各自独立地写盘（一路出事另一路照跑；一路起不来只给它自己发一条
   `SourceLost`，两路都起不来才拒绝开场）；
-- 音频落 `<场次目录>\meeting_audio_mic.pcm` 与 `meeting_audio_loopback.pcm`
-  （16k / 单声道 / int16 小端裸 PCM，无头，**边采边落盘**）；
-- 停下来的收尾：第 1 步停流落盘，第 2 步同目录同名转出 `.mp3`（64k）。**转码成功之后 PCM 照样
-  留着** —— `session.json` 里 `sources[*].archive` 声明的就是它。
+- 音频按段落盘：`<场次目录>\meeting_audio_<source>_<NNN>.pcm`（`meeting_audio_mic_001.pcm` /
+  `meeting_audio_loopback_001.pcm`；NNN 三位零填充、从 1 起，一段 = 一次录制，
+  16k / 单声道 / int16 小端裸 PCM，无头，**边采边落盘**）；
+- 停下来的收尾：第 1 步停流落盘，第 2 步同目录同名**逐段**转出 `.mp3`（64k）。**转码成功之后
+  PCM 照样留着** —— `session.json` 里 `sources[*].archives` 段文件名表声明的就是它们。
 
 录哪一路用哪个设备由两个配置键定（`devices.mic` / `devices.loopback`，不配就按默认策略挑）；
 改完要重启才生效。**配置是「你的意图」，快照 `sources[*].device_name` 是「实际落到的那个

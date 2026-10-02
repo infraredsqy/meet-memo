@@ -37,7 +37,7 @@ def decode_audio(path: str | Path) -> "np.ndarray":
 
     本机实测：99 分 03.3 秒的那条 mp3 走这条路得到 `(95092800,)` float32。
 
-    归档 PCM（`meeting_audio_<source>.pcm`）是**无头的裸流**，开容器那一步按后缀分流
+    归档 PCM（`meeting_audio_<source>_<段号>.pcm`，一段一个文件）是**无头的裸流**，开容器那一步按后缀分流
     （见 `_open_container()`）：探测在它上面必然失败，只有显式给出格式才解得开。
     """
     import numpy as np
@@ -66,7 +66,7 @@ def decode_audio(path: str | Path) -> "np.ndarray":
 def _open_container(av, path: str | Path):
     """按容器形态开 PyAV 输入：归档 PCM 走**显式格式**，别的容器照旧让 PyAV 探测。
 
-    归档 PCM（`meeting_audio_<source>.pcm`）是**无头的裸流**，`av.open()` 的探测在它上面
+    归档 PCM（`meeting_audio_<source>_<段号>.pcm`，一段一个文件）是**无头的裸流**，`av.open()` 的探测在它上面
     必然失败（实测 `InvalidDataError: Invalid data found when processing input`）——
     这与文件好坏无关：同一个文件按下面的显式格式打开，整份样本都能解出来（`260928` 那份
     900224 字节的归档 PCM 解出 450112 个样本，`450112 * 2 == 900224`）。形状是已知的
