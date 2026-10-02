@@ -910,7 +910,7 @@
 | `band--quiet` / `band--alert` / `band--sticky` | 横带修饰：次级（无底线）、故障（红底）、吸顶 |
 | `rail` / `rail__tick` / `rail__label` / `rail__zero` | 左尺：刻度列 / 刻度线 / 刻度字 / 零位线 |
 | `list` / `list__row` | 会后视图用的纵向列表 |
-| `page--home` / `home` / `home__list` / `home__aside` / `wspane` / `wspane__title` / `wspane__why` | 工作台首页（空闲态与收尾落定后的那一屏；判据在 `web/src/home/gate.ts`）：页面 / 主体两列 / 左清单 / 右侧那一场 / 那一块 / 标题 / 按不动时的那句原因 |
+| `page--home` / `home` / `home__list` / `home__aside` / `wspane` / `wspane__title` / `wspane__why` | 工作台首页（空闲态与收尾落定后的那一屏；判据在 `web/src/home/gate.ts`）：页面 / 主体两列 / 左清单 / 右侧那一场 / 那一块 / 标题 / 按不动时的那句原因 / 详情里各段的读数行（「录音 共 N 段 · 合计」加每段的时长与起止时刻，`kv` 一族；顶栏动作钮对录过的行叫「接着录」，`670d72b5`） |
 | `wspane__post` / `wspane__posttitle` / `wspane__postacts` / `wspane__postline` | 工作台里那一场的**会后那一块**（两个按钮，章 3.1 末尾那张表）：块（`aria-label="会后"`）/ 「会后」那一行小标题 / 两个按钮那一排 / 块里那几行小字（「这一场有会后精细稿…」那一格与它按不动时的三档写法、动作回执） |
 | `wslist` / `wslist__row` / `wslist__row--on` / `wslist__name` / `wslist__path` / `wslist__state` / `wslist__state--dim` / `wslist__state--post-running` / `wslist__state--waiting` / `wslist__state--draining` / `wslist__remove` | 工作区清单与一行：容器 / 一行 / 选中的实心底 / 场名 / 路径 / 状态格（行四态的字 + glyph 或 spinner，`52b24392`：空闲 / 正在录 / 会后跑着 / 等你动手）/ 灰档（路径已不在）/ 三个冗余色档（会后跑着 / 等你动手 / 收尾中；字与形状已经承载语义，颜色只作第二通道）/ 移除按钮 |
 | `wsprog` / `wsprog__head` / `wsprog__title` / `wsprog__phase` / `wsprog__toggle` / `wsprog__body` | 选中那一场详情里的**会后进度区**（`52b24392`，章 3.3）：区（`aria-label="会后进度"`）/ 头行 / 「会后进度」小标题 / 阶段行（`data-phase` 挂四档：真在跑 / 盘上停着一版 running / 跑完 / 没跑过；字 + spinner 或 glyph）/ 展开·收缩按钮（`aria-expanded`）/ 展开后的主体（收起时不渲染） |
@@ -979,7 +979,7 @@
 | `seg` / `seg__item` / `seg__item--on` | 档位组（总结窗口 5 / 15 / 30 / 整场） |
 | `readout` / `readout--great` / `readout--bad` / `readout--dead` | 读数：默认 / 正常 / 异常 / 已停 |
 | `tag` | 标签（`临时稿 · 会后重建一份` 这类） |
-| `kv` / `kv__k` / `kv__v` | 键值对（设备名、log 路径、耗时） |
+| `kv` / `kv__k` / `kv__v` | 键值对（设备名、log 路径、耗时、工作台详情里各段的读数行） |
 | `rule-h` / `rule-v` | 横线 / 竖线 |
 | `codeblock` | 可复制块（命令、log 路径），失败块与空态里都用它 |
 | `glyph` + `glyph--idle` / `glyph--rec` / `glyph--alert` / `glyph--draining` / `glyph--done`（另有小号三件 `glyph--check` / `glyph--cross` / `glyph--dashed`：勾 / 叉 / 虚线环，内联 SVG mask 的 data URI、仍零外链；每路健康徽标与行四态在用） | 四态图形标记：空心方框 / 实心圆 / 实心三角 / 半实心方框 / 实心方框打勾。**形状是"不靠颜色"的那一半**，用 `clip-path` 画，不引任何图片、SVG 资源或图标字体 |

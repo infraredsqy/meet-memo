@@ -23,7 +23,7 @@
 真采集后端（`dca4539b` 的 `meeting.backends.capture:CaptureBackend`，`capture.backend` 的默认值 `auto` 解析到它）把上面四条都落到了实处：
 
 - `probe()` 用 `sounddevice` 枚举输入端点、用 `soundcard` 枚举 render 端点，按配置与策略挑选，**以 16k 试开并读回一小段样本**（「能打开 ≠ 有波形」那一档就是这一步加出来的），结果如实报成两路 `ready` / `probe_failed`；
-- `start()` 起两路**各自独立**的采集：mic 走 `sd.InputStream` 回调、loopback 走 `soundcard` 的 recorder（专用线程 + `CoInitializeEx`），把 16k / 单声道 / int16 的裸 PCM 写进 `meeting_audio_<source>_<NNN>.pcm`（NNN 三位零填充、从 1 起；**一段 = 一次录制**，本节点内每场每路恰好一段；`buffering=0` 的截断写，强杀最多丢最后一个块的尾巴），每 `frame_interval` 秒**无条件**发一帧 `LevelFrame`（静音时发 `-120 dBFS` 的那一帧）+ 一条 `SourceFacts`；
+- `start()` 起两路**各自独立**的采集：mic 走 `sd.InputStream` 回调、loopback 走 `soundcard` 的 recorder（专用线程 + `CoInitializeEx`），把 16k / 单声道 / int16 的裸 PCM 写进 `meeting_audio_<source>_<NNN>.pcm`（NNN 三位零填充、从 1 起；**一段 = 一次录制**，段号 = 各路盘上实有最大段号 + 1，续接接着已有段号编新文件、旧段一个字节不碰；`buffering=0` 的截断写，强杀最多丢最后一个块的尾巴），每 `frame_interval` 秒**无条件**发一帧 `LevelFrame`（静音时发 `-120 dBFS` 的那一帧）+ 一条 `SourceFacts`；
 - 两路各有一条写线程（一路卡在磁盘上不会把另一路拖住）；一路的源读崩时该路报一条 `SourceLost`，另一路照常写；
 - 暂停与「关一路」的服务层出口（`6ea32d8d`；不在上面那张协议表里 —— HTTP 动作入口是 `pause` / `resume` / `set_source`，`10770b41`）：`pause()` / `resume()` 让所有路从这一刻起写数字静音（**不录内容**，真音频在写侧被等长替换成数字零），暂停不切段、只记进段账的 `pauses` 区间；`deactivate_source()` 是用户主动关掉某一路 —— 那一路改写静音，**不报 `SourceLost`、不进告警**（与「这一路真死了」是两回事）；`mode` 没选中的那一路整段写静音填充。三种静音都单独记进写侧的 `silence_bytes` 账，两路时间轴始终等长；**同一对动作在转写那一侧还牵一件事** —— 暂停把会中模型放出显存、继续再把它拉回来（可选成员 `acquire_gpu()`，见下面转写那一节 `release_gpu()` 那一条，`10770b41`）；
 - `finalize()` / `transcode()` / `stop()` 见上表；转码成功之后**保留 PCM**（`session.json` 的 `sources[*].archives` 段文件名表声明的是它们）。

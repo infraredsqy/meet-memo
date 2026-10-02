@@ -27,8 +27,8 @@
 | `GET /api/events` | SSE。**第一帧一定是 `snapshot`**，之后是 `state` / `levels` / `transcript` 三条通道 |
 | `GET /api/heartbeat` | `{"service": "meeting", "server_time", "revision", "top_state", "recording_alive", "seconds_since_last_tick"}`，`200`，任何状态下都给。`service` 这个字面量是端口探测认亲用的，必须有 |
 | `GET /api/summaries` | 本场按过的、成功产出的那几次会中总结（时刻 + 窗口 + 那几条），`200`，任何状态下都给。记录活在服务侧内存里、**不落文件**，新的一场 `start` 清空 |
-| `GET /api/sessions` | 工作区注册表：软件自己记的那份"我这些会"（住在配置目录 `workspaces.json`、按路径去重），`200`，任何状态下都给；`recent` = 最近一次被打开/切换的那一场；顶层还有一格 `post_job`（此刻在飞的那趟会后，`null` = 没有）—— 界面那格全局「显卡忙不忙」的会后一半读数。**纯读**，形状与现行口径见 `docs/contract.md` 4.8 |
-| `GET /api/sessions/{id}` | 单场状态：这一场此刻跑到哪一档、会后离线跑到第几块 / 共几块、正在跑哪一路、已经跑了多久，`200`。`{id}` 是**这一场的目录路径**（URL 编码的绝对路径）。**纯读**，形状与失败口径见 `docs/contract.md` 4.9 |
+| `GET /api/sessions` | 工作区注册表：软件自己记的那份"我这些会"（住在配置目录 `workspaces.json`、按路径去重），`200`，任何状态下都给；`recent` = 最近一次被打开/切换的那一场；每行带这一场各段的时长与时间（`segments`，续接过的会看得出接过）；顶层还有一格 `post_job`（此刻在飞的那趟会后，`null` = 没有）—— 界面那格全局「显卡忙不忙」的会后一半读数。**纯读**，形状与现行口径见 `docs/contract.md` 4.8 |
+| `GET /api/sessions/{id}` | 单场状态：这一场此刻跑到哪一档、各段的时长与时间（`segments`，与清单同一来源）、会后离线跑到第几块 / 共几块、正在跑哪一路、已经跑了多久，`200`。`{id}` 是**这一场的目录路径**（URL 编码的绝对路径）。**纯读**，形状与失败口径见 `docs/contract.md` 4.9 |
 | `GET /api/dirs` | 目录选择器的一个现场：一层子目录的名目判读（起点用户主目录，`?dir=` 换层），`200`。**纯读**，只挑已有目录、不建目录 |
 | `GET /api/devices` | 两路各自的候选设备端点表（`{mic: [...], loopback: [...]}`，每项六格），`200`，任何状态下都给。**纯读、只枚举、不开任何设备**（`probe()` 会短暂试开，清单不走它）；设置抽屉的两个设备下拉读它 |
 | `POST /api/actions` | 动作端点，见第 2–4 章 |
@@ -84,9 +84,9 @@
 
 ### 逐个动作的语义
 
-**`start`** —— 失败顺序是固定的：先判态（`already_recording` / `draining`）→ 再校验 `args`（`dir` 缺失 / 目录不存在 / 目录里已有另一场的记录、`mode` 非法 → `invalid_setting`(400)）→ 再判后端可用性（`capture_unavailable`）→ 最后才写第一版文件。**态不对或后端不可用时盘上不落这个目录里的任何新东西。**
+**`start`** —— 失败顺序是固定的：先判态（`already_recording` / `draining`）→ 再校验 `args`（`dir` 缺失 / 目录不存在、`mode` 非法 → `invalid_setting`(400)；目录里已有 `session.json` 过得了这道校验 —— 那一档是**续接**，同一场会再录一段）→ 再判后端可用性（`capture_unavailable`）→ 最后才写第一版文件。**态不对或后端不可用时盘上不落这个目录里的任何新东西；续接失败那一档旧记录原样保留、本轮段文件收走，工作区回到按下去之前的样子。**
 
-- `args.dir` **必给**：一条**已存在**目录的路径，是这场会的工作区与落点。**没有默认落点、也不新建目录、不按日期命名**（`docs/design-intent.md` 第 3、4 条）——目录名就是这场会的名字，由发起的人从磁盘里挑。
+- `args.dir` **必给**：一条**已存在**目录的路径，是这场会的工作区与落点。**没有默认落点、也不新建目录、不按日期命名**（`docs/design-intent.md` 第 3、4 条）——目录名就是这场会的名字，由发起的人从磁盘里挑。目录里已有 `session.json` 时这一场是续接：旧段的归档一个字节不碰（新段接着已有段号编），段账与权威时长把旧段合并着写盘。
 - `args.mode` 取值 `both` / `mic` / `loopback`，**缺省 `both`**。
 - `189` 的拒绝路径 `detail` 带 `session_id` / `dir` / `elapsed_seconds`（场次目录名、场次目录路径、已录秒数），够界面画「已经有一场在录」。
 - `draining` 的拒绝路径 `detail` 带三项：场次目录（`session_id` / `dir`）、失败步（`failed_steps`，每项 `{id, error}`，没有失败步就是空数组）、场次 log 路径（`log_path`）。
@@ -173,7 +173,7 @@
 - 拒绝档固定三条：这一场还没结束 / 收尾还没落定，或已经有一趟会后活在飞 → 409 `draining`；`post_minutes` 那一层的账停在 `running`（纪要 claim 闸同步判）→ 409 `draining`，`detail` 带 `status_path`；这一层没接实现（`post.hook` / `minutes.hook` 缺席）→ 404 `action_unavailable`。
 - 成功体是通用信封 + `post: {kind: "offline"|"minutes", dir}`；回执只说「起没起、跑的哪一场」，跑成什么样由场次目录里的 `meeting_offline_status.json` / `meeting_minutes_status.json` 回答；**跑到哪一档**（第几块 / 共几块、正在跑哪一路、已经跑了多久）由 `GET /api/sessions/{id}` 回答。
 
-**`GET /api/sessions` / `GET /api/dirs`** —— 两只纯读端点：前者给注册表 + `recent`（每行带 `has_offline`：这一场有没有会后精细稿），后者给选择器的一层子目录名目。**"最近一场"只从注册表读**：启动、请求都不扫任何场次目录（`docs/design-intent.md` 第 4 条）。
+**`GET /api/sessions` / `GET /api/dirs`** —— 两只纯读端点：前者给注册表 + `recent`（每行带 `has_offline`：这一场有没有会后精细稿；带 `segments`：这一场各段的时长与时间），后者给选择器的一层子目录名目。**"最近一场"只从注册表读**：启动、请求都不扫任何场次目录（`docs/design-intent.md` 第 4 条）。
 
 **`GET /api/sessions/{id}`** —— 单场状态（会后视图的进度区）：`{id}` 是这一场的目录路径（URL 编码的绝对路径），应答体见 `docs/contract.md` 4.9。会后离线那条链每跑完一块就往场次目录里那份 `meeting_offline_progress.jsonl` 上补一行（这一块的文字 + 这一块的落点），这只端点把「第几块 / 共几块、正在跑哪一路、已经跑了多久」按路各交一份回来。**纯读**：不涨 `revision`、不广播。
 

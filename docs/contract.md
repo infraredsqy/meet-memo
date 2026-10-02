@@ -210,7 +210,7 @@ data: {"revision": 3, "frames": {...}}
 | `ts` | number | 后端给的秒数（**语义归后端**，服务只透传；fixtures 里那个 `1.5` 是假转写后端的固定值）。真转写后端给的是**采集时刻的墙钟秒数**（epoch 秒）：段一入队就盖章，识别慢不会把后面几行的时间戳挤到一起 |
 | `source` | string | 哪一路（`mic` / `loopback`） |
 | `text` | string | 这一行的正文。识别失败的段落也照出一行，正文是**占位符**（双层方括号的裸文本，不带时间戳、不含 `**`）：`[[识别失败: 超时 20s]]` / `[[识别失败: 重复循环]]` / `[[识别失败: 无输出]]` |
-| `kind` | string | `line` 或 `gap`（断口）。真转写后端产出的照旧是 `line`，失败段落也走 `line`，靠 `text` 的占位符形状认出来 —— 界面按那个形状把它画成缺口（`docs/ui-design.md` 第 2 章），别按正文渲染 |
+| `kind` | string | `line` 或 `gap`（断口）。真转写后端产出的照旧是 `line`，失败段落也走 `line`，靠 `text` 的占位符形状认出来 —— 界面按那个形状把它画成缺口（`docs/ui-design.md` 第 2 章），别按正文渲染。服务侧推 `gap` 的场合是**续接开场**（同一工作区再录一段，`docs/state.md` 第 3 章）：两段之间那截没录的时间各路各推一条，`text` 直说「续接：上面是上一段的稿子，两段之间有一段没录」 |
 
 一行到来时服务侧只更新 `transcript.last_line_at` 并推这一帧，**不参与状态迁移、不涨 `revision`**。
 
@@ -282,7 +282,7 @@ X-Meeting-Service: 1
 
 | 动作 | 语义 | `args` |
 |---|---|---|
-| `start` | 开一场：校验落点 → 写第一版 `session.json` → 起采集 → 进 `recording`（`idle` 与 `ended` 都能出发） | `dir`：**必给** —— 一条**已存在**的目录的路径，这一场的工作区与落点（服务**不建目录、不设默认落点、不按日期命名**，`docs/design-intent.md` 第 3、4 条；目录里已有另一场的 `session.json` 时拒）；`mode`：`both` / `mic` / `loopback`，**缺省 `both`** |
+| `start` | 开一场：校验落点 → 写第一版 `session.json` → 起采集 → 进 `recording`（`idle` 与 `ended` 都能出发） | `dir`：**必给** —— 一条**已存在**的目录的路径，这一场的工作区与落点（服务**不建目录、不设默认落点、不按日期命名**，`docs/design-intent.md` 第 3、4 条；目录里已有 `session.json` 的那一档放行 = **续接**，同一场会再录一段，见下面的失败顺序）；`mode`：`both` / `mic` / `loopback`，**缺省 `both`** |
 | `stop` | 结束本场：冻结时长 → 进 `ended·draining` → 服务按四步收尾跑到终态。**第 4 步 `post` 不自动拉起任何会后流程**（R26）：它做完该做的（让会中模型退出显存）就停在 `waiting`（＝等你动手），会后归下面两个动作 | 无 |
 | `mute_session` | 本场不再出声：`alerts.*.muted` 立刻变 `true`。**不改**持久化开关 `alarm.sound`，**下一场 `start` 自动复位** | 无 |
 | `pause` | **暂停**：这一场从这一刻起不录内容 —— 两路的归档改写数字静音（第 8 条），快照 `session.paused` 变 `true`，段**不**切（第 9 条），时长读数停在原地（第 7 条）。暂停的那几段时间**不计入静默判定**：安静房间里暂停多久都不会冒出一条「这一路静默已达 N 秒」的致命级（第 17 条）。顺带让**会中模型当场退出显存**（可选成员 `release_gpu()`，异步提交，应答不等它做完；第 21 条点名了「暂停」这一格）。幂等；顶层四态一个字不动 | 无 |
@@ -311,7 +311,7 @@ X-Meeting-Service: 1
 - 成功体是通用信封 + 一个 `post` 键：`{ok, revision, post: {kind: "offline"｜"minutes", dir}}`
   —— 回执里**没有**「跑完了没有」这一格，那一趟可能跑一小时。
 
-**`start` 的失败顺序是固定的**：先判态（`already_recording` / `draining`）→ 再校验 `args`（`dir` 缺失 / 目录不存在 / 目录里已有另一场的记录、`mode` 非法 → `invalid_setting`）→ 再判后端可用性（`capture_unavailable`）→ 最后才写第一版文件。**态不对或后端不可用时盘上不落这个目录里的任何新东西（目录本身是用户给的，软件也不删它）。**
+**`start` 的失败顺序是固定的**：先判态（`already_recording` / `draining`）→ 再校验 `args`（`dir` 缺失 / 目录不存在、`mode` 非法 → `invalid_setting`；目录里已有 `session.json` 过得了这道校验 —— 那一档是**续接**，同一场会再录一段）→ 再判后端可用性（`capture_unavailable`）→ 最后才写第一版文件。**态不对或后端不可用时盘上不落这个目录里的任何新东西（目录本身是用户给的，软件也不删它）；续接失败那一档旧记录原样保留、本轮段文件收走，工作区回到按下去之前的样子。**
 
 **`reprobe` 的 `detail` 形状**：成功体就是通用的 `{ok, revision}`（**没有额外字段**），挑不到设备不构成动作失败 —— 那一档如实落进快照两路的 `health = probe_failed` 与 `probe()` 的 `detail` 里。
 
@@ -502,7 +502,10 @@ X-Meeting-Service: 1
 {"sessions": [{"dir": "<path>", "session_id": "<session-id>|null", "dir_exists": true,
                "kind": "empty|meeting|unknown|missing", "suspected": false,
                "state": "recording|draining|done|failed|null", "date": "<YYYY-MM-DD>|null",
-               "mode": "both|mic|loopback|null", "has_offline": false,
+               "mode": "both|mic|loopback|null",
+               "segments": [{"index": 1, "started_at": "<iso>", "ended_at": "<iso>|null",
+                             "duration_seconds": 61.5}],
+               "has_offline": false,
                "added_at": "<iso>", "last_opened_at": "<iso>"}],
  "recent": "<path>|null",
  "post_job": {"kind": "offline|minutes", "dir": "<path>", "started_at": "<iso>"}|null}
@@ -511,8 +514,9 @@ X-Meeting-Service: 1
 - 清单是**软件自己记的那一份**（住在服务侧配置目录 `workspaces.json`，按路径去重）；**列表从登记来** —— 本端点不列任何没登记过的目录，`start` 与 `workspace_open` 是仅有的两个登记入口。
 - 每行的"目录还在不在、里面是什么"由服务**现场判**（注册表条目只记两个时刻）：`dir_exists: false` 的那一行如实等着界面写「路径已不在」；`state` 只在盘上 `session.json` 读得出来时带值、四档之外如实 `null`（读盘那份**只判集合成员关系**，不反查映射、不读成 `top_state`）。
 - **`has_offline` = 这一场有没有会后精细稿**（R29）：判据是场次目录里在不在 `meeting_offline_transcript_<source>.md`（只判名目、不读内容、不猜）。「出纪要」那个按钮上那一格按它渲染 —— 界面因此一眼看得出 AI 手上有没有那份更细的稿。**这一格走本端点，不进快照**（推送出去的东西只认那九个顶层键）。
+- **`segments` = 这一场各段的时长与时间**（续接节点加上去的读数）：盘上 `session.json` 段账的原文，每段四格 —— `index`（段号）/ `started_at` / `ended_at`（还在录的那段是 `null`）/ `duration_seconds`（在录时长、不含暂停；还没写完的段是 `null`）。续接过的会列里有旧段也有新段，界面上看得出接过；盘上没有段账（还没开过会）时是空数组。它是给人看的读数：不进快照、不参与任何判定。
 - `recent` = **最近一次被打开/切换**的那一条的目录（`workspace_open` 与开成一场的 `start` 都刷新这一格）；**只从注册表读，服务与界面都不扫任何场次目录**（`docs/design-intent.md` 第 4 条的退场判据仍在）。
-- **顶层第三格 `post_job`**（会后进度界面节点 `52b24392`）：服务进程里此刻在飞的那一趟会后 —— `{kind, dir, started_at}` 三格（`kind` 答**这一趟跑的是哪条路**：`offline` 精细稿 / `minutes` 纪要），没有在飞的就是 `null`。它是界面那格全局「显卡忙不忙」的**会后一半读数**（另一半「本机正在录」从快照状态读，不走这里）；读数就是 `runtime.post_job_state()` 的原文，**跑完那一刻线程收工、这一格翻回 `null`**。`meeting post` 命令行那趟活在另一进程，这一格看不见 —— 如实显示，不编。**这一格在应答体顶层、不进任何一行**：每行照旧恰好十一键，快照九键一个字没动。
+- **顶层第三格 `post_job`**（会后进度界面节点 `52b24392`）：服务进程里此刻在飞的那一趟会后 —— `{kind, dir, started_at}` 三格（`kind` 答**这一趟跑的是哪条路**：`offline` 精细稿 / `minutes` 纪要），没有在飞的就是 `null`。它是界面那格全局「显卡忙不忙」的**会后一半读数**（另一半「本机正在录」从快照状态读，不走这里）；读数就是 `runtime.post_job_state()` 的原文，**跑完那一刻线程收工、这一格翻回 `null`**。`meeting post` 命令行那趟活在另一进程，这一格看不见 —— 如实显示，不编。**这一格在应答体顶层、不进任何一行**：每行照旧恰好十二键（`segments` 是其中之一，上一条写了），快照九键一个字没动。
 
 **`GET /api/dirs`**（目录选择器的一个现场；**任何状态下都 200**；纯读）：
 
@@ -534,7 +538,10 @@ X-Meeting-Service: 1
 ```json
 {"dir": "<path>", "session_id": "<session-id>|null", "kind": "empty|meeting|unknown",
  "state": "recording|draining|done|failed|null", "date": "<YYYY-MM-DD>|null",
- "mode": "both|mic|loopback|null", "has_offline": true,
+ "mode": "both|mic|loopback|null",
+ "segments": [{"index": 1, "started_at": "<iso>", "ended_at": "<iso>|null",
+               "duration_seconds": 61.5}],
+ "has_offline": true,
  "post": {"running": false, "kind": "offline|minutes", "started_at": "<iso>",
           "finished_at": "<iso>|null"},
  "offline": {"ledger": "meeting_offline_progress.jsonl",
@@ -548,7 +555,7 @@ X-Meeting-Service: 1
                                      "unjudged": 0}}]}}
 ```
 
-**前七格与 `GET /api/sessions` 的同一行同源**（同一套注册表 / 目录判读 / 盘上 `session.json` 的读法），逐格语义见 4.8 —— 那七格是「这一场是哪一场」，这一只端点要回答的是后两格「这一场此刻跑到哪儿了」。
+**前八格与 `GET /api/sessions` 的同一行同源**（同一套注册表 / 目录判读 / 盘上 `session.json` 的读法），逐格语义见 4.8 —— 那八格是「这一场是哪一场」（`segments` 在其中：这一场各段的时长与时间，续接过的会看得出接过），这一只端点要回答的是后面两格「这一场此刻跑到哪儿了」。
 
 - **`post`** = 会后那两趟活（4.3 的 `post_offline` / `post_minutes`）此刻在不在飞、跑的是哪一趟、什么时候起的；**这三格说的是服务此刻手上这一趟**（`running` 翻 `false`、`finished_at` 补上，是这一趟自己的收工读数）。**跨场次跑过之后**，同一台服务再对任何一场起一趟会后活，上一场这三格就交回 `null`（单槽记录，后一趟把前一趟整个换掉）——上一场跑成什么样，改由那一场的 **`offline`** 那份账回答：`state` / `started_at` / `finished_at` 都还在，跨场次、跨重启都读得到（见本节 `offline` 那一条）。这一场一次都没跑过后会时它是 `null`。
 - **`offline`** = **会后离线的逐块进度读数**（节点 `a9affaa8`）。`sources` **按路各一份**，分母是**这一路**切了几块（`post.chunk_seconds` 切出来的块数）—— 两路各算各的，合成一个整场分母就是在造一个不存在的量（`docs/design-intent.md` 第 9 条）。
@@ -569,7 +576,7 @@ X-Meeting-Service: 1
   - `ledger` 是这一场那份逐块账的文件名（`meeting_offline_progress.jsonl`，见 4.9 末段）。
 - **读数来自哪里**：这一趟正在本进程里跑 → 用会后那条线程手里的现场（「已经跑了多久」按单调钟当场算）；本进程没在跑这一趟（服务重启过、命令行跑的那一趟、跑完很久了）→ 读场次目录里那份逐块账。跨进程算不出单调钟的差值，**`elapsed_seconds` 那一格在这种情况下如实给 `null`**。
 - **它是给人看的读数，不带校验性质的含义**：块数、已跑时长这一类错了就错了，任何代码不许拿它们对账、报错、改结论（`docs/design-intent.md` 第 6、7 条；唯一权威是实际录到的音频时长）。这一场跑成什么样**仍由 `meeting_offline_status.json` 与那四份产物回答**，这张应答不替它们下结论。
-- **它不进快照**：推送出去的东西只认第 2 章那九个顶层键，`GET /api/sessions` 每一行照旧十一键（快照九键与列表十一键这两处一个字都没动；这只端点与那张列表各自成体，列表唯一的加法是 4.8 写的顶层第三格 `post_job`，不在任何一行里）。
+- **它不进快照**：推送出去的东西只认第 2 章那九个顶层键，`GET /api/sessions` 每一行照旧十二键（快照九键与列表十二键这两处一个字都没动；这只端点与那张列表各自成体，列表唯一的顶层加法是 4.8 写的第三格 `post_job`，不在任何一行里）。
 
 **逐块账**：会后离线每跑完一块，就往场次目录里那份 `meeting_offline_progress.jsonl` 上补一行 —— **这一块的文字 + 这一块的落点**（JSON Lines：第一行表头 `{kind: "ledger", schema_version, session_id, sources}`，之后一行一块，带 `source` / `chunk` / `chunks_total` / `span` / `state` / `text` / `segments` / `wall_seconds` / `error`）。**引擎加载失手那一档也留一行**（`state = failed`、`error` 里带 `engine_load_error`）：不然这一路在盘上只剩表头，进程不在场的读方从上面 `sources[].total` 上看到的是 `null`，而现在读到的仍是这一路切出来的块数。**正式稿 `meeting_offline_transcript_<source>.md` 的写时机不变**（整路跑完一次写），那份账是另一份文件、另一个名字，`has_offline` 那一格不受它影响。这份账不参与任何判定（`meeting/cli.py` 的幂等闸读的仍是状态文件），字段契约的正文在 `meeting/offline/progress.py` 的模块说明里。
 

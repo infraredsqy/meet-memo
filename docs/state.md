@@ -64,7 +64,7 @@
 
 骨架构建（`null` 替身或 dev 替身 + `post.hook = null`）跑一场会的预期终态是固定的：`flush: skipped` / `transcode: skipped` / `log: done` / `post: waiting`（第 4 步对任何构建都停在 `waiting`），于是 `ended.phase == "done"`。
 
-**真采集那一场**（`capture.backend` 取默认值 `auto`，解析到 `meeting.backends.capture:CaptureBackend`）的终态是 `flush: done` / `transcode: done` / `log: done` / `post: waiting`；收尾跑完之后场次目录里躺着两路的段归档：`meeting_audio_mic_001.pcm` + `.mp3`、`meeting_audio_loopback_001.pcm` + `.mp3`（**一段 = 一次录制**，序号三位零填充、从 1 起；本节点内每场每路恰好一段。未选中的那一路整段写数字静音，`.pcm` 照常落盘、`.mp3` 照常产出 —— 内容就是一段静音）；会后那两趟（离线链与纪要层）不自动跑，由「生成会后精细稿」/「直接出纪要」按钮或 `meeting post` 拉起，产物才往同一目录里落（见第 3 章）。第 1 步落盘失败（例如磁盘满）与第 2 步转码失败（例如 `ffmpeg` 不在 PATH 上）各记 `failed`，**PCM 一个字节都不删**。第 4 步停在 `waiting` 说的是**这一格等你动手**（`ended.phase` 仍判 `done`），释放显存那一步自身出事只记一条 log、不改这一格；会后那一趟跑成什么样由场次目录里的 `meeting_offline_status.json` 与 `meeting_minutes_status.json` 回答。
+**真采集那一场**（`capture.backend` 取默认值 `auto`，解析到 `meeting.backends.capture:CaptureBackend`）的终态是 `flush: done` / `transcode: done` / `log: done` / `post: waiting`；收尾跑完之后场次目录里躺着两路的段归档：`meeting_audio_mic_001.pcm` + `.mp3`、`meeting_audio_loopback_001.pcm` + `.mp3`（**一段 = 一次录制**，序号三位零填充、从 1 起；续接（同一工作区再录一段）接着已有段号往下编，一场会因此可以有多段。未选中的那一路整段写数字静音，`.pcm` 照常落盘、`.mp3` 照常产出 —— 内容就是一段静音）；会后那两趟（离线链与纪要层）不自动跑，由「生成会后精细稿」/「直接出纪要」按钮或 `meeting post` 拉起，产物才往同一目录里落（见第 3 章）。第 1 步落盘失败（例如磁盘满）与第 2 步转码失败（例如 `ffmpeg` 不在 PATH 上）各记 `failed`，**PCM 一个字节都不删**。第 4 步停在 `waiting` 说的是**这一格等你动手**（`ended.phase` 仍判 `done`），释放显存那一步自身出事只记一条 log、不改这一格；会后那一趟跑成什么样由场次目录里的 `meeting_offline_status.json` 与 `meeting_minutes_status.json` 回答。
 
 ### 收尾怎么跑：触发、共享预算、超时与中断
 
@@ -155,9 +155,9 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 ## 3. 场次目录、`session.json` 与会后离线产物
 
 - **没有默认落点**（`docs/design-intent.md` 第 4 条）：一场会落在 start 请求 / 命令行**显式给的已存在目录**里；服务不建目录、不按日期命名，目录名就是这场会的名字。日期仍是每一场的元信息（`session.json` 的 `date` 字段，取开场时刻），只是它不再写进目录名。
-- 一次只接受一个新场次：目标目录里已经有另一场的 `session.json` 时 `start` 拒绝（`invalid_setting`）。
-- 一场会一个目录，目录里只有一份 `session.json` 是服务现在写的。**两路音频归档也落在这里**（`dca4539b` 落地采集、`6ea32d8d` 落地分段）：`meeting_audio_<source>_<NNN>.pcm`（NNN 三位零填充、从 1 起；**一段 = 一次录制**，本节点内每场每路恰好一段），16k / 单声道 / int16 小端裸 PCM、无头，**边采边写**（无缓冲截断写，服务被强杀最多丢最后一个块的尾巴）；收尾第 2 步在同目录同名换扩展名**逐段**产出 `.mp3`（64k），**转码成功之后 PCM 照样留着**（`sources[*].archives` 段文件名表声明的就是它们）。**暂停、会中关掉某一路、某一路没开都不切段**：那一路写数字静音 —— 暂停窗的真音频在写侧被等长替换成数字零（内容到不了盘上），暂停只进段账的 `pauses` 区间，两路时间轴始终等长。这些事都由动作驱动（`pause` / `resume` / `set_source`，`10770b41`）：快照 `session` 的第七子键 `paused` 就是「暂停中」的落点（顶层四态一个字不动），关掉某一路落在那一路上现成的 `health = stopped` 档；**关掉与重新打开都是用户按的按钮**，不报 `SourceLost`、不进告警（重开时设备打不开才如实回一条 `capture_unavailable`(503)）。
-- **两路转写各自落一本会中临时稿**（`9e5db89c` 已落地）：`meeting_transcript_mic.md` 与 `meeting_transcript_loopback.md`，追加写、逐行 flush，每行 `[HH:MM] 正文` —— 时间戳取**分钟级**的采集时刻：段一入队就盖上，识别慢也不会把后面几行的时间戳挤到一起。某一段识别不出来也照落一行，正文是**占位符**：`[[识别失败: 超时 20s]]` / `[[识别失败: 重复循环]]` / `[[识别失败: 无输出]]`（双层方括号、裸文本、不带时间戳、**不含 `**`**；识别过程抛错那一档落 `[[识别失败: 错误]]`）；纯噪声的段落一行都不写，连占位符也不写 —— 暂停窗（归档里那一段数字静音）同样一行都不产。同一行同时经 SSE 的 `transcript` 通道推给界面（第 6 章）。它是**临时稿**：会后那条带说话人编号的稿另落一份，两份平级放在一起对拍、谁也不顶掉谁（R11，`docs/ui-design.md` 第 3 章的标签口径）。
+- 对录过的目录按 start = **续接**（`docs/design-intent.md` 第 9 条翻案）：目标目录里已有 `session.json` 不再拒绝，同一场会再录一段 —— 旧段的归档一个字节不碰（新段接着已有段号编号），段账与权威时长合并着写盘；续接开场失败时旧记录原样写回、本轮段文件收走，工作区回到按下去之前的样子。
+- 一场会一个目录，目录里只有一份 `session.json` 是服务现在写的。**两路音频归档也落在这里**（`dca4539b` 落地采集、`6ea32d8d` 落地分段）：`meeting_audio_<source>_<NNN>.pcm`（NNN 三位零填充、从 1 起；**一段 = 一次录制**，续接（同一工作区再录一段）接着已有段号编，一场会可以有多段），16k / 单声道 / int16 小端裸 PCM、无头，**边采边写**（无缓冲截断写，服务被强杀最多丢最后一个块的尾巴）；收尾第 2 步在同目录同名换扩展名**逐段**产出 `.mp3`（64k），**转码成功之后 PCM 照样留着**（`sources[*].archives` 段文件名表声明的就是它们）。**暂停、会中关掉某一路、某一路没开都不切段**：那一路写数字静音 —— 暂停窗的真音频在写侧被等长替换成数字零（内容到不了盘上），暂停只进段账的 `pauses` 区间，两路时间轴始终等长。这些事都由动作驱动（`pause` / `resume` / `set_source`，`10770b41`）：快照 `session` 的第七子键 `paused` 就是「暂停中」的落点（顶层四态一个字不动），关掉某一路落在那一路上现成的 `health = stopped` 档；**关掉与重新打开都是用户按的按钮**，不报 `SourceLost`、不进告警（重开时设备打不开才如实回一条 `capture_unavailable`(503)）。
+- **两路转写各自落一本会中临时稿**（`9e5db89c` 已落地）：`meeting_transcript_mic.md` 与 `meeting_transcript_loopback.md`，追加写、逐行 flush，每行 `[HH:MM] 正文` —— 时间戳取**分钟级**的采集时刻：段一入队就盖上，识别慢也不会把后面几行的时间戳挤到一起。某一段识别不出来也照落一行，正文是**占位符**：`[[识别失败: 超时 20s]]` / `[[识别失败: 重复循环]]` / `[[识别失败: 无输出]]`（双层方括号、裸文本、不带时间戳、**不含 `**`**；识别过程抛错那一档落 `[[识别失败: 错误]]`）；纯噪声的段落一行都不写，连占位符也不写 —— 暂停窗（归档里那一段数字静音）同样一行都不产。同一行同时经 SSE 的 `transcript` 通道推给界面（第 6 章）。**续接的那一场开场**（同一工作区再录一段）各路先追加一条注释形的记号行，形状是 `<!-- [HH:MM] 续接：上面是上一段的稿子，两段之间有一段没录 -->`，落在旧正文与新正文之间 —— `<!-- … -->` 形的行不算发言行，读侧（纪要切块、行数统计）跳过它；两段之间那截没录的时间从此在稿子里留着一道看得见的口子。同一时刻各路还经 SSE 各推一条 `kind="gap"` 的行，转写区把它画成断口。转写的读头从盘上实有的**最大段号**接起，旧段一个字节不重读 —— 临时稿里的旧正文不会被抄第二遍。它是**临时稿**：会后那条带说话人编号的稿另落一份，两份平级放在一起对拍、谁也不顶掉谁（R11，`docs/ui-design.md` 第 3 章的标签口径）。
 - `session.json` **原子写**：同目录临时文件 + `os.replace` + `flush`。**每个阶段变更都写一次**（`start` 的第一版、进收尾中、每一步的 `status`/`detail`、终态那一版），被打断不留半截文件、工作区目录里不留 `.tmp` 残骸。
 
 字段全貌（**字段名与字段个数是冻结项**，示例里的取值只是某一版的示意）：
@@ -168,13 +168,16 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
   "state": "recording | draining | done | failed",
   "created_at": "...", "started_at": "...", "ended_at": "... | null",
   "sources": [
-    {"id": "mic", "device": "... | null", "archives": ["meeting_audio_mic_001.pcm"]},
-    {"id": "loopback", "device": "... | null", "archives": ["meeting_audio_loopback_001.pcm"]}
+    {"id": "mic", "device": "... | null", "archives": ["meeting_audio_mic_001.pcm", "meeting_audio_mic_002.pcm"]},
+    {"id": "loopback", "device": "... | null", "archives": ["meeting_audio_loopback_001.pcm", "meeting_audio_loopback_002.pcm"]}
   ],
   "segments": [
-    {"index": 1, "started_at": "...", "ended_at": "... | null",
+    {"index": 1, "started_at": "...", "ended_at": "...",
      "sources": ["mic", "loopback"], "pauses": [{"start": "...", "end": "... | null"}],
-     "duration_seconds": 61.5 | null}
+     "duration_seconds": 61.5},
+    {"index": 2, "started_at": "...", "ended_at": "... | null",
+     "sources": ["mic", "loopback"], "pauses": [],
+     "duration_seconds": null}
   ],
   "audio_duration_seconds": 61.5,
   "drain": {"steps": [
@@ -189,11 +192,11 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 ```
 
 - `state` 的四取值与顶层四态是**两套词汇**（`alert` 在盘上写 `recording`：告警不是盘上的一档，会话还在录）。映射只有一处实现，读回时只做集合成员判断。
-- `sources[*].archives` 是这一路的**段文件名表**（序号升序），命名固定为 `meeting_audio_<source>_<NNN>.pcm`（NNN 三位零填充、从 1 起）。**两路都无条件列出来**（冻结项），所以采集侧开场就把两路的段 1 都建出来 —— 未选中的那一路是写满数字静音的文件，收尾照给它产 `.mp3`（内容是一段静音；`6ea32d8d`）。
-- `segments` 是**段列表**（`6ea32d8d`）：一段 = 一次录制（start→finalize），每段带 `index` / 起止戳 / 该段采哪几路 / 段内暂停区间 `pauses`（`{"start", "end"}`，`end` 为 `null` = 还在暂停中）/ `duration_seconds` **在录时长**（不含暂停；还在录时为 `null`）。暂停不切段，暂停只进 `pauses`。
-- `audio_duration_seconds` 是**权威时长**（R23 / `docs/design-intent.md` 第 7 条）：实际录到的音频时长（不含暂停），从写侧的内容字节算出（字节数 ÷ 32000、各段取各路较大者再求和）。它也是盘上这份文件里唯一被当判据的元信息 —— 墙钟跨度、起止戳、空档时长**一律不校验、不对账、不改结论**（第 6 条：改错墙钟，程序的读法一个字不变）。
+- `sources[*].archives` 是这一路的**段文件名表**（序号升序），命名固定为 `meeting_audio_<source>_<NNN>.pcm`（NNN 三位零填充、从 1 起）。**两路都无条件列出来**（冻结项），所以采集侧开场就把两路**本段**的段文件都建出来（新场是段 1，续接接着已有段号编）—— 未选中的那一路是写满数字静音的文件，收尾照给它产 `.mp3`（内容是一段静音；`6ea32d8d`）。续接过后这张表把**各段**的文件名都列上（旧段名在前、保序）。
+- `segments` 是**段列表**（`6ea32d8d`）：一段 = 一次录制（start→finalize），每段带 `index` / 起止戳 / 该段采哪几路 / 段内暂停区间 `pauses`（`{"start", "end"}`，`end` 为 `null` = 还在暂停中）/ `duration_seconds` **在录时长**（不含暂停；还在录时为 `null`）。暂停不切段，暂停只进 `pauses`。**续接过后一场会的列表是多段**：旧段的原账原样保留、本段追加在后面；段号是**一场会共一个计器**（两路的第 N 段拼成同一段时间轴），下一个段号 = 各路盘上实有段号的最大值 + 1（`meeting/session.py` 的 `next_segment_number()`，判据是盘上的段文件，不读元信息）。
+- `audio_duration_seconds` 是**权威时长**（R23 / `docs/design-intent.md` 第 7 条）：实际录到的音频时长（不含暂停），= **合并后各段 `duration_seconds` 之和**（续接档把旧段一起算上；还没写完的段没有账，不计入）。单段的秒数从写侧的内容字节算出（字节数 ÷ 32000、该段各路取较大者），合计跟着合并后的段列表当场算，旧段账残缺时也能自愈。它也是盘上这份文件里唯一被当判据的元信息 —— 墙钟跨度、起止戳、空档时长**一律不校验、不对账、不改结论**（第 6 条：改错墙钟，程序的读法一个字不变）。
 - **一场会的事实全在这一份文件里**，不另开服务级状态文件。`meeting post` 靠它认场次（服务自己不再扫未收尾场次，见本章末「重启自洽」）。
-- `start` 阶段写这份文件失败 → **不进 `recording`**，回 503 并把本场写入的这份 `session.json` 收走、在主 log 留一条痕（工作区目录本身是用户给的，服务不删）；「没有落痕就开始录」是不许的。
+- `start` 阶段出事（写这份文件失败、或采集起不来）→ **不进 `recording`**，回 503 并在主 log 留痕。新场照旧把本场写入的文件收走（工作区目录本身是用户给的，服务不删）；续接场**旧记录原样保留** —— 写盘失败那一档旧记录没被这一写碰到，采集起不来那一档把旧记录原样写回、再把本轮开出的段文件收走，工作区回到按下去之前的样子，已录的段一个字节不丢。「没有落痕就开始录」是不许的。
 
 ### 会后离线产物
 
