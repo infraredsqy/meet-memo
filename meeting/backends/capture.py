@@ -11,8 +11,10 @@
   - 用户在录音前改了配置打 `reprobe`，runtime 再调一次 `probe()` 就重新探测（`probe()` 幂等）；
   - `start()` 起**两路各自独立**的采集（读侧在 `sources.py`、写侧与电平刻度在
     `meeting/capture/engine.py`），归档写进 `start()` 收到的 `session_dir`；
-  - `finalize()` 停流 + join + 关文件 + `fsync`，`transcode()` 把两路 PCM 转成 MP3
-    （收尾第 1、2 步），`stop()` 幂等收场（进程关停时调）。
+  - `finalize()` 停流 + join + 关文件 + `fsync`，`transcode()` 把各段 PCM 转成 MP3
+    （收尾第 1、2 步），`stop()` 幂等收场（进程关停时调）；
+  - `pause()` / `resume()` / `deactivate_source()` 是暂停与「用户关一路」的服务层出口
+    （写静音、不录内容；告警语义不动，动作面入口归下游节点）。
 
 **`start()` 的抛错口径**（§5 的裁定）：单路起不来**不抛错** —— 只给那一路发一条
 `SourceLost`（`reason` 写人话），另一路照跑；**本场该采的路全部起不来**才抛
@@ -244,6 +246,33 @@ class CaptureBackend:
     def stop(self) -> None:
         """停采集（**幂等**）：没落过盘就先 `finalize()`，再清掉这一场。"""
         self._stop_session()
+
+    # -- 暂停 / 关一路（引擎能力的服务层出口；动作面入口归暂停/切源节点） -------
+
+    def pause(self) -> None:
+        """暂停本场采集：所有路写数字静音、不录内容（`docs/design-intent.md` 第 8 条）。
+
+        没有在录的会话时什么都不做（幂等；动作面怎么暴露这个能力是下游节点的事，
+        `ACTION_NAMES` 与顶层四态本节点都不动）。
+        """
+        session = self.session
+        if session is None:
+            return
+        session.pause()
+
+    def resume(self) -> None:
+        """继续本场采集（幂等；没有在录的会话时什么都不做）。"""
+        session = self.session
+        if session is None:
+            return
+        session.resume()
+
+    def deactivate_source(self, source: str) -> None:
+        """用户主动关掉某一路：那一路写静音，**不报 `SourceLost`、不进告警**（幂等）。"""
+        session = self.session
+        if session is None:
+            return
+        session.deactivate_source(source)
 
     # -- 内部 -------------------------------------------------------------
 

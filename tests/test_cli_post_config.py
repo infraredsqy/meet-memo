@@ -442,7 +442,7 @@ def synth_session(root: Path, *, sources: tuple[str, ...] = ("mic",)) -> Path:
     """
     root.mkdir(parents=True, exist_ok=True)
     for source in sources:
-        (root / f"meeting_audio_{source}.pcm").write_bytes(
+        (root / f"meeting_audio_{source}_001.pcm").write_bytes(
             b"\x00\x01" * int(SAMPLE_SECONDS * SAMPLE_RATE)
         )
     (root / "session.json").write_text(
@@ -453,7 +453,7 @@ def synth_session(root: Path, *, sources: tuple[str, ...] = ("mic",)) -> Path:
                 "mode": "both" if len(sources) > 1 else sources[0],
                 "state": "done",
                 "sources": [
-                    {"id": source, "archive": f"meeting_audio_{source}.pcm"}
+                    {"id": source, "archive": f"meeting_audio_{source}_001.pcm"}
                     for source in sources
                 ],
             },
@@ -577,7 +577,7 @@ def test_the_post_engine_selector_comes_from_config_json(
         }
     ], RecordingOfflineEngine.constructor_args
     assert [Path(call).name for call in RecordingOfflineEngine.calls] == [
-        "meeting_audio_mic.pcm"
+        "meeting_audio_mic_001.pcm"
     ], RecordingOfflineEngine.calls
 
     assert config_module.get("post.engine") == FAKE_ENGINE_TARGET

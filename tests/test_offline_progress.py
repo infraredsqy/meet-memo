@@ -187,7 +187,7 @@ def test_a_silent_chunk_and_a_failed_chunk_both_count_as_one_chunk_run(tmp_path)
     loopback：有一块引擎抛错，那一块照记 `failed`，同路别的块照跑。
     """
     session = synth_session(tmp_path / "250906")
-    with open(session / "meeting_audio_mic.pcm", "wb") as handle:
+    with open(session / "meeting_audio_mic_001.pcm", "wb") as handle:
         handle.write(b"\x01\x01" * 4096)  # 第 1 块里有信号
         handle.seek(int(25.0 * SAMPLE_RATE) * 2 - 2)
         handle.write(b"\x01\x00")  # 长度铺到 25 秒，中间那片是数字零

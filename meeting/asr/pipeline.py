@@ -5,10 +5,12 @@
 
 **音频从哪来 —— 这一段的骨头**（`phase2/task.md` §1 / `docs/v1-lineage.md` 的 R2 / R3）：
 
-  - 采集只管往 `session_dir/meeting_audio_<source>.pcm` 里写（`meeting/capture/archive.py`
-    的 `open_pcm()` 是 `buffering=0` 的追加写，写在盘上**立刻可见**）；
-  - 转写侧**每路一条读线程**，按游标从那两个文件里读**新字节**（不碰采集层的任何对象、
-    不要求采集给它开旁路出口 —— 这正是 spec 要的那条边界）；
+  - 采集只管往 `session_dir/meeting_audio_<source>_<段号>.pcm` 里写（`meeting/capture/archive.py`
+    的 `open_pcm()` 是 `buffering=0` 的写，写在盘上**立刻可见**；一段 = 一次录制，
+    按序号命名的段拼起来 = 连续时间轴，暂停区间写的是数字零）；
+  - 转写侧**每路一条读线程**，按游标**逐段**读新字节（段列表 = 按命名规则枚举出的
+    序号升序的段文件，`meeting/session.py` 的 `segment_archive_paths()` 同一条认名规则；
+    不碰采集层的任何对象、不要求采集给它开旁路出口 —— 这正是 spec 要的那条边界）；
   - **时间戳取「读到这一块那一刻」的墙钟**并随段入队 —— 这就是「入队即盖章」在 V2 的形状，
     与 V1 `_TaggedSink`（`mnotes_core/pipeline.py:47-62`）的语义一致：
     **处理慢不会把后面段的时间戳挤到一起**（V1 的事故根因就是「等 ASR 返回后再取时间戳」，
@@ -59,6 +61,7 @@ from typing import Any, Callable, Protocol, runtime_checkable
 from meeting import config as config_module
 from meeting.asr import glm as glm_module
 from meeting.backends.base import SOURCE_IDS, TranscriptLine
+from meeting.session import archive_name
 
 _log = logging.getLogger("meeting.asr.pipeline")
 
@@ -382,6 +385,91 @@ def tail_archive(
                 pass
 
 
+def tail_archive_segments(
+    segment_path: Callable[[int], str | None],
+    *,
+    stop: threading.Event,
+    on_chunk: Callable[[bytes, float], None],
+    chunk_bytes: int = DEFAULT_READ_CHUNK_BYTES,
+    idle_seconds: float = DEFAULT_TAIL_IDLE_SECONDS,
+    archive_poll_seconds: float = DEFAULT_ARCHIVE_POLL_SECONDS,
+    first_seen: Callable[[str, int], None] | None = None,
+) -> None:
+    """按**段序号**尾读一路归档：段 1、段 2、…逐段接续，拼起来就是连续时间轴。
+
+    - `segment_path(index)` 交回第 `index` 段的路径；交回 `None` 表示**不会再有下一段**
+      （单文件场景借此保持 `tail_archive()` 的老行为：读到 EOF 就守着这一个文件）；
+    - 当前段还没出现时按 `archive_poll_seconds` 等它；读到 EOF 后，**下一序号的段文件
+      已经出现**就接过去，否则守着当前段继续等新字节；
+    - 每一块的盖章口径与 `tail_archive()` 同一条：`on_chunk(data, time.time())`，读到那一刻
+      的墙钟。跨段不换章：续接（下游节点）留下的时间洞在这里只是「EOF 等了很久」，
+      断口语义归下游，本层不表达；
+    - 其余口径（`"r+b"` 不隐式建文件、文件被删原样上抛、`first_seen` 每段一次）与
+      `tail_archive()` 一致。
+    """
+    index = 1
+    while not stop.is_set():
+        path = segment_path(index)
+        if path is None:
+            return
+        if not os.path.exists(path):
+            if stop.wait(archive_poll_seconds):
+                return
+            continue
+        reached_eof = _tail_one_segment(
+            path,
+            stop=stop,
+            on_chunk=on_chunk,
+            chunk_bytes=chunk_bytes,
+            idle_seconds=idle_seconds,
+            first_seen=first_seen,
+            next_path=lambda: segment_path(index + 1),
+        )
+        if stop.is_set():
+            return
+        if reached_eof:
+            index += 1
+
+
+def _tail_one_segment(
+    path: str,
+    *,
+    stop: threading.Event,
+    on_chunk: Callable[[bytes, float], None],
+    chunk_bytes: int,
+    idle_seconds: float,
+    first_seen: Callable[[str, int], None] | None,
+    next_path: Callable[[], str | None],
+) -> bool:
+    """尾读**一个**段文件直到收到停机信号；交回是否要把读头移到下一段。
+
+    「移到下一段」的判据：读到了 EOF，而且下一序号的段文件已经在盘上。EOF 而下一段
+    还没出现（本段还在被写、或后面没有更多段）就守着本段继续等。
+    """
+    handle = open(path, "r+b")
+    try:
+        if first_seen is not None:
+            first_seen(path, int(handle.tell()))
+        while not stop.is_set():
+            data = handle.read(chunk_bytes)
+            if data:
+                # **盖章点**：这一刻的墙钟随这一块里切出来的段一起入队
+                on_chunk(data, time.time())
+                continue
+            # EOF：下一段已经在盘上就接过去；否则按 idle 节奏守着本段等新字节
+            following = next_path()
+            if following is not None and os.path.exists(following):
+                return True
+            if stop.wait(idle_seconds):
+                return False
+        return False
+    finally:
+        try:
+            handle.close()
+        except OSError:  # pragma: no cover - 关不掉不影响收队
+            pass
+
+
 # ---------------------------------------------------------------------------
 # 流水线
 # ---------------------------------------------------------------------------
@@ -518,12 +606,16 @@ class TranscriptionPipeline:
 
     # -- 读线程 -----------------------------------------------------------
 
-    def _archive_path(self, source: str) -> str:
-        return os.path.join(str(self.session_dir), f"meeting_audio_{source}.pcm")
+    def _segment_path(self, source: str, index: int) -> str:
+        """这一路第 `index` 段的归档路径（命名规则由 `meeting/session.py` 一处定死）。"""
+        return os.path.join(str(self.session_dir), archive_name(source, index))
 
     def _reader_loop(self, source: str) -> None:
-        """一路读线程：游标尾读归档，把新字节喂给这一路的 VAD。"""
-        path = self._archive_path(source)
+        """一路读线程：按段序号游标尾读归档，把新字节喂给这一路的 VAD。
+
+        段列表不问 `session.json`（开场第一版还没有段账，而且元信息不当判据）：按确定的
+        命名规则逐序号找盘上的段文件，序号升序接续 = 连续时间轴。
+        """
 
         def on_chunk(data: bytes, captured_at: float) -> None:
             # **盖章点就是这里**：captured_at 是「读到这一块那一刻」的墙钟，
@@ -534,9 +626,13 @@ class TranscriptionPipeline:
         def first_seen(seen_path: str, offset: int) -> None:
             _log.info("转写开始尾读归档：%s（从偏移 %s 起）", seen_path, offset)
 
+        def segment_path(index: int) -> str | None:
+            # 每个序号都值得等：续接（下游节点）会在同一工作区里落下第 2、3…段
+            return self._segment_path(source, index)
+
         try:
-            tail_archive(
-                path,
+            tail_archive_segments(
+                segment_path,
                 stop=self._stop,
                 on_chunk=on_chunk,
                 chunk_bytes=self._read_chunk_bytes,
@@ -973,5 +1069,6 @@ __all__ = [
     "close_transcripts_when_drained",
     "compute_drain_budget",
     "tail_archive",
+    "tail_archive_segments",
     "validate_transcript_health",
 ]

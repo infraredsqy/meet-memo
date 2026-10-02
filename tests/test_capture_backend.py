@@ -264,23 +264,36 @@ def test_mic_mode_only_counts_the_mic_route(
 def test_mic_mode_does_not_read_the_loopback_route(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """`mode=mic` 时不读 loopback：那一路的源连造都不造，归档文件照样在（0 字节）。"""
+    """`mode=mic` 时不读 loopback：那一路的源连造都不造，归档**整段时间写静音**。
+
+    「某一路没开」也是「那一路写静音」（`docs/design-intent.md` 第 9 条）：不再是 0 字节
+    文件——两路时间轴等长，落盘的全是数字零，内容账一格不动。
+    """
     factory = SourceFactory(chunks=3)
     backend = make_backend(monkeypatch, factory=factory)
     session_dir = tmp_path / "250906"
     session_dir.mkdir()
 
     backend.start("mic", str(session_dir))
+    session = backend.session
     try:
         wait_until(
-            lambda: backend.session.bytes_written("mic") >= 3 * CHUNK_BYTES,
+            lambda: session.bytes_written("mic") >= 3 * CHUNK_BYTES,
             timeout=BACKEND_POLL_TIMEOUT_SECONDS,
             what="mic 那一路的归档长起来",
         )
+        wait_until(
+            lambda: session.silence_bytes("loopback") >= 2 * CHUNK_BYTES,
+            timeout=BACKEND_POLL_TIMEOUT_SECONDS,
+            what="loopback 那一路的静音写起来",
+        )
     finally:
         backend.stop()
-    assert (session_dir / archive_name("loopback")).exists()
-    assert (session_dir / archive_name("loopback")).stat().st_size == 0
+    loop_file = session_dir / archive_name("loopback")
+    assert loop_file.exists()
+    assert loop_file.stat().st_size == session.bytes_written("loopback") > 0
+    assert session.content_bytes("loopback") == 0
+    assert loop_file.read_bytes() == bytes(loop_file.stat().st_size)  # 逐样本为零
 
 
 # ---------------------------------------------------------------------------
@@ -331,10 +344,10 @@ def test_transcode_writes_one_mp3_per_route(
     backend.transcode()
 
     assert sorted(item.name for item in session_dir.iterdir()) == [
-        "meeting_audio_loopback.mp3",
-        "meeting_audio_loopback.pcm",
-        "meeting_audio_mic.mp3",
-        "meeting_audio_mic.pcm",
+        "meeting_audio_loopback_001.mp3",
+        "meeting_audio_loopback_001.pcm",
+        "meeting_audio_mic_001.mp3",
+        "meeting_audio_mic_001.pcm",
     ]
     backend.stop()
 
@@ -479,8 +492,8 @@ def test_end_to_end_session_drains_with_two_mp3(tmp_path: Path, monkeypatch: pyt
         assert steps["transcode"]["status"] == "done", steps["transcode"]
         assert steps["log"]["status"] == "done"
 
-        assert (session_dir / "meeting_audio_mic.mp3").exists()
-        assert (session_dir / "meeting_audio_loopback.mp3").exists()
+        assert (session_dir / "meeting_audio_mic_001.mp3").exists()
+        assert (session_dir / "meeting_audio_loopback_001.mp3").exists()
         # 两份 PCM 原样留着（`session.json` 声明的是它们）
         assert (session_dir / archive_name("mic")).exists()
         assert (session_dir / archive_name("loopback")).exists()

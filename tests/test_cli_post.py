@@ -348,7 +348,7 @@ def test_post_prints_the_selected_session_and_the_artifact_paths(
     session = synth_session(tmp_path / "250919")
     transcript = session / "meeting_offline_transcript_mic.md"
     transcript.write_text("[22:01] **S01**: 会上定了两件事。\n", encoding="utf-8")
-    archive = tmp_path / "meeting_audio_mic.mp3"
+    archive = tmp_path / "meeting_audio_mic_001.mp3"
     archive.write_bytes(b"mp3")
 
     def fake_run_post(session_dir, **_kwargs):
@@ -515,7 +515,7 @@ def test_a_nonempty_pcm_without_an_mp3_is_converted_once(tmp_path: Path) -> None
 
     assert [row["outcome"] for row in outcome["sources"]] == ["converted"]
     assert outcome["state"] == "done"
-    assert (session / "meeting_audio_mic.mp3").is_file()
+    assert (session / "meeting_audio_mic_001.mp3").is_file()
     assert len(converter.calls) == 1
 
 
@@ -540,8 +540,8 @@ def test_the_product_path_calls_the_one_converter_the_repo_already_has(
     assert outcome["state"] == "done"
     assert [row["outcome"] for row in outcome["sources"]] == ["converted"]
     assert len(seen) == 1, f"转码该只被调一次，实测 {seen}"
-    assert Path(seen[0][0]).name == "meeting_audio_mic.pcm"
-    assert Path(seen[0][1]).name == "meeting_audio_mic.mp3"
+    assert Path(seen[0][0]).name == "meeting_audio_mic_001.pcm"
+    assert Path(seen[0][1]).name == "meeting_audio_mic_001.mp3"
 
 
 def test_an_empty_pcm_produces_no_mp3_and_calls_no_converter(tmp_path: Path) -> None:
@@ -554,28 +554,28 @@ def test_an_empty_pcm_produces_no_mp3_and_calls_no_converter(tmp_path: Path) -> 
     assert [row["outcome"] for row in outcome["sources"]] == ["no_work"]
     assert outcome["state"] == "skipped"
     assert converter.calls == []
-    assert not (session / "meeting_audio_mic.mp3").exists()
+    assert not (session / "meeting_audio_mic_001.mp3").exists()
 
 
 def test_a_one_byte_pcm_counts_as_empty(tmp_path: Path) -> None:
     """1 字节的残缺 PCM（装不下一个 int16 样本）同样按空处理。"""
     session = synth_session(tmp_path / "250919", sources=("mic",))
-    (session / "meeting_audio_mic.pcm").write_bytes(b"\x01")
+    (session / "meeting_audio_mic_001.pcm").write_bytes(b"\x01")
     converter = RecordingConverter()
 
     outcome = sync_archive(session, sources=("mic",), converter=converter)
 
     assert [row["outcome"] for row in outcome["sources"]] == ["no_work"]
     assert converter.calls == []
-    assert not (session / "meeting_audio_mic.mp3").exists()
+    assert not (session / "meeting_audio_mic_001.mp3").exists()
 
 
 def test_an_mp3_newer_than_the_pcm_is_left_alone(tmp_path: Path) -> None:
     """MP3 的 mtime 已比 PCM 新 → **不调转码**，MP3 字节一个都不变。"""
     session = synth_session(tmp_path / "250919", sources=("mic",))
-    mp3 = session / "meeting_audio_mic.mp3"
+    mp3 = session / "meeting_audio_mic_001.mp3"
     mp3.write_bytes(b"already-archived")
-    pcm = session / "meeting_audio_mic.pcm"
+    pcm = session / "meeting_audio_mic_001.pcm"
     old = time.time() - 600
     os.utime(pcm, (old, old))
     os.utime(mp3, (time.time(), time.time()))
@@ -592,9 +592,9 @@ def test_an_mp3_newer_than_the_pcm_is_left_alone(tmp_path: Path) -> None:
 def test_an_mp3_older_than_the_pcm_is_converted_again(tmp_path: Path) -> None:
     """MP3 在场但比 PCM **旧** → 转一次（这一路是新采的音频，归档得跟上）。"""
     session = synth_session(tmp_path / "250919", sources=("mic",))
-    mp3 = session / "meeting_audio_mic.mp3"
+    mp3 = session / "meeting_audio_mic_001.mp3"
     mp3.write_bytes(b"stale")
-    pcm = session / "meeting_audio_mic.pcm"
+    pcm = session / "meeting_audio_mic_001.pcm"
     os.utime(mp3, (time.time() - 600, time.time() - 600))
     os.utime(pcm, (time.time(), time.time()))
     converter = RecordingConverter(body=b"fresh")
@@ -609,7 +609,7 @@ def test_an_mp3_older_than_the_pcm_is_converted_again(tmp_path: Path) -> None:
 def test_a_failed_conversion_keeps_the_pcm_byte_for_byte(tmp_path: Path) -> None:
     """转码抛错 → 该路记 `failed`、PCM 的 sha256 与转换前**逐字节相同**。"""
     session = synth_session(tmp_path / "250919", sources=("mic",))
-    pcm = session / "meeting_audio_mic.pcm"
+    pcm = session / "meeting_audio_mic_001.pcm"
     before = digest(pcm)
     converter = RecordingConverter(raises="ffmpeg 不在 PATH 上")
 
@@ -620,15 +620,15 @@ def test_a_failed_conversion_keeps_the_pcm_byte_for_byte(tmp_path: Path) -> None
     assert outcome["state"] == "failed"
     assert "ffmpeg 不在 PATH 上" in str(row["reason"])
     assert digest(pcm) == before, "转码失败不许动 PCM 一个字节"
-    assert not (session / "meeting_audio_mic.mp3").exists()
+    assert not (session / "meeting_audio_mic_001.mp3").exists()
 
 
 def test_a_failed_conversion_puts_a_stale_mp3_back(tmp_path: Path) -> None:
     """转砸了那次可能写了一半：盘上那份旧 MP3 要原样放回去。"""
     session = synth_session(tmp_path / "250919", sources=("mic",))
-    mp3 = session / "meeting_audio_mic.mp3"
+    mp3 = session / "meeting_audio_mic_001.mp3"
     mp3.write_bytes(b"the-old-one")
-    pcm = session / "meeting_audio_mic.pcm"
+    pcm = session / "meeting_audio_mic_001.pcm"
     os.utime(mp3, (time.time() - 600, time.time() - 600))
     os.utime(pcm, (time.time(), time.time()))
     before = digest(mp3)
@@ -648,7 +648,7 @@ def test_one_broken_conversion_does_not_stop_the_other_source(tmp_path: Path) ->
     session = synth_session(tmp_path / "250919")
 
     def picky(pcm_path, mp3_path) -> bool:
-        if Path(pcm_path).name.endswith("mic.pcm"):
+        if Path(pcm_path).name.startswith("meeting_audio_mic_"):
             raise RuntimeError("mic 这一路转不动")
         Path(mp3_path).write_bytes(b"loopback-mp3")
         return True
@@ -659,7 +659,7 @@ def test_one_broken_conversion_does_not_stop_the_other_source(tmp_path: Path) ->
     assert rows["mic"]["outcome"] == "failed"
     assert rows["loopback"]["outcome"] == "converted"
     assert outcome["state"] == "failed"
-    assert (session / "meeting_audio_loopback.mp3").read_bytes() == b"loopback-mp3"
+    assert (session / "meeting_audio_loopback_001.mp3").read_bytes() == b"loopback-mp3"
 
 
 def test_the_archive_uses_the_sources_the_session_json_declares(tmp_path: Path) -> None:
@@ -987,8 +987,8 @@ def test_the_engine_is_handed_to_the_offline_layer(tmp_path: Path) -> None:
     run_post(session, engine=fake_engine, archive_converter=RecordingConverter())
 
     assert [Path(call).name for call in fake_engine.calls] == [
-        "meeting_audio_mic.pcm",
-        "meeting_audio_loopback.pcm",
+        "meeting_audio_mic_001.pcm",
+        "meeting_audio_loopback_001.pcm",
     ]
 
 

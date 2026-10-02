@@ -41,6 +41,7 @@ from meeting.asr.pipeline import (
     _format_failure,
 )
 from meeting.service.runtime import compute_drain_budget
+from meeting.session import archive_name
 
 #: 慢档标记：`pytest.mark.slow` 的归位判据与实测数据见 `docs/service.md` 第 7 章。
 pytestmark = pytest.mark.slow
@@ -657,7 +658,8 @@ def test_line_timestamp_is_the_capture_moment_while_the_model_is_slow(session_di
     pipeline = make_pipeline(session_dir, transcriber, line_sink=recorder)
     pipeline.start("mic", str(session_dir))
     try:
-        archive = session_dir / "meeting_audio_mic.pcm"
+        # 段 1 的归档（`meeting/session.py` 的 `archive_name()`；尾读按段序号找文件）
+        archive = session_dir / archive_name("mic", 1)
         handle = open(archive, "ab", buffering=0)  # 采集侧的样子：无缓冲追加写
         try:
             for chunk in (speech_pcm(0.3), speech_pcm(0.3), speech_pcm(0.3)):
@@ -694,7 +696,7 @@ def test_line_timestamp_is_the_capture_moment_while_the_model_is_slow(session_di
 
 
 def test_pipeline_reads_from_the_archive_on_disk(session_dir: Path):
-    """**音频从盘上来**：真读线程尾读 `meeting_audio_<source>.pcm` 的新字节（不碰采集对象）。
+    """**音频从盘上来**：真读线程尾读 `meeting_audio_<source>_<段号>.pcm` 的新字节（不碰采集对象）。
 
     这一条走的是**真时间**：静默判据只有在墙钟真的走过那 0.3 秒之后才成立（用例注入的
     窗口，生产值是 2.0 秒）。模型这一侧故意慢 0.3 秒：判据「盖章早于模型被进入」
@@ -705,7 +707,7 @@ def test_pipeline_reads_from_the_archive_on_disk(session_dir: Path):
     pipeline = make_pipeline(session_dir, transcriber, line_sink=recorder)
     pipeline.start("both", str(session_dir))
     try:
-        archive = session_dir / "meeting_audio_mic.pcm"
+        archive = session_dir / archive_name("mic", 1)
         # 采集侧的样子：无缓冲追加写（`meeting/capture/archive.py` 的 `open_pcm()`）
         written: list[float] = []
         handle = open(archive, "ab", buffering=0)
@@ -740,6 +742,76 @@ def test_pipeline_reads_from_the_archive_on_disk(session_dir: Path):
     )
     assert transcriber.returns[0] - ts >= 0.25, "模型慢过 0.3 秒；取返回时刻就会晚一整段"
     assert stamp_of(lines[0]) == clock_stamp(ts), "落盘的分钟级戳与行出口的 ts 必须同源"
+
+
+def test_pipeline_keeps_reading_across_segments(session_dir: Path):
+    """段 2 出现后读头**自己接过去**：按序拼接 = 连续时间轴，两段的语音各出一行。
+
+    「分段会静默杀死会中转写」是分段落地最大的坑（读线程只认一个句柄、永远等同一个
+    文件长出新字节）。这里把那口棺材钉死：段 1 出行之后落下段 2 的文件，第二段的语音
+    照样出第二行，中间不需要任何重启。
+    """
+    transcriber = SleepingTranscriber(sleep_seconds=0.0)
+    recorder = LineRecorder()
+    pipeline = make_pipeline(session_dir, transcriber, line_sink=recorder)
+    pipeline.start("mic", str(session_dir))
+    transcript = session_dir / TRANSCRIPT_FILE_TEMPLATE.format(source="mic")
+    try:
+        # 段 1：三块语音 + 真等静默判据成立 + 一块静默（把段切出来）
+        with open(session_dir / archive_name("mic", 1), "ab", buffering=0) as handle:
+            for _ in range(3):
+                handle.write(speech_pcm(0.3))
+            time.sleep(TEST_SILENCE_TIMEOUT_SECONDS + 0.1)
+            handle.write(silent_pcm(0.6))
+        wait_for(lambda: line_texts(transcript) or None, what="段 1 的第一行")
+        # 段 2：一个新的段文件出现，读头要接过去
+        with open(session_dir / archive_name("mic", 2), "ab", buffering=0) as handle:
+            for _ in range(3):
+                handle.write(speech_pcm(0.3))
+            time.sleep(TEST_SILENCE_TIMEOUT_SECONDS + 0.1)
+            handle.write(silent_pcm(0.6))
+        wait_for(lambda: (lambda rows: rows if len(rows) >= 2 else None)(line_texts(transcript)),
+                 what="段 2 的第二行")
+    finally:
+        pipeline.stop()
+
+    lines = line_texts(transcript)
+    assert len(lines) == 2
+    # 两行的分钟级戳与各自被读到的那一刻同源（跨段不换章：盖章点还是「读到」那一刻）
+    stamps = recorder.stamps("mic")
+    assert len(stamps) == 2 and stamps[0] <= stamps[1]
+
+
+def test_a_pause_window_of_digital_silence_produces_no_lines(session_dir: Path):
+    """暂停窗口（整段的数字零）**一行转写都不产生**——静音不进正文（第 8 条的隐私线）。
+
+    暂停写成同文件的数字零之后，这条由 VAD 与噪声预筛顺带保证；这里用真归档 + 真时间
+    把它钉住：语音 → 一整段零 → 语音，产物里恰好两行，零窗一行都没有。
+    """
+    transcriber = SleepingTranscriber(sleep_seconds=0.0)
+    recorder = LineRecorder()
+    pipeline = make_pipeline(session_dir, transcriber, line_sink=recorder)
+    pipeline.start("mic", str(session_dir))
+    transcript = session_dir / TRANSCRIPT_FILE_TEMPLATE.format(source="mic")
+    try:
+        with open(session_dir / archive_name("mic", 1), "ab", buffering=0) as handle:
+            handle.write(speech_pcm(0.3) * 3)
+            # 真等静默判据成立，再喂暂停窗口：第一块零把上一段切出来，其余的零没有内容
+            time.sleep(TEST_SILENCE_TIMEOUT_SECONDS + 0.1)
+            handle.write(silent_pcm(0.9))
+            time.sleep(TEST_SILENCE_TIMEOUT_SECONDS + 0.1)
+            handle.write(speech_pcm(0.3) * 3)
+            time.sleep(TEST_SILENCE_TIMEOUT_SECONDS + 0.1)
+            handle.write(silent_pcm(0.6))
+        wait_for(
+            lambda: (lambda rows: rows if len(rows) >= 2 else None)(line_texts(transcript)),
+            what="两段语音的两行",
+        )
+    finally:
+        pipeline.stop()
+
+    lines = line_texts(transcript)
+    assert len(lines) == 2
 
 
 # ---------------------------------------------------------------------------

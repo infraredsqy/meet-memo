@@ -50,6 +50,7 @@ from meeting.backends.transcribe import (
     TranscriberBackend,
 )
 from meeting.service.runtime import compute_drain_budget
+from meeting.session import archive_name
 from tests import _helpers as helpers
 
 #: 慢档标记：`pytest.mark.slow` 的归位判据与实测数据见 `docs/service.md` 第 7 章。
@@ -621,7 +622,7 @@ def test_health_backlog_and_timeout_follow_the_pipeline(session_dir: Path, monke
     assert backend.health() == "stopped", "起之前如实报 stopped"
 
     backend.start("both", str(session_dir))
-    archive = ArchiveWriter(session_dir / "meeting_audio_mic.pcm")
+    archive = ArchiveWriter(session_dir / archive_name("mic", 1))
     try:
         assert backend.health() == "normal"
         assert backend.segment_timeout() == 7.5, "单段超时取配置里的 asr.timeout_seconds"
@@ -648,7 +649,7 @@ def test_health_reports_stopped_when_the_model_blows_up(session_dir: Path):
     recorder = Recorder()
     backend.bind(recorder)
     backend.start("mic", str(session_dir))
-    archive = ArchiveWriter(session_dir / "meeting_audio_mic.pcm")
+    archive = ArchiveWriter(session_dir / archive_name("mic", 1))
     try:
         write_until_segment(archive)
         wait_for(lambda: model.calls or None, what="假模型被调到（抛错那一次）")
@@ -686,7 +687,7 @@ def test_bound_archive_and_wall_clock_do_not_wait_for_a_held_model(session_dir: 
     recorder = Recorder()
     backend.bind(recorder)
     backend.start("mic", str(session_dir))
-    archive = ArchiveWriter(session_dir / "meeting_audio_mic.pcm")
+    archive = ArchiveWriter(session_dir / archive_name("mic", 1))
     stop_writer = threading.Event()
     written: list[int] = []
     writer: threading.Thread | None = None
@@ -857,7 +858,7 @@ def test_a_held_model_never_touches_the_real_capture_path(session_dir: Path):
         # 这一场音频的起点（读者线程随会话起步，这一格只是给下面那条窗口判据一个左端）
         session_started_at = time.time()
         session_dir_on_disk = Path(runtime.snapshot.session.dir)
-        archive_path = session_dir_on_disk / "meeting_audio_mic.pcm"
+        archive_path = session_dir_on_disk / archive_name("mic", 1)
         try:
             # 先等真采集路径真的喂出几块（读线程 / 写线程 / 归档写全是生产代码），
             # 再等 worker 一拿到第一段就被模型扣住 —— **窗口从「模型已经进过一次」这一刻算起**，
@@ -1005,7 +1006,7 @@ def test_a_raising_model_keeps_the_archive_and_the_service_alive(session_dir: Pa
         assert post(client, "start", {"mode": "both"}).status_code == 200
         session_dir_on_disk = Path(runtime.snapshot.session.dir)
         session_box["dir"] = session_dir_on_disk
-        archive_path = session_dir_on_disk / "meeting_audio_mic.pcm"
+        archive_path = session_dir_on_disk / archive_name("mic", 1)
 
         try:
             # 先等真采集路径写出几块、模型也真的被调到并且崩了
@@ -1534,7 +1535,7 @@ def test_stop_join_budget_covers_the_vad_flush_tail(session_dir: Path, monkeypat
     backend.bind(Recorder())
     backend.start("mic", str(session_dir))
     pipeline = backend._pipeline
-    archive = ArchiveWriter(session_dir / "meeting_audio_mic.pcm")
+    archive = ArchiveWriter(session_dir / archive_name("mic", 1))
     try:
         pipeline._enqueue("mic", time.time(), speech_pcm(1.0))  # 这一段立刻被 worker 拿走
         wait_for(lambda: model.entered.is_set() or None, what="假模型把 worker 按住")
@@ -1705,7 +1706,7 @@ def test_stop_is_idempotent_and_joins_the_worker(session_dir: Path):
     backend.bind(Recorder())
     backend.start("both", str(session_dir))
     pipeline = backend._pipeline
-    archive = ArchiveWriter(session_dir / "meeting_audio_mic.pcm")
+    archive = ArchiveWriter(session_dir / archive_name("mic", 1))
     try:
         write_until_segment(archive)
         wait_for(lambda: model.calls or None, what="假模型被调到")
@@ -1759,7 +1760,7 @@ def test_transcript_handles_reopened_after_stop_are_closed_again(session_dir: Pa
     backend.bind(Recorder())
     backend.start("mic", str(session_dir))
     pipeline = backend._pipeline
-    archive = ArchiveWriter(session_dir / "meeting_audio_mic.pcm")  # 给写行那一步一个真目录
+    archive = ArchiveWriter(session_dir / archive_name("mic", 1))  # 给写行那一步一个真目录
     reopen_count = 0
     reopened: list = []
     closes: list[float] = []
@@ -1857,7 +1858,7 @@ def test_reader_threads_tail_both_archives(session_dir: Path):
     backend.bind(Recorder())
     backend.start("both", str(session_dir))
     archives = {
-        source: ArchiveWriter(session_dir / f"meeting_audio_{source}.pcm") for source in SOURCE_IDS
+        source: ArchiveWriter(session_dir / archive_name(source, 1)) for source in SOURCE_IDS
     }
     errors: list[BaseException] = []
 

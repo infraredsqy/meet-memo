@@ -42,16 +42,17 @@ from meeting.backends.base import (
     SourceFacts,
     SourceLost,
 )
-from meeting.capture.archive import PcmArchiveWriter
+from meeting.capture.archive import PcmArchiveWriter, SAMPLE_RATE, SAMPLE_WIDTH
 from meeting.capture.levels import frame_level
-from meeting.session import archive_name
+from meeting.session import archive_name, segment_archive_paths
+from meeting.state import now_iso
 
 _log = logging.getLogger("meeting.capture.engine")
 
 #: 两路（`mic` = 本地、`loopback` = 远端）；口径与 `meeting.backends.base.SOURCE_IDS` 一致
 SOURCE_IDS: tuple[str, ...] = ("mic", "loopback")
 
-#: `start()` 收到的三种模式（未选中的那一路**不读、不发帧**，但归档文件照样建出来）
+#: `start()` 收到的三种模式（未选中的那一路**不读、不发帧**，但按整段时间写静音）
 CAPTURE_MODES: tuple[str, ...] = ("both", "mic", "loopback")
 
 #: 读侧一次空转的等待上限（秒）：源没有新块时读线程按这个节奏醒来，`stop()` 因此能及时收队
@@ -59,6 +60,19 @@ READ_POLL_SECONDS = 0.05
 
 #: 收尾 join 的确定上界（秒）——join 有上界，超时留一条 warning，不静默、也不挂住进程
 JOIN_TIMEOUT_SECONDS = 5.0
+
+#: 一路音频每秒的字节数（16k × int16 = 32000；归档对账与时长换算的同一把尺）
+BYTES_PER_SECOND = SAMPLE_RATE * SAMPLE_WIDTH
+
+#: 写静音的节拍（秒）：暂停、用户关一路、没开的那一路都按这个节奏往归档里写数字零，
+#: 两路的时间轴因此始终等长（`docs/design-intent.md` 第 8、9 条）
+SILENCE_CHUNK_SECONDS = 0.1
+
+#: 写静音的一块多少字节（0.1 秒 = 3200 字节；与真采集一个块的量级对齐）
+SILENCE_CHUNK_BYTES = int(SAMPLE_RATE * SILENCE_CHUNK_SECONDS) * SAMPLE_WIDTH
+
+#: 数字零的一块（写线程落盘的就是它；真音频块在写侧被等长替换，内容到不了盘上）
+_SILENCE_CHUNK = bytes(SILENCE_CHUNK_BYTES)
 
 
 def sources_for_mode(mode: str) -> tuple[str, ...]:
@@ -92,7 +106,8 @@ class CaptureSource(Protocol):
 class _SourceWorker:
     """一路的全套件：一条读线程（拿块→喂写侧）、一条电平刻度线程、一条写线程。
 
-    `active=False` 的那一路只有归档文件（0 字节），**不读、不发帧**（§5「未选中的那一路」）。
+    `active=False` 的那一路**不读真源、不发帧**，但读线程照样起——跑的是**写静音的节拍器**
+    （`docs/design-intent.md` 第 9 条：某一路没开也是「那一路写静音」，两路时间轴等长）。
     """
 
     def __init__(
@@ -104,6 +119,7 @@ class _SourceWorker:
         emit: Callable[[Any], None],
         frame_interval: float,
         active: bool,
+        pause_event: threading.Event | None = None,
     ) -> None:
         self.source = source
         self.source_impl = source_impl
@@ -111,26 +127,39 @@ class _SourceWorker:
         self.active = active
         self._emit = emit
         self.frame_interval = float(frame_interval)
+        #: 本场的暂停信号（`CaptureSession.pause()` / `resume()` 翻动；置位时读线程
+        #: 把拿到的真音频**等长替换成数字零**再交给写侧——暂停 = 写静音，不录内容）
+        self._pause_event = pause_event if pause_event is not None else threading.Event()
         #: 这一路的流还活着没有（死掉之后 `SourceFacts` 照发，值为假）
         self.alive = bool(active)
         self._stop = threading.Event()
+        #: 用户主动关掉这一路（与「这一路真死了」是两回事：不报 `SourceLost`、不进告警）
+        self._user_closed = threading.Event()
+        #: 写静音的下一拍（绝对时刻，防漂移）
+        self._silence_deadline: float | None = None
         self._threads: list[threading.Thread] = []
         self._lock = threading.Lock()
 
     # -- 起停 -------------------------------------------------------------
 
     def start(self) -> None:
-        if not self.active:
-            return
-        self._threads = [
-            threading.Thread(target=self._read_loop, name=f"capture-read-{self.source}", daemon=True),
-            threading.Thread(target=self._tick_loop, name=f"capture-level-{self.source}", daemon=True),
-        ]
+        if self.active:
+            self._threads = [
+                threading.Thread(target=self._read_loop, name=f"capture-read-{self.source}", daemon=True),
+                threading.Thread(target=self._tick_loop, name=f"capture-level-{self.source}", daemon=True),
+            ]
+        else:
+            # 未选中的那一路只有静音节拍器：没有读侧、没有电平刻度
+            self._threads = [
+                threading.Thread(
+                    target=self._silence_loop, name=f"capture-silence-{self.source}", daemon=True
+                )
+            ]
         for thread in self._threads:
             thread.start()
 
     def stop(self, *, timeout: float = JOIN_TIMEOUT_SECONDS) -> None:
-        """收队：停源、唤醒两条线程、join（**幂等**）。"""
+        """收队：停源、唤醒线程、join（**幂等**）。"""
         self._stop.set()
         source = self.source_impl
         if source is not None:
@@ -148,29 +177,86 @@ class _SourceWorker:
                     )
         self._threads = []
 
+    # -- 关一路（用户的主动选择，不是故障） ---------------------------------
+
+    def deactivate(self) -> None:
+        """用户主动关掉这一路：停读真源、改写静音；**不报 `SourceLost`、不进告警**。
+
+        与「这一路真死了」的区分落在这里（`docs/design-intent.md` 第 9 条：那一路写静音，
+        两路时间对齐）：真死维持读线程里的 `SourceLost` 语义不动；主动关只翻本地的
+        `_user_closed` 信号——读线程随后不再碰源（设备被释放），转由静音节拍器接管。
+        """
+        if self._user_closed.is_set():
+            return
+        self._user_closed.set()
+        source = self.source_impl
+        if source is not None:
+            try:
+                source.stop()
+            except Exception:  # noqa: BLE001 - 关掉时停源失败不改变「用户已关」的事实
+                _log.warning("关 %s 这一路时停源失败（写静音照常）", self.source, exc_info=True)
+        _log.info("用户关掉 %s 这一路：改写静音（不报故障）", self.source)
+
+    @property
+    def user_closed(self) -> bool:
+        """这一路是否被用户主动关掉（与「真死」区分开的读数）。"""
+        return self._user_closed.is_set()
+
     # -- 读侧 -------------------------------------------------------------
+
+    def _feed(self, data: bytes) -> None:
+        """把拿到的块交给写侧；本场暂停中就**等长替换成静音**（内容到不了写侧队列）。"""
+        if self._pause_event.is_set():
+            self.writer.feed(data, silence=True)
+        else:
+            self.writer.feed(data)
 
     def _read_loop(self) -> None:
         """取一块、写一块（搬自 `pipeline._audio_loop` 的 `pipeline.py:89-95`）。
 
         一路的源读不出来 / 抛错时：**这一路收队并报一条 `SourceLost`**，另一路的读线程与写线程
-        一个都不动（「一路出事另一路照跑」就是这么落地的）。
+        一个都不动（「一路出事另一路照跑」就是这么落地的）。用户主动关掉的那一路**不走**
+        这条报障路：读线程转去跑静音节拍器。
         """
         source = self.source_impl
-        if source is None:  # pragma: no cover - active 为真时源一定在
-            return
         while not self._stop.is_set():
+            if not self.active or self._user_closed.is_set() or source is None:
+                if self._pace_silence():
+                    return
+                continue
             try:
                 data = source.read(READ_POLL_SECONDS)
             except Exception as exc:  # noqa: BLE001 - 采集侧的任何读错都如实报成 SourceLost
-                self._lose(f"{type(exc).__name__}: {exc}")
+                if not self._user_closed.is_set():
+                    self._lose(f"{type(exc).__name__}: {exc}")
                 return
             if data is None:
-                self._lose("这一路的采集流已经结束")
+                if not self._user_closed.is_set():
+                    self._lose("这一路的采集流已经结束")
                 return
             if not data:
                 continue
-            self.writer.feed(data)
+            self._feed(data)
+
+    def _silence_loop(self) -> None:
+        """未选中那一路的整段时间静音节拍器（没有读侧，纯按真实时长写零）。"""
+        while not self._stop.is_set():
+            if self._pace_silence():
+                return
+
+    def _pace_silence(self) -> bool:
+        """往归档写一块数字静音，然后歇到下一拍（绝对时刻，防漂移）。
+
+        交回 `True` 表示收到停机信号，调用方照办退出。
+        """
+        self.writer.feed(_SILENCE_CHUNK, silence=True)
+        now = time.monotonic()
+        if self._silence_deadline is None:
+            self._silence_deadline = now + SILENCE_CHUNK_SECONDS
+        else:
+            self._silence_deadline += SILENCE_CHUNK_SECONDS
+        delay = self._silence_deadline - time.monotonic()
+        return bool(delay > 0 and self._stop.wait(delay))
 
     def _lose(self, reason: str) -> None:
         """这一路没了：如实报一条 `SourceLost`（**不判告警、不报静默秒数**，那是服务侧的事）。"""
@@ -229,12 +315,21 @@ class CaptureSession:
 
     生命周期（`meeting/service/runtime.py` 的调用顺序）：
 
-      - 构造：**把两路的归档文件都建出来**（未选中的那一路是 0 字节，`session.json` 的
-        `sources[*].archive` 因此条条落到实处），并起两路写线程；此刻还没有读侧；
-      - `start()`：按 `mode` 起该采的几路读侧与电平刻度；
-      - `finalize()`：停流 + join + 关文件 + `fsync`（收尾第 1 步）；
-      - `transcode()`：把两路 PCM 转成 MP3（收尾第 2 步）；转不动**原样上抛**，PCM 留着；
+      - 构造：**把两路的段 1 归档文件都建出来**（`meeting_audio_<source>_001.pcm`），
+        并起两路写线程；此刻还没有读侧；
+      - `start()`：按 `mode` 起该采的几路读侧与电平刻度（未选中的那一路起静音节拍器），
+        同时落下**本段**的起点戳——一段 = 一次录制（start→finalize，`docs/design-intent.md`
+        第 9 条）；
+      - `pause()` / `resume()`：暂停与继续。暂停期间所有路写数字静音、不录内容
+        （第 8 条），段**不**切段，暂停区间进段账；
+      - `deactivate_source()`：用户主动关掉某一路——那一路改写静音，不报 `SourceLost`；
+      - `finalize()`：停流 + join + 关文件 + `fsync`（收尾第 1 步），落下本段终点戳
+        并结出**在录时长**（实际录到的音频时长，不含暂停；权威数只从写侧的字节账来）；
+      - `transcode()`：把各段 PCM 转成 MP3（收尾第 2 步）；转不动**原样上抛**，PCM 留着；
       - `stop()`：幂等收场（进程关停时调；已经收过尾就什么都不做）。
+
+    段账（`segment_records()` / `audio_duration_seconds()`）由服务侧落进 `session.json`；
+    本类只管把它记对，不做任何墙钟对账（第 6 条：元信息除权威时长外一律不当判据）。
     """
 
     def __init__(
@@ -258,11 +353,19 @@ class CaptureSession:
         self._started = False
         self._finalized = False
         self._stopped = False
+        #: 本场的暂停信号（读线程看它决定写内容还是写静音）
+        self._pause_event = threading.Event()
+        #: 段内暂停区间（墙钟 ISO；`{"start": …, "end": …}`，end 为 None = 还在暂停中）
+        self._pause_intervals: list[dict[str, str | None]] = []
+        #: 本段的起止戳与在录时长（一段 = 一次录制；本节点每场每路恰好一段）
+        self._segment_started_at: str | None = None
+        self._segment_ended_at: str | None = None
+        self._segment_duration_seconds: float | None = None
         self.writers: dict[str, PcmArchiveWriter] = {}
         self.workers: dict[str, _SourceWorker] = {}
         for source in SOURCE_IDS:
             writer = PcmArchiveWriter(
-                _archive_path(self.session_dir, source), label=source
+                _archive_path(self.session_dir, source, 1), label=source
             )
             writer.open()
             self.writers[source] = writer
@@ -273,6 +376,7 @@ class CaptureSession:
                 emit=emit,
                 frame_interval=self.frame_interval,
                 active=source in self.requested and source in self._sources,
+                pause_event=self._pause_event,
             )
 
     # -- 起 ---------------------------------------------------------------
@@ -298,6 +402,8 @@ class CaptureSession:
             if self._started:
                 return
             self._started = True
+            # 本段从这里起算（一段 = 一次录制；只是元信息戳，不当判据）
+            self._segment_started_at = now_iso()
         try:
             for worker in self.workers.values():
                 worker.start()
@@ -305,39 +411,139 @@ class CaptureSession:
             self.stop()
             raise
 
+    # -- 暂停 / 关一路（驱动能力做在引擎与服务层；动作面入口归下游节点） -------
+
+    def pause(self) -> None:
+        """暂停本场采集：所有路从这一刻起写数字静音，**不录内容**（第 8 条的隐私线）。
+
+        幂等；没在录（没 `start()` 或已 `finalize()`）时什么都不做。段**不**切段：
+        暂停只在本段账上记一条区间。
+        """
+        with self._lock:
+            if self._pause_event.is_set() or not self._started or self._finalized:
+                return
+            self._pause_event.set()
+            self._pause_intervals.append({"start": now_iso(), "end": None})
+        _log.info("本场已暂停：%s 往归档写数字静音，不录内容", self.session_dir)
+
+    def resume(self) -> None:
+        """继续本场采集：结束当前这条暂停区间（**幂等**；没在暂停中时什么都不做）。"""
+        with self._lock:
+            if not self._pause_event.is_set():
+                return
+            self._pause_event.clear()
+            for interval in reversed(self._pause_intervals):
+                if interval.get("end") is None:
+                    interval["end"] = now_iso()
+                    break
+        _log.info("本场已继续：暂停区间结束，归档回到录内容")
+
+    @property
+    def paused(self) -> bool:
+        """本场是否正处在暂停中（写静音、不录内容）。"""
+        return self._pause_event.is_set()
+
+    def deactivate_source(self, source: str) -> None:
+        """用户主动关掉某一路：那一路改写静音，**不报 `SourceLost`、不进告警**（幂等）。"""
+        worker = self.workers.get(source)
+        if worker is None:  # pragma: no cover - 两路的 worker 构造即建
+            return
+        worker.deactivate()
+
+    # -- 段账 ---------------------------------------------------------------
+
+    def segment_records(self) -> list[dict[str, Any]]:
+        """本场的段列表（`session.json` 的 `segments` 那一格的来源）。
+
+        本节点每场每路恰好一段（段 1）；还在录时 `ended_at` 与 `duration_seconds`
+        是 `None`，收尾那一刻由 `finalize()` 结账。
+        """
+        with self._lock:
+            pauses = [dict(interval) for interval in self._pause_intervals]
+            started = self._segment_started_at
+            ended = self._segment_ended_at
+            duration = self._segment_duration_seconds
+        return [
+            {
+                "index": 1,
+                "started_at": started,
+                "ended_at": ended,
+                "sources": list(self.requested),
+                "pauses": pauses,
+                "duration_seconds": None if duration is None else round(duration, 3),
+            }
+        ]
+
+    def audio_duration_seconds(self) -> float:
+        """权威时长：实际录到的音频时长（不含暂停）= 各段在录时长之和。
+
+        只数**写完的段**（还在录的那段没有账可结）；每个数的来历是写侧的**内容字节**
+        （`÷ 32000`），与墙钟无关。
+        """
+        with self._lock:
+            duration = self._segment_duration_seconds
+        return 0.0 if duration is None else round(duration, 3)
+
+    def archives_for(self, source: str) -> list[str]:
+        """这一路写下的段文件名表（`session.json` 的 `sources[*].archives` 的来源）。"""
+        return [archive_name(source, 1)]
+
     # -- 收尾 -------------------------------------------------------------
 
     def finalize(self) -> None:
-        """停流 + join + 关文件 + `fsync`（**幂等**）。"""
+        """停流 + join + 关文件 + `fsync`（**幂等**），并结出本段的在录时长。"""
         with self._lock:
             if self._finalized:
                 return
             self._finalized = True
+            # 暂停中收尾：把最后一条暂停区间关上（后端 stop 会停源，静音写不到下一拍）
+            if self._pause_event.is_set():
+                self._pause_event.clear()
+                for interval in reversed(self._pause_intervals):
+                    if interval.get("end") is None:
+                        interval["end"] = now_iso()
+                        break
         for worker in self.workers.values():
             worker.stop()
         for writer in self.writers.values():
             writer.close()
+        with self._lock:
+            # 在录时长 = 该段各路「内容字节」最大的那一条 ÷ 每秒字节数：内容字节只由
+            # 真正录到的块累加（暂停静音、没开一路的填充都记在 silence 那一格），
+            # 权威数因此从盘上的字节账来，与墙钟无关。
+            self._segment_ended_at = now_iso()
+            self._segment_duration_seconds = max(
+                (
+                    self.writers[source].content_bytes / BYTES_PER_SECOND
+                    for source in self.requested
+                ),
+                default=0.0,
+            )
         _log.info(
             "收尾落盘完成：%s（两路归档 %s）",
             self.session_dir,
             ", ".join(
-                f"{source}={self.writers[source].bytes_written} 字节" for source in SOURCE_IDS
+                f"{source}={self.writers[source].bytes_written} 字节"
+                f"（内容 {self.writers[source].content_bytes}、静音 {self.writers[source].silence_bytes}）"
+                for source in SOURCE_IDS
             ),
         )
 
     def transcode(self) -> None:
-        """收尾第 2 步：两路 PCM → MP3。**不做决定论的口径**，转不动就抛（该步记 `failed`）。
+        """收尾第 2 步：各段 PCM → MP3。**不做决定论的口径**，转不动就抛（该步记 `failed`）。
 
-        未选中的那一路是 0 字节，`convert_to_mp3()` 按空文件处理、**不产出 MP3**（照 V1）。
+        逐段转（`meeting/session.py` 枚举出的段文件，本节点每路恰好一段）。判据照旧是
+        `convert_to_mp3()` 的空文件口径：0 字节的段不产出 MP3；写满静音的段字节非空，
+        照转（盘上事实如此，产物里就是一段静音）。
         """
         # 函数内 import：转码这一层是「可以整块换掉」的（测试拿它验失败那一档）
         from meeting.capture.archive import convert_to_mp3, mp3_path_for
 
         produced: list[str] = []
         for source in SOURCE_IDS:
-            pcm_path = _archive_path(self.session_dir, source)
-            if convert_to_mp3(pcm_path, mp3_path_for(pcm_path)):
-                produced.append(mp3_path_for(pcm_path).name)
+            for pcm_path in segment_archive_paths(self.session_dir, source):
+                if convert_to_mp3(pcm_path, mp3_path_for(pcm_path)):
+                    produced.append(mp3_path_for(pcm_path).name)
         _log.info("收尾转码完成：%s（产出 %s）", self.session_dir, produced or "无")
 
     def stop(self) -> None:
@@ -351,19 +557,30 @@ class CaptureSession:
     # -- 读数（测试与 /debug 用） -----------------------------------------
 
     def bytes_written(self, source: str) -> int:
-        """这一路真正写下去的字节数（对账口径：32000 字节/秒 × 秒数）。"""
+        """这一路真正写下去的字节数（时间轴口径：32000 字节/秒 × 秒数，含静音）。"""
         return self.writers[source].bytes_written
 
+    def content_bytes(self, source: str) -> int:
+        """这一路**录到内容**的字节数（权威时长的账本：不含暂停静音与未选一路的填充）。"""
+        return self.writers[source].content_bytes
 
-def _archive_path(session_dir: str, source: str) -> str:
-    """场次目录里的归档路径（文件名由 `meeting/session.py` 定死）。"""
-    return os.path.join(session_dir, archive_name(source))
+    def silence_bytes(self, source: str) -> int:
+        """这一路写下去的静音字节数（暂停 / 用户关一路 / 没开一路的填充）。"""
+        return self.writers[source].silence_bytes
+
+
+def _archive_path(session_dir: str, source: str, segment: int) -> str:
+    """场次目录里某路某段的归档路径（文件名由 `meeting/session.py` 定死）。"""
+    return os.path.join(session_dir, archive_name(source, segment))
 
 
 __all__ = [
+    "BYTES_PER_SECOND",
     "CAPTURE_MODES",
     "JOIN_TIMEOUT_SECONDS",
     "READ_POLL_SECONDS",
+    "SILENCE_CHUNK_BYTES",
+    "SILENCE_CHUNK_SECONDS",
     "SOURCE_IDS",
     "CaptureSession",
     "CaptureSource",

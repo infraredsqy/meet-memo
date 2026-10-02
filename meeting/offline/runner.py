@@ -11,13 +11,15 @@
 
 ## 音频来源
 
-一路的音频按两档取，先到先用：
+一路的音频 = **这一路的段列表**（`meeting/session.py` 的 `segment_archive_paths()` 按命名
+规则枚举出的段文件，序号升序；一段 = 一次录制，段拼起来 = 连续时间轴，暂停区间写的是
+数字零），按两档取，先到先用：
 
-  1. 归档 PCM `meeting_audio_<source>.pcm`（采集侧边采边写的裸流）；
-  2. 归档 MP3 `meeting_audio_<source>.mp3`（收尾转码的产物）。
+  1. 归档 PCM `meeting_audio_<source>_<段号>.pcm`（采集侧边采边写的裸流）；
+  2. 归档 MP3 `meeting_audio_<source>_<段号>.mp3`（收尾转码的产物）。
 
-PCM 是 0 字节而 MP3 在时走第二档。**两档都没有的那一路如实记成失败**（报告与状态文件里
-都留痕），另一路照常跑完 —— 整场不许因为一路缺音频就崩掉。
+段 PCM 全部是 0 字节而段 MP3 在时走第二档。**两档都没有的那一路如实记成失败**（报告与
+状态文件里都留痕），另一路照常跑完 —— 整场不许因为一路缺音频就崩掉。
 
 **两路分别调用引擎，绝不先混音再跑**：混了就没法「各自编号、互不相认」（R10）。
 
@@ -198,6 +200,7 @@ from meeting.offline import artifacts
 from meeting.offline.engine import OfflineEngine, OfflineSegment
 from meeting.offline.progress import ChunkProgress, OfflineProgressLedger
 from meeting.offline.speakers import number_speakers
+from meeting.session import archive_name, segment_archive_paths
 
 if TYPE_CHECKING:  # pragma: no cover - 只为类型标注，运行时不 import（惰性纪律）
     import numpy as np
@@ -580,20 +583,36 @@ def chunk_file(session_dir: Path | str, index: int) -> Path:
     return Path(session_dir) / CHUNK_DIR_NAME / f"chunk_{int(index):02d}.wav"
 
 
-def _decode_samples(path: str | Path) -> "np.ndarray":
+def _audio_paths(path: "str | Path | Sequence[str | Path]") -> list[Path]:
+    """把「一个路径或一串段路径」归一成段路径表（段是本层时间轴的唯一形状）。"""
+    if isinstance(path, (list, tuple)):
+        return [Path(item) for item in path]
+    return [Path(path)]
+
+
+def _decode_samples(path: "str | Path | Sequence[str | Path]") -> "np.ndarray":
     """解出整段 16k 单声道 float32 波形（**用例的接缝**：分块那条路只在非 PCM 音频上走它）。
 
-    单列一个函数是为了让用例把真解码换掉（`tests/conftest.py` 不许碰真模型，也不让
-    一条用例为了一次解码等上几秒）。
+    给的是**一串段路径**时逐段解、按序拼接（段拼起来 = 连续时间轴）。单列一个函数是为了
+    让用例把真解码换掉（`tests/conftest.py` 不许碰真模型，也不让一条用例为了一次解码等上
+    几秒）。
     """
     from meeting.offline.audio import decode_audio
 
-    return decode_audio(path)
+    paths = _audio_paths(path)
+    if len(paths) == 1:
+        return decode_audio(paths[0])
+    import numpy as np
+
+    pieces = [decode_audio(item) for item in paths]
+    return np.concatenate(pieces) if pieces else np.empty(0, dtype=np.float32)
 
 
-def _pcm_sample_count(path: Path) -> int:
-    """归档 PCM 的样本数（字节数 ÷ 2，不读内容）。"""
-    return int(os.path.getsize(path) // PCM_SAMPLE_WIDTH)
+def _pcm_sample_count(paths: "Path | str | Sequence[Path | str]") -> int:
+    """一段列 PCM 的样本数（各段字节数之和 ÷ 2，不读内容）。"""
+    return sum(
+        os.path.getsize(path) // PCM_SAMPLE_WIDTH for path in _audio_paths(paths)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -628,46 +647,86 @@ def samples_to_counts(samples: Any) -> Any:
     raise TypeError(f"波形的 dtype 该是 float 或 int，收到 {data.dtype}")
 
 
-def pcm_sample_chunk_counts(path: Path | str, *, offset: float, seconds: float) -> Any:
-    """归档 PCM 上的一段读成 int16 计数（`_materialize_chunk()` 用的同一个换算）。
+def pcm_sample_chunk_counts(
+    paths: "Path | str | Sequence[Path | str]", *, offset: float, seconds: float
+) -> Any:
+    """段列表拼成的时间轴上 `[offset, offset + seconds)` 读成 int16 计数。
 
-    读不出来时交回空数组（调用方各自决定怎么办：切块那一步照抛、门那一步放行）。
+    段按序号升序拼 = 连续时间轴；跨段的块按各段长度切着读（读侧不知道「段」的存在差异，
+    字节接字节就是同一条轴）。读不出来时交回空数组（调用方各自决定怎么办：切块那一步
+    照抛、门那一步放行）。
     """
     import numpy as np
 
+    series = _audio_paths(paths)
     start = int(round(float(offset) * PCM_SAMPLE_RATE))
     end = int(round((float(offset) + float(seconds)) * PCM_SAMPLE_RATE))
-    with open(path, "rb") as handle:
-        handle.seek(max(0, start) * PCM_SAMPLE_WIDTH)
-        raw = handle.read(max(0, end - start) * PCM_SAMPLE_WIDTH)
-    return np.frombuffer(raw, dtype="<i2").astype(np.int32)
+    skip = max(0, start)
+    want = max(0, end - start)
+    pieces: list[Any] = []
+    for path in series:
+        if want <= 0:
+            break
+        try:
+            available = os.path.getsize(path) // PCM_SAMPLE_WIDTH
+        except OSError:
+            available = 0
+        if skip >= available:
+            skip -= available
+            continue
+        take = min(available - skip, want)
+        with open(path, "rb") as handle:
+            handle.seek(skip * PCM_SAMPLE_WIDTH)
+            raw = handle.read(take * PCM_SAMPLE_WIDTH)
+        got = len(raw) // PCM_SAMPLE_WIDTH
+        if got:
+            pieces.append(np.frombuffer(raw, dtype="<i2").astype(np.int32))
+            want -= got
+        skip = 0
+        if got < take:
+            break  # 这一段比标称短：时间轴到这里为止（末段短一截的那一档）
+    if not pieces:
+        return np.empty(0, dtype=np.int32)
+    return np.concatenate(pieces)
 
 
-def _pcm_span_scan(path: Path | str, *, offset: float, seconds: float) -> bool | None:
-    """按字节块扫归档 PCM 的一段：读到非零字节交回 `False`，读满全零交回 `True`。
+def _pcm_span_scan(
+    paths: "Path | str | Sequence[Path | str]", *, offset: float, seconds: float
+) -> bool | None:
+    """按字节块扫段列表拼成的时间轴上的一段：读到非零字节交回 `False`，读满全零交回 `True`。
 
-    要的那一段**没读全**（文件比它短）时交回 `None`（这一段的静音与否没有依据），
+    要的那一段**没读全**（各段加起来比它短）时交回 `None`（这一段的静音与否没有依据），
     读不动（文件没了、读错）同样交回 `None`：门在「确实读到全零」以外一律不下结论。
 
     成本落在这里：见到第一个非零字节就返回，一段有声的音频几乎在第一个字节块里就出结果；
-    只有整段全零（实测那一档）才需要读满。
+    只有整段全零（实测那一档）才需要读满。跨段的偏移按各段长度逐段折算：先跳过起点落在
+    的那几段，再在剩下的段里读满要的字节数。
     """
+    series = _audio_paths(paths)
     start = max(0, int(round(float(offset) * PCM_SAMPLE_RATE)))
     count = max(0, int(round(float(seconds) * PCM_SAMPLE_RATE)))
-    begin = start * PCM_SAMPLE_WIDTH
-    remaining = count * PCM_SAMPLE_WIDTH
+    remaining = count * PCM_SAMPLE_WIDTH  # 还要读的字节数
+    skip = start * PCM_SAMPLE_WIDTH  # 还要跳过的字节数
     try:
-        with open(path, "rb") as handle:
-            handle.seek(begin)
-            while remaining > 0:
-                block = handle.read(min(_PCM_SCAN_BLOCK_BYTES, remaining))
-                if not block:
-                    break
-                if block.translate(_PCM_SCAN_TABLE).count(1):
-                    return False
-                remaining -= len(block)
+        for path in series:
+            if remaining <= 0:
+                break
+            size = os.path.getsize(path)
+            if skip >= size:
+                skip -= size
+                continue
+            with open(path, "rb") as handle:
+                handle.seek(skip)
+                skip = 0
+                while remaining > 0:
+                    block = handle.read(min(_PCM_SCAN_BLOCK_BYTES, remaining))
+                    if not block:
+                        break
+                    if block.translate(_PCM_SCAN_TABLE).count(1):
+                        return False
+                    remaining -= len(block)
     except OSError:  # 读不到（文件没了、读错）就按「可能有声」放行，引擎那一层照样报错
-        _log.warning("会后离线：数字静音门读不动 %s，照常送引擎", path, exc_info=True)
+        _log.warning("会后离线：数字静音门读不动 %s，照常送引擎", series, exc_info=True)
         return None
     if remaining > 0:
         return None
@@ -750,8 +809,10 @@ def is_digital_silence(samples: Any) -> bool:
     return _peak_counts(scaled) < float(SILENT_PEAK_FLOOR)
 
 
-def pcm_span_is_silent(path: Path | str, *, offset: float, seconds: float) -> bool:
-    """归档 PCM 上 `[offset, offset + seconds)` 这一段是不是数字静音（**不解析成波形**）。
+def pcm_span_is_silent(
+    path: "str | Path | Sequence[str | Path]", *, offset: float, seconds: float
+) -> bool:
+    """段列表拼的时间轴上 `[offset, offset + seconds)` 是不是数字静音（**不解析成波形**）。
 
     按字节块扫（`_PCM_SCAN_BLOCK_BYTES`），见到任何一个非零字节就当场交回 `False`：
     有声的音频几乎在第一块里就出结果，静音那一档才读满整段。长度按样本数判
@@ -811,7 +872,7 @@ def _span_samples(waveform: Any, *, offset: float, seconds: float) -> Any | None
 
 
 def measure_span(
-    path: str | Path,
+    path: "str | Path | Sequence[str | Path]",
     *,
     offset: float,
     seconds: float,
@@ -821,11 +882,12 @@ def measure_span(
 ) -> MeasureResult:
     """门在**一段音频**上的结论：先按归档 PCM 的字节扫，再用量好的波形，最后现解一次。
 
-    三条路按成本从低到高排（前一条用得上就不走后面）：
+    `path` 收单个路径，也收**一串段路径**（段按序号升序拼 = 连续时间轴；本层的偏移与
+    秒数都长在这条轴上）。三条路按成本从低到高排（前一条用得上就不走后面）：
 
-      1. **归档 PCM**（`meeting_audio_<source>.pcm`）按字节扫那一段：见到第一个非零字节就
-         出结果，一场静音会议才需要读满，成本可以忽略。**它排在波形前面**：单趟跑的 MP3
-         是转码产物，归档 PCM 与它同一段音频而更便宜。
+      1. **归档 PCM**（`meeting_audio_<source>_<段号>.pcm`）按字节扫那一段：见到第一个
+         非零字节就出结果，一场静音会议才需要读满，成本可以忽略。**它排在波形前面**：
+         单趟跑的 MP3 是转码产物，归档 PCM 与它同一段音频而更便宜。
       2. **已经解好的波形**（`_plan_for_source()` 量长度时解出来的那一份，分块跑与单趟跑
          共用同一份）切片判 —— **单趟跑的 MP3 走的是这一条**，门口不再现解第二遍。
       3. **现解一次音频文件**：`decode_audio()`（`av`）解成 16k 单声道波形再判。这一支在产品
@@ -839,7 +901,8 @@ def measure_span(
     直接照「门判不了」记账（`GATE_METHOD_DECODE_AT_PLAN`）—— 同一个坏文件解两次只会把
     同一句话打两遍日志。
     """
-    audio_path = Path(path)
+    audio_paths = _audio_paths(path)
+    audio_path = audio_paths[0]
     if audio_path.suffix.lower() == ".pcm":
         count = max(0, int(round(float(seconds) * PCM_SAMPLE_RATE)))
         if count < MIN_GATE_SAMPLES:
@@ -849,7 +912,7 @@ def measure_span(
                 silent=False,
                 detail="这一段短于 0.1 秒，样本不足时不替引擎下结论",
             )
-        verdict = _pcm_span_scan(audio_path, offset=offset, seconds=seconds)
+        verdict = _pcm_span_scan(audio_paths, offset=offset, seconds=seconds)
         if verdict is None:
             return MeasureResult(
                 method=GATE_METHOD_PCM,
@@ -885,7 +948,7 @@ def measure_span(
         )
 
     try:
-        decoded = _decode_samples(audio_path)
+        decoded = _decode_samples(audio_paths)
     except Exception as exc:  # 解不开：门判不了，那一段照常送引擎
         return MeasureResult(
             method=GATE_METHOD_DECODE_NOW,
@@ -910,7 +973,11 @@ def measure_span(
 
 
 def span_is_silent(
-    path: str | Path, *, offset: float, seconds: float, waveform: Any = None
+    path: "str | Path | Sequence[str | Path]",
+    *,
+    offset: float,
+    seconds: float,
+    waveform: Any = None,
 ) -> bool:
     """一段音频（原录音时间轴上的 `[offset, offset + seconds)`）是不是数字静音。
 
@@ -972,34 +1039,72 @@ def _read_session_json(session_dir: Path | str) -> dict[str, Any]:
 
 
 def audio_path_for(session_dir: Path | str, source: str) -> Path:
-    """一路音频的首选路径（归档的裸 PCM；`meeting/session.py` 的 `archive_name()` 同形）。"""
-    return Path(session_dir) / f"meeting_audio_{source}.pcm"
+    """一路**段 1**的音频路径（`meeting/session.py` 的 `archive_name()` 同形）。
+
+    本层的消费入口是 `resolve_audio()`（它交回**整份段列表**）；这一格留着是给
+    「就要看第一段在哪」的读方与日志用的。
+    """
+    return Path(session_dir) / archive_name(source, 1)
 
 
 def resolve_audio(
     session_dir: Path | str, source: str
-) -> tuple[str | None, str | None]:
-    """挑一路的音频：交回 `(路径, 说明)`；挑不出来时 `路径` 为 `None`、`说明` 里是原因。
+) -> tuple[list[str] | None, str | None]:
+    """挑一路的音频：交回 `(按序拼接的段路径表, 说明)`；挑不出来时路径为 `None`、说明里是原因。
 
-    判据按顺序走：
+    段列表 = `meeting/session.py` 的 `segment_archive_paths()` 枚举出的段文件（序号升序，
+    拼起来 = 连续时间轴）。判据按顺序走：
 
-      - 归档 PCM 字节数 `>= 2`（装得下至少一个样本）→ 用它；
-      - PCM 缺席或 0 字节，但同名 `.mp3` 在 → 用 MP3（收尾转码的产物），说明里记一笔；
-      - 两档都挑不出来 → `(None, "no_audio…")`。
+      - 段 PCM 在场且字节总数 `>= 2`（装得下至少一个样本）→ 用段 PCM；
+      - 段 PCM 缺席或全部 0 字节，但同族的段 `.mp3` 在（非空）→ 用段 MP3，说明里记一笔；
+      - 两档都挑不出来 → `(None, "no_audio…")` / `(None, "empty_pcm…")`。
     """
-    pcm = audio_path_for(session_dir, source)
-    if pcm.exists():
-        size = pcm.stat().st_size
-        if size >= EMPTY_PCM_BYTES:
-            return str(pcm), None
-        mp3 = pcm.with_suffix(".mp3")
-        if mp3.exists() and mp3.stat().st_size > 0:
-            return str(mp3), f"归档 PCM 是 {size} 字节，改用 MP3"
-        return None, f"{REASON_EMPTY_PCM}：归档 PCM 是 {size} 字节、同目录没有可用的 MP3"
-    mp3 = pcm.with_suffix(".mp3")
-    if mp3.exists() and mp3.stat().st_size > 0:
-        return str(mp3), "归档 PCM 缺席，改用 MP3"
-    return None, f"{REASON_NO_AUDIO}：{pcm.name} 与 {mp3.name} 都不在场"
+    pcm_paths = segment_archive_paths(session_dir, source)
+
+    def _size(path: Path) -> int:
+        try:
+            return path.stat().st_size
+        except OSError:
+            return 0
+
+    total = sum(_size(path) for path in pcm_paths)
+    if pcm_paths and total >= EMPTY_PCM_BYTES:
+        return [str(path) for path in pcm_paths], None
+    mp3_paths = [
+        path
+        for path in segment_archive_paths(session_dir, source, suffix=".mp3")
+        if _size(path) > 0
+    ]
+    if mp3_paths:
+        # 「段 PCM 在但为 0 字节」与「段 PCM 全部缺席」分开表述：缺席的文件不能说成空文件。
+        if pcm_paths:
+            return (
+                [str(path) for path in mp3_paths],
+                f"归档 PCM 共 {total} 字节，改用 MP3",
+            )
+        return [str(path) for path in mp3_paths], "归档 PCM 缺席，改用 MP3"
+    if pcm_paths:
+        return (
+            None,
+            f"{REASON_EMPTY_PCM}：归档 PCM 共 {total} 字节、同目录没有可用的 MP3",
+        )
+    first_mp3 = audio_path_for(session_dir, source).with_suffix(".mp3").name
+    return (
+        None,
+        f"{REASON_NO_AUDIO}：{archive_name(source, 1)} 与 {first_mp3} 都不在场",
+    )
+
+
+def _audio_file_label(paths: "Sequence[str]") -> str:
+    """产物里 `audio.file` 那一格的读法：恰好一段写文件名，多段写「第一段名 等 N 个段文件」。
+
+    这一格是**给人看的注脚**，段清单的权威在 `session.json` 的 `segments` 与盘上的段文件
+    本身；多段时把段数亮出来，读的人不会拿一个文件名当成整条时间轴。
+    """
+    names = [Path(path).name for path in paths]
+    if len(names) == 1:
+        return names[0]
+    return f"{names[0]} 等 {len(names)} 个段文件"
 
 
 # ---------------------------------------------------------------------------
@@ -1612,11 +1717,11 @@ def _run_one_source(
     """
     metric = artifacts.SourceMetrics(source=source, state="running")
     started = time.monotonic()
-    path, note = resolve_audio(directory, source)
+    paths, note = resolve_audio(directory, source)
     segments: list[OfflineSegment] = []
     wrote_artifacts = False
 
-    if path is None:
+    if paths is None:
         metric.state = "failed"
         metric.error = note
         metric.reasons[
@@ -1629,13 +1734,13 @@ def _run_one_source(
         metric.reasons[REASON_ENGINE_ERROR] = 1
     else:
         if note:
-            _log.info("会后离线：%s 的音频取 %s（%s）", source, path, note)
+            _log.info("会后离线：%s 的音频取 %s（%s）", source, paths[0], note)
         # 引擎抛错那一档在 `_execute_chunks` 的**切法计算**里收（`plan`），
         # 与逐块的失败分开记：切法算不出来时一块都没跑过。
         try:
-            metric.audio_file = Path(path).name
+            metric.audio_file = _audio_file_label(paths)
             plan, waveform, decode_attempted = _plan_for_source(
-                directory, source, path, config=config
+                directory, source, paths, config=config
             )
             metric.audio_seconds = plan.total_seconds
             if progress is not None:
@@ -1645,7 +1750,7 @@ def _run_one_source(
             segments, runs = _execute_chunks(
                 directory,
                 source,
-                path,
+                paths,
                 engine=engine,
                 plan=plan,
                 waveform=waveform,
@@ -1654,7 +1759,7 @@ def _run_one_source(
             )
         except Exception as exc:  # 切法/解码抛错：这一路失败，另一路照跑
             metric.state = "failed"
-            metric.audio_file = Path(path).name
+            metric.audio_file = _audio_file_label(paths)
             metric.error = f"{REASON_ENGINE_ERROR}：{type(exc).__name__}: {exc}"
             metric.reasons[REASON_ENGINE_ERROR] = 1
             if progress is not None and not progress.has_source(source):
@@ -1726,13 +1831,14 @@ def _run_one_source(
 
 
 def _plan_for_source(
-    directory: Path, source: str, path: str, *, config: Any = None
+    directory: Path, source: str, paths: "str | Sequence[str]", *, config: Any = None
 ) -> tuple[ChunkPlan, Any, bool]:
     """算这一路的切法（块长读 `post.chunk_seconds`，总时长按音频类型分别量）。
 
-    归档 PCM 的时长由**文件字节数**算出（不读内容）：一份 5943 秒的 PCM 是 190 MB，
+    归档 PCM 的时长由**各段字节数之和**算出（不读内容）：一份 5943 秒的 PCM 是 190 MB，
     为了量长度先读一遍它并不划算。别的容器解一遍取样本数（`decode_audio()` 给出的就是
-    16k 单声道波形，样本数 ÷ 16000 即秒数），解码那一次也用来切块。
+    16k 单声道波形，样本数 ÷ 16000 即秒数），解码那一次也用来切块。段列表是本层时间轴的
+    唯一形状：PCM 按各段字节相加，非 PCM 逐段解、按序拼接。
 
     **解出来的那段波形一并交回**（`(切法, 波形, 解过没有)`）：同一个文件不该为了不同的理由
     解两遍 —— 单趟跑的 MP3 要在门口看一眼峰值（C1），分块跑的 MP3 要逐块切，两处都用这一段
@@ -1743,26 +1849,26 @@ def _plan_for_source(
     在这里替它下结论会让「引擎交回什么」这件事变成「我们量长度成没成」。
     """
     del directory, source  # 切法只认路径与块长，两路之间没有别的差别
-    audio_path = Path(path)
+    audio_paths = _audio_paths(paths)
     chunk_seconds = read_chunk_seconds(config)
-    if audio_path.suffix.lower() == ".pcm":
+    if audio_paths[0].suffix.lower() == ".pcm":
         # 归档 PCM 不在这里解波形：门按字节扫那一段（比解一遍便宜），切块按字节定位读
         try:
-            total = _pcm_sample_count(audio_path) / PCM_SAMPLE_RATE
+            total = _pcm_sample_count(audio_paths) / PCM_SAMPLE_RATE
         except OSError:
             _log.warning(
                 "会后离线：%s 的时长量不出来（退回整段一次跑，交给引擎如实报错）",
-                path, exc_info=True,
+                paths, exc_info=True,
             )
             return plan_chunks(0.0, chunk_seconds), None, False
         return plan_chunks(total, chunk_seconds), None, False
     try:
-        waveform = _decode_samples(audio_path)
+        waveform = _decode_samples(audio_paths)
         total = float(waveform.size) / PCM_SAMPLE_RATE
     except Exception:
         _log.warning(
             "会后离线：%s 的时长量不出来（退回整段一次跑，交给引擎如实报错）",
-            path, exc_info=True,
+            paths, exc_info=True,
         )
         return plan_chunks(0.0, chunk_seconds), None, True
     return plan_chunks(total, chunk_seconds), waveform, True
@@ -1771,7 +1877,7 @@ def _plan_for_source(
 def _execute_chunks(
     directory: Path,
     source: str,
-    path: str,
+    paths: "str | Sequence[str]",
     *,
     engine: Any,
     plan: ChunkPlan,
@@ -1781,10 +1887,12 @@ def _execute_chunks(
 ) -> tuple[list[OfflineSegment], list[ChunkRun]]:
     """按切法逐块调引擎，交回 `(拼回整场时间轴的分段, 逐块记账)`。
 
-    单趟（块数为 1）时**不切块**：归档 PCM 那一条路把原始音频路径喂引擎，产物与加
-    `post.chunk_seconds` 之前逐字一致；解好了波形的那一条路（mp3）喂的是解好的那份 wav ——
-    那一次解码已经为过门花掉了，让引擎再解一遍原文件没有意义。**没声那一档两路都除外**：
-    那一段跳过引擎，产物里留下 `silent_spans`。
+    `paths` 是这一路的**段路径表**（序号升序 = 连续时间轴）。单趟（块数为 1）时**不切块**：
+    恰好一段时把那一段的原始音频路径喂引擎，产物与加 `post.chunk_seconds` 之前逐字一致；
+    多于一段时把各段按序拼成一份临时 wav 再喂（段拼起来 = 连续时间轴，引擎拿到的仍是
+    一条轴）；解好了波形的那一条路（mp3）喂的是解好的那份 wav —— 那一次解码已经为过门
+    花掉了，让引擎再解一遍原文件没有意义。**没声那一档两路都除外**：那一段跳过引擎，
+    产物里留下 `silent_spans`。
 
     分块时：块内波形写成临时 wav（`write_chunk_wav()`）→ 调引擎 → 把每段的
     `start` / `end` 加上该块偏移、说话人标签加上块内命名空间。**块与块之间不传任何东西**
@@ -1802,21 +1910,24 @@ def _execute_chunks(
     跑完（或抛出来）都把临时块扫干净：分块目录是这一趟的中间产物，留着只会让下一趟
     分不清哪一份是哪一次的。产物里留下的是**逐块的记账**（`ChunkRun`），音频本身可重切。
     """
+    audio_paths = _audio_paths(paths)
     steps = plan.chunks
     materialize = len(steps) > 1
-    if materialize:
+    # 单趟但段数多于一个：引擎的入参得是一份文件，先按序拼成临时 wav（`_materialize_series`）
+    series_concat = not materialize and len(audio_paths) > 1
+    if materialize or series_concat:
         clear_chunk_dir(directory)
     # 非 PCM 的音频在这里现解一次（分块跑与单趟跑都要）：分块跑拿它切片，单趟跑拿它过门。
     # 归档 PCM 不走这一步（字节扫与按字节切块都比解一遍便宜）。
     # **解不开不算这一路失败**：解不动是引擎该报的错，这里的门记一笔「判不了」
     # （`GATE_UNJUDGED`）之后照常把原文件送进去，让引擎给出权威的说法。
-    if waveform is None and not decode_attempted and Path(path).suffix.lower() != ".pcm":
+    if waveform is None and not decode_attempted and audio_paths[0].suffix.lower() != ".pcm":
         try:
-            waveform = _decode_samples(path)
+            waveform = _decode_samples(audio_paths)
         except Exception:
             _log.warning(
                 "会后离线：%s 解不出波形，门在这一段上判不了（照常送引擎）",
-                path, exc_info=True,
+                paths, exc_info=True,
             )
     waveform_length = None if waveform is None else len(waveform)
 
@@ -1826,14 +1937,18 @@ def _execute_chunks(
         for step in steps:
             try:
                 target = (
-                    _materialize_chunk(directory, path, step, waveform)
+                    _materialize_chunk(directory, audio_paths, step, waveform)
                     if materialize
-                    else str(path)
+                    else (
+                        str(audio_paths[0])
+                        if len(audio_paths) == 1
+                        else _materialize_series(directory, audio_paths)
+                    )
                 )
                 # **单趟与分块走同一个门**（C1）：这一段是归档 PCM 就按字节扫那一段，
                 # 是别的容器就用解好的波形（单趟跑的 mp3 在门口现解一次），判不了就照常送引擎。
                 measured = measure_span(
-                    path,
+                    audio_paths,
                     offset=step.offset,
                     seconds=step.seconds,
                     waveform=waveform,
@@ -1958,18 +2073,19 @@ def _execute_chunks(
             _note_progress(progress, source, run, spans=shifted)
             merged.extend(shifted)
     finally:
-        if materialize:
+        if materialize or series_concat:
             clear_chunk_dir(directory)
     return merged, runs
 
 
 def _materialize_chunk(
-    directory: Path, path: str, step: ChunkStep, waveform: Any
+    directory: Path, audio_paths: "Sequence[Path]", step: ChunkStep, waveform: Any
 ) -> str:
     """把第 `step` 块的音频写成临时 wav，交回它的路径。
 
-    PCM 走**按字节定位**那条路（`seek` 到块起点、读到块终点），因此块长 450 秒时占的内存
-    是那 14 MB，与整段多长无关。别的容器用已经解好的那段波形切片。
+    PCM 走**按字节定位**那条路（段列表拼的时间轴上 `seek` 到块起点、读到块终点，
+    跨段的块按各段长度接着读），因此块长 450 秒时占的内存是那 14 MB，与整段多长无关。
+    别的容器用已经解好的那段波形切片。
 
     读完这一段可能**短于标称块长**：归档 PCM 在收尾那一刻被截断、或采集侧少写了尾巴时，
     末尾那一块就是这么短。短了就按实际读到的样本数写（不补零、不报错），于是这一块覆盖
@@ -1985,11 +2101,39 @@ def _materialize_chunk(
         return str(write_chunk_wav(target, piece))
 
     samples = pcm_sample_chunk_counts(
-        path, offset=step.offset, seconds=step.seconds
+        audio_paths, offset=step.offset, seconds=step.seconds
     ).astype("<i2")
     # PCM 上读出来的**已经是 int16 计数**，换算回 `[-1, 1]` 是为了走 `write_chunk_wav()`
     # 那一条（它按 `× 32767` 换算，与 32768 的一格差在最低位上，无损可逆）。
     return str(write_chunk_wav(target, samples.astype("float32") / 32768.0))
+
+
+def _materialize_series(directory: Path, audio_paths: "Sequence[Path]") -> str:
+    """单趟跑且**多于一段**时，把各段按序拼成一份临时 wav（引擎的入参必须是一条轴）。
+
+    流式写：逐块跨段读、读多少写多少，内存里永远只有一个块（两小时的 PCM 也不整段进内存）。
+    临时文件落在分块目录里，跑完由 `_execute_chunks()` 的收尾一并扫掉。
+    """
+    import wave
+
+    target = chunk_file(directory, 1)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(target), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(PCM_SAMPLE_WIDTH)
+        handle.setframerate(PCM_SAMPLE_RATE)
+        for path in audio_paths:
+            with open(path, "rb") as src:
+                while True:
+                    block = src.read(_PCM_SCAN_BLOCK_BYTES)
+                    if not block:
+                        break
+                    if len(block) % PCM_SAMPLE_WIDTH:
+                        # 残缺的尾巴（不到一个样本）进不了 wav：按 int16 对齐截掉
+                        block = block[: len(block) - (len(block) % PCM_SAMPLE_WIDTH)]
+                    if block:
+                        handle.writeframes(block)
+    return str(target)
 
 
 def _shift_segment(segment: OfflineSegment, step: ChunkStep, *, namespaced: bool) -> OfflineSegment:

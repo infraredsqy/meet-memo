@@ -16,6 +16,9 @@
 
 分块那几条的音频用 `sparse_pcm()` 造（`seek` 到目标长度再写一个字节）：一份 1000 秒的
 假 PCM 因此当场就有、不占盘，假引擎也只读它需要的那几十个字节。
+
+段列表（本节点）：会后链吃的是**段列表**——每路的段文件按序号升序拼 = 连续时间轴；
+取音频、量长度、切块、门、单趟拼接全都在这条轴上工作（本目录底部的「段列表」一节）。
 """
 
 from __future__ import annotations
@@ -111,7 +114,7 @@ def synth_session(
     """合成一个场次目录：两路 16k 单声道 int16 裸 PCM + 一份最小的 `session.json`。"""
     root.mkdir(parents=True, exist_ok=True)
     for source in sources:
-        path = root / f"meeting_audio_{source}.pcm"
+        path = root / f"meeting_audio_{source}_001.pcm"
         if source in missing:
             continue
         if source in empty:
@@ -128,7 +131,7 @@ def synth_session(
                 "mode": "both" if len(declared) > 1 else (declared or ["mic"])[0],
                 "state": "done",
                 "sources": [
-                    {"id": source, "archive": f"meeting_audio_{source}.pcm"}
+                    {"id": source, "archive": f"meeting_audio_{source}_001.pcm"}
                     for source in declared
                 ],
             },
@@ -203,7 +206,7 @@ def test_run_session_writes_every_artifact(tmp_path) -> None:
         assert document["session_id"] == "250919"
         assert document["engine"]["model"] == "OpenMOSS-Team/MOSS-Transcribe-Diarize"
         assert document["engine"]["dtype"] == "bfloat16"
-        assert document["audio"]["file"] == f"meeting_audio_{source}.pcm"
+        assert document["audio"]["file"] == f"meeting_audio_{source}_001.pcm"
         assert document["audio"]["seconds"] == 3.0
         assert [item["speaker"] for item in document["segments"]] == [
             f"{source}:S01",
@@ -231,8 +234,8 @@ def test_run_session_calls_the_engine_once_per_source(tmp_path) -> None:
     run_session(session, engine=engine, config=FakeConfig())
 
     assert [Path(call).name for call in engine.calls] == [
-        "meeting_audio_mic.pcm",
-        "meeting_audio_loopback.pcm",
+        "meeting_audio_mic_001.pcm",
+        "meeting_audio_loopback_001.pcm",
     ]
 
 
@@ -349,7 +352,7 @@ def test_a_missing_source_is_recorded_and_the_other_still_runs(tmp_path) -> None
     assert (session / "meeting_offline_transcript_mic.md").exists()
     assert "mic" in status["artifacts"]
     # 引擎只被调了一次，收到的是 mic 那一路
-    assert [Path(call).name for call in engine.calls] == ["meeting_audio_mic.pcm"]
+    assert [Path(call).name for call in engine.calls] == ["meeting_audio_mic_001.pcm"]
     # 报告里两路各一行，失败那一行的原因查得到
     report = (session / artifacts.REPORT_NAME).read_text(encoding="utf-8")
     assert "| loopback | （缺）" in report
@@ -361,12 +364,12 @@ def test_a_missing_source_is_recorded_and_the_other_still_runs(tmp_path) -> None
 def test_an_empty_pcm_falls_back_to_the_mp3(tmp_path) -> None:
     """归档 PCM 是 0 字节、同目录有 MP3 → 走 MP3（收尾转码的产物），并记一笔。"""
     session = synth_session(tmp_path / "250919", empty=("loopback",))
-    mp3 = session / "meeting_audio_loopback.mp3"
+    mp3 = session / "meeting_audio_loopback_001.mp3"
     mp3.write_bytes(b"ID3 fake mp3 bytes")
     engine = FakeEngine()
 
     path, note = resolve_audio(session, "loopback")
-    assert path == str(mp3)
+    assert path == [str(mp3)]
     assert "MP3" in (note or "")
 
     run_session(session, engine=engine, config=FakeConfig())
@@ -374,8 +377,8 @@ def test_an_empty_pcm_falls_back_to_the_mp3(tmp_path) -> None:
     assert read_status(session)["state"] == "done"
     assert (session / "meeting_offline_transcript_loopback.md").exists()
     assert {Path(call).name for call in engine.calls} == {
-        "meeting_audio_mic.pcm",
-        "meeting_audio_loopback.mp3",
+        "meeting_audio_mic_001.pcm",
+        "meeting_audio_loopback_001.mp3",
     }
 
 
@@ -397,7 +400,7 @@ def test_an_empty_pcm_without_an_mp3_fails_that_source_only(tmp_path) -> None:
 def test_both_sources_unavailable_lands_failed(tmp_path) -> None:
     """两路都没有音频 → 整场落 `failed`（一份产物都出不来，如实报）。"""
     session = synth_session(tmp_path / "250919", missing=("loopback",))
-    (session / "meeting_audio_mic.pcm").unlink()
+    (session / "meeting_audio_mic_001.pcm").unlink()
 
     run_session(session, engine=FakeEngine(), config=FakeConfig())
 
@@ -533,7 +536,7 @@ def sparse_pcm(session: Path, source: str, seconds: float) -> Path:
     与「切出一堆静音」。做法：先 `seek` 到末尾写出长度（稀疏文件，当场就有、不占盘），
     再按 0.5 秒一块把带信号的字节块写在**稀疏区之上**（长度只按真正写下的那些算）。
     """
-    path = session / f"meeting_audio_{source}.pcm"
+    path = session / f"meeting_audio_{source}_001.pcm"
     total = int(seconds * SAMPLE_RATE) * 2
     pattern = b"\x01\x01" * 4096  # 8192 字节的非零样本（int16 的 257），每 4 秒铺一块
     with open(path, "wb") as handle:
@@ -720,7 +723,7 @@ def test_long_audio_is_chunked_and_short_audio_is_not(tmp_path, monkeypatch) -> 
     synth_session(short_session, sources=("mic",), seconds=3.0)
     short_engine = FakeEngine()
     run_session(short_session, engine=short_engine, config=FakeConfig())
-    assert [Path(call).name for call in short_engine.calls] == ["meeting_audio_mic.pcm"]
+    assert [Path(call).name for call in short_engine.calls] == ["meeting_audio_mic_001.pcm"]
 
 
 def test_chunking_is_off_when_the_config_says_zero(tmp_path) -> None:
@@ -730,7 +733,7 @@ def test_chunking_is_off_when_the_config_says_zero(tmp_path) -> None:
 
     run_session(session, engine=engine, config=FakeConfig(**{"post.chunk_seconds": 0}))
 
-    assert [Path(call).name for call in engine.calls] == ["meeting_audio_mic.pcm"]
+    assert [Path(call).name for call in engine.calls] == ["meeting_audio_mic_001.pcm"]
     assert not (session / CHUNK_DIR_NAME).exists()
 
 
@@ -1130,7 +1133,7 @@ def silence_session(
     session.mkdir(parents=True, exist_ok=True)
     if ranges is None:
         ranges = chunk_ranges(seconds, chunk_seconds=chunk_seconds)
-    path = session / f"meeting_audio_{source}.pcm"
+    path = session / f"meeting_audio_{source}_001.pcm"
     payload = bytearray(int(seconds * SAMPLE_RATE) * 2)
     for begin, _end, index in ranges:
         if index in silent_chunks:
@@ -1355,7 +1358,7 @@ def test_the_silence_gate_is_off_for_containers_it_cannot_scan(tmp_path) -> None
     from meeting.offline import runner as runner_module
 
     session, _ = silence_session(tmp_path, silent_chunks=(1, 2, 3), source="mic", name="mp3")
-    pcm = session / "meeting_audio_mic.pcm"
+    pcm = session / "meeting_audio_mic_001.pcm"
     mp3 = pcm.with_suffix(".mp3")
     pcm.unlink()
     mp3.write_bytes(b"\x00" * (int(30.0 * SAMPLE_RATE) * 2))
@@ -1367,7 +1370,7 @@ def test_the_silence_gate_is_off_for_containers_it_cannot_scan(tmp_path) -> None
     # 全零的 mp3 走的是「解出来看看」那一步：解不动就如实抛（这一档不在这里验真解码）；
     # 关键是 `.pcm` 之外的后缀**不会**被门按字节判静音。
     assert runner_module.span_is_silent(mp3, offset=0.0, seconds=30.0) is False
-    assert runner_module.span_is_silent(session / "meeting_audio_mic.pcm", offset=0.0, seconds=30.0) is False
+    assert runner_module.span_is_silent(session / "meeting_audio_mic_001.pcm", offset=0.0, seconds=30.0) is False
 
 
 def test_pcm_span_scan_reads_the_span_it_was_asked_for(tmp_path) -> None:
@@ -1378,7 +1381,7 @@ def test_pcm_span_scan_reads_the_span_it_was_asked_for(tmp_path) -> None:
     """
     from meeting.offline import runner as runner_module
 
-    path = tmp_path / "meeting_audio_mic.pcm"
+    path = tmp_path / "meeting_audio_mic_001.pcm"
     payload = bytearray(int(30.0 * SAMPLE_RATE) * 2)
     payload[0:2] = b"\x00\x01"  # 只有第 0 秒有声
     path.write_bytes(bytes(payload))
@@ -1451,7 +1454,7 @@ def load_waveform(monkeypatch, waveform) -> None:
 def mp3_session(root: Path, *, seconds: float, source: str = "mic") -> Path:
     """合成一个「只有 mp3」的场次目录（归档 PCM 缺席，音频走转码产物那一档）。"""
     root.mkdir(parents=True, exist_ok=True)
-    (root / f"meeting_audio_{source}.mp3").write_bytes(b"ID3" + b"\x00" * 64)
+    (root / f"meeting_audio_{source}_001.mp3").write_bytes(b"ID3" + b"\x00" * 64)
     (root / "session.json").write_text(
         json.dumps(
             {
@@ -1487,7 +1490,7 @@ def speech(seconds: float):
 def test_a_silent_single_pass_mp3_never_reaches_the_engine(tmp_path, monkeypatch) -> None:
     """**C1 的直接回归**：单趟跑的 mp3 也过门，全零的那一段碰都不碰引擎。
 
-    审查给的产品路径复现：一个合成场次目录，`meeting_audio_mic.mp3` 是一段 400 秒的全零
+    审查给的产品路径复现：一个合成场次目录，`meeting_audio_mic_001.mp3` 是一段 400 秒的全零
     音频，配置取默认（`post.chunk_seconds = 450`）。改之前那一段**不经过门**（单趟那条路
     没有解好的波形），引擎被调了一次、在权威底本里留下整段假正文；现在一次调用都不发生，
     整段记成没声跳过。
@@ -1613,7 +1616,7 @@ def test_the_gate_answers_the_same_for_a_span_it_cannot_read_whole(tmp_path) -> 
     """
     from meeting.offline import runner as runner_module
 
-    pcm = tmp_path / "meeting_audio_mic.pcm"
+    pcm = tmp_path / "meeting_audio_mic_001.pcm"
     pcm.write_bytes(b"\x00" * (int(10.0 * SAMPLE_RATE) * 2))
     waveform = zeros(10.0)
 
@@ -1638,7 +1641,7 @@ def test_the_gate_answers_the_same_for_a_span_it_cannot_read_whole(tmp_path) -> 
         assert runner_module.span_is_silent(pcm, offset=offset, seconds=seconds) is False
         assert (
             runner_module.span_is_silent(
-                "meeting_audio_mic.mp3",
+                "meeting_audio_mic_001.mp3",
                 offset=offset,
                 seconds=seconds,
                 waveform=waveform,
@@ -1738,7 +1741,7 @@ def test_the_gate_boundary_is_the_documented_half_step_rule(tmp_path) -> None:
     one_count_float[9] = np.float32(1.0) / np.float32(32767.0)
     assert runner_module.is_digital_silence(one_count_float) is False
     # 归档 PCM 那一支对同一段音频给同一个答案（按字节扫：见到非零字节就放行）
-    pcm = tmp_path / "meeting_audio_mic.pcm"
+    pcm = tmp_path / "meeting_audio_mic_001.pcm"
     pcm.write_bytes(b"\x00" * (length * 2))
     assert runner_module.measure_span(pcm, offset=0.0, seconds=1.0).silent is True
     loud = np.zeros(length, dtype=np.int16)
@@ -1774,17 +1777,17 @@ def test_the_ruler_the_single_pass_product_path_uses(tmp_path, monkeypatch) -> N
     with_pcm = synth_session(
         tmp_path / "empty-pcm-with-mp3", sources=("mic",), seconds=seconds, empty=("mic",)
     )
-    (with_pcm / "meeting_audio_mic.mp3").write_bytes(b"ID3" + b"\x00" * 64)
+    (with_pcm / "meeting_audio_mic_001.mp3").write_bytes(b"ID3" + b"\x00" * 64)
     run_session(with_pcm, engine=FakeEngine(), config=FakeConfig())
     document = artifacts.read_speakers_artifact(with_pcm / "meeting_offline_speakers_mic.json")
-    assert document["audio"]["file"] == "meeting_audio_mic.mp3"
+    assert document["audio"]["file"] == "meeting_audio_mic_001.mp3"
     assert [run["gate_method"] for run in document["chunks"]] == ["waveform"]
 
     # 3. 一份**非空**归档 PCM 而没有 mp3 → 音频走 PCM，尺子是按字节扫那一把
     pcm_only = synth_session(tmp_path / "pcm-only", sources=("mic",), seconds=seconds)
     run_session(pcm_only, engine=FakeEngine(), config=FakeConfig())
     document = artifacts.read_speakers_artifact(pcm_only / "meeting_offline_speakers_mic.json")
-    assert document["audio"]["file"] == "meeting_audio_mic.pcm"
+    assert document["audio"]["file"] == "meeting_audio_mic_001.pcm"
     assert [run["gate_method"] for run in document["chunks"]] == ["pcm_bytes"]
     # 这一份 PCM 是 `b"\x00\x01"` 重复出来的：每个样本都是 1 格，**有声**，照常送引擎
     assert [run["reason"] for run in document["chunks"]] == ["transcribed"]
@@ -2122,3 +2125,136 @@ def test_every_artifact_field_the_gate_adds_is_on_both_routes(tmp_path) -> None:
     assert status["artifacts"]["mic"]["silent_spans"] == [[10.0, 20.0]]
     assert status["artifacts"]["mic"]["gate"]["applied"] is True
     assert status["gate"]["applied"] is True
+
+
+# ---------------------------------------------------------------------------
+# 十三、段列表：几段拼一条时间轴（会后链吃段列表）
+# ---------------------------------------------------------------------------
+
+
+def _write_segment(root: Path, source: str, index: int, seconds: float, *, amplitude: int) -> Path:
+    """一路的一段 PCM：常值样本（`amplitude=0` 即整段数字静音）。"""
+    path = root / f"meeting_audio_{source}_{index:03d}.pcm"
+    path.write_bytes(_constant_pcm(seconds, amplitude))
+    return path
+
+
+def _constant_pcm(seconds: float, amplitude: int) -> bytes:
+    import struct
+
+    samples = int(seconds * SAMPLE_RATE)
+    return struct.pack(f"<{samples}h", *([amplitude] * samples))
+
+
+def test_segments_concatenate_into_one_timeline(tmp_path) -> None:
+    """两段按序拼 = 连续时间轴：取音频按序交两段、总时长 5 秒、门与切块都跨段读得通。"""
+    import numpy as np
+
+    from meeting.offline import runner as runner_module
+
+    session = tmp_path / "250919"
+    session.mkdir()
+    # 段 1 = 3 秒（前 1 秒有声、后 2 秒静音）；段 2 = 2 秒全有声
+    seg1 = session / "meeting_audio_mic_001.pcm"
+    seg1.write_bytes(_constant_pcm(1.0, 1000) + _constant_pcm(2.0, 0))
+    seg2 = _write_segment(session, "mic", 2, 2.0, amplitude=1000)
+    paths = [str(seg1), str(seg2)]
+
+    resolved, note = resolve_audio(session, "mic")
+    assert resolved == paths and note is None
+
+    # 时长 = 各段相加（门与切法共用的总数）
+    plan, _waveform, _attempted = runner_module._plan_for_source(
+        session, "mic", paths, config=FakeConfig(**{"post.chunk_seconds": 2.0})
+    )
+    assert plan.total_seconds == pytest.approx(5.0)
+    assert [step.offset for step in plan.chunks] == [0.0, 2.0, 4.0]
+
+    # 门跨段判：静音区（段 1 的零窗）、有声区、以及**骑在段缝上**的区间
+    assert runner_module.pcm_span_is_silent(paths, offset=1.2, seconds=1.0) is True
+    assert runner_module.pcm_span_is_silent(paths, offset=0.2, seconds=0.5) is False
+    assert runner_module.pcm_span_is_silent(paths, offset=2.5, seconds=1.0) is False
+    assert runner_module.pcm_span_is_silent(paths, offset=4.5, seconds=0.4) is False
+    # 跨段读一块：前半是段 1 的零、后半是段 2 的声
+    counts = runner_module.pcm_sample_chunk_counts(paths, offset=2.5, seconds=1.0)
+    assert int(counts.size) == SAMPLE_RATE
+    assert int(np.max(np.abs(counts[: SAMPLE_RATE // 2]))) == 0
+    assert int(np.max(np.abs(counts[SAMPLE_RATE // 2 :]))) == 1000
+
+
+def test_single_pass_over_multiple_segments_feeds_one_concatenated_wav(tmp_path) -> None:
+    """单趟跑但多于一段：各段按序拼成一份临时 wav 喂引擎（引擎拿到的仍是一条轴）。"""
+    import struct
+
+    session = tmp_path / "250919"
+    session.mkdir()
+    seg1 = _write_segment(session, "mic", 1, 1.0, amplitude=300)
+    seg2 = _write_segment(session, "mic", 2, 1.0, amplitude=700)
+    seen: list[bytes] = []
+
+    class ReadingEngine:
+        def transcribe(self, audio_path):
+            seen.append(Path(audio_path).read_bytes())
+            return [OfflineSegment(0.0, 2.0, "S01", "拼起来的一句话")]
+
+    run_session(session, engine=ReadingEngine(), config=FakeConfig(**{"post.chunk_seconds": 0}))
+    # 引擎只被调了一次，拿到的是 `_offline_chunks/` 里的一份 wav；数据区 = 段 1 + 段 2
+    assert len(seen) == 1
+    payload = seen[0]
+    assert payload[:4] == b"RIFF"  # 一份现拼的 wav（引擎的入参总是单一文件）
+    data = payload[44:]
+    expected = _constant_pcm(1.0, 300) + _constant_pcm(1.0, 700)
+    assert data == expected
+    assert struct.unpack("<2h", data[:4]) == (300, 300)
+    # 跑完临时块照例扫干净
+    assert not (session / CHUNK_DIR_NAME).exists()
+    assert seg1.exists() and seg2.exists()  # 段文件一个字节都不动
+
+
+def test_a_corrupted_wall_clock_changes_no_conclusion(tmp_path) -> None:
+    """故意把墙钟那一栏改错：程序的行为与结论**一个字都不变**（元信息不当判据）。
+
+    两份完全相同的场次目录，一份的 `session.json` 墙钟字段与段戳被改成胡话；
+    同一引擎各跑一遍，逐字节比较三份产物与状态文件——除此之外任何代码都不许拿
+    墙钟对账（`docs/design-intent.md` 第 6 条；spec 完成判定第 4 条）。
+    """
+    clean = synth_session(tmp_path / "clean" / "250919")
+    corrupt = synth_session(tmp_path / "corrupt" / "250919")
+
+    record = json.loads((corrupt / "session.json").read_text(encoding="utf-8"))
+    record["date"] = "1999-99-99"
+    record["created_at"] = "1999-12-31T23:59:59+08:00"
+    record["started_at"] = "去年"
+    record["ended_at"] = "明天"
+    record["segments"] = [
+        {
+            "index": 1,
+            "started_at": "比宇宙还早",
+            "ended_at": None,
+            "sources": ["mic", "loopback"],
+            "pauses": [{"start": "永不", "end": "从未"}],
+            "duration_seconds": -42.0,
+        }
+    ]
+    record["audio_duration_seconds"] = 12345.0
+    (corrupt / "session.json").write_text(
+        json.dumps(record, ensure_ascii=False), encoding="utf-8"
+    )
+
+    outcomes = []
+    for root in (clean, corrupt):
+        engine = FakeEngine(
+            [OfflineSegment(0.5, 2.5, "S01", "同一句")]
+        )
+        run_session(root, engine=engine, config=FakeConfig())
+        outcomes.append(
+            {
+                "status": (root / artifacts.STATUS_NAME).read_text(encoding="utf-8"),
+                "transcript_mic": (root / "meeting_offline_transcript_mic.md").read_text(encoding="utf-8"),
+                "speakers_mic": (root / "meeting_offline_speakers_mic.json").read_text(encoding="utf-8"),
+                "transcript_loopback": (root / "meeting_offline_transcript_loopback.md").read_text(encoding="utf-8"),
+            }
+        )
+
+    assert outcomes[0] == outcomes[1]
+    assert read_status(clean)["state"] == "done"

@@ -33,10 +33,60 @@ _log = logging.getLogger("meeting.session")
 #: `session.json` 的文件名
 SESSION_FILE_NAME = "session.json"
 
+#: 段序号在归档文件名里的位数（三位，按名排序 = 按序号排序；一段 = 一次录制）
+SEGMENT_NUMBER_WIDTH = 3
 
-def archive_name(source: str) -> str:
-    """两路归档文件名 = `meeting_audio_<source>.pcm`（音频字节的写入归 `dca4539b`）。"""
-    return f"meeting_audio_{source}.pcm"
+
+def archive_name(source: str, segment: int = 1) -> str:
+    """一路**一段**的归档文件名 = `meeting_audio_<source>_<段号:03d>.pcm`。
+
+    段的口径（`docs/design-intent.md` 第 9 条）：**一段 = 一次录制（start→finalize）**，
+    序号从 1 起；暂停、会中关掉某一路、某一路没开都不切段——那一路写静音而已。
+    段只表达「这场会录了几次」：续接（同一工作区再录一段）用**下一个序号**开新文件，
+    不追加旧文件——「续接=追加到旧文件末尾」是 V1 的旧口径，已被第 9 条翻案。
+    """
+    return f"meeting_audio_{source}_{int(segment):0{SEGMENT_NUMBER_WIDTH}d}.pcm"
+
+
+def archive_segment_number(name: str, source: str) -> int | None:
+    """从归档文件名主干里认出段序号；不是这一路的段文件名主干时交回 `None`。
+
+    认名规则与 `archive_name()` 同一条：`meeting_audio_<source>_<三位序号>`（不带后缀，
+    后缀由调用方剥好——`.pcm` 与 `.mp3` 同一套序号）。
+    """
+    prefix = f"meeting_audio_{source}_"
+    if not name.startswith(prefix):
+        return None
+    digits = name[len(prefix):]
+    if len(digits) != SEGMENT_NUMBER_WIDTH or not digits.isdigit():
+        return None
+    return int(digits)
+
+
+def segment_archive_paths(
+    session_dir: Path | str, source: str, *, suffix: str = ".pcm"
+) -> list[Path]:
+    """这一路**盘上实际存在**的各段归档（缺省 PCM，可要 `.mp3`），按段序号升序。
+
+    消费端（会中转写的尾读、会后链的取音频）的**段列表来自这里**：按确定的命名规则
+    枚举盘上的段文件就是「这场会录了几段」的现场事实，序号升序拼起来 = 连续时间轴
+    （暂停区间写的是数字零，天然连续）。目录不存在 / 一个段都没有时交回空表。
+    """
+    root = Path(session_dir)
+    found: list[tuple[int, Path]] = []
+    try:
+        items = list(root.iterdir())
+    except OSError:
+        return []
+    for item in items:
+        name = item.name
+        if not name.endswith(suffix):
+            continue
+        number = archive_segment_number(name[: -len(suffix)], source)
+        if number is not None and item.is_file():
+            found.append((number, item))
+    found.sort(key=lambda pair: pair[0])
+    return [path for _number, path in found]
 
 
 def state_for(*, top_state: str, ended_phase: str | None = None, has_failed_step: bool = False) -> str:
@@ -86,11 +136,28 @@ def build_session_record(
     ended_at: str | None = None,
     interrupted: bool = False,
     pid: int | None = None,
+    segments: list[dict[str, Any]] | None = None,
+    audio_duration_seconds: float = 0.0,
+    archives: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
     """组装一份字段一个不省的 `session.json`（四步各一条、每条四键齐）。
 
     `date` 是**元信息**字段（`docs/design-intent.md` 第 3、6 条）：日期仍是每一场的信息，
     从开场的时刻取，只记录、不参与任何寻址与不参与任何校验。
+
+    段账（本节点的两件套，第 6、7、9 条）：
+
+      - `segments` 是**段列表**：每段一条（序号、起止、哪几路、段内暂停区间、在录时长）。
+        一段 = 一次录制；暂停不切段，段内的暂停靠 `pauses` 区间说话。**未写完的段**
+        （还在录）`ended_at` 与 `duration_seconds` 为 `None`；
+      - `audio_duration_seconds` 是**权威时长** = 实际录到的音频时长（不含暂停），
+        写端唯一的自洽式：它 = 各段 `duration_seconds` 之和（未写完的段不计入）。
+        除此之外元信息一律不当判据：墙钟跨度、空档时长、段与墙钟的关系，**不校验、
+        不对账、不改结论**（第 6 条）。
+
+    `archives` 是每一路的段文件名表（序号升序）；不给时按「恰好一段」声明——开场
+    第一版落盘时引擎还没起、此刻还没有段账，段 1 的文件名由命名规则确定。本节点内
+    每场每路恰好这一段；同一个工作区续接再加段，是下游节点的活。
     """
     devices = devices or {}
     if steps is None:
@@ -111,10 +178,14 @@ def build_session_record(
             {
                 "id": source,
                 "device": devices.get(source),
-                "archive": archive_name(source),
+                "archives": list(
+                    (archives or {}).get(source, [archive_name(source, 1)])
+                ),
             }
             for source in SOURCE_IDS
         ],
+        "segments": [dict(segment) for segment in (segments or [])],
+        "audio_duration_seconds": round(float(audio_duration_seconds), 3),
         "drain": {"steps": [dict(step) for step in steps]},
         "interrupted": bool(interrupted),
         "service": {
@@ -261,11 +332,14 @@ class SessionStore:
 
 __all__ = [
     "SESSION_FILE_NAME",
+    "SEGMENT_NUMBER_WIDTH",
     "SessionRecord",
     "SessionStore",
     "archive_name",
+    "archive_segment_number",
     "build_session_record",
     "resolve_workspace_dir",
+    "segment_archive_paths",
     "state_for",
     "steps_from_ended",
 ]

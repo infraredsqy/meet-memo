@@ -33,7 +33,7 @@ def _document(**overrides) -> dict:
             "device": "auto",
             "selector": "auto",
         },
-        "audio": {"file": "meeting_audio_loopback.pcm", "seconds": 300.0},
+        "audio": {"file": "meeting_audio_loopback_001.pcm", "seconds": 300.0},
         "segments": [
             {"start": 0.48, "end": 3.2, "local": "S01", "text": "第一句"},
             {"start": 3.2, "end": 5.0, "local": "S02", "text": "第二句"},
@@ -61,7 +61,7 @@ def test_document_carries_the_contract_fields() -> None:
     assert document["source"] == "loopback"
     assert document["session_id"] == "250919"
     assert document["engine"]["model"]
-    assert document["audio"]["file"] == "meeting_audio_loopback.pcm"
+    assert document["audio"]["file"] == "meeting_audio_loopback_001.pcm"
     for item in document["segments"]:
         assert set(item) == {"start", "end", "speaker", "local", "text"}
     for row in document["speakers"]:
@@ -407,7 +407,7 @@ def test_empty_transcript_is_an_empty_file(tmp_path) -> None:
 def _metrics() -> list[artifacts.SourceMetrics]:
     good = artifacts.SourceMetrics(
         source="mic",
-        audio_file="meeting_audio_mic.pcm",
+        audio_file="meeting_audio_mic_001.pcm",
         audio_seconds=120.0,
         state="done",
         segments=4,
@@ -419,7 +419,7 @@ def _metrics() -> list[artifacts.SourceMetrics]:
     bad = artifacts.SourceMetrics(
         source="loopback",
         state="failed",
-        error="no_audio：meeting_audio_loopback.pcm 与 meeting_audio_loopback.mp3 都不在场",
+        error="no_audio：meeting_audio_loopback_001.pcm 与 meeting_audio_loopback_001.mp3 都不在场",
         reasons={"no_audio": 1},
     )
     return [good, bad]
@@ -455,7 +455,7 @@ def test_report_carries_the_b16_sections(tmp_path) -> None:
     assert f"{artifacts.V1_RTF_BASELINE:.2f}×" in text
     # 失败那一档如实落进原因分布
     assert "no_audio：1" in text
-    assert "no_audio：meeting_audio_loopback.pcm" in text
+    assert "no_audio：meeting_audio_loopback_001.pcm" in text
 
 
 def test_the_session_realtime_factor_divides_by_the_wall_clock(tmp_path) -> None:
@@ -567,7 +567,7 @@ def test_the_report_headline_only_claims_a_silent_skip_that_happened(tmp_path) -
     # 1. 三段都有声：整行里不许出现「有段因为没声被跳过」这种说法
     quiet = artifacts.SourceMetrics(
         source="mic",
-        audio_file="meeting_audio_mic.pcm",
+        audio_file="meeting_audio_mic_001.pcm",
         audio_seconds=30.0,
         state="done",
         segments=5,
@@ -587,7 +587,7 @@ def test_the_report_headline_only_claims_a_silent_skip_that_happened(tmp_path) -
     # 2. 真跳过一段：跳过的段数写在那一行上
     hushed = artifacts.SourceMetrics(
         source="mic",
-        audio_file="meeting_audio_mic.pcm",
+        audio_file="meeting_audio_mic_001.pcm",
         audio_seconds=30.0,
         state="done",
         segments=5,
@@ -608,7 +608,7 @@ def test_the_report_headline_only_claims_a_silent_skip_that_happened(tmp_path) -
     # 3. 判不了那一档照旧：那一行仍走「没做成判断」，一个字都没动
     blocked = artifacts.SourceMetrics(
         source="mic",
-        audio_file="meeting_audio_mic.pcm",
+        audio_file="meeting_audio_mic_001.pcm",
         audio_seconds=30.0,
         state="done",
         segments=5,

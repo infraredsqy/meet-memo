@@ -8,7 +8,9 @@
   - **日期**是 `session.json` 的元信息字段（`date`），从开场的时刻取，不来自目录名；
   - `session.json` 字段全貌、**原子写**（**无 `.tmp` 残骸**、读到的永远是完整 JSON）、
     **每个阶段变更都落盘一次**（四步的 `status` / `detail` 各写一次）；
-  - `sources[*].archive` = `meeting_audio_<source>.pcm`；
+  - `sources[*].archives` = 段文件名表（`meeting_audio_<source>_<段号:03d>.pcm`），
+    `segments` + `audio_duration_seconds` = 段账（一段 = 一次录制；权威时长 = 各段在录
+    时长之和，写端唯一的自洽式）；
   - `start` 写文件失败 → **不进 `recording`**、只收走本场写入的文件、主 log 有留痕。
 """
 
@@ -26,8 +28,11 @@ from tests import _helpers as helpers
 from meeting.session import (
     SESSION_FILE_NAME,
     SessionStore,
+    archive_name,
+    archive_segment_number,
     build_session_record,
     resolve_workspace_dir,
+    segment_archive_paths,
     state_for,
 )
 from meeting.state import DRAIN_STEP_IDS
@@ -126,7 +131,8 @@ def test_start_uses_the_given_workspace_verbatim(tmp_path):
         assert len(record["date"]) == 10 and record["date"][4] == "-"
         assert set(record) == {
             "session_id", "dir", "date", "mode", "state", "created_at", "started_at",
-            "ended_at", "sources", "drain", "interrupted", "service",
+            "ended_at", "sources", "segments", "audio_duration_seconds", "drain",
+            "interrupted", "service",
         }
     finally:
         stack.close()
@@ -151,7 +157,7 @@ def test_session_json_has_the_frozen_field_shape(tmp_path):
     )
     assert set(record) == {
         "session_id", "dir", "date", "mode", "state", "created_at", "started_at", "ended_at",
-        "sources", "drain", "interrupted", "service",
+        "sources", "segments", "audio_duration_seconds", "drain", "interrupted", "service",
     }
     assert record["date"] == "2025-09-06"
     assert record["state"] in ("recording", "draining", "done", "failed")
@@ -161,13 +167,86 @@ def test_session_json_has_the_frozen_field_shape(tmp_path):
         assert step["status"] == "waiting"
     assert [item["id"] for item in record["sources"]] == ["mic", "loopback"]
     for item in record["sources"]:
-        assert set(item) == {"id", "device", "archive"}
-        # 归档名形状 = meeting_audio_<source>.pcm
-        assert item["archive"] == f"meeting_audio_{item['id']}.pcm"
+        assert set(item) == {"id", "device", "archives"}
+        # 段文件名形状 = meeting_audio_<source>_<段号:03d>.pcm（一段 = 一次录制，序号从 1 起）
+        assert item["archives"] == [f"meeting_audio_{item['id']}_001.pcm"]
+    # 段账：开场第一版还没有段（引擎没起），权威时长为 0
+    assert record["segments"] == []
+    assert record["audio_duration_seconds"] == 0.0
     assert set(record["service"]) == {"pid", "started_at"}
     assert record["service"]["pid"] == 1234
     assert record["interrupted"] is False
     assert record["ended_at"] is None
+
+
+def test_archive_names_carry_the_segment_ordinal():
+    """段命名：一段 = 一次录制，序号从 1 起进文件名；认号只认三位数字。"""
+    assert archive_name("mic") == "meeting_audio_mic_001.pcm"
+    assert archive_name("loopback", 2) == "meeting_audio_loopback_002.pcm"
+    assert archive_name("mic", 12) == "meeting_audio_mic_012.pcm"
+    # 认号：三位数字才算段号，别的形状一概不是段文件
+    assert archive_segment_number("meeting_audio_mic_007", "mic") == 7
+    assert archive_segment_number("meeting_audio_mic_0007", "mic") is None
+    assert archive_segment_number("meeting_audio_mic_abc", "mic") is None
+    assert archive_segment_number("meeting_audio_mic", "mic") is None
+    assert archive_segment_number("meeting_audio_loopback_001", "mic") is None
+
+
+def test_segment_archive_paths_enumerate_in_ordinal_order(tmp_path):
+    """段列表来自盘上实有的段文件：按序号升序，别路的不混进来，`.mp3` 同一套序号。"""
+    (tmp_path / "meeting_audio_mic_002.pcm").write_bytes(b"b")
+    (tmp_path / "meeting_audio_mic_001.pcm").write_bytes(b"a")
+    (tmp_path / "meeting_audio_mic_010.pcm").write_bytes(b"c")
+    (tmp_path / "meeting_audio_mic_00x.pcm").write_bytes(b"bad")
+    (tmp_path / "meeting_audio_loopback_001.pcm").write_bytes(b"other")
+    (tmp_path / "meeting_audio_mic_002.mp3").write_bytes(b"m")
+
+    assert [path.name for path in segment_archive_paths(tmp_path, "mic")] == [
+        "meeting_audio_mic_001.pcm",
+        "meeting_audio_mic_002.pcm",
+        "meeting_audio_mic_010.pcm",
+    ]
+    assert [path.name for path in segment_archive_paths(tmp_path, "mic", suffix=".mp3")] == [
+        "meeting_audio_mic_002.mp3"
+    ]
+    assert segment_archive_paths(tmp_path, "loopback") == [
+        tmp_path / "meeting_audio_loopback_001.pcm"
+    ]
+    # 空目录 / 不存在的目录：空表（消费端按「没有段」处理）
+    assert segment_archive_paths(tmp_path / "nowhere", "mic") == []
+
+
+def test_build_session_record_carries_the_segment_ledger():
+    """段账进 `session.json`：段列表 + 权威时长 + 每路的段文件名表。"""
+    segments = [
+        {
+            "index": 1,
+            "started_at": "2025-09-06T10:00:00+08:00",
+            "ended_at": "2025-09-06T10:01:00+08:00",
+            "sources": ["mic", "loopback"],
+            "pauses": [{"start": "2025-09-06T10:00:30+08:00", "end": "2025-09-06T10:00:40+08:00"}],
+            "duration_seconds": 50.0,
+        }
+    ]
+    record = build_session_record(
+        session_id="跟老王聊周会",
+        session_dir=" somewhere",
+        mode="both",
+        state="done",
+        created_at="2025-09-06T10:00:00+08:00",
+        started_at="2025-09-06T10:00:00+08:00",
+        segments=segments,
+        audio_duration_seconds=50.0,
+        archives={
+            "mic": ["meeting_audio_mic_001.pcm"],
+            "loopback": ["meeting_audio_loopback_001.pcm"],
+        },
+    )
+    assert record["segments"] == segments
+    assert record["audio_duration_seconds"] == 50.0
+    by_id = {item["id"]: item for item in record["sources"]}
+    assert by_id["mic"]["archives"] == ["meeting_audio_mic_001.pcm"]
+    assert by_id["loopback"]["archives"] == ["meeting_audio_loopback_001.pcm"]
 
 
 def test_write_session_json_is_atomic_and_leaves_no_tmp(tmp_path):
@@ -264,9 +343,12 @@ def test_every_phase_change_writes_the_session_file(tmp_path, monkeypatch):
         assert first["interrupted"] is False
         assert first["created_at"] and first["started_at"]
         assert first["ended_at"] is None
-        assert [item["archive"] for item in first["sources"]] == [
-            "meeting_audio_mic.pcm", "meeting_audio_loopback.pcm",
+        assert [item["archives"] for item in first["sources"]] == [
+            ["meeting_audio_mic_001.pcm"], ["meeting_audio_loopback_001.pcm"],
         ]
+        # 开场第一版：还没有段账（引擎没起），权威时长 0
+        assert first["segments"] == []
+        assert first["audio_duration_seconds"] == 0.0
 
         # 收尾过程中盘上写「收尾中」，终态写 `done`（四步的 status / detail 各写一次）。
         # 为了让 `draining` 那一版可确定性观察到，把第 4 步里那一次同步调用（让会中模型退出

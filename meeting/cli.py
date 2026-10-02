@@ -40,6 +40,11 @@ from meeting.capture.archive import EMPTY_PCM_BYTES
 from meeting.offline import progress as offline_progress
 from meeting.offline import runner as offline_runner
 from meeting.service import app as service_app
+from meeting.session import (
+    archive_name,
+    archive_segment_number,
+    segment_archive_paths,
+)
 
 # ---------------------------------------------------------------------------
 # 退出码表（§3.4，**本 Phase 冻结**：标识符与取值都是冻结项）
@@ -1252,27 +1257,28 @@ def sync_archive(
     sources: Iterable[str] | None = None,
     converter: Callable[[Path, Path], bool] | None = None,
 ) -> dict[str, Any]:
-    """按收尾第 2 步同一套判据补齐两路的 MP3 归档，交回逐路记账。
+    """按收尾第 2 步同一套判据补齐各路各段的 MP3 归档，交回逐段记账。
 
     **转码实现只有一份**：`meeting/capture/archive.py` 的 `convert_to_mp3()` 与
     `mp3_path_for()`（函数体内 import，与本模块对重依赖的惰性纪律一致），这里只负责
     「该不该转」这一层判据 —— 连**空 PCM 那个阈值**也取它的 `EMPTY_PCM_BYTES`
-    （`meeting_audio_*.mp3` 这个落点则由 `archive_mp3_path_for()` 转交给它的
-    `mp3_path_for()`）：本模块不留第二份拷贝，那边换了值 / 换了形这里跟着走。
+    （`meeting_audio_*_<段号>.mp3` 这个落点则由 `mp3_path_for()` 给）：本模块不留第二份
+    拷贝，那边换了值 / 换了形这里跟着走。段列表来自
+    `meeting/session.py` 的 `segment_archive_paths()`（一段 = 一次录制，逐段独立判）。
 
-      - 该路 PCM 非空（字节数 `>= EMPTY_PCM_BYTES`）且（**MP3 缺席** 或 **MP3 比 PCM 旧**）
+      - 该段 PCM 非空（字节数 `>= EMPTY_PCM_BYTES`）且（**MP3 缺席** 或 **MP3 比 PCM 旧**）
         → 转一次（`converted`）：`mtime` 上 MP3 比 PCM 新说明这一段音频已经归档过，
         R8 的「反复重跑」在它身上不该再花一次转码；
-      - 空 PCM（0 / 1 字节，采集侧没选中的那一路就是这个形状）→ 不产 MP3、也不调转码
-        （`no_work`：这一路本来就没有音频可归档）；
+      - 空段 PCM（0 / 1 字节，采集侧没录到东西的段就是这个形状）→ 不产 MP3、也不调转码
+        （`no_work`：这一段本来就没有音频可归档）；
       - PCM 不在场 → 同样 `no_work`；
-      - 转码抛错（`ffmpeg` 缺席、`pydub` 起不来这类）→ 该路记 `failed`，并把这一趟可能
+      - 转码抛错（`ffmpeg` 缺席、`pydub` 起不来这类）→ 该段记 `failed`，并把这一趟可能
         写了一半的 MP3 落盘字节**原样收回**（转码前的旧 MP3 内容与缺席状态都复原），
         **PCM 一个字节都不动**（不 unlink、不截断）。
 
-    **两路各自独立判、独立转**：一路转不动不带停另一路（归档这一层的每一路都是自己的账）。
-    `sources` 缺省取 `offline_runner.declared_sources()`（`session.json` 声明的那几路）；
-    `converter` 是用例的接缝（缺省就是上面那一个真实现）。
+    **各路各段各自独立判、独立转**：一段转不动不带停别的段（归档这一层的每一段都是
+    自己的账）。`sources` 缺省取 `offline_runner.declared_sources()`（`session.json`
+    声明的那几路）；`converter` 是用例的接缝（缺省就是上面那一个真实现）。
     """
     directory = Path(session_dir)
     names = tuple(sources) if sources is not None else offline_runner.declared_sources(directory)
@@ -1280,59 +1286,69 @@ def sync_archive(
 
     rows: list[dict[str, Any]] = []
     for source in names:
-        pcm_path = directory / f"meeting_audio_{source}.pcm"
-        mp3_path = archive_mp3_path_for(pcm_path)
-        row: dict[str, Any] = {
-            "source": str(source),
-            "pcm": str(pcm_path.resolve()),
-            "mp3": None,
-            "outcome": OUTCOME_NO_WORK,
-            "reason": None,
-        }
-        if not pcm_path.is_file():
-            row["reason"] = "归档 PCM 不在场"
-            rows.append(row)
-            continue
-
-        size = pcm_path.stat().st_size
-        if size < EMPTY_PCM_BYTES:
-            row["reason"] = f"归档 PCM 是 {size} 字节（空），不产 MP3"
-            rows.append(row)
-            continue
-
-        if mp3_path.is_file() and mp3_path.stat().st_mtime > pcm_path.stat().st_mtime:
-            row.update(
-                mp3=str(mp3_path.resolve()),
-                outcome=OUTCOME_NO_WORK,
-                reason="MP3 已经比 PCM 新，不重复转",
+        segment_paths = segment_archive_paths(directory, source)
+        if not segment_paths:
+            rows.append(
+                {
+                    "source": str(source),
+                    "segment": None,
+                    "pcm": str((directory / archive_name(source, 1)).resolve()),
+                    "mp3": None,
+                    "outcome": OUTCOME_NO_WORK,
+                    "reason": "归档 PCM 不在场",
+                }
             )
-            rows.append(row)
             continue
+        for pcm_path in segment_paths:
+            segment = archive_segment_number(pcm_path.stem, source)
+            mp3_path = archive_mp3_path_for(pcm_path)
+            row: dict[str, Any] = {
+                "source": str(source),
+                "segment": segment,
+                "pcm": str(pcm_path.resolve()),
+                "mp3": None,
+                "outcome": OUTCOME_NO_WORK,
+                "reason": None,
+            }
+            size = pcm_path.stat().st_size
+            if size < EMPTY_PCM_BYTES:
+                row["reason"] = f"归档 PCM 是 {size} 字节（空），不产 MP3"
+                rows.append(row)
+                continue
 
-        # 转码前把 MP3 的现场收好：转砸了要能原样放回去
-        had_mp3 = mp3_path.is_file()
-        payload = mp3_path.read_bytes() if had_mp3 else None
-        try:
-            produced = bool(apply_conversion(pcm_path, mp3_path))
-        except Exception as exc:
-            _restore_payload(mp3_path, payload)
-            row.update(outcome=OUTCOME_FAILED, reason=f"{type(exc).__name__}: {exc}")
+            if mp3_path.is_file() and mp3_path.stat().st_mtime > pcm_path.stat().st_mtime:
+                row.update(
+                    mp3=str(mp3_path.resolve()),
+                    outcome=OUTCOME_NO_WORK,
+                    reason="MP3 已经比 PCM 新，不重复转",
+                )
+                rows.append(row)
+                continue
+
+            # 转码前把 MP3 的现场收好：转砸了要能原样放回去
+            had_mp3 = mp3_path.is_file()
+            payload = mp3_path.read_bytes() if had_mp3 else None
             try:
-                _log().error("音频归档补齐失败：%s（%s）", pcm_path, row["reason"])
-            except Exception:  # pragma: no cover - 日志尚未初始化时只留记账
-                pass
-            rows.append(row)
-            continue
+                produced = bool(apply_conversion(pcm_path, mp3_path))
+            except Exception as exc:
+                _restore_payload(mp3_path, payload)
+                row.update(outcome=OUTCOME_FAILED, reason=f"{type(exc).__name__}: {exc}")
+                try:
+                    _log().error("音频归档补齐失败：%s（%s）", pcm_path, row["reason"])
+                except Exception:  # pragma: no cover - 日志尚未初始化时只留记账
+                    pass
+                rows.append(row)
+                continue
 
-        if produced and mp3_path.is_file():
-            row.update(mp3=str(mp3_path.resolve()), outcome=OUTCOME_CONVERTED)
-        elif produced:  # pragma: no cover - 转码器说产出了却不见文件：如实记成失败
-            row.update(
-                outcome=OUTCOME_FAILED, reason="转码器报成功，但 MP3 没落盘"
-            )
-        else:
-            row.update(outcome=OUTCOME_NO_WORK, reason="转码器按空音频处理，没有产出 MP3")
-        rows.append(row)
+            if produced and mp3_path.is_file():
+                row.update(mp3=str(mp3_path.resolve()), outcome=OUTCOME_CONVERTED)
+            elif produced:  # pragma: no cover - 转码器说产出了却不见文件：如实记成失败
+                row.update(
+                    outcome=OUTCOME_FAILED, reason="转码器报成功，但 MP3 没落盘"
+                )
+            else:
+                row.update(outcome=OUTCOME_NO_WORK, reason="转码器按空音频处理，没有产出 MP3")
+            rows.append(row)
 
     state = ARCHIVE_DONE
     if any(row["outcome"] == OUTCOME_FAILED for row in rows):
@@ -1884,7 +1900,8 @@ def _artifact_paths(directory: Path) -> dict[str, str]:
         names.append((f"meeting_offline_transcript_{source}.md", f"{source} 的离线转写"))
         names.append((f"meeting_offline_speakers_{source}.json", f"{source} 的说话人对照表"))
     for source in offline_runner.declared_sources(directory):
-        names.append((f"meeting_audio_{source}.mp3", f"{source} 的归档 MP3"))
+        for path in segment_archive_paths(directory, source, suffix=".mp3"):
+            names.append((path.name, f"{source} 的归档 MP3（{path.stem.rsplit('_', 1)[-1]} 段）"))
     found: dict[str, str] = {}
     for name, label in names:
         path = directory / name

@@ -220,8 +220,8 @@ def archive_mp3s(session: Path, *, newer_than_pcm: bool = True) -> list[Path]:
     """给两路各落一份归档 MP3，并把 `mtime` 摆到 PCM 的前面（或后面）。"""
     made: list[Path] = []
     for source in SOURCES:
-        pcm = session / f"meeting_audio_{source}.pcm"
-        mp3 = session / f"meeting_audio_{source}.mp3"
+        pcm = session / f"meeting_audio_{source}_001.pcm"
+        mp3 = session / f"meeting_audio_{source}_001.mp3"
         mp3.write_bytes(f"mp3-{source}".encode())
         stamp = pcm.stat().st_mtime + (3600.0 if newer_than_pcm else -3600.0)
         os.utime(mp3, (stamp, stamp))
@@ -365,8 +365,8 @@ def test_the_second_run_calls_neither_the_engine_nor_the_launcher(tmp_path: Path
 def test_the_repeat_runs_leave_the_pcm_and_the_mp3_alone(tmp_path: Path) -> None:
     """三遍跑完：PCM 的 sha256 一模一样，MP3 的 `mtime` 一次都没被刷新（不重复转）。"""
     session, engine, launcher = a_finished_session(tmp_path / "250919")
-    pcm = session / "meeting_audio_mic.pcm"
-    mp3 = session / "meeting_audio_mic.mp3"
+    pcm = session / "meeting_audio_mic_001.pcm"
+    mp3 = session / "meeting_audio_mic_001.mp3"
     before_digest = digest(pcm)
     before_mtime = mp3.stat().st_mtime_ns
 
@@ -1011,8 +1011,8 @@ def test_the_two_entries_write_the_same_artifact_names(
     )
     # 集合里确实含音频归档、两份状态文件与纪要（不然这条断言是空的）
     for expected in (
-        "meeting_audio_mic.pcm",
-        "meeting_audio_mic.mp3",
+        "meeting_audio_mic_001.pcm",
+        "meeting_audio_mic_001.mp3",
         OFFLINE_STATUS_NAME,
         MINUTES_STATUS_NAME,
         MINUTES_FINAL_NAME,

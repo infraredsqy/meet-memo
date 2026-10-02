@@ -152,8 +152,8 @@ def test_launch_returns_immediately_while_the_engine_is_still_blocked(
         what="后台线程跑完并落 done",
     )
     assert [Path(call).name for call in engine.calls] == [
-        "meeting_audio_mic.pcm",
-        "meeting_audio_loopback.pcm",
+        "meeting_audio_mic_001.pcm",
+        "meeting_audio_loopback_001.pcm",
     ]
     assert (session / "meeting_offline_transcript_mic.md").exists()
 

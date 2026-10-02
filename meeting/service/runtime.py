@@ -1564,8 +1564,20 @@ class ServiceRuntime:
         interrupted: bool,
         steps: list[dict[str, Any]] | None,
     ) -> dict[str, Any]:
-        """按当前快照组装一份 `session.json` 的内容（盘上那一版的唯一组装点）。"""
+        """按当前快照组装一份 `session.json` 的内容（盘上那一版的唯一组装点）。
+
+        段账从采集引擎现场取（`segments` / `audio_duration_seconds` / 各路的段文件名表）；
+        引擎还没起（开场第一版落盘那一刻）时按「还没有段」写：`segments: []`、
+        权威时长 `0.0`——开场第一版在 `backend.start()` 之前，这是唯一的形状。
+        """
         devices = {item.id: item.device_name for item in self.snapshot.sources}
+        # `getattr` 而非属性访问：替身（null）没有 `.session` 这一位，那一刻就是「还没有段」
+        engine = (
+            getattr(self.capture_backend, "session", None)
+            if self.capture_backend is not None
+            else None
+        )
+        segments = engine.segment_records() if engine is not None else []
         return build_session_record(
             session_id=session.id,
             session_dir=session.dir,
@@ -1577,6 +1589,15 @@ class ServiceRuntime:
             steps=steps,
             ended_at=ended_at,
             interrupted=interrupted,
+            segments=segments,
+            audio_duration_seconds=(
+                engine.audio_duration_seconds() if engine is not None else 0.0
+            ),
+            archives=(
+                {source: engine.archives_for(source) for source in ("mic", "loopback")}
+                if engine is not None
+                else None
+            ),
         )
 
     def _write_session(

@@ -66,6 +66,9 @@ E2E_POLL_TIMEOUT_SECONDS = 15.0
 #: 「两路先攒出这么多块再收尾」（1.6 秒：3 个整 0.5 秒帧 + 尾数，MP3 时长也有得比）
 RECORD_CHUNKS = 16
 
+#: 两路的固定次序（对账循环与段账断言共用）
+SOURCE_ORDER = ("mic", "loopback")
+
 #: MP3 与 PCM 的时长容差（秒）。MP3 按帧编解码（16k 下一帧 576 样本 ≈ 36ms），编码器
 #: 首尾各垫小半帧 —— 实测差距见 `phase3/evidence/`（本机 8.1 的 lame 对 1.6 秒素材差 0）。
 MP3_DURATION_TOLERANCE_SECONDS = 0.1
@@ -175,7 +178,7 @@ def test_a_full_session_reconciles_frame_by_frame(tmp_path: Path, monkeypatch):
             [
                 SESSION_FILE_NAME,
                 archive_name("mic"), archive_name("loopback"),
-                "meeting_audio_mic.mp3", "meeting_audio_loopback.mp3",
+                "meeting_audio_mic_001.mp3", "meeting_audio_loopback_001.mp3",
                 "meeting.log",
             ]
         )
@@ -184,6 +187,7 @@ def test_a_full_session_reconciles_frame_by_frame(tmp_path: Path, monkeypatch):
         mic_pcm = (session_dir / archive_name("mic")).read_bytes()
         loop_pcm = (session_dir / archive_name("loopback")).read_bytes()
         evidence: dict = {"wall_seconds": round(wall_seconds, 3)}
+        audits: dict = {}
 
         for source, data in (("mic", mic_pcm), ("loopback", loop_pcm)):
             fed = backend.fed_chunks(source)
@@ -193,6 +197,7 @@ def test_a_full_session_reconciles_frame_by_frame(tmp_path: Path, monkeypatch):
                 expected_bytes=expected_archive_bytes(source, fed),
                 expected_samples=fed * CHUNK_FRAMES,
             )
+            audits[source] = audit
             # 样本数 = 喂进去的块数 × 每块样本数；与墙钟的偏差在一个采集块以内
             assert audit.sample_gap == 0
             assert samples_within_one_block(audit.samples, wall_seconds)
@@ -215,7 +220,7 @@ def test_a_full_session_reconciles_frame_by_frame(tmp_path: Path, monkeypatch):
                 "silent_frames": audit.silent_frames,
             }
             # MP3 能解且时长对得上
-            duration = _mp3_duration(session_dir / f"meeting_audio_{source}.mp3")
+            duration = _mp3_duration(session_dir / f"meeting_audio_{source}_001.mp3")
             assert abs(duration - audit.seconds) <= MP3_DURATION_TOLERANCE_SECONDS
             evidence[source]["mp3_duration"] = round(duration, 3)
 
@@ -225,9 +230,22 @@ def test_a_full_session_reconciles_frame_by_frame(tmp_path: Path, monkeypatch):
         assert record["interrupted"] is False
         assert {step["id"]: step["status"] for step in record["drain"]["steps"]} == steps
         assert record["ended_at"] is not None
-        assert [item["archive"] for item in record["sources"]] == [
-            archive_name("mic"), archive_name("loopback"),
+        assert [item["archives"] for item in record["sources"]] == [
+            [archive_name("mic")], [archive_name("loopback")],
         ]
+        # 段账：一场恰好一段，段起止、在录时长都落了；权威时长 = 在录时长之和
+        assert len(record["segments"]) == 1
+        segment = record["segments"][0]
+        assert segment["index"] == 1
+        assert segment["started_at"] and segment["ended_at"]
+        assert segment["sources"] == ["mic", "loopback"]
+        assert segment["pauses"] == []
+        assert segment["duration_seconds"] == pytest.approx(
+            max(audits[source].seconds for source in SOURCE_ORDER), abs=0.15
+        )
+        assert record["audio_duration_seconds"] == pytest.approx(
+            segment["duration_seconds"], abs=0.001
+        )
 
         print("E2E-EVIDENCE " + json.dumps(evidence, ensure_ascii=False))
 
@@ -311,8 +329,8 @@ def test_a_route_dying_midrun_leaves_the_other_route_intact(tmp_path: Path, monk
         assert len(mic_data) == mic_fed * CHUNK_BYTES
         assert len(mic_data) > size_at_death
         # 收尾的 MP3：mic 照样出得来（loopback 的 PCM 非空，也有它的一份）
-        assert (session_dir / "meeting_audio_mic.mp3").exists()
-        assert (session_dir / "meeting_audio_loopback.mp3").exists()
+        assert (session_dir / "meeting_audio_mic_001.mp3").exists()
+        assert (session_dir / "meeting_audio_loopback_001.mp3").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -364,7 +382,7 @@ def test_transcode_throughput_ten_minutes_extrapolates_two_hours(tmp_path: Path)
     session.transcode()
     elapsed = time.monotonic() - started
 
-    mp3_path = tmp_path / "meeting_audio_mic.mp3"
+    mp3_path = tmp_path / "meeting_audio_mic_001.mp3"
     assert mp3_path.exists()
     assert (pcm_path).exists()  # 转码成功之后 PCM 原样留着
     extrapolated_two_hours = elapsed * (120 / THROUGHPUT_MINUTES)

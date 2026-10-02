@@ -41,20 +41,20 @@ _CLOSE_SENTINEL = None
 
 
 def open_pcm(path: Path | str):
-    """打开 raw PCM 录音文件（int16 mono，无 header），会话期间边采边写。
+    """打开一路**一段**的 raw PCM 录音文件（int16 mono，无 header），录制期间边采边写。
 
-    搬自 V1 `mnotes_core/media.py:13-21`（`_open_pcm`）。**追加模式**那一段逐字保留：
+    搬自 V1 `mnotes_core/media.py:13-21`（`_open_pcm`）。V2 的两处差别，各有理由：
 
-        **追加模式**：续接会议时旧会话的 .pcm 仍在，新会话直接接到末尾——
-        录音格式恒为 16k mono int16（recorder 统一按 SAMPLE_RATE 采样），追加安全无损；
-        清空重开由调用方先删旧文件，本函数只负责打开。相比 WAV：无需回填 header，
-        崩溃残留的 .pcm 也能直接用 pydub from_raw 读回，更稳。
-
-    与 V1 的差别**只有一处**：`open(path, "ab")` 改成 `open(path, "ab", buffering=0)`
-    （无缓冲，一个词的改动）。理由：服务被强杀时最多丢最后一个块的尾巴，而带缓冲的写法会把
-    几十 KB 压在进程内存里一起丢（`dca4539b` §3 的取舍）。
+      - `open(path, "ab")` 改成 `open(path, "ab", buffering=0)`（**无缓冲**，一个词的改动）。
+        理由：服务被强杀时最多丢最后一个块的尾巴，而带缓冲的写法会把几十 KB 压在进程
+        内存里一起丢（`dca4539b` §3 的取舍）。
+      - 追加语义**翻案**（`docs/design-intent.md` 第 9 条）：V1 的「续接会议 = 追加到旧
+        文件末尾」作废——段只表达「这场会录了几次」，续接是**下一个序号的新段文件**，
+        不追加旧文件。因此一个段文件只装**本段**的字节，打开模式是 **截断写**
+        （`"wb"`）：同名残留（上一场崩在同一目录的半截段）被截掉，而不是被悄悄接上
+        ——那正是第 9 条要消灭的「音频比文本长」悬案的来路。
     """
-    return open(path, "ab", buffering=0)
+    return open(path, "wb", buffering=0)
 
 
 def convert_to_mp3(pcm_path: Path | str, mp3_path: Path | str, bitrate: str = MP3_BITRATE) -> bool:
@@ -69,7 +69,7 @@ def convert_to_mp3(pcm_path: Path | str, mp3_path: Path | str, bitrate: str = MP
     与 V1 的差别（**有意**，理由写在 `dca4539b` §3）：
 
       - **转完不删 PCM**：V1 结尾是 `pcm_path.unlink(missing_ok=True)`（转走就把临时的
-        `.pcm` 清掉）。V2 的 `session.json` 里 `sources[*].archive` 声明的是那个 `.pcm`，
+        `.pcm` 清掉）。V2 的 `session.json` 里 `sources[*].archives` 声明的是那些段 `.pcm`，
         删掉它那份记录就指向空气，所以这里**保留 PCM**；空文件那一档同理不再 `unlink`
         （V1 那里删的是「本来就没有内容」的文件，V2 留一个 0 字节文件与记录对齐）。
       - 去掉 `prepend_mp3`（续接会议时把旧 mp3 拼在本轮 PCM 之前）：V1 的会议续接与音频
@@ -98,7 +98,7 @@ def mp3_path_for(pcm_path: Path | str) -> Path:
 
 
 class PcmArchiveWriter:
-    """一路归档的写侧：**自己的写线程**，从自己的队列里取一块、写一块。
+    """一路**一段**归档的写侧：**自己的写线程**，从自己的队列里取一块、写一块。
 
     V1 的写侧是 `pipeline._audio_loop` 里按 tag 取块再写的那三行（`pipeline.py:89-95`）：
 
@@ -108,20 +108,24 @@ class PcmArchiveWriter:
         if f:
             f.write(data)
 
-    这里逐字保留「取一块、写一块」（连 `timeout=0.1` 的取法都留着），外面按 V2 契约加三样
-    东西（§3 的取舍，每一处都有理由）：
+    这里逐字保留「取一块、写一块」（连 `timeout=0.1` 的取法都留着），外面按 V2 契约加四样
+    东西（每一处都有理由）：
 
       - **两路各自一条写线程**（V1 是两路共用一条队列 + 一条写线程）：契约要求「一路出事
         另一路照跑」，分开写更直接，一路卡在磁盘上不会把另一路拖住；
       - **无缓冲写**（`open_pcm()` 的 `buffering=0`）：强杀最多丢最后一个块；
       - **收尾 `close()`**：`finalize()` 要能确定地停流、join、关文件、`fsync`；join 的上界
-        由这里给（V1 那个 `join(timeout=2.0)` 不保证线程已退出）。
+        由这里给（V1 那个 `join(timeout=2.0)` 不保证线程已退出）；
+      - **静音块**（本节点新增）：`feed(..., silence=True)` 投进来的块写的是**数字零**
+        （暂停期间、用户主动关掉的那一路、没开的那一路都走这一路），并单独记进
+        `silence_bytes`——「实际录到的音频时长」的账只数 `content_bytes`，
+        `bytes_written` 仍是落盘总字节数（= 时间轴长度）。
     """
 
     def __init__(self, path: Path | str, *, label: str = "") -> None:
         self.path = Path(path)
         self.label = label or self.path.name
-        self._queue: queue.Queue[bytes | None] = queue.Queue()
+        self._queue: queue.Queue[tuple[bytes, bool] | None] = queue.Queue()
         self._thread: threading.Thread | None = None
         self._handle = None
         #: 收队信号（写线程正在把队列里剩下的块写完）
@@ -132,11 +136,14 @@ class PcmArchiveWriter:
         #: 真正写下去的字节数（收尾的核对口径：字节数 = 32000 字节/秒 × 秒数）
         self.bytes_written = 0
         self.chunks_written = 0
+        #: 其中内容 / 静音各多少字节（「实际录到的音频时长」只数内容那一格）
+        self.content_bytes = 0
+        self.silence_bytes = 0
 
     # -- 打开 / 关闭 -------------------------------------------------------
 
     def open(self) -> None:
-        """建出归档文件并起写线程（**文件在这一刻就存在**，未选中的那一路因此也是 0 字节文件）。"""
+        """建出归档文件并起写线程（**文件在这一刻就存在**，还没起采的那一路是 0 字节文件）。"""
         with self._lock:
             if self._closing:
                 raise RuntimeError(f"{self.label} 的归档已经关过，不复用")
@@ -191,40 +198,54 @@ class PcmArchiveWriter:
 
     # -- 写侧 -------------------------------------------------------------
 
-    def feed(self, data: bytes) -> None:
-        """读侧投一块进来（`data` 为空时什么都不做）。"""
+    def feed(self, data: bytes, *, silence: bool = False) -> None:
+        """读侧投一块进来（`data` 为空时什么都不做）。
+
+        `silence=True` 的块**内容不落盘**：写线程写的是等长的数字零（`_write` 里替换），
+        字节数记进 `silence_bytes`。这一格只该由「暂停 / 用户关一路 / 没开一路」的
+        写静音路径投，普通内容块保持缺省。
+        """
         if not data:
             return
-        self._queue.put(bytes(data))
+        self._queue.put((bytes(data), bool(silence)))
 
     def _run(self, handle) -> None:
         """写线程：取一块、写一块（照 `pipeline._audio_loop` 的那三行）。"""
         while True:
             try:
-                data = self._queue.get(timeout=0.1)
+                item = self._queue.get(timeout=0.1)
             except queue.Empty:
                 if self._closing:
                     break
                 continue
-            if data is _CLOSE_SENTINEL:
+            if item is _CLOSE_SENTINEL:
                 break
-            self._write(handle, data)
+            self._write(handle, *item)
         # 收尾时把这一轮还压在队列里的块写完（强杀也最多丢最后一个块）
         while True:
             try:
-                data = self._queue.get_nowait()
+                item = self._queue.get_nowait()
             except queue.Empty:
                 break
-            if data is _CLOSE_SENTINEL:
+            if item is _CLOSE_SENTINEL:
                 continue
-            self._write(handle, data)
+            self._write(handle, *item)
 
-    def _write(self, handle, data: bytes) -> None:
-        """写一块并记账（句柄已经关掉时不再写：这一支只在 join 超时那条路上会走到）。"""
+    def _write(self, handle, data: bytes, silence: bool = False) -> None:
+        """写一块并记账（句柄已经关掉时不再写：这一支只在 join 超时那条路上会走到）。
+
+        静音块在这里替换成等长数字零：**队列里从不放内容**，替换发生在写线程这一侧，
+        暂停期间的真音频到不了盘上（`docs/design-intent.md` 第 8 条的隐私线）。
+        """
         with self._lock:
             if self._closed:
                 return
-            handle.write(data)
+            if silence:
+                handle.write(bytes(len(data)))
+                self.silence_bytes += len(data)
+            else:
+                handle.write(data)
+                self.content_bytes += len(data)
             self.bytes_written += len(data)
             self.chunks_written += 1
 

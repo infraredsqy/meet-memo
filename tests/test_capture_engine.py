@@ -4,12 +4,16 @@
 「每块内容可指定、第 N 块抛错、块数可指定」这几种情形，覆盖面比录几秒真声音更全。
 
 验的是生产代码这条路径：读线程、写线程、电平刻度、收尾落盘全部是真的，换掉的只有最外面
-那一层声卡库。四块：
+那一层声卡库。五块：
 
   1. 归档对账：两路 PCM 都长起来，字节数按 **32000 字节/秒** 对得上喂进去的块数；
   2. 单路死亡：一路的源抛错 → 该路一条 `SourceLost`，**另一路的字节数继续增长**；
-  3. `mode` 过滤：`mode="mic"` 时 loopback 不读、不发帧，但两路归档文件都在；
-  4. 电平刻度：每 `frame_interval` 秒**无条件**发一帧（静音时也发），`SourceFacts` 跟着走。
+  3. `mode` 过滤：`mode="mic"` 时 loopback 不读、不发帧，但**整段时间写静音**
+     （两路时间轴等长，`docs/design-intent.md` 第 9 条）；
+  4. 暂停与关一路：暂停 = 所有路写数字静音（逐样本为零）、不录内容、段不切段；
+     用户主动关一路 = 那一路写静音、**不报 `SourceLost`**，另一路照常；
+  5. 段账与电平刻度：段起止戳、在录时长（内容字节 ÷ 32000）、权威时长 = 各段之和；
+     每 `frame_interval` 秒**无条件**发一帧（静音时也发），`SourceFacts` 跟着走。
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ import pytest
 from meeting.backends.base import LevelFrame, SourceFacts, SourceLost
 from meeting.capture.engine import (
     CAPTURE_MODES,
+    SILENCE_CHUNK_BYTES,
     SOURCE_IDS,
     CaptureSession,
     sources_for_mode,
@@ -318,26 +323,42 @@ def test_a_dead_route_stops_reporting_itself_alive(tmp_path: Path):
 
 
 def test_mic_mode_leaves_the_loopback_route_alone(tmp_path: Path):
-    """`mode="mic"`：loopback 不读、不发帧，两路归档文件都在（0 字节那一份也在）。"""
+    """`mode="mic"`：loopback 不读、不发帧，但**整段时间写静音**（两路时间轴等长）。
+
+    「某一路没开」也是「那一路写静音」（`docs/design-intent.md` 第 9 条）：未选那一路的
+    文件不再是 0 字节，落盘的全是数字零，且不记内容账——权威时长只由 mic 那一路的内容
+    字节说话。
+    """
     mic = FakeCaptureSource("mic", chunks=4)
     loop = FakeCaptureSource("loopback")
     session, facts, _sources = make_session(tmp_path, mode="mic", mic=mic, loopback=loop)
     session.start()
     assert wait_for(lambda: mic.fed >= 4)
-    time.sleep(0.12)
+    # 静音节拍器按真实时长写零（等的是时间本身，但判据挂在可观察的字节数上）
+    assert wait_for(lambda: session.silence_bytes("loopback") >= 3 * SILENCE_CHUNK_BYTES)
     session.finalize()
 
     assert loop.reads == 0
     assert loop.fed == 0
-    assert session.bytes_written("loopback") == 0
+    # 时间轴等长：未选那一路落的全是静音字节，且与它的字节数对上账
+    assert session.bytes_written("loopback") > 0
+    assert session.silence_bytes("loopback") == session.bytes_written("loopback")
+    assert session.content_bytes("loopback") == 0
+    assert (tmp_path / archive_name("loopback")).stat().st_size == session.bytes_written("loopback")
+    loop_data = (tmp_path / archive_name("loopback")).read_bytes()
+    assert loop_data == bytes(len(loop_data))  # 逐样本为零
     assert {fact.source for fact in only(facts, LevelFrame)} == {"mic"}
-    assert (tmp_path / archive_name("loopback")).exists()
-    assert (tmp_path / archive_name("loopback")).stat().st_size == 0
-    assert session.bytes_written("mic") > 0
+    # 权威时长只数该采那一路的内容：mic 有内容、loopback 全静音
+    assert session.content_bytes("mic") > 0
+    records = session.segment_records()
+    assert records[0]["sources"] == ["mic"]
+    assert records[0]["duration_seconds"] == pytest.approx(
+        session.content_bytes("mic") / 32000, abs=0.001
+    )
 
 
 def test_loopback_mode_leaves_the_mic_route_alone(tmp_path: Path):
-    """反过来一样：`mode="loopback"` 时 mic 那一路一个块都不读。"""
+    """反过来一样：`mode="loopback"` 时 mic 那一路一个块都不读（整段时间写静音）。"""
     mic = FakeCaptureSource("mic")
     loop = FakeCaptureSource("loopback", chunks=4)
     session, facts, _sources = make_session(
@@ -345,22 +366,158 @@ def test_loopback_mode_leaves_the_mic_route_alone(tmp_path: Path):
     )
     session.start()
     assert wait_for(lambda: loop.fed >= 4)
-    time.sleep(0.12)
+    assert wait_for(lambda: session.silence_bytes("mic") >= 3 * SILENCE_CHUNK_BYTES)
     session.finalize()
 
     assert mic.reads == 0
-    assert session.bytes_written("mic") == 0
+    assert session.content_bytes("mic") == 0
+    assert session.bytes_written("mic") == session.silence_bytes("mic") > 0
     assert {fact.source for fact in only(facts, LevelFrame)} == {"loopback"}
 
 
-def test_an_unselected_route_gets_no_worker_threads(tmp_path: Path):
-    """未选中的那一路没有读线程、也没有刻度线程（只有那个 0 字节的归档文件）。"""
+def test_an_unselected_route_gets_only_a_silence_pacer(tmp_path: Path):
+    """未选中的那一路没有读线程、也没有刻度线程，只有**静音节拍器**那一条。"""
     session, _facts, _sources = make_session(tmp_path, mode="mic")
     session.start()
     time.sleep(0.05)
+    names = [thread.name for thread in session.workers["loopback"]._threads]
+    assert names == ["capture-silence-loopback"]
     assert session.workers["mic"]._threads != []
-    assert session.workers["loopback"]._threads == []
     session.stop()
+
+
+# ---------------------------------------------------------------------------
+# ③½ 暂停与关一路：写静音，不录内容；段不切段
+# ---------------------------------------------------------------------------
+
+
+def test_pause_writes_silence_and_does_not_record_content(tmp_path: Path):
+    """暂停期间两路都写数字零、内容账停住；恢复后内容照录；**段不切段**。
+
+    盘上对账**在收尾结算之后**做（不跟写线程的记账时序赛跑）：内容块全是源给的那一块、
+    静音全是零且总量等于写侧的静音账——两句话合起来就是「暂停 = 写静音，不录内容」。
+    """
+    mic = FakeCaptureSource("mic", chunk=block(900), pace_seconds=0.005)
+    loop = FakeCaptureSource("loopback", chunk=block(3100), pace_seconds=0.005)
+    session, _facts, _sources = make_session(tmp_path, mic=mic, loopback=loop)
+    session.start()
+    assert wait_for(lambda: session.content_bytes("mic") >= 3 * CHUNK_BYTES)
+    assert not session.paused
+    content_before_pause = session.content_bytes("mic")
+    session.pause()
+    assert session.paused
+    assert wait_for(
+        lambda: session.silence_bytes("mic") >= 3 * CHUNK_BYTES,
+        timeout=FRAME_WAIT_TIMEOUT_SECONDS,
+    )
+    session.resume()
+    assert not session.paused
+    assert wait_for(lambda: session.content_bytes("mic") > content_before_pause)
+    session.finalize()
+
+    # 盘上对账（**结算后**对，不跟写线程的记账时序赛跑）：内容块都是源给的那一块、
+    # 暂停静音逐样本为零且总量等于静音账——暂停只是把中间那截换成了零
+    data = (tmp_path / archive_name("mic")).read_bytes()
+    content_total = session.content_bytes("mic")
+    silence_total = session.silence_bytes("mic")
+    assert silence_total >= 3 * CHUNK_BYTES
+    assert content_total % CHUNK_BYTES == 0 and silence_total % CHUNK_BYTES == 0
+    assert data.count(block(900)) * CHUNK_BYTES + silence_total == len(data)
+    assert data.replace(block(900), b"") == bytes(silence_total), (
+        "暂停窗口必须逐样本为零（第 8 条的隐私线）"
+    )
+    # 账目自洽：总账 = 内容 + 静音；暂停没有把段切开
+    assert session.bytes_written("mic") == content_total + silence_total
+    records = session.segment_records()
+    assert len(records) == 1
+    assert records[0]["index"] == 1
+    assert records[0]["started_at"] and records[0]["ended_at"]
+    pauses = records[0]["pauses"]
+    assert len(pauses) == 1
+    assert pauses[0]["start"] and pauses[0]["end"]
+    # 在录时长只数内容：暂停的静音一格都不算；取两路内容的较大者（同一段时间轴）
+    expected_duration = max(
+        session.content_bytes(source) for source in ("mic", "loopback")
+    ) / 32000
+    assert records[0]["duration_seconds"] == pytest.approx(expected_duration, abs=0.001)
+    assert session.audio_duration_seconds() == records[0]["duration_seconds"]
+
+
+def test_pause_is_idempotent_and_resume_without_pause_is_a_no_op(tmp_path: Path):
+    """重复 `pause()` 只记一条区间；没暂停时 `resume()` 什么都不改。"""
+    mic = FakeCaptureSource("mic", chunk=block(900), pace_seconds=0.005)
+    session, _facts, _sources = make_session(tmp_path, mode="mic", mic=mic)
+    session.start()
+    assert wait_for(lambda: session.content_bytes("mic") >= CHUNK_BYTES)
+    session.pause()
+    session.pause()
+    assert wait_for(lambda: session.silence_bytes("mic") >= CHUNK_BYTES)
+    session.resume()
+    session.resume()
+    session.finalize()
+    assert len(session.segment_records()[0]["pauses"]) == 1
+
+
+def test_pause_before_start_or_after_finalize_is_a_no_op(tmp_path: Path):
+    """没起采 / 已收尾时 `pause()` 不动作（不记区间、不留半个状态）。"""
+    mic = FakeCaptureSource("mic", chunks=3)
+    session, _facts, _sources = make_session(tmp_path, mode="mic", mic=mic)
+    session.pause()
+    assert not session.paused
+    session.start()
+    assert wait_for(lambda: mic.fed >= 3)
+    session.finalize()
+    session.pause()
+    assert not session.paused
+    assert session.segment_records()[0]["pauses"] == []
+
+
+def test_deactivating_a_route_writes_silence_without_source_lost(tmp_path: Path):
+    """用户主动关一路：那一路改写静音、**不报 `SourceLost`**，另一路照常录内容。"""
+    mic = FakeCaptureSource("mic", chunk=block(900), pace_seconds=0.005)
+    loop = FakeCaptureSource("loopback", chunk=block(3100), pace_seconds=0.005)
+    session, facts, sources = make_session(tmp_path, mic=mic, loopback=loop)
+    session.start()
+    assert wait_for(lambda: session.content_bytes("loopback") >= 2 * CHUNK_BYTES)
+    mic_content_at_close = session.content_bytes("mic")
+    session.deactivate_source("loopback")
+    session.deactivate_source("loopback")  # 幂等
+    assert sources["loopback"].stopped is True  # 真源被释放
+    assert session.workers["loopback"].user_closed is True
+    # 静音在涨（时间轴不断），mic 的内容也在涨
+    assert wait_for(
+        lambda: session.silence_bytes("loopback") >= 3 * CHUNK_BYTES,
+        timeout=FRAME_WAIT_TIMEOUT_SECONDS,
+    )
+    assert wait_for(lambda: session.content_bytes("mic") > mic_content_at_close)
+    session.finalize()
+
+    assert only(facts, SourceLost) == []  # 主动关不报故障（与「真死」区分的地方）
+    loop_data = (tmp_path / archive_name("loopback")).read_bytes()
+    tail = loop_data[-3 * CHUNK_BYTES :]
+    assert tail == bytes(len(tail))  # 关掉之后写的是数字零
+    # mic 全程内容、loopback 关掉后全静音：权威时长 = mic 的内容时长
+    assert session.content_bytes("loopback") < session.bytes_written("loopback")
+    assert session.segment_records()[0]["duration_seconds"] == pytest.approx(
+        session.content_bytes("mic") / 32000, abs=0.001
+    )
+
+
+def test_segment_account_before_finalize_has_no_closing_stamp(tmp_path: Path):
+    """还在录时段账没有终点戳、权威时长为 0（没写完的段没有账可结）。"""
+    mic = FakeCaptureSource("mic", chunk=block(900), pace_seconds=0.005)
+    session, _facts, _sources = make_session(tmp_path, mode="mic", mic=mic)
+    session.start()
+    assert wait_for(lambda: session.content_bytes("mic") >= CHUNK_BYTES)
+    record = session.segment_records()[0]
+    assert record["started_at"] and record["ended_at"] is None
+    assert record["duration_seconds"] is None
+    assert record["sources"] == ["mic"]
+    assert session.audio_duration_seconds() == 0.0
+    assert session.archives_for("mic") == [archive_name("mic", 1)]
+    session.finalize()
+    assert session.segment_records()[0]["ended_at"] is not None
+    assert session.audio_duration_seconds() > 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -530,8 +687,8 @@ def test_finalize_after_stop_writes_the_same_bytes(tmp_path: Path):
     assert session.bytes_written("mic") == 3 * CHUNK_BYTES
 
 
-def test_transcode_produces_one_mp3_per_route(tmp_path: Path):
-    """收尾第 2 步：两路各出一个 MP3，PCM 原样留着。"""
+def test_transcode_produces_one_mp3_per_filled_segment(tmp_path: Path):
+    """收尾第 2 步：每路**写了字节的段**各出一个 MP3，PCM 原样留着。"""
     mic = FakeCaptureSource("mic", chunks=8)
     loop = FakeCaptureSource("loopback", chunks=8)
     session, _facts, _sources = make_session(tmp_path, mic=mic, loopback=loop)
@@ -546,17 +703,14 @@ def test_transcode_produces_one_mp3_per_route(tmp_path: Path):
 
 
 def test_transcode_skips_the_route_with_no_audio(tmp_path: Path):
-    """未选中的那一路是 0 字节：不产出它的 MP3（照 V1 的空文件口径）。"""
-    mic = FakeCaptureSource("mic", chunks=8)
-    session, _facts, _sources = make_session(tmp_path, mode="mic", mic=mic)
-    session.start()
-    assert wait_for(lambda: mic.fed >= 8)
-    session.finalize()
+    """收尾那一刻一个字节都没写到的段不产出它的 MP3（照 V1 的空文件口径）。"""
+    session, _facts, _sources = make_session(tmp_path, mode="mic")
+    session.finalize()  # start() 都没调：两路都是 0 字节
     session.transcode()
 
-    assert (tmp_path / "meeting_audio_mic.mp3").exists()
-    assert not (tmp_path / "meeting_audio_loopback.mp3").exists()
-    assert (tmp_path / archive_name("loopback")).exists()
+    assert not (tmp_path / "meeting_audio_mic_001.mp3").exists()
+    assert not (tmp_path / "meeting_audio_loopback_001.mp3").exists()
+    assert (tmp_path / archive_name("mic")).exists()
 
 
 def test_transcode_raises_but_keeps_the_pcm(tmp_path: Path, monkeypatch):
