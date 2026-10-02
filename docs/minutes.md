@@ -8,7 +8,7 @@
 
 `meeting post` 那条链上，离线那一趟跑完之后，`meeting/offline/runner.py` 的 `run_session()` 在**最后**通知一次这一层（`_announce_minutes()`）。顺序不能反：离线那条转写就是这一层的输入之一，先出纪要就永远只有降级档。工作台上「生成会后精细稿」按钮那一趟走的是 `run_session(..., minutes=False)`——**不**通知这一层，纪要归「直接出纪要」那个按钮。
 
-钩子住在 `meeting/backends/minutes.py` 的 `MinutesHook`：`launch(session_dir)` 起一条 daemon 线程跑 `meeting/minutes/runner.py` 的 `run()`，**返回即算启动成功**。离线那一趟不等它跑完，它跑多久都不占收尾预算；它炸了也不带走离线那三份产物、不改 `meeting_offline_status.json`（全程 `try/except BaseException` 兜住，只在主 log 记一条）。
+钩子住在 `meeting/backends/minutes.py` 的 `MinutesHook`：`launch(session_dir)` 起一条 daemon 线程跑 `meeting/minutes/runner.py` 的 `run()`，**返回即算启动成功**。离线那一趟不等它跑完，它跑多久都不占收尾预算；它炸了也不带走离线那四份产物、不改 `meeting_offline_status.json`（全程 `try/except BaseException` 兜住，只在主 log 记一条）。
 
 一次 `run()` 按这个顺序做五件事：
 

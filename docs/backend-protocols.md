@@ -76,7 +76,7 @@
 
 - `launch(session_dir)` 起一条 daemon 线程跑 `meeting.offline.runner.run_session(session_dir)`，随即返回 —— 收尾不等它跑完，它跑多久都不占收尾那条预算；
 - 线程里的异常落进场次目录的 `meeting_offline_status.json`（`error` 那一格），**不回收尾流程**；`session_dir` 是空值时当场抛错，那一步据实记 `failed`；
-- 会话级 `session.json` 归收尾流程写，这条线程不去碰它；它只往场次目录落会后产物（文件名与字段契约见 `docs/state.md` 第 3 章）；
+- 会话级 `session.json` 归收尾流程写，这条线程不去碰它；它只往场次目录落会后产物（文件名与字段契约见 `docs/state.md` 第 3 章）。整条链每跑完一块就往 `meeting_offline_progress.jsonl` 补一行（这一块的文字与这一块的落点，`a9affaa8` 落地），于是「跑到第几块」不必等整路跑完；正式稿 `meeting_offline_transcript_<source>.md` 的写时机没变（整路跑完一次写），`GET /api/sessions` 的 `has_offline` 那一格因此不受它影响；
 - `torch` / `transformers` / `av` 都在函数体内 import，`import meeting.backends.post` 保持轻量，`meeting web` 的启动链不被拖慢；
 - 它**不带 `finalize` / `transcode`**：那两项是采集后端的能力，这两个键上的闸门不看它。
 
@@ -92,7 +92,7 @@
 - `launch(session_dir)` 起一条 daemon 线程（线程名 `minutes-final`）跑 `meeting.minutes.runner.run(session_dir)`，随即返回 —— 它跑多久都不占收尾预算，也不占离线那一趟的墙钟；
 - **返回之前先把「这一层在飞」落到盘上**：`meeting/minutes/status.py` 的 `mark_running()` 同步写一版 `state = "running"` 的 `meeting_minutes_status.json`，盘上已经停着一版 `running` 时抛 `AlreadyRunningError`（带 `force=True` 时放行）—— 「同一场被拉起两个子会话」这件事因此在**跨进程**下也读得出来（用户随后手敲的 `meeting post` 是另一个进程），判据与那把瞬态 `meeting_minutes_status.lock` 见 `docs/minutes.md` 第 1.1 节；
 - 线程里的异常落进场次目录的 `meeting_minutes_status.json`（补成 `failed` 并写上原因），**不外传**；`session_dir` 是空值时当场抛错；
-- `meeting_offline_status.json` 与离线的三份产物，这条线程一个字节都不碰；
+- `meeting_offline_status.json` 与离线的四份产物，这条线程一个字节都不碰；
 - **重依赖在函数体内 import**：模块顶层只有标准库，`import meeting.backends.minutes` 保持轻量。
 
 它调用的那一层做什么、产物有哪几份、怎么手动跑，见 `docs/minutes.md`。

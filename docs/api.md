@@ -1,6 +1,6 @@
 # meeting · HTTP 面
 
-> 这份文档写服务对外的那几条线：九条端点（七条 `/api/*` + 静态首页 `GET /` + `/debug`）、动作的信封、动作表与 `code` 表、以及本地防线。
+> 这份文档写服务对外的那几条线：十条端点（八条 `/api/*` + 静态首页 `GET /` + `/debug`）、动作的信封、动作表与 `code` 表、以及本地防线。
 >
 > 读者是接这套 API 的人：前端、验收脚本、命令行复核。四态状态机、快照字段、`session.json`、SSE 帧形状、告警判定写在 `docs/state.md`；怎么起服务写在 `docs/service.md`。
 >
@@ -10,14 +10,14 @@
 
 | 章 | 标题 |
 |---|---|
-| 1 | 九条端点 |
+| 1 | 十条端点 |
 | 2 | 请求信封与应答形状 |
 | 3 | 动作表与 `code` 表 |
 | 4 | `settings_update`：写哪些键、什么时候生效 |
 | 5 | 端口与本地最低防线 |
 | 6 | 复核时怎么打 |
 
-## 1. 九条端点
+## 1. 十条端点
 
 | 端点 | 给什么 |
 |---|---|
@@ -28,6 +28,7 @@
 | `GET /api/heartbeat` | `{"service": "meeting", "server_time", "revision", "top_state", "recording_alive", "seconds_since_last_tick"}`，`200`，任何状态下都给。`service` 这个字面量是端口探测认亲用的，必须有 |
 | `GET /api/summaries` | 本场按过的、成功产出的那几次会中总结（时刻 + 窗口 + 那几条），`200`，任何状态下都给。记录活在服务侧内存里、**不落文件**，新的一场 `start` 清空 |
 | `GET /api/sessions` | 工作区注册表：软件自己记的那份"我这些会"（住在配置目录 `workspaces.json`、按路径去重），`200`，任何状态下都给；`recent` = 最近一次被打开/切换的那一场。**纯读**，形状与现行口径见 `docs/contract.md` 4.8 |
+| `GET /api/sessions/{id}` | 单场状态：这一场此刻跑到哪一档、会后离线跑到第几块 / 共几块、正在跑哪一路、已经跑了多久，`200`。`{id}` 是**这一场的目录路径**（URL 编码的绝对路径）。**纯读**，形状与失败口径见 `docs/contract.md` 4.9 |
 | `GET /api/dirs` | 目录选择器的一个现场：一层子目录的名目判读（起点用户主目录，`?dir=` 换层），`200`。**纯读**，只挑已有目录、不建目录 |
 | `POST /api/actions` | 动作端点，见第 2–4 章 |
 
@@ -145,9 +146,11 @@
 
 - `args.dir` **可省**：给了就跑它指定的那一场，且要过与 `GET /api/sessions` 同一套注册表 / 目录判读（不在注册表里、目录不在原地、盘上 `state` 还是 `recording` / `draining` → `invalid_setting`(400)）；省略时跑**收尾刚落定的那一场**（命令行与既有调用走这一路）。
 - 拒绝档固定三条：这一场还没结束 / 收尾还没落定，或已经有一趟会后活在飞 → 409 `draining`；`post_minutes` 那一层的账停在 `running`（纪要 claim 闸同步判）→ 409 `draining`，`detail` 带 `status_path`；这一层没接实现（`post.hook` / `minutes.hook` 缺席）→ 404 `action_unavailable`。
-- 成功体是通用信封 + `post: {kind: "offline"|"minutes", dir}`；回执只说「起没起、跑的哪一场」，跑成什么样由场次目录里的 `meeting_offline_status.json` / `meeting_minutes_status.json` 回答。
+- 成功体是通用信封 + `post: {kind: "offline"|"minutes", dir}`；回执只说「起没起、跑的哪一场」，跑成什么样由场次目录里的 `meeting_offline_status.json` / `meeting_minutes_status.json` 回答；**跑到哪一档**（第几块 / 共几块、正在跑哪一路、已经跑了多久）由 `GET /api/sessions/{id}` 回答。
 
 **`GET /api/sessions` / `GET /api/dirs`** —— 两只纯读端点：前者给注册表 + `recent`（每行带 `has_offline`：这一场有没有会后精细稿），后者给选择器的一层子目录名目。**"最近一场"只从注册表读**：启动、请求都不扫任何场次目录（`docs/design-intent.md` 第 4 条）。
+
+**`GET /api/sessions/{id}`** —— 单场状态（会后视图的进度区）：`{id}` 是这一场的目录路径（URL 编码的绝对路径），应答体见 `docs/contract.md` 4.9。会后离线那条链每跑完一块就往场次目录里那份 `meeting_offline_progress.jsonl` 上补一行（这一块的文字 + 这一块的落点），这只端点把「第几块 / 共几块、正在跑哪一路、已经跑了多久」按路各交一份回来。**纯读**：不涨 `revision`、不广播。
 
 ## 4. `settings_update`：写哪些键、什么时候生效
 
@@ -201,6 +204,8 @@ curl.exe -s http://127.0.0.1:8765/api/state
 curl.exe -s -N http://127.0.0.1:8765/api/events     # 首帧 snapshot，之后 state / levels / transcript
 curl.exe -s http://127.0.0.1:8765/api/heartbeat
 curl.exe -s http://127.0.0.1:8765/api/sessions
+# 单场状态（会后进度读数；{id} 是这一场的目录路径，得 URL 编码）
+curl.exe -s "http://127.0.0.1:8765/api/sessions/C%3A%5C%E4%BC%9A%E8%AE%AE%5C%E8%B7%9F%E8%80%81%E7%8E%8B%E8%81%8A%E5%91%A8%E4%BC%9A"
 curl.exe -s http://127.0.0.1:8765/api/dirs
 curl.exe -s -X POST http://127.0.0.1:8765/api/actions `
   -H "Content-Type: application/json" -H "X-Meeting-Service: 1" `
@@ -216,5 +221,5 @@ curl.exe -s -X POST http://127.0.0.1:8765/api/actions `
 - 怎么起服务、配置、日志、退出码、跑测试：`docs/service.md`
 - 后端协议与 dev 替身：`docs/backend-protocols.md`
 - 前端工程怎么跑、怎么构建：`web/README.md`
-- 契约的可机读基准（32 个 golden 样本与掩码规则）：`contract/README.md`
+- 契约的可机读基准（33 个 golden 样本与掩码规则）：`contract/README.md`
 - 索引：`docs/spec.md`

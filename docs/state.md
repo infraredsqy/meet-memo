@@ -187,16 +187,18 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 
 ### 会后离线产物
 
-会后离线那一套跑过之后（`7c6952e5` 已落地；由「生成会后精细稿」按钮或 `meeting post` 拉起 —— 收尾第 4 步不再自动跑它，那一格停在 `waiting`），一场会在场次目录里多出四类文件（转写与对照表按路各落一份，两路的场次一共六份）。写盘与字段契约在 `meeting/offline/artifacts.py`。这一层用哪个模型、按什么块长切、精度档与显存读数的来由，见 `docs/asr-backends.md`：
+会后离线那一套跑过之后（`7c6952e5` 已落地；由「生成会后精细稿」按钮或 `meeting post` 拉起 —— 收尾第 4 步不再自动跑它，那一格停在 `waiting`），一场会在场次目录里多出五类文件（转写与对照表按路各落一份，两路的场次一共七份）：底下四份的写盘与字段契约在 `meeting/offline/artifacts.py`，逐块进度账那一份（`a9affaa8` 落地）在 `meeting/offline/progress.py`。这一层用哪个模型、按什么块长切、精度档与显存读数的来由，见 `docs/asr-backends.md`：
 
 | 文件 | 内容 | 读者 |
 |---|---|---|
 | `meeting_offline_transcript_<source>.md` | 会后精细稿（带说话人编号），每行 `[HH:MM] **S01**: 正文`（**分钟级**） | 人 + 下游对账 |
 | `meeting_offline_speakers_<source>.json` | 类编号 → 每段区间的对照表（`start` / `end` 是**秒级浮点**） | 下游程序 |
 | `meeting_offline_report.md` | 运行报告：逐路的秒数 / 段数 / 类数 / 墙钟 / 实时率、段耗时分布、失败原因分布、缺了哪几段、没声跳过了哪几段、零时长的段有几段 | 人 |
-| `meeting_offline_status.json` | 状态文件：`running` / `done` / `failed`，外加 `partial` / `silent` / `silent_spans` / `error` | 下游程序 + 将来的界面 |
+| `meeting_offline_status.json` | 状态文件：`running` / `done` / `failed`，外加 `partial` / `silent` / `silent_spans` / `error` | 下游程序 + 界面（这一场跑成什么样） |
+| `meeting_offline_progress.jsonl` | **逐块进度账**（`a9affaa8` 已落地）：每跑完一块补一行 —— 这一块的文字与这一块的落点（`source` / `chunk` / `chunks_total` / `span` / `state` / `text` / `segments` / `wall_seconds` / `error`），第一行是表头 | 人 + `GET /api/sessions/{id}`（这一场跑到第几块） |
 
-- **每路各一份，两路不合并**：转写与对照表的文件名里都带 `<source>`，说话人的限定名一律是 `${source}:${local}`（`mic:S01` 这种形状）。两路的编号互不相认，混成一份就说不出某一行的出处了。
+- **每路各一份，两路不合并**：转写与对照表的文件名里都带 `<source>`，说话人的限定名一律是 `${source}:${local}`（`mic:S01` 这种形状）。两路的编号互不相认，混成一份就说不出某一行的出处了。进度账是一份、按 `source` 分节，**分母按路各算一份**（这一路切了几块）。
+- **进度账与正式稿是两份东西**：正式稿整路跑完一次写（时机没变），进度账一块跑完补一行；后者的文件名与 `meeting_offline_transcript_` 那个前缀对不上，`GET /api/sessions` 的 `has_offline` 那一格因此不受它影响。它是给人看的读数（块数、已跑时长都不是判据），字段契约在 `meeting/offline/progress.py` 的模块说明里。
 - 对照表给的是**类编号**（`S01` 这种），这条链不给编号起名，表里也没有名字那一格。
 - 分块跑时的临时块音频住在 `<场次目录>/_offline_chunks/` 下面，跑完一块都不留：正常跑完与中途抛出来都会扫干净。
 - 对照表的必填顶层键是 `schema_version` / `source` / `speakers` / `segments`，`segments` 每一项必填 `start` / `end` / `speaker` / `text`。`schema_version` 缺失或主版本号读方不认识、`source` 缺失的对照表，读方拒绝并如实报错，读的人拿不到一份半信半疑的表。
@@ -279,7 +281,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 | `working/segment-*.md`、`working/segmentation.json` | 逐段总结与分段方案（子会话产出，一份方案覆盖一到两条输入、每条段带 `source`） | DSH 子会话 |
 | `working/run_prompt.md`、`working/minutes-run.log` | 那一次运行的提示词正文，以及这一趟留下的账：headless 那一趟是子进程的 stdout / stderr，web 那一趟是三步 RPC 的请求与应答摘要 | 排查现场 |
 
-- **起线程就返回，不占收尾预算**：它炸了不带走进度更早的产物，`meeting_offline_status.json` 与那三份离线产物一个字节都不改（`try/except BaseException` 兜住，只记主 log 一条）。
+- **起线程就返回，不占收尾预算**：它炸了不带走进度更早的产物，`meeting_offline_status.json` 与那四份离线产物一个字节都不改（`try/except BaseException` 兜住，只记主 log 一条）。
 - **两条分支：探一次 DSH web 服务端，在跑就交付、没在跑才自己起子进程**。拉起之前先探 `minutes.dsh_url` 指的那台（`meeting/minutes/dsh_web.py` 的 `probe()`：先 TCP，再发一次只读、无参数的 RPC 确认协议与鉴权）：**在跑**走 web 分支，把这一场经 `/api` 交付给 DSH web 服务端（三步：`workspace/create` → `session/create`（只带 `workspaceId`）→ `session/prompt` 送提示词全文），**投递 accepted 即算交付完成**，终态记 **`delivered`**；**没在跑**才落回现成的 headless 分支（`launch.launch_headless()`：等子进程退出 + 四条判据校验产物，终态 `done` / `failed`）。走哪一条由探针当场答，**`minutes.hook` 里写 `web` 或 `headless` 都改不了它** —— 配置里那个词只是记在「在飞」那一版上（见下一格）。
 - **`branch` 记实际走的那一条，但「在飞」那一版是例外**：终局那一版记 `web`（交付给 DSH web 服务端）或 `headless`（本进程自己起的子进程）；**拉起方在建线程之前落的那一版 `running` 记的是配置里写的那个词**（`launch.configured_branch()` 校验取值域后原样交回 `auto` / `web` / `headless`）—— 那一刻还没探，配置里写 `web` 而那一台没在跑时，读终局那一版才看得到实际落的是 `headless`。
 - **`delivered` 与 `done` 的分工**：`done` 是「纪要认真校验过、产物在盘上」（headless 那一趟走的四条判据）；`delivered` 是「投递成功了，产物还没（或者不会）经这一层校验」—— 这一层**不等** DSH 那边把纪要写完、也不校验产物，**停不停 DSH 是用户的事**。读方按**产物**判「这一场补不补跑」（`meeting_final.md` 过四条判据就是已完成，终态落在 `done` 与 `delivered` 哪一档都算），按 `delivered` / `running` 判「这一场已经交付过、别再拉起第二个会话」（`meeting post` 的重复拉起闸把这两档并列，`--force` 是重新交付的出路）。
@@ -297,6 +299,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 
 - 没走完收尾就被打断的那一场，盘上那版 `session.json` 原样留在原地：谁都不去改写它、也不拦新场次的 `start`。
 - 工作区的登记与"最近一场"由收编节点（e2f6166b）落地：注册表住在配置目录 `workspaces.json`，界面经 `GET /api/sessions` 读（形状见 `docs/contract.md` 4.8）——启动序列对场次目录照旧一个字不读。
+- **这一场此刻跑到哪一档**由 `GET /api/sessions/{id}` 回答（`a9affaa8` 已落地，形状见 `docs/contract.md` 4.9）：会后离线跑到第几块 / 共几块、正在跑哪一路、已经跑了多久。它也是纯读：**启动序列照旧不碰任何场次目录**，这只端点是有人问才去读那一场。
 
 ## 4. 心跳与 `recording_alive`
 
@@ -407,5 +410,5 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 - 会中与会后两套模型的选型、四个 `post.*` 键的取值依据与本机实测：`docs/asr-backends.md`
 - 界面怎么画这四态：`docs/ui-design.md`
 - 前端工程怎么跑、怎么构建：`web/README.md`
-- 契约的可机读基准（32 个 golden 样本与掩码规则）：`contract/README.md`
+- 契约的可机读基准（33 个 golden 样本与掩码规则）：`contract/README.md`
 - 索引：`docs/spec.md`

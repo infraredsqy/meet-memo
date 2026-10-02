@@ -92,7 +92,7 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 （纪要正文 + 说话人附录，附录里写清每个人名的依据与把握，猜不出的单列一节），
 状态在 `meeting_minutes_status.json`（`running` / `done` / `failed` / `delivered` + 原因 + 档位 +
 实际走的启动分支），中间产物与那一次运行的账在 `working/` 下（`inputs.json`、
-`<source>/<kind>/chunks/`、`run_prompt.md`、`minutes-run.log`）。这一层跑砸了不影响离线那三份产物。
+`<source>/<kind>/chunks/`、`run_prompt.md`、`minutes-run.log`）。这一层跑砸了不影响离线那几份产物。
 `minutes.hook` 决定这一层**由哪个实现接**（`auto` / `dev` / `module:Class`；写成 `null` 时
 「直接出纪要」那个按钮当场回 404，如实说这台机器上没接这一层）；每块行数、分段上限、
 一次运行的墙钟上限与那一台 `dsh web` 服务端的地址分别由 `minutes.chunk_lines` /
@@ -279,7 +279,7 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
     npm test           # vitest run，14 个文件 360 个用例
     npm run typecheck  # 两条 tsc --noEmit -p，各查各的 project
 
-`npm run build` 里已经含 `npm run typecheck`，所以构建过一次就不必再单独跑；只改类型不看产物时跑 `typecheck` 更快。契约正文在 `docs/contract.md`，可机读基准（32 个 golden 样本与掩码规则）在 `contract/`，前端工程的五个脚本（`dev` / `typecheck` / `build` / `preview` / `test`）与其余说明在 `web/README.md`。
+`npm run build` 里已经含 `npm run typecheck`，所以构建过一次就不必再单独跑；只改类型不看产物时跑 `typecheck` 更快。契约正文在 `docs/contract.md`，可机读基准（33 个 golden 样本与掩码规则）在 `contract/`，前端工程的五个脚本（`dev` / `typecheck` / `build` / `preview` / `test`）与其余说明在 `web/README.md`。
 
 ---
 
