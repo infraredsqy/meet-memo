@@ -233,8 +233,8 @@ SEGMENT_TIMEOUT_SECONDS_ENV = "MEETING_TEST_DRAIN_SEGMENT_TIMEOUT_SECONDS"
 LAUNCH_DELAY_SECONDS_ENV = "MEETING_TEST_DRAIN_LAUNCH_DELAY_SECONDS"
 LAUNCH_THREAD_SECONDS_ENV = "MEETING_TEST_DRAIN_LAUNCH_THREAD_SECONDS"
 
-#: **让某一步真的越过这一趟收尾预算**的旋钮（`FakePostHook.launch()` 用它）：给一个文件路径时，
-#: `launch()` 把**时钟偏移秒数**写进那个文件。
+#: **让某一步真的越过这一趟收尾预算**的旋钮（写它的那一步见下）：给一个文件路径时，
+#: 那一步把**时钟偏移秒数**写进那个文件。
 #:
 #: 为什么需要它（写清、别读成「绕过断言」）：这一趟收尾的总上限写死是
 #: `budget = 30 + backlog × (segment_timeout + 5)`，**下限 30 秒且不开配置键** —— 「某一步
@@ -243,9 +243,10 @@ LAUNCH_THREAD_SECONDS_ENV = "MEETING_TEST_DRAIN_LAUNCH_THREAD_SECONDS"
 #: `tests/_drain_fakes.py` 的 `write_clock_offset_shim()`），于是 deadline 真的过期、越界真的由
 #: `_drain_wait()` 与事件循环的计时判出来（那一步 `error` 里的两个数仍由被测代码给出）。
 #:
-#: **它由哪一步写**：`FakePostHook.launch()` —— 也就是「越过预算」的那一步自己（`post` 排在
-#: 四步末尾，前面的步不受这只钟影响）。名字与 `tests/_drain_fakes.py` 里那个写入助手同名同义
-#: （`FINALIZE_MARKER_ENV`）：两处只认这一个环境变量。
+#: **它由哪一步写**：第 1 步 `flush`（`FakeCaptureBackend.finalize()` 返回前）。
+#: 原先写在第 4 步的会后钩子上，而按「结束录音」之后会后一个动作都不自动跑（R26），
+#: 那一步已经不再被调用 —— 标记因此改由收尾里**第一个真实调用**写下，排在它后面的
+#: `transcode` / `log` / `post` 三格面对的剩余预算随即过期，越界照样落在真实的调用上。
 FINALIZE_MARKER_ENV = "MEETING_TEST_DRAIN_FINALIZE_MARKER"
 
 #: 没给 `BLOCK_SECONDS_ENV` 时 `BlockingThreadPostHook` 的阻塞秒数
@@ -400,6 +401,9 @@ class FakeCaptureBackend:
         )
         if self.finalize_delay_seconds > 0:
             time.sleep(self.finalize_delay_seconds)
+        # 配了「时钟偏移标记」就把偏移写下来（`tests/test_drain.py` ⑤f 用它让**后面那几步**
+        # 真的越过这一趟收尾预算：标记一落，这只单调钟就前移，`_drain_wait()` 的等待随即过期）
+        _write_clock_offset_marker()
         if self.finalize_error:
             raise OSError(self.finalize_error)
 
@@ -426,6 +430,7 @@ class FakeTranscriberBackend:
         self._segment_timeout = float(segment_timeout)
         self.bound = False
         self.started = False
+        self.released = 0
 
     def bind(self, line_sink, *, config=None) -> None:
         self.bound = True
@@ -444,6 +449,15 @@ class FakeTranscriberBackend:
 
     def segment_timeout(self) -> float:
         return _seconds_from_env(SEGMENT_TIMEOUT_SECONDS_ENV, self._segment_timeout)
+
+    def release_gpu(self) -> bool:
+        """收尾第 4 步现在只做这件事（R26：会后归用户手上那两个按钮）。
+
+        它照真后端那条防御式取法被用到（`getattr(self.transcriber_backend, "release_gpu", None)`
+        + 经 `_drain_wait()` 提交到工作线程），收尾编排里该跑的四步因此一步不少。
+        """
+        self.released += 1
+        return True
 
 
 class FakePostHook:

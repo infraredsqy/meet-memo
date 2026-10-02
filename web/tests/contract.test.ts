@@ -92,7 +92,7 @@ describe('快照样本', () => {
     expect(snap.sources.find((s) => s.id === 'mic')?.health).toBe('capturing');
   });
 
-  it('ended-done：四步次序 flush/transcode/log/post，status 是 skipped/skipped/done/skipped', () => {
+  it('ended-done：四步次序 flush/transcode/log/post，status 是 skipped/skipped/done/waiting', () => {
     const snap = snapshotSchema.parse(readFixture('snapshot', 'ended-done'));
     expect(snap.ended?.phase).toBe('done');
     expect(snap.ended?.error).toBeNull();
@@ -102,11 +102,12 @@ describe('快照样本', () => {
       'log',
       'post',
     ]);
+    // 第 4 步 `post` 停在 `waiting`（＝等你动手）：按「结束录音」之后会后一个动作都不自动跑（R26）
     expect(snap.ended?.steps.map((step) => step.status)).toEqual([
       'skipped',
       'skipped',
       'done',
-      'skipped',
+      'waiting',
     ]);
     // error 键恒在：没有错误时它填 null，键本身照旧留着。
     for (const step of snap.ended?.steps ?? []) {
@@ -116,13 +117,17 @@ describe('快照样本', () => {
     expect(snap.sources.map((s) => s.health)).toEqual(['unprobed', 'unprobed']);
   });
 
-  it('ended-draining：post 步 failed、ended.error 有值、两路停 stopped', () => {
+  it('ended-draining：log 步 failed、ended.error 有值、post 停在 waiting、两路停 stopped', () => {
     const snap = snapshotSchema.parse(readFixture('snapshot', 'ended-draining'));
     expect(snap.ended?.phase).toBe('draining');
-    expect(snap.ended?.error).toContain('会后流程启动失败');
+    expect(snap.ended?.error).toContain('场次日志');
+    const failed = snap.ended?.steps.find((step) => step.status === 'failed');
+    expect(failed?.id).toBe('log');
+    expect(failed?.error).toBe(snap.ended?.error);
+    // 第 4 步那一格与成败无关：它照旧停在「等你动手」
     const post = snap.ended?.steps.find((step) => step.id === 'post');
-    expect(post?.status).toBe('failed');
-    expect(post?.error).toBe(snap.ended?.error);
+    expect(post?.status).toBe('waiting');
+    expect(post?.error).toBeNull();
     expect(snap.sources.map((s) => s.health)).toEqual(['stopped', 'stopped']);
   });
 
@@ -364,7 +369,8 @@ describe('动作样本', () => {
     expect(steps).toHaveLength(1);
     for (const step of steps) {
       expect(Object.keys(step).sort()).toEqual(['error', 'id']);
-      expect(step.id).toBe('post');
+      // 样本里失败的是 `log` 那一步（第 4 步 `post` 现在停在 `waiting`：会后归两个按钮，R26）
+      expect(step.id).toBe('log');
     }
     expect(fixture.body.detail.log_path).toBe('<path>');
   });

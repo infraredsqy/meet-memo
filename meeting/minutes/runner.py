@@ -247,7 +247,7 @@ def run(
         _log.error("会后纪要：%s", message)
         return settle(status_module.STATE_FAILED, error=message)
 
-    # 二、分块（每一条输入各切各的：两条都在时切的是会后那份权威稿）
+    # 二、分块（每一条输入**手上的每一份稿**各切一套：两份都在时两份都切、都留在盘上）
     try:
         chunks = chunk_session(directory, discover_inputs(directory), chunk_lines=chunk_lines)
     except Exception as exc:
@@ -334,23 +334,27 @@ def _probe_web(probe_fn: Callable[..., Any], url: str) -> tuple[bool, str]:
 
 
 def _chunk_summary(chunks: Mapping[str, Any]) -> dict[str, Any]:
-    """分块那一趟的账（每条 source 的行数与块数），进状态文件之外的返回值。
+    """分块那一趟的账（每一路每一份稿的行数与块数），进状态文件之外的返回值。
 
-    状态文件的形状是冻结的（spec 那张表），因此这一格只出现在返回值里：`meeting post`
-    与用例用它核「切了几块」。
+    形状与 `chunk_session()` 的返回值同构（`{source: {kind: {…}}}`）：两份稿都在时两份各答一格
+    （R11 的两份稿对拍靠的就是这一层）。状态文件的形状是冻结的，因此这一格只出现在返回值里：
+    `meeting post` 与用例用它核「切了几块」。
     """
     return {
         str(source): {
-            "transcript": getattr(report, "transcript", ""),
-            "total_lines": int(getattr(report, "total_lines", 0)),
-            "chunk_count": int(getattr(report, "chunk_count", 0)),
+            str(kind): {
+                "transcript": getattr(report, "transcript", ""),
+                "total_lines": int(getattr(report, "total_lines", 0)),
+                "chunk_count": int(getattr(report, "chunk_count", 0)),
+            }
+            for kind, report in reports.items()
         }
-        for source, report in chunks.items()
+        for source, reports in chunks.items()
     }
 
 
-def expected_lines_for(session_dir: str | Path, chunks: Mapping[str, Any]) -> dict[str, int]:
-    """`chunk_session()` 的结果 → 每条 source 的真实行数（契约校验的输入）。"""
+def expected_lines_for(session_dir: str | Path, chunks: Mapping[str, Any]) -> dict[str, dict[str, int]]:
+    """`chunk_session()` 的结果 → 每一路每一份稿的真实行数（契约校验的输入）。"""
     return expected_lines_from_chunks(chunks)
 
 

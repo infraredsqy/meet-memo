@@ -918,7 +918,7 @@ def test_the_offline_runner_keeps_its_own_announce_function(
 
 
 def test_both_entries_call_the_same_orchestration(tmp_path: Path) -> None:
-    """`meeting post` 与收尾第 4 步都经 `meeting.cli.run_post`：替身各被调到一次。"""
+    """`meeting post` 与直接驱动的 `PostProcessHook._run()` 都经 `meeting.cli.run_post`：替身各被调到一次。"""
     session = synth_session(tmp_path / "250919")
     seen: list[tuple[str, dict]] = []
 
@@ -981,7 +981,9 @@ def test_the_two_entries_write_the_same_artifact_names(
         cli_module.run_post = original
     assert info.value.code == EXIT_OK
 
-    # 入口二：开会结束时自动跑的那一遍（daemon 线程，等它落定靠轮询状态文件）。
+    # 入口二：直接驱动的 `PostProcessHook()._run()`（daemon 线程，等它落定靠轮询状态文件）
+    # —— 该钩子的产品调用方已退场（收尾第 4 步不再拉起、两个按钮各走各的路），这条用例
+    # 拿它的线程体当第二条入口，钉「两条入口共用 run_post」这件事。
     # 这一趟走的是**产品路径**（线程体不给形参），再入闸标记在场时会当场安静跳过，
     # 因此先摘掉它 —— 这一档安全：实现那一格已经被换成只记账的计数替身，起不了任何东西。
     monkeypatch.delenv("MEETING_MINUTES_CHILD", raising=False)

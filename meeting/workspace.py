@@ -58,6 +58,31 @@ def meeting_material_names() -> frozenset[str]:
     )
 
 
+#: 会后精细稿的文件名前缀（`meeting_offline_transcript_<source>.md`）。
+#: 与 `meeting/offline/artifacts.py` 的转写名同一族：这里**只按名目判**，
+#: 不 import 那个包（工作区列表是只读的一瞥，不该把会后那一套的依赖拖进来）。
+OFFLINE_TRANSCRIPT_PREFIX = "meeting_offline_transcript_"
+
+
+def has_offline_transcript(value: Any) -> bool:
+    """这一场有没有**会后精细稿**（`meeting_offline_transcript_<source>.md`）。
+
+    R29 那一格的判据（`GET /api/sessions` 每行的 `has_offline`）：只看名目、不读内容、
+    不猜 —— 文件在就算有，哪怕它还没被切块。「出纪要」按钮按它如实显示。
+
+    目录不在 / 读不动时答 `False`（读不出来就是不认为有），不抛异常：
+    这一格服务的是界面上的一句话，不该把整个列表端点带走。
+    """
+    path = Path(canonical_dir(value))
+    try:
+        return any(
+            item.is_file() and item.name.startswith(OFFLINE_TRANSCRIPT_PREFIX)
+            for item in path.iterdir()
+        )
+    except OSError:
+        return False
+
+
 def classify_workspace_dir(value: Any) -> dict[str, Any]:
     """把一个目录判成三档：`empty` / `meeting` / `unknown`（外加 `missing` 一档）。
 
@@ -271,9 +296,11 @@ class WorkspaceRegistry:
 
 
 __all__ = [
+    "OFFLINE_TRANSCRIPT_PREFIX",
     "REGISTRY_FILE_NAME",
     "WorkspaceRegistry",
     "canonical_dir",
     "classify_workspace_dir",
+    "has_offline_transcript",
     "meeting_material_names",
 ]

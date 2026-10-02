@@ -1110,6 +1110,7 @@ def run_session(
     config: Any = None,
     minutes_launcher: Any = None,
     force: bool = False,
+    minutes: bool = True,
 ) -> dict:
     """对一场会跑完会后离线转写，落三份产物 + 状态文件，返回摘要 dict。
 
@@ -1117,10 +1118,15 @@ def run_session(
     `post.dtype` 现造一台。`config` 是可选的那一份配置对象（`meeting.config.Config`），
     缺省读进程当前生效值。
 
-    `minutes_launcher` / `force` 是尾巴上那道纪要通知（`_announce_minutes()`）的两个
-    入参，**一路向下传**（不落在模块全局上）：`minutes_launcher` 非空时用它替掉
-    「按 `minutes.hook` 解析出来的启动器」，`force = True` 时跳过那道「已是终态」的闸。
-    两个都缺省到「什么都不改」那一档：`None` / `False` 就是本模块原来的行为。
+    `minutes_launcher` / `force` / `minutes` 是尾巴上那道纪要通知（`_announce_minutes()`）
+    的三个入参，**一路向下传**（不落在模块全局上）：`minutes_launcher` 非空时用它替掉
+    「按 `minutes.hook` 解析出来的启动器」，`force = True` 时跳过那道「已是终态」的闸，
+    `minutes = False` 时**这一趟根本不通知纪要那一层**。
+
+    `minutes = False` 是「生成会后精细稿」那个按钮（`POST /api/actions` 的 `post_offline`）
+    走的那一档：它只管把会后那份精细稿跑出来，纪要等用户另外按「直接出纪要」——
+    两条路各有各的按钮（R26 / `docs/design-intent.md` 第 10 条）。`meeting post` 与收尾那两条
+    入口照旧走缺省的 `True`。
 
     **一路的失败不带走整场**：那一路的失败原因落进报告与状态文件，另一路照常跑。
     全部路都失败时整场落 `failed`，否则落 `done`。
@@ -1259,8 +1265,10 @@ def run_session(
         "report": report_path.name,
         "status": status_path.name,
         "transcripts": per_source,
-        "minutes": _announce_minutes(
-            directory, launcher=minutes_launcher, force=force
+        "minutes": (
+            _announce_minutes(directory, launcher=minutes_launcher, force=force)
+            if minutes
+            else {"hook": "skipped", "announced": False, "reason": "这一趟只要会后精细稿"}
         ),
     }
     _log.info(

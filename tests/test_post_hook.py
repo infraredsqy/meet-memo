@@ -327,18 +327,18 @@ def test_a_failing_background_run_keeps_the_earlier_status_fields(
 # ---------------------------------------------------------------------------
 
 
-def test_the_drain_post_step_turns_done_with_this_implementation(
+def test_the_drain_post_step_leaves_the_lane_waiting_for_the_user(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """真服务里收尾第 4 步从 `skipped` 翻成 `done`（本实现到位之后）。
+    """收尾第 4 步**不拉起任何会后动作**，这一格如实停在 `waiting`（＝等你动手）。
 
+    R26 / `docs/design-intent.md` 第 10 条：按「结束录音」之后什么都不发生。
     走的是真路径：开一场（dev 采集替身）→ 真 `_resolve_backends()` 按 `post.hook = auto`
-    解析到本实现 → 真正的 `_drain_post()` 跑那一步。**`launch` 换成一条只落状态文件的替身**
-    —— 这一步要量的是「收尾那一步有没有被拉起、记成什么」，会后链自己的账在
-    `tests/test_offline_runner.py` 里验（同 `tests/test_drain.py` 的既有做法）。
+    解析到本实现 → 真正的 `_drain_post()` 跑那一步。**`launch` 换成一条记账替身**：
+    这一条要量的是「那一步有没有把会后拉起来、这一格记成什么」——
+    判据就是那份调用清单**恒为空**（事件驱动，不必等墙钟）。
     """
     import asyncio
-    import json
 
     from meeting import config as config_module
     from meeting.service.app import build_runtime
@@ -359,18 +359,8 @@ def test_the_drain_post_step_turns_done_with_this_implementation(
     launched: list[str] = []
 
     def fake_launch(self, target: str) -> None:
-        """替身 `launch()`：在它自己收到的那个场次目录下落一版 `running` 状态文件。"""
+        """替身 `launch()`：**被调到就记一笔**（这一条要证明的正是它一次都没被调到）。"""
         launched.append(str(target))
-        directory = Path(target)
-        directory.mkdir(parents=True, exist_ok=True)
-        artifacts.write_status(
-            directory / artifacts.STATUS_NAME,
-            session_id=directory.name,
-            state="running",
-            started_at="2025-09-19T20:00:00",
-            sources=["mic", "loopback"],
-            artifacts={},
-        )
 
     monkeypatch.setattr(post_module.PostProcessHook, "launch", fake_launch)
     try:
@@ -381,7 +371,7 @@ def test_the_drain_post_step_turns_done_with_this_implementation(
         )
         runtime._resolve_backends()
 
-        # 接线第一段：解析结论
+        # 接线第一段：解析结论照旧（钩子在位，与「要不要自动拉起」是两件事）
         assert runtime.post_resolution.target == "meeting.backends.post:PostProcessHook"
         assert runtime.post_resolution.has_implementation is True
         assert runtime.post_resolution.skipped() is False
@@ -394,24 +384,24 @@ def test_the_drain_post_step_turns_done_with_this_implementation(
         session_dir = Path(runtime.snapshot.session.dir)
         begin_drain(runtime.snapshot, reason="user")
 
-        # 接线第二段：那一步真的跑、落 `done`
+        # 接线第二段：那一步真的跑，但**一个会后动作都不启动**
         asyncio.run(runtime._drain_post(deadline=time.monotonic() + 10.0))
     finally:
         config_module.set_current(previous)
 
     step = next(item for item in runtime.snapshot.ended.steps if item.id == "post")
-    assert step.status == "done", (step.status, step.detail, step.error)
-    assert runtime.post_resolution.run_ok is True
-    # 收尾那一步交给钩子的正是这一场的场次目录（缺席档给的是 `None`）
-    assert launched == [str(session_dir)], launched
-    written = json.loads((session_dir / artifacts.STATUS_NAME).read_text(encoding="utf-8"))
-    assert written["session_id"] == session_dir.name
-    assert written["state"] == "running"
-    assert written["sources"] == ["mic", "loopback"]
+    assert step.status == "waiting", (step.status, step.detail, step.error)
+    assert launched == [], f"结束录音之后会后流程不许自己被拉起来：{launched}"
+    # 「什么都不按」是合法的一档（R26），而这一格已经走完了：盘上不会多出一份离线状态文件
+    assert not (session_dir / artifacts.STATUS_NAME).exists()
 
 
-def test_the_absent_lane_still_records_skipped(tmp_path: Path, monkeypatch) -> None:
-    """替身缺席那条路径没被本单元改坏：`post.hook = null` → 那一步照旧记 `skipped`。"""
+def test_the_post_step_stays_waiting_even_without_a_hook(tmp_path: Path, monkeypatch) -> None:
+    """`post.hook = null` 那一档也停在 `waiting`：**没人按按钮**时两种钩子配置长得一样。
+
+    这一步的读数不再区分「钩子在不在」（它一次都不调），因此缺席档不再是 `skipped` ——
+    「会后流程还没接入」这句话在按钮那一层另有回答（`post_offline` 的 404 档）。
+    """
     import asyncio
 
     from meeting import config as config_module
@@ -447,21 +437,20 @@ def test_the_absent_lane_still_records_skipped(tmp_path: Path, monkeypatch) -> N
         config_module.set_current(previous)
 
     step = next(item for item in runtime.snapshot.ended.steps if item.id == "post")
-    assert step.status == "skipped", (step.status, step.detail, step.error)
-    # 缺席那一档的说明留着一句「还没接入」（本实现到位之后，这一档只在显式取 null 时出现）
+    assert step.status == "waiting", (step.status, step.detail, step.error)
+    # 缺席那一档的解析结论照旧（本实现到位之后，这一档只在显式取 null 时出现）
     assert runtime.post_resolution.skipped() is True
     assert runtime.post_resolution.target is None
 
 
 # ---------------------------------------------------------------------------
-# 五之二、收尾第 4 步的**顺序**：会中模型先退出显存，再拉起会后流程
+# 五之二、收尾第 4 步**只做一件事**：让会中模型退出显存
 #
-# 为什么顺序是这一步的全部要点：`launch()` 一返回，那条 daemon 线程就已经在跑
-# `run_session()`，会后离线链（MOSSTD）的加载紧接着就开始 —— 释放放在 `launch()` 之后
-# 等于没做（16 GB 卡上两份模型同住才是真风险）。
+# 为什么这一步还要跑：会中那个模型用完了就该当场退出显卡（`docs/design-intent.md` 第 21 条），
+# 这件事与「要不要跑会后」无关。会后那两趟活各有各的按钮，这一条线一次都不碰它们。
 #
-# 判据取**事件列表的顺序**：释放与 `launch()` 各自往同一个列表里记一笔，断言两条事件的先后。
-# 不用固定 `sleep` 赌时序（项目纪律），也不读源码行号。
+# 判据取**事件列表**：替身后端的 `release_gpu()` 往列表里记一笔，假 `launch()` 也记一笔
+# —— 列表里只有 `release` 这一项。不用固定 `sleep` 赌时序（项目纪律），也不读源码行号。
 # ---------------------------------------------------------------------------
 
 #: 释放抛异常时写进 log 的那一段（用例按它核实「如实记账、不静默」）
@@ -556,8 +545,12 @@ def _post_wiring(tmp_path: Path, monkeypatch, *, events: list[str], transcriber_
     return runtime, launched, previous
 
 
-def test_the_backend_release_runs_before_the_post_launch(tmp_path, monkeypatch) -> None:
-    """**顺序断言**：`release_gpu()` 落在 `launch()` 之前（事件列表里 `release` 排在前面）。"""
+def test_the_backend_release_still_runs_on_the_drain_post_step(tmp_path, monkeypatch) -> None:
+    """**释放照做、会后不碰**：`release_gpu()` 被喊到一次，而 `launch()` 一次都没被喊。
+
+    事件列表里只有 `release` 这一项 —— 会中模型当场退出显存（`docs/design-intent.md`
+    第 21 条），会后那两趟活留给用户手上的两个按钮。
+    """
     import asyncio
 
     class OrderRecorder:
@@ -582,25 +575,22 @@ def test_the_backend_release_runs_before_the_post_launch(tmp_path, monkeypatch) 
     finally:
         config_module.set_current(previous)
 
-    assert events == ["release", "launch"], (
-        f"释放必须排在 launch() 之前，实测顺序 {events}"
-    )
-    assert launched == [runtime.snapshot.session.dir], launched
+    assert events == ["release"], f"释放该被喊到一次，会后一个动作都不许起：{events}"
+    assert launched == [], "结束录音之后会后流程不许自己被拉起来"
     step = next(item for item in runtime.snapshot.ended.steps if item.id == "post")
-    assert step.status == "done", (step.status, step.detail, step.error)
+    assert step.status == "waiting", (step.status, step.detail, step.error)
     # **没有新增 step_id**：`state.py` 的取值域只认 flush / transcode / log / post
     assert {item.id for item in runtime.snapshot.ended.steps} == {
         "flush", "transcode", "log", "post",
     }
 
 
-def test_a_raising_release_still_lets_the_post_step_land_done(
+def test_a_raising_release_still_lets_the_post_step_settle(
     tmp_path, monkeypatch, caplog
 ) -> None:
-    """释放抛异常**不许把整场拖下水**：如实记一条 log，`post` 照旧落 `done`。
+    """释放抛异常**不许把整场拖下水**：如实记一条 log，这一步照旧跑完。
 
-    这一条与 `runtime.py` 相邻几步的既有姿态同源（收尾失败如实记账、别把别的步骤带走）：
-    会后流程该拉起来还得拉起来。
+    这一条与 `runtime.py` 相邻几步的既有姿态同源（收尾失败如实记账、别把别的步骤带走）。
     """
     import asyncio
 
@@ -627,11 +617,11 @@ def test_a_raising_release_still_lets_the_post_step_land_done(
         config_module.set_current(previous)
 
     step = next(item for item in runtime.snapshot.ended.steps if item.id == "post")
-    assert step.status == "done", (
+    assert step.status == "waiting", (
         f"释放抛错不该让这一步落 failed：{step.status} / {step.detail} / {step.error}"
     )
-    assert launched == [runtime.snapshot.session.dir], "会后流程该照常拉起"
-    assert events == ["release", "launch"], events
+    assert launched == [], "会后流程照旧由用户手上的两个按钮按才起"
+    assert events == ["release"], events
     assert RELEASE_FAILURE_NOTE in written, f"释放失败该如实进 log：\n{written}"
 
 
@@ -668,10 +658,10 @@ def test_the_product_transcriber_backend_really_takes_this_lane(tmp_path, monkey
     finally:
         config_module.set_current(previous)
 
-    assert events == ["release", "launch"], "真后端上的释放该经这条线被喊到一次"
-    assert launched == [runtime.snapshot.session.dir], launched
+    assert events == ["release"], "真后端上的释放该经这条线被喊到一次"
+    assert launched == [], launched
     step = next(item for item in runtime.snapshot.ended.steps if item.id == "post")
-    assert step.status == "done", (step.status, step.detail, step.error)
+    assert step.status == "waiting", (step.status, step.detail, step.error)
 
 
 # ---------------------------------------------------------------------------

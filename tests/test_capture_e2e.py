@@ -9,7 +9,8 @@ registry 的既有口径）把假端点表与带剧本的假源挂进真后端�
 
 三场戏：
 
-  1. **一场正常会，逐帧对账**：收尾四步走到 `done`；场次目录里两路 `.pcm` + 两个
+  1. **一场正常会，逐帧对账**：收尾 phase 走到 `done`（第 4 步 `post` 按 R26 停
+     `waiting`，会后等你按按钮）；场次目录里两路 `.pcm` + 两个
      `.mp3` 都在；两路样本数与「喂进去的块数 × 每块样本数」相符、与「start 到 stop
      之间的墙钟秒数 × 16000」偏差在一个采集块以内、字节数为偶；归档字节与假源的
      喂块账**逐字节一致**（丢 0 秒）；按 0.5 秒重跑电平换算，帧序号连续无空洞，
@@ -163,8 +164,9 @@ def test_a_full_session_reconciles_frame_by_frame(tmp_path: Path, monkeypatch):
         done = _wait_for_done(client)
 
         steps = _drain_steps(done)
+        # 第 4 步按 R26 落 `waiting`（会后不自动跑，等你按按钮），`done` 是收尾 phase 的终态
         assert steps == {
-            "flush": "done", "transcode": "done", "log": "done", "post": "skipped",
+            "flush": "done", "transcode": "done", "log": "done", "post": "waiting",
         }
 
         session_dir = _session_dir_of(client)
@@ -287,8 +289,9 @@ def test_a_route_dying_midrun_leaves_the_other_route_intact(tmp_path: Path, monk
 
         assert post(client, "stop").status_code == 200
         done = _wait_for_done(client)
+        # 第 4 步按 R26 落 `waiting`（会后不自动跑，等你按按钮），`done` 是收尾 phase 的终态
         assert _drain_steps(done) == {
-            "flush": "done", "transcode": "done", "log": "done", "post": "skipped",
+            "flush": "done", "transcode": "done", "log": "done", "post": "waiting",
         }
 
         # 死掉那一路留下恰好那 10 块，逐字节可对（半份归档照样可信）

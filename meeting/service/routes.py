@@ -268,6 +268,18 @@ async def _api_actions(request: Request) -> Response:
                     "workspace": runtime.workspace_remove(args.get("dir")),
                 }
             )
+        elif action in ("post_offline", "post_minutes"):
+            # 会后的两个按钮（R26）：起一条后台线程即算启动成功，成功体在通用信封上多一个
+            # `post` 键（先例是 `summarize` 的 `summary` / `workspace_open` 的 `workspace`）——
+            # 它说的是「这一趟跑的是哪一场、跑的哪一趟」，跑成什么样由盘上的状态文件回答。
+            started = (
+                runtime.post_offline(args)
+                if action == "post_offline"
+                else runtime.post_minutes(args)
+            )
+            return JSONResponse(
+                {"ok": True, "revision": runtime.revision, "post": started}
+            )
     except ActionError as exc:
         return _error_response(exc)
     except Exception as exc:  # 未捕获异常带堆栈进 log（R16 的最低要求）

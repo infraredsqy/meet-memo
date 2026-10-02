@@ -49,6 +49,10 @@ ENDED_PHASE: tuple[str, ...] = ("draining", "done")
 #: 收尾四步的顺序
 DRAIN_STEP_IDS: tuple[str, ...] = ("flush", "transcode", "log", "post")
 
+#: 收尾那一步"留给用户按按钮"的格子（`post`）：它停在 `waiting` 也算收尾走完，
+#: 因为按「结束录音」之后会后一个动作都不自动跑（R26），这一格本来就该空着等人。
+POST_DRAIN_STEP_ID = "post"
+
 #: `DrainStep.status` 的五档取值域（与 `DRAIN_STEP_IDS` 同形）
 DRAIN_STEP_STATUS: tuple[str, ...] = ("waiting", "running", "done", "failed", "skipped")
 
@@ -646,7 +650,7 @@ def finish_drain_step(
     frozen_ended: bool = False,
     frozen_interrupted: bool = False,
 ) -> DrainStep:
-    """落该步终态（`status` 取 `done` / `failed` / `skipped`）。
+    """落该步的记账（`status` 取 `done` / `failed` / `skipped`，外加 `post` 那一格的 `waiting`）。
 
     `frozen_*` 两个关键字是**取消路径的记账约束**（phase2 §3.5.6 的「三条不覆盖约束」，
     第三个 Phase 的强制打断路径依赖它们），普通调用点一律不传：
@@ -654,11 +658,20 @@ def finish_drain_step(
       - `frozen_ended=True`：**不许**把 `ended` 的 `phase` / `error` 改掉（先落盘那一步
         已经写下的「收尾中 + 已打断」由此保住）；
       - `frozen_interrupted=True`：步骤表里已落定的步骤保持原样（取消时的记账只补状态）。
+
+    **`waiting` 是 `post` 那一格的专有终态**（R26 / `docs/design-intent.md` 第 10 条）：
+    按「结束录音」之后会后一个动作都不自动跑，那一步做完它该做的（释放会中模型）就如实
+    空着等人按按钮 —— 它没有别的词可用（`running` 是"正在跑"、`done` 是"跑完了"、
+    `skipped` 是"这一格不存在"、`failed` 是"搞砸了"）。别的步骤仍不许落回 `waiting`：
+    那会把"收尾协程被取消、四步都还没轮到"与"这一步不归我管"混成同一副面孔。
     """
     if status not in DRAIN_STEP_STATUS:
         raise DrainStateError(f"未知的收尾状态：{status!r}（取值域 {DRAIN_STEP_STATUS}）")
-    if status == "waiting":
-        raise DrainStateError("`waiting` 只能出现在第一版快照里，不能作为落定结果写入")
+    if status == "waiting" and step_id != POST_DRAIN_STEP_ID:
+        raise DrainStateError(
+            f"`waiting` 只能作为 {POST_DRAIN_STEP_ID!r} 那一格的落定结果（它空着等人按按钮），"
+            f"别的步骤不许落回 `waiting`：{step_id!r}"
+        )
 
     target = _resolve(snapshot)
     step = target.drain_step(step_id)
@@ -672,21 +685,39 @@ def finish_drain_step(
     return step
 
 
-def finish_drain(snapshot: Snapshot | None = None) -> str:
+def finish_drain(snapshot: Snapshot | None = None, *, cancelled: bool = False) -> str:
     """**收尾的唯一出口**：按当前四步结果判终态，只有两种结果。
 
-      - 四步 `status` 全部落在 `{done, skipped}` 且没有任何一步 `failed`
+      - 四步都落定（`status` 全部落在 `{done, skipped, waiting}`，
+        或者**只差 `post` 那一格还停在 `running`**）且没有任何一步 `failed`
         → `ended.phase = "done"`（`top_state` **停在 `ended`**、`session` 保留）；
-      - 有任一步 `failed`，或四步尚未全部落定（收尾协程被取消）
+      - 有任一步 `failed`，或**取消**那一趟进来的（`cancelled=True`，四步没跑完）
         → `ended.phase` **保持 `draining`**（`top_state` 停在 `ended`、`session` 保留）。
 
     返回最终 `ended.phase`（`"done"` / `"draining"`），**写盘与提交都不在这里**。
+
+    `cancelled` 是**取消路径**那一趟的读数（`ServiceRuntime._finish_drain(cancelled=True)`
+    传进来）：被取消的收尾没有跑完，终态该是 `draining`。它在取消那一刻能把在飞那一步
+    记成 `running`（照实记账，不伪造终态），因此下面那一条"只差 `post` 停在 `running`"
+    必须让开这一趟 —— 否则取消会被误判成"收尾走完了"。
+
+    ## 为什么 `post` 空着也算收尾走完
+
+    按「结束录音」之后会后一个动作都不自动跑（R26 / `docs/design-intent.md` 第 10 条）：
+    第 4 步做完它该做的（释放会中模型）之后，如实停在"还没做、等你按按钮"那一格，
+    于是收尾四步跑完时那一格正是 `waiting`（在飞时被取消的那一趟记 `running`，
+    而那一趟走的是上面第二条、终态是 `draining`）。`drain_has_settled()` 一直把 `waiting`
+    算作"已落定"，本函数跟着认下 `post` 这一格的两种读数，收尾才走得进 `done`。
     """
     target = _resolve(snapshot)
     if target.ended is None:
         raise DrainStateError("当前没有收尾中的会话（ended 为 None）")
-    settled = all(step.status in ("done", "skipped") for step in target.ended.steps)
-    if settled:
+    settled = all(
+        step.status in ("done", "skipped", "waiting")
+        or (step.id == POST_DRAIN_STEP_ID and step.status == "running")
+        for step in target.ended.steps
+    )
+    if settled and not cancelled:
         target.ended.phase = "done"
         end_session(target)
         return "done"

@@ -188,7 +188,12 @@ class PostProcessHook(Protocol):
     """会后流程钩子（`65dd3e4c` 实现，约定路径 `meeting.backends.post:PostProcessHook`）。"""
 
     def launch(self, session_dir: str) -> None:
-        """收尾第 4 步调它，**返回即算启动成功**（不等跑完）。缺席 → 该步 `skipped`。"""
+        """**返回即算启动成功**（不等跑完）。
+
+        现在没有产品路径调用它：自动收尾（第 4 步）不再调它，「生成会后精细稿」按钮走
+        `run_session(..., minutes=False)` 的直路也不经它 —— `post.hook` 只剩「这一层接没接」
+        的解析答案（`null` → 对应按钮 404 `action_unavailable`）。
+        """
 
 
 # ---------------------------------------------------------------------------

@@ -35,6 +35,7 @@ import pytest
 
 from tests import _helpers as helpers
 from meeting import config as config_module
+from meeting.service import runtime as runtime_module
 from meeting.service.runtime import ACTION_CODES, ACTION_NAMES
 
 #: 慢档标记：`pytest.mark.slow` 的归位判据与实测数据见 `docs/service.md` 第 7 章。
@@ -133,10 +134,12 @@ def wait_for_done(client):
 def test_action_names_and_codes_are_the_frozen_ones():
     """动作名清单与 `code` 表逐字冻结（`reprobe` 是 `dca4539b` 加的那一名、`summarize` 与它那两个
     `code` 是 `1987cb20` phase2 加的那一档，其余不动）。`workspace_open` / `workspace_remove`
-    两只是工作台收编节点 `e2f6166b` 加的。"""
+    两只是工作台收编节点 `e2f6166b` 加的；末尾 `post_offline` / `post_minutes` 是会后两个按钮
+    （`05a48b6a`：`POST /api/actions` 上那两个动作，R26）。"""
     assert ACTION_NAMES == (
         "start", "stop", "mute_session", "settings_update", "reprobe", "dev_inject",
         "summarize", "workspace_open", "workspace_remove",
+        "post_offline", "post_minutes",
     )
     assert set(ACTION_CODES) == {
         "already_recording", "draining", "capture_unavailable", "not_recording",
@@ -260,19 +263,23 @@ def test_start_unavailable_on_the_explicit_null_backend_leaves_nothing_on_disk(t
         assert not any((item / "session.json").exists() for item in out_root.iterdir() if item.is_dir())
 
 
-def test_start_is_rejected_while_draining(tmp_path):
-    """收尾未落定（失败停留档）→ `start` 回 `draining`(409)，`detail` 三件套齐。"""
+def test_start_is_rejected_while_draining(tmp_path, monkeypatch):
+    """收尾未落定（失败停留档）→ `start` 回 `draining`(409)，`detail` 三件套齐。
+
+    失败步由 `log` 那一步演（`write_session_end_marker` 换成抛错的替身）：
+    第 4 步 `post` 按「结束录音」之后不自动拉起会后（R26），它每次都停在 `waiting`，
+    拿它演不出失败档。
+    """
     with live(tmp_path) as (client, runtime, _home, _out):
         assert post(client, "start").status_code == 200
         session_dir = Path(runtime.snapshot.session.dir)
 
-        class BoomHook:
-            def launch(self, target: str) -> None:
-                raise RuntimeError("假会后钩子：按测试要求抛错")
+        def boom_end_marker(*args, **kwargs):
+            raise RuntimeError("假场次日志接缝：按测试要求抛错")
 
-        runtime.post_hook = BoomHook()
-        runtime.post_resolution.implementation = runtime.post_hook
-        runtime.post_resolution.has_implementation = True
+        monkeypatch.setattr(
+            runtime_module.logging_setup, "write_session_end_marker", boom_end_marker
+        )
 
         assert post(client, "stop").status_code == 200
         wait_until(
@@ -288,7 +295,7 @@ def test_start_is_rejected_while_draining(tmp_path):
         detail = rejected.json()["detail"]
         assert detail["session_id"] == session_dir.name
         assert detail["dir"] == str(session_dir)
-        assert [item["id"] for item in detail["failed_steps"]] == ["post"]
+        assert [item["id"] for item in detail["failed_steps"]] == ["log"]
         assert detail["log_path"] == runtime.log_path
         assert snapshot_of(client)["top_state"] == "ended"
         # 现场没有被覆盖：盘上还是失败那一版
@@ -513,7 +520,7 @@ def test_settings_update_writes_only_existing_plus_changed_keys(tmp_path):
         assert [item.name for item in config_path.parent.iterdir() if item.name.endswith(".tmp")] == []
 
 
-def test_settings_update_is_available_in_every_top_state(tmp_path):
+def test_settings_update_is_available_in_every_top_state(tmp_path, monkeypatch):
     """`settings_update` 在任何 `top_state` 下都可用（含 `idle` 与 `ended` 的两种终态）。"""
     with live(tmp_path) as (client, runtime, _home, _out):
         # idle
@@ -529,16 +536,16 @@ def test_settings_update_is_available_in_every_top_state(tmp_path):
         assert snapshot_of(client)["ended"]["phase"] == "done"
         assert post(client, "settings_update", {"alert.silence_seconds": 122}).status_code == 200
 
-        # ended · phase == "draining"（失败停留档）
+        # ended · phase == "draining"（失败停留档；失败步由 `log` 那一步演 —— 第 4 步 `post`
+        # 按 R26 停在 `waiting`，拿它演不出失败档）
         assert post(client, "start").status_code == 200
 
-        class BoomHook:
-            def launch(self, target: str) -> None:
-                raise RuntimeError("假会后钩子：按测试要求抛错")
+        def boom_end_marker(*args, **kwargs):
+            raise RuntimeError("假场次日志接缝：按测试要求抛错")
 
-        runtime.post_hook = BoomHook()
-        runtime.post_resolution.implementation = runtime.post_hook
-        runtime.post_resolution.has_implementation = True
+        monkeypatch.setattr(
+            runtime_module.logging_setup, "write_session_end_marker", boom_end_marker
+        )
         assert post(client, "stop").status_code == 200
         wait_until(
             lambda: (lambda s: s if (
@@ -692,7 +699,7 @@ def test_settings_snapshot_shape_stays_frozen(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_dev_inject_requires_an_active_session(tmp_path):
+def test_dev_inject_requires_an_active_session(tmp_path, monkeypatch):
     """没有正在进行的场次时 `dev_inject` 回 `not_recording`(409)，且**一条事实都不注入**。"""
     with live(tmp_path) as (client, runtime, _home, _out):
         # ① idle
@@ -710,16 +717,16 @@ def test_dev_inject_requires_an_active_session(tmp_path):
         assert done.json()["code"] == "not_recording"
         assert runtime.capture_backend.active_faults() == {}
 
-        # ③ ended · phase == "draining"（失败停留档）
+        # ③ ended · phase == "draining"（失败停留档；失败步由 `log` 那一步演 —— 第 4 步 `post`
+        # 按 R26 停在 `waiting`，拿它演不出失败档）
         assert post(client, "start").status_code == 200
 
-        class BoomHook:
-            def launch(self, target: str) -> None:
-                raise RuntimeError("假会后钩子：按测试要求抛错")
+        def boom_end_marker(*args, **kwargs):
+            raise RuntimeError("假场次日志接缝：按测试要求抛错")
 
-        runtime.post_hook = BoomHook()
-        runtime.post_resolution.implementation = runtime.post_hook
-        runtime.post_resolution.has_implementation = True
+        monkeypatch.setattr(
+            runtime_module.logging_setup, "write_session_end_marker", boom_end_marker
+        )
         assert post(client, "stop").status_code == 200
         wait_until(
             lambda: (lambda s: s if (

@@ -99,18 +99,18 @@
       },
       {
         "id": "log",
-        "status": "done",
-        "detail": "场次日志已 flush、结束标记已写、handler 已摘掉（结束标记是这一场的最后一行）",
-        "error": null
+        "status": "failed",
+        "detail": "场次日志的 flush / 结束标记 / 摘除失败",
+        "error": "场次日志的 flush / 结束标记 / 摘除失败：RuntimeError: 假场次日志接缝：按样本要求抛错；可复制命令：meeting post <path>；log 路径：<path>"
       },
       {
         "id": "post",
-        "status": "failed",
-        "detail": "会后流程启动失败",
-        "error": "会后流程启动失败：RuntimeError: 假会后钩子按要求抛错；可复制命令：meeting post <path>；log 路径：<path>"
+        "status": "waiting",
+        "detail": "会后不自动跑：按「生成会后精细稿」或「直接出纪要」才起（这一格等你动手）",
+        "error": null
       }
     ],
-    "error": "会后流程启动失败：RuntimeError: 假会后钩子按要求抛错；可复制命令：meeting post <path>；log 路径：<path>"
+    "error": "场次日志的 flush / 结束标记 / 摘除失败：RuntimeError: 假场次日志接缝：按样本要求抛错；可复制命令：meeting post <path>；log 路径：<path>"
   },
   "settings": {
     "alarm_sound": true,

@@ -91,15 +91,20 @@ def _listing(*inputs: PromptInput, mode: str = "both", session: str = "C:/out/25
     return InputsListing(session_dir=session, mode=mode, inputs=inputs)
 
 
-def _input(source: str = "loopback", **overrides) -> PromptInput:
+def _input(source: str = "loopback", kind: str = "offline", **overrides) -> PromptInput:
+    """清单里的一条：**某一路的某一份稿**（默认 `loopback` 的会后稿，与旧用例同形）。"""
+    name = {
+        "live": f"meeting_transcript_{source}.md",
+        "offline": f"meeting_offline_transcript_{source}.md",
+    }.get(kind, f"meeting_{kind}_transcript_{source}.md")
     values = {
         "source": source,
-        "transcript": f"meeting_offline_transcript_{source}.md",
+        "kind": kind,
+        "transcript": name,
         "lines": 738,
         "chunk_count": 8,
-        "index": f"working/{source}/{INDEX_NAME}",
-        "chunk_dir": f"working/{source}/chunks",
-        "kind": "offline_only",
+        "index": f"working/{source}/{kind}/{INDEX_NAME}",
+        "chunk_dir": f"working/{source}/{kind}/chunks",
     }
     values.update(overrides)
     return PromptInput(**values)
@@ -285,10 +290,20 @@ def test_render_rejects_a_bad_max_segments() -> None:
         render_prompt(_listing(_input()), TEMPLATE, max_segments=0)
 
 
-def test_render_rejects_a_duplicated_source() -> None:
-    """输入清单里同一条 source 出现两次 → 抛错。"""
-    with pytest.raises(PromptTemplateError, match="重复的 source"):
+def test_render_rejects_a_duplicated_source_and_kind() -> None:
+    """同一路同一份稿在清单里出现两次 → 抛错（两份稿本身各占一条，那是合法的）。"""
+    with pytest.raises(PromptTemplateError, match="重复的"):
         render_prompt(_listing(_input(), _input()), TEMPLATE)
+
+
+def test_render_accepts_both_kinds_of_one_source() -> None:
+    """同一路的两份稿各占一条 —— 这是本轮的正常形状（两份平级、一起喂）。"""
+    text = render_prompt(
+        _listing(_input("loopback", "live"), _input("loopback", "offline")), TEMPLATE
+    )
+
+    assert "meeting_transcript_loopback.md" in text
+    assert "meeting_offline_transcript_loopback.md" in text
 
 
 # ---------------------------------------------------------------------------
@@ -300,23 +315,28 @@ def test_listing_says_where_the_chunks_are() -> None:
     """清单写着每条输入几行、几块、块文件在哪（相对场次目录的路径）。"""
     text = build_inputs_text(_listing(_input()))
 
-    assert "本轮输入 1 条" in text
-    assert "| loopback | meeting_offline_transcript_loopback.md | 738 | 8 |" in text
-    assert "`working/loopback/chunks/`" in text
-    assert "`working/loopback/00_index.md`" in text
+    assert "本轮输入 1 路、共 1 份稿" in text
+    assert "| loopback | 会后稿 | meeting_offline_transcript_loopback.md | 738 | 8 |" in text
+    assert "`working/loopback/offline/chunks/`" in text
+    assert "`working/loopback/offline/00_index.md`" in text
     assert '"chunk_count": 8' in text
+
+
+def test_listing_lists_both_kinds_of_one_source() -> None:
+    """一路两份都在时清单里**两份各印一条**（模型照清单读得到两份）。"""
+    text = build_inputs_text(_listing(_input("mic", "live"), _input("mic", "offline")))
+
+    assert "| mic | 会中稿 | meeting_transcript_mic.md | 738 | 8 |" in text
+    assert "| mic | 会后稿 | meeting_offline_transcript_mic.md | 738 | 8 |" in text
+    assert "本轮输入 1 路、共 2 份稿" in text
 
 
 def test_listing_carries_the_speaker_shape_of_each_kind() -> None:
     """两条一起时清单点明哪一份带编号、哪一份没有（这是本流程的输入事实）。"""
     text = build_inputs_text(
         _listing(
-            _input(
-                transcript="meeting_transcript_loopback.md",
-                kind="live_only",
-                chunk_count=2,
-            ),
-            _input(source="mic"),
+            _input("loopback", "live", chunk_count=2),
+            _input("mic", "offline"),
         )
     )
 
@@ -325,55 +345,84 @@ def test_listing_carries_the_speaker_shape_of_each_kind() -> None:
 
 
 def test_listing_names_the_kind_from_the_semantic_field() -> None:
-    """清单印哪种稿的说明**按 `kind` 字段**，与文件名叫什么无关（M2 的回归）。"""
+    """清单印哪一份稿的说明**按 `kind` 字段**，与文件名叫什么无关（M2 的回归）。"""
     text = build_inputs_text(
         _listing(
-            _input(transcript="meeting_transcript_loopback.md", kind="live_only"),
-            _input(source="mic", transcript="meeting_offline_transcript_mic.md"),
+            _input("loopback", "live", transcript="some/deep/meeting_transcript_loopback.md"),
+            _input("mic", "offline"),
         )
     )
 
-    assert "会中临时稿" in text and KIND_LABELS["live"] in text
+    assert KIND_LABELS["live"] in text and KIND_LABELS["offline"] in text
     assert SPEAKER_SHAPE_NOTES["live"] in text
     assert SPEAKER_SHAPE_NOTES["offline"] in text
+    assert "权威" not in text
 
 
 def test_a_both_kind_input_names_both_shapes() -> None:
     """一路两条都在时，清单那一行把两种稿的形态各说一句。"""
-    text = build_inputs_text(_listing(_input(source="mic", kind="both")))
+    text = build_inputs_text(_listing(_input("mic", "live"), _input("mic", "offline")))
 
     assert SPEAKER_SHAPE_NOTES["live"] in text
     assert SPEAKER_SHAPE_NOTES["offline"] in text
 
 
-def test_both_mode_has_no_degradation_note() -> None:
-    """`both` 档且每一路两条都在时没有降级要说：说明段是空的。"""
-    assert mode_note_text("both", _per_source(("loopback", "both"), ("mic", "both"))) == ""
+def test_both_mode_names_what_this_session_holds() -> None:
+    """`both` 档且每一路两份都在时，说明段逐条写清这一场手上有哪几份（复审 m9）。
+
+    改之前这一档返回空串、提示词里那一格是空白行 —— spec 完成判定第 3 条要的是
+    「三种输入各渲染一次提示词，说明段逐条写清这一场手上有哪几份」，因此这一档同样要有字。
+    """
+    note = mode_note_text("both", _per_source(("loopback", "both"), ("mic", "both")))
+
+    assert note.strip(), "「两份都全」这一档的说明段不该是空的"
+    assert "loopback" in note and "mic" in note, note
+    assert SPEAKER_SHAPE_NOTES["live"] in note and SPEAKER_SHAPE_NOTES["offline"] in note, note
+    assert "平级" in note and "不合并" in note, note
+    assert "权威" not in note and "更可信" not in note
+
+
+def test_both_mode_note_reaches_the_rendered_prompt() -> None:
+    """那一句真的进了渲染出来的提示词（`{{MODE_NOTE}}` 那一格不再留空白行）。"""
+    text = render_prompt(
+        _listing(_input("mic", "live"), _input("mic", "offline"), mode="both"),
+        TEMPLATE,
+    )
+
+    assert "本次这两路两份都在" in text, text
+    note_line = next(
+        line for line in text.splitlines() if "本次这两路两份都在" in line
+    )
+    assert note_line.strip() != "", "这一格不许是空白行"
+    assert "本次档位：both" in text
 
 
 def test_live_only_note_says_only_the_live_transcript_is_here() -> None:
-    """`live_only` 档的说明段明写「本次只有会中临时稿」，并嘱咐附录如实写分不出个人。"""
+    """`live_only` 档的说明段明写「只有会中稿」，并嘱咐附录如实写分不出个人。"""
     note = mode_note_text("live_only", _per_source(("loopback", "live_only")))
 
-    assert "本次只有会中临时稿" in note
+    assert "只有会中稿" in note
     assert "分不出个人" in note
+    assert "权威" not in note
 
 
 def test_offline_only_note_says_only_the_offline_transcript_is_here() -> None:
-    """`offline_only` 档的说明段明写「本次只有会后权威稿」。"""
-    assert "本次只有会后权威稿" in mode_note_text(
-        "offline_only", _per_source(("mic", "offline_only"))
-    )
+    """`offline_only` 档的说明段明写「只有会后稿」。"""
+    note = mode_note_text("offline_only", _per_source(("mic", "offline_only")))
+
+    assert "只有会后稿" in note
+    assert "分不出个人" in note
+    assert "权威" not in note
 
 
 def test_mode_note_is_rendered_into_the_prompt() -> None:
     """降级档的说明段真的进了提示词（不是只写在函数里）。"""
     text = render_prompt(
-        _listing(_input(kind="live_only"), mode="live_only"),
+        _listing(_input("loopback", "live"), mode="live_only"),
         TEMPLATE,
     )
 
-    assert "本次只有会中临时稿（loopback）" in text
+    assert "只有会中稿" in text
     assert "本次档位：live_only" in text
 
 
@@ -388,6 +437,57 @@ def test_mode_note_rejects_an_unknown_mode() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_the_legacy_working_dir_index_is_the_fallback_for_a_single_kind(tmp_path: Path) -> None:
+    """只切过旧位置（`working/<source>/00_index.md`）时，读数与区间表都指回那里（复审 m5）。
+
+    这是 report ④.7 特意保留的**唯一**一条向后兼容路径：老场次目录的块还停在
+    `working/<source>/` 时，提示词仍要渲染得出来。
+    """
+    session = _write_session(tmp_path, live=True, offline=False)
+    live_dir = session / "working" / "loopback" / "live"
+    legacy_dir = session / "working" / "loopback"
+    assert live_dir.is_dir(), "先确认新位置那一套真的切出来了"
+    for item in list(live_dir.iterdir()):
+        item.rename(legacy_dir / item.name)
+    live_dir.rmdir()
+
+    listing = listing_for_session(session)
+    item = listing.inputs[0]
+
+    assert item.kind == "live", item
+    assert item.index == f"working/loopback/{INDEX_NAME}", item.index
+    assert item.chunk_dir == "working/loopback/chunks", item.chunk_dir
+    assert item.lines == 15, item.lines
+    assert item.chunk_count == 2, item.chunk_count
+
+
+def test_the_legacy_index_is_refused_when_two_kinds_are_both_here(tmp_path: Path) -> None:
+    """同一路两份稿都在时**不许**退回旧位置（复审 m5 的第二档）。
+
+    `_is_the_only_kind()` 为假的那一档退回旧位置，会把「两条稿各自的块」又混成一套：
+    这里两份稿的块都挪到旧位置之后，读数该退回「还没切块」（块数 0、行数数转写本身），
+    区间表仍指向新位置 —— 两条稿各自的块因此各归各。
+    """
+    session = _write_session(tmp_path, live=True, offline=True)
+    for kind in ("live", "offline"):
+        kind_dir = session / "working" / "loopback" / kind
+        legacy_dir = session / "working" / "loopback"
+        for item in list(kind_dir.iterdir()):
+            item.rename(legacy_dir / f"{kind}-{item.name}")
+        kind_dir.rmdir()
+
+    listing = listing_for_session(session)
+    by_kind = {item.kind: item for item in listing.inputs}
+
+    assert set(by_kind) == {"live", "offline"}, by_kind
+    for kind, item in by_kind.items():
+        assert item.index == f"working/loopback/{kind}/{INDEX_NAME}", item.index
+        assert item.chunk_count == 0, (kind, item.chunk_count)
+    # 行数退回数那一份转写本身（区间表读不出来那一档）
+    assert by_kind["live"].lines == 15, by_kind["live"].lines
+    assert by_kind["offline"].lines == 12, by_kind["offline"].lines
+
+
 def test_windows_paths_come_out_with_forward_slashes(tmp_path: Path) -> None:
     """Windows 形状的场次目录渲染出来没有反斜杠（位号也是正斜杠）。"""
     session = _write_session(tmp_path)
@@ -396,15 +496,15 @@ def test_windows_paths_come_out_with_forward_slashes(tmp_path: Path) -> None:
 
     assert "\\" not in text, "渲染结果里出现了反斜杠"
     assert str(session).replace("\\", "/") in text
-    assert f"working/loopback/{INDEX_NAME}" in text
+    assert f"working/loopback/offline/{INDEX_NAME}" in text
 
 
 def test_prompt_input_normalises_backslashes_at_construction() -> None:
     """`PromptInput` 收下反斜杠路径时当场换成正斜杠（漏不出去）。"""
     item = _input(
         transcript=r"working\meeting_offline_transcript_loopback.md",
-        index=r"working\loopback\00_index.md",
-        chunk_dir=r"working\loopback\chunks",
+        index=r"working\loopback\offline\00_index.md",
+        chunk_dir=r"working\loopback\offline\chunks",
     )
 
     assert "\\" not in (item.transcript + item.index + item.chunk_dir)
@@ -416,16 +516,17 @@ def test_prompt_input_normalises_backslashes_at_construction() -> None:
 
 
 def test_listing_for_session_reads_the_index_and_the_lines(tmp_path: Path) -> None:
-    """块数与行数从 `00_index.md` 读（两条都在时取会后那份权威稿）。"""
+    """两份稿都在时**清单里两条各答一条**（行数与块数取各自那份的重量）。"""
     session = _write_session(tmp_path)
 
     listing = listing_for_session(session)
 
     assert listing.mode == "both"
-    assert len(listing.inputs) == 1
-    item = listing.inputs[0]
-    assert item.transcript == "meeting_offline_transcript_loopback.md"
-    assert (item.lines, item.chunk_count) == (12, 2)
+    assert [(item.kind, item.transcript, item.lines, item.chunk_count) for item in listing.inputs] == [
+        ("live", "meeting_transcript_loopback.md", 15, 2),
+        ("offline", "meeting_offline_transcript_loopback.md", 12, 2),
+    ]
+    assert listing.kinds_per_source() == (("loopback", "both"),)
 
 
 def test_listing_for_session_falls_back_before_chunking(tmp_path: Path) -> None:
@@ -567,23 +668,27 @@ def test_the_real_template_renders_for_both_a_full_and_a_degraded_session(
         assert "\\" not in text, "渲染结果里出现了反斜杠"
     assert "本次档位：`both`" in full
     assert "本次档位：`live_only`" in degraded
-    assert "本次只有会中临时稿" in degraded
+    assert "只有会中稿" in degraded
+    assert "权威" not in full and "权威" not in degraded
 
 
 def test_the_real_template_renders_a_mixed_shape_without_contradicting_itself(
     tmp_path: Path,
 ) -> None:
-    """混合形状（一路两条都在、一路只有会中稿）也渲染得出来，说明段逐 source 说话。"""
+    """混合形状（一路两份都在、一路只有会中稿）也渲染得出来，说明段逐 source 说话。"""
     session = _write_mixed_session(tmp_path)
 
     text = render_session_prompt(session)
 
     assert "{{" not in text
     assert "本次档位：`both`" in text
-    # 整场那句降级话不许出现（至少有一条真·离线稿在场上）
-    assert "本次只有会中临时稿（mic、loopback）" not in text
+    # 整场那句降级话不许出现（至少有一份真·会后稿在场上）
+    assert "本次两路都只有" not in text
     assert text.count("> `mic` 这一路的稿：") == 1
-    assert text.count("> `loopback` 这一路本次只有会中临时稿") == 1
+    assert text.count("> `loopback` 这一路本次只有") == 1
+    # 两份稿都在的那一路：清单里两份各印一条
+    assert "| mic | 会中稿 | meeting_transcript_mic.md |" in text
+    assert "| mic | 会后稿 | meeting_offline_transcript_mic.md |" in text
 
 
 def test_the_real_template_carries_the_two_fixed_sections_verbatim() -> None:
@@ -630,13 +735,15 @@ def test_the_real_template_keeps_the_synchronous_waiting_rule_verbatim() -> None
 
 
 def test_the_real_template_writes_down_the_reconciliation_rule() -> None:
-    """对账口径（R12）写在模板里：不做预先对齐、两条稿同时读、按内容判哪边可信。"""
+    """对账口径（R12）写在模板里：不做预先对齐、两份稿同时读、按内容判哪边可信。"""
     text = DEFAULT_TEMPLATE.read_text(encoding="utf-8")
 
     assert "按内容判哪一边可信" in text
     assert "不做预先的文本对齐" in text
     assert "对账结果" in text
-    assert "两条稿都读" in text or "两条稿同时读" in text
+    assert "两份稿都读" in text or "两份稿同时读" in text
+    # 两份稿在这一段里平级：没有任何一处把它们排成"可信 / 凑数"
+    assert "权威" not in text
 
 
 def test_the_real_template_writes_down_the_honest_attribution_rules() -> None:
@@ -658,8 +765,8 @@ def test_the_real_template_names_the_five_artifacts_and_the_reentry_gate() -> No
     """产物落点与再入防护都写清：场次目录根的纪要、`working/` 下的分块与方案、不写状态文件。"""
     text = DEFAULT_TEMPLATE.read_text(encoding="utf-8")
 
-    assert "working/<source>/chunks/chunk_NN.md" in text
-    assert "working/<source>/00_index.md" in text
+    assert "working/<source>/<kind>/chunks/chunk_NN.md" in text
+    assert "working/<source>/<kind>/00_index.md" in text
     assert "working/segmentation.json" in text
     assert "working/segment-<id>.md" in text
     assert "/meeting_final.md" in text
@@ -671,7 +778,7 @@ def test_the_real_template_has_no_leftover_v1_paths() -> None:
 
     `prompts/meeting_final.md` 里提到它们，是为了写明**本轮不落这两处**
     （V1 三种写法并存，照抄哪一条都是错的）；除此之外的路径一律是
-    `working/<source>/chunks/chunk_NN.md` 与 `working/<source>/00_index.md`。
+    `working/<source>/<kind>/chunks/chunk_NN.md` 与 `working/<source>/<kind>/00_index.md`。
     """
     text = DEFAULT_TEMPLATE.read_text(encoding="utf-8")
     mentions = [line for line in text.splitlines() if "working/chunk_01.md" in line]
@@ -690,9 +797,9 @@ def test_the_real_template_has_no_leftover_v1_paths() -> None:
 
 
 def test_a_mixed_shape_gets_a_per_source_note(tmp_path: Path) -> None:
-    """**M1**：`mic` 两条都在 + `loopback` 只有会中稿 → 说明段逐 source 说话。
+    """**M1**：`mic` 两份都在 + `loopback` 只有会中稿 → 说明段逐 source 说话。
 
-    整体档位取两路合并后的公共档位（这里是 `both`）：至少有一条真·离线稿在场上，
+    整体档位取两路合并后的公共档位（这里是 `both`）：至少有一份真·会后稿在场上，
     整场不再说成降级；而 `loopback` 那一路缺稿这件事照样写在说明段里。
     """
     session = _write_mixed_session(tmp_path)
@@ -702,19 +809,24 @@ def test_a_mixed_shape_gets_a_per_source_note(tmp_path: Path) -> None:
 
     assert listing.mode == "both"
     assert listing.kinds_per_source() == (("mic", "both"), ("loopback", "live_only"))
-    # mic 那一路两条都在：说明段里那一句只该说「有哪几份稿」，不许替它下「分不出个人」的结论
+    # mic 那一路两份都在：说明段里那一句只该说「有哪几份稿」，不许替它下「分不出个人」的结论
     mic_sentence = [line for line in text.splitlines() if line.startswith("> `mic`")]
     loopback_sentence = [line for line in text.splitlines() if line.startswith("> `loopback`")]
     assert len(mic_sentence) == 1 and len(loopback_sentence) == 1
-    assert "会中临时稿" in mic_sentence[0] and "会后权威稿" in mic_sentence[0]
+    assert KIND_LABELS["live"] in mic_sentence[0] and KIND_LABELS["offline"] in mic_sentence[0]
+    assert "平级" in mic_sentence[0]
     assert "分不出个人" not in mic_sentence[0]
     # loopback 那一路只有会中稿：它那一句必须说清，并且嘱咐附录如实写
-    assert "这一路本次只有会中临时稿" in loopback_sentence[0]
+    assert "这一路本次只有" in loopback_sentence[0]
+    assert KIND_LABELS["live"] in loopback_sentence[0]
     assert "分不出个人" in loopback_sentence[0]
-    # 整场不再说成降级（至少有一条真·离线稿在场上）：整场那一句连着说两路时才出现
-    assert "本次只有会中临时稿（mic、loopback）" not in text
-    # 清单里 mic 那一条写的是会后权威稿的形状（与说明段不打架）
-    assert "| mic | meeting_offline_transcript_mic.md |" in text
+    # 整场不再说成降级（至少有一份真·会后稿在场上）：整场那一句连着说两路时才出现
+    assert "本次两路都只有" not in text
+    # 清单里 mic 那一路**两份各印一条**（与说明段不打架）
+    assert "| mic | 会中稿 | meeting_transcript_mic.md |" in text
+    assert "| mic | 会后稿 | meeting_offline_transcript_mic.md |" in text
+    # 「权威」这两个字在整份提示词里一个字都不出现
+    assert "权威" not in text
 
 
 def test_mode_for_answers_the_common_level_when_the_two_sources_differ() -> None:
@@ -739,9 +851,9 @@ def test_mode_for_answers_the_common_level_when_the_two_sources_differ() -> None
 
 
 def test_the_input_kind_comes_from_the_semantics_not_from_the_file_name() -> None:
-    """**M2**：清单里的稿型按 `kind` 判，与文件名里有没有 `offline` 这个子串无关。"""
+    """**M2**：清单印哪一份稿的形态**按 `kind` 判**，与文件名叫什么无关。"""
     text = build_inputs_text(
-        _listing(_input(transcript="some/deep/meeting_transcript_loopback.md", kind="live_only"))
+        _listing(_input("loopback", "live", transcript="some/deep/meeting_transcript_loopback.md"))
     )
 
     assert SPEAKER_SHAPE_NOTES["live"] in text
@@ -749,15 +861,15 @@ def test_the_input_kind_comes_from_the_semantics_not_from_the_file_name() -> Non
 
 
 def test_prompt_input_rejects_a_kind_it_does_not_know() -> None:
-    """`kind` 只有三个词；写别的当场抛错（免得清单印一句说不清的说明）。"""
-    with pytest.raises(PromptTemplateError, match="稿型只认"):
+    """`kind` 只有两份稿这两个词；写别的当场抛错（免得清单印一句说不清的说明）。"""
+    with pytest.raises(PromptTemplateError, match="稿别只认"):
         _input(kind="transcript")
 
 
 def test_a_missing_selected_transcript_raises_the_renderer_error(tmp_path: Path) -> None:
-    """**M6**：选中的那份转写在盘上不在、区间表也没切 → 抛 `PromptTemplateError`（带那个路径）。
+    """**M6**：某一份稿在盘上不在、区间表也没切 → 抛 `PromptTemplateError`（带那个路径）。
 
-    走 `_prompt_input()` 那条路：`listing_for_session()` 按盘上有没有来认输入，
+    走 `_prompt_inputs()` 那条路：`listing_for_session()` 按盘上有没有来认输入，
     因此手工构造一条「文件不在」的 `InputSpec` 才触得到这一档（转写在两步之间被删掉、
     或者调用方自己塞了一份 `InputSpec` 时就是它）。
     """
@@ -770,9 +882,9 @@ def test_a_missing_selected_transcript_raises_the_renderer_error(tmp_path: Path)
     )
 
     with pytest.raises(PromptTemplateError) as info:
-        prompt_module._prompt_input(session, spec)
+        prompt_module._prompt_inputs(session, spec)
 
-    assert "meeting_offline_transcript_mic.md" in str(info.value)
+    assert "meeting_transcript_mic.md" in str(info.value)
     assert "读不动" in str(info.value)
 
 
@@ -885,7 +997,8 @@ def test_the_rendered_prompt_only_shows_model_paths_relative_to_the_session(
     # 场次目录、`meeting` 包不在它的模块搜索路径上，那条命令必然报 ModuleNotFoundError）；
     # 块与区间表仍旧以相对路径点名，模型照着认就行
     assert _minutes_command_lines(text) == []
-    assert f"working/loopback/{INDEX_NAME}" in text
+    assert f"working/loopback/live/{INDEX_NAME}" in text
+    assert f"working/loopback/offline/{INDEX_NAME}" in text
     # 给程序读的那一格照旧是绝对路径（**两者不要一起改**）：清单那段 JSON 里原位保留
     assert f'"session_dir": "{absolute}"' in text
 
@@ -959,8 +1072,8 @@ def test_the_real_template_phase_one_says_the_chunks_are_already_cut() -> None:
 
     assert "块已经切好了" in phase_one
     assert "不要" in phase_one and "切块" in phase_one, "要明写不要去跑切块命令"
-    assert "working/<source>/00_index.md" in phase_one
-    assert "working/<source>/chunks/chunk_NN.md" in phase_one
+    assert "working/<source>/<kind>/00_index.md" in phase_one
+    assert "working/<source>/<kind>/chunks/chunk_NN.md" in phase_one
 
 
 def test_the_real_template_keeps_no_minutes_command_anywhere(tmp_path: Path) -> None:
@@ -1036,3 +1149,98 @@ def test_the_rendered_prompt_keeps_the_fixed_text_and_the_waiting_sentence(
     assert "### 猜不出的" in flattened
     assert waiting in text
     assert "{{" not in text and "}}" not in text
+
+
+# ---------------------------------------------------------------------------
+# 十一、块路径与划段分母：三档渲染产物里点到的每一条输入路径都在盘上
+# （review-3 C1 / C2 / m1）
+#
+# C1：阶段 3 的块文件列表少过一层 `chunks/`——主 agent 照它抄出来的路径在盘上不存在；
+# C2：`offline_only` 档的划段分母与自检原先都指会中稿，而那一档会中稿根本不在
+#     （与 `contract.py` 的既有降级口径分叉：两份都在按会中稿、只有会后稿按会后稿）；
+# m1：模板与清单 docstring 里残留旧布局 `working/<source>/chunks/`。
+# 三条都按「渲染产物里出现的每一条输入路径，在盘上都能找到」这一口径钉住。
+# ---------------------------------------------------------------------------
+
+#: 渲染产物里的 `working/…` 路径（占位符形状含 `<>`，匹配时天然截断在它上面）
+WORKING_PATH_RE = re.compile(r"working/[^\s`\"<>，。、）()|]*")
+
+
+def _concrete_input_paths(text: str) -> list[str]:
+    """渲染产物里点到的**具体输入**路径（区间表与块目录）。
+
+    方案（`segmentation.json`）、段总结（`segment-*.md`）与 `inputs.json` 是这一趟的
+    产出 / 编排层的东西，渲染时刻不在盘上，不在这一条口径里；`chunk_NN.md` 是模式名。
+    """
+    paths: list[str] = []
+    for raw in WORKING_PATH_RE.findall(text):
+        if "chunk_NN" in raw:
+            continue
+        path = raw.rstrip("./")
+        if not (path.endswith(f"/{INDEX_NAME}") or path.endswith("chunks")):
+            continue
+        if path not in paths:
+            paths.append(path)
+    return paths
+
+
+@pytest.mark.parametrize(
+    "live, offline",
+    [(True, True), (True, False), (False, True)],
+    ids=["both", "live_only", "offline_only"],
+)
+def test_every_input_path_the_render_names_exists_on_disk(
+    tmp_path: Path, live: bool, offline: bool
+) -> None:
+    """三种输入各真渲染一次：产物里点到的每一条区间表 / 块目录路径，在盘上都真存在。"""
+    session = _write_session(tmp_path, live=live, offline=offline)
+    text = render_session_prompt(session)
+
+    paths = _concrete_input_paths(text)
+    assert paths, "渲染产物里至少要点到一条输入路径"
+    for path in paths:
+        if path.endswith("chunks"):
+            assert (session / path).is_dir(), f"块目录不在盘上：{path}"
+        else:
+            assert (session / path).is_file(), f"区间表不在盘上：{path}"
+    # 旧布局（`working/<source>/chunks/`、`working/<source>/00_index.md`）一条都不残留
+    assert "working/loopback/chunks" not in text
+    assert f"working/loopback/{INDEX_NAME}" not in text
+    # 缺的那一份稿，它的具体路径一条都不出现（清单不编不在的稿，正文只写占位符形状）
+    if not offline:
+        assert "working/loopback/offline/" not in text
+    if not live:
+        assert "working/loopback/live/" not in text
+
+
+def test_the_offline_only_render_self_check_points_at_the_index_that_exists(
+    tmp_path: Path,
+) -> None:
+    """`offline_only` 档：划段分母与自检按**在场那份稿**（会后稿）说话，指的区间表在盘上。
+
+    旧文让这一档拿会中稿当分母、照 `working/<source>/live/00_index.md` 自检——两处都取
+    不到（清单里只有会后稿一行）。新口径与 `contract.py` 的降级同话：两份都在按会中稿，
+    只有会后稿的场次按会后稿。
+    """
+    session = _write_session(tmp_path, live=False, offline=True)
+    text = render_session_prompt(session)
+    phase_two = text.split("### 阶段 3")[0].split("### 阶段 2", 1)[1]
+
+    assert "working/<source>/live/00_index.md" not in text, "自检不该再指这一档不存在的区间表"
+    assert "划段按会中稿的行号空间来" not in text
+    assert "划段按这一路在场那份稿的行号空间来" in phase_two
+    assert "只有会后稿的场次按会后稿" in phase_two
+    index_rel = f"working/loopback/offline/{INDEX_NAME}"
+    assert index_rel in text, "自检核的那份区间表就是清单里这一档真实存在的那一条"
+    assert (session / index_rel).is_file(), index_rel
+
+
+def test_the_real_template_names_chunk_paths_in_the_new_layout() -> None:
+    """阶段 3 的块文件列表写新布局（带 `chunks/` 一层），全文不残留旧布局形状（C1 / m1）。"""
+    text = DEFAULT_TEMPLATE.read_text(encoding="utf-8")
+
+    assert "working/[source]/<kind>/chunks/chunk_NN.md" in text
+    assert "working/[source]/live/chunk_NN.md" not in text, "照这一行抄出来的是盘上没有的路径"
+    assert "这一路在场的每一份稿各自照它 `chunks` 那一格给" in text
+    assert "working/<source>/chunks/" not in text, "旧布局的块目录位置不残留"
+    assert "working/<source>/00_index.md" not in text, "旧布局的区间表位置不残留"

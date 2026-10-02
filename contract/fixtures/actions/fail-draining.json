@@ -14,8 +14,8 @@
       "dir": "<path>",
       "failed_steps": [
         {
-          "id": "post",
-          "error": "会后流程启动失败：RuntimeError: 假会后钩子按要求抛错；可复制命令：meeting post <path>；log 路径：<path>"
+          "id": "log",
+          "error": "场次日志的 flush / 结束标记 / 摘除失败：RuntimeError: 假场次日志接缝：按样本要求抛错；可复制命令：meeting post <path>；log 路径：<path>"
         }
       ],
       "log_path": "<path>"

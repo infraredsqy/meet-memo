@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { initialSelection, startWhy, statusLabel } from '../src/home/model';
 import { confirmWorkspaceOpen } from '../src/home/confirmWorkspaceOpen';
+import { drainSettled, showsWorkspaceHome } from '../src/home/gate';
+import { offlineNoticeOf, postButtonsView, postIdleNote } from '../src/home/post';
 import { failureFrom } from '../src/failure';
 import { probeDecision } from '../src/api/sessions';
-import type { SessionRow } from '../src/contract';
+import type { SessionRow, Snapshot } from '../src/contract';
 
 /** 造一行注册表（空缺全给 null / 无害值，用例只翻自己要翻的那几格）。 */
 function row(over: Partial<SessionRow> = {}): SessionRow {
@@ -16,6 +18,7 @@ function row(over: Partial<SessionRow> = {}): SessionRow {
     state: null,
     date: null,
     mode: null,
+    has_offline: false,
     added_at: '2026-09-21T21:03:00+08:00',
     last_opened_at: '2026-09-21T21:03:00+08:00',
     ...over,
@@ -70,6 +73,148 @@ describe('目录名目 → 三档处理', () => {
     expect(probeDecision('meeting')).toBe('meeting');
     expect(probeDecision('unknown')).toBe('need-confirm');
     expect(probeDecision('missing')).toBe('need-confirm');
+  });
+});
+
+describe('会后那两个按钮（R26 / R29）', () => {
+  it('收尾落定的那一场两个都能按', () => {
+    const view = postButtonsView(row({ kind: 'meeting', state: 'done', has_offline: true }));
+    expect(view.canPostOffline).toBe(true);
+    expect(view.canPostMinutes).toBe(true);
+    expect(view.why).toBeNull();
+  });
+
+  it('还在录 / 还在收尾：两个都按不动，并给一句为什么', () => {
+    for (const state of ['recording', 'draining'] as const) {
+      const view = postButtonsView(row({ kind: 'meeting', state }));
+      expect(view.canPostOffline).toBe(false);
+      expect(view.canPostMinutes).toBe(false);
+      expect(view.why).toContain('收尾');
+    }
+  });
+
+  it('还在录 / 还在收尾那一格：两件事并列说，不拿「盘上有稿」盖住「还没落定」（review-2 C1）', () => {
+    for (const state of ['recording', 'draining'] as const) {
+      for (const has_offline of [true, false]) {
+        const view = postButtonsView(row({ kind: 'meeting', state, has_offline }));
+        expect(view.offlineNotice).toContain('这一场还在录 / 还在收尾');
+        expect(view.offlineNotice).toContain(`盘上会后稿：${has_offline ? '有' : '没有'}`);
+        // 落定之后那一档的两句话在这一档一个都不许出现
+        expect(view.offlineNotice).not.toContain('这一场有会后精细稿');
+        expect(view.offlineNotice).not.toContain('这一场还没有会后精细稿');
+      }
+    }
+  });
+
+  it('目录已不在原地：两个都按不动，那一格说这一场跑不了会后（不冒充会后稿读数）', () => {
+    const view = postButtonsView(row({ dir_exists: false }));
+    expect(view.canPostOffline).toBe(false);
+    expect(view.offlineNotice).toBe('这一场跑不了会后：目录不在原地');
+    // 「路径已不在」归路径那一格（`statusLabel()`）
+    expect(view.offlineNotice).not.toBe('路径已不在');
+  });
+
+  it('收尾失败（failed）那一场照样能按：会后跑不跑与收尾那一步的成败无关', () => {
+    expect(postButtonsView(row({ state: 'failed' })).canPostMinutes).toBe(true);
+  });
+
+  it('「出纪要」按钮上那一格按 has_offline 如实写（R29）', () => {
+    expect(offlineNoticeOf(row({ has_offline: true }))).toContain('有会后精细稿');
+    expect(offlineNoticeOf(row({ has_offline: false }))).toContain('还没有会后精细稿');
+  });
+
+  it('底下那行小字说明两个都不按的后果', () => {
+    expect(postIdleNote()).toContain('都不按');
+  });
+});
+
+describe('闸的分流（R26：结束录音之后回到工作台）', () => {
+  /** 造一份只填这一档判据的快照（其余格子给无害值）。 */
+  function snapshot(over: {
+    top_state?: Snapshot['top_state'];
+    hasSession?: boolean;
+    phase?: 'draining' | 'done';
+    statuses?: string[];
+  }): Snapshot {
+    const statuses = over.statuses ?? ['skipped', 'skipped', 'done', 'waiting'];
+    return {
+      revision: 1,
+      service: {
+        version: '0.0.0',
+        started_at: '2026-09-21T21:00:00+08:00',
+        server_time: '2026-09-21T21:00:00+08:00',
+      },
+      top_state: over.top_state ?? 'ended',
+      session:
+        over.hasSession === false
+          ? null
+          : {
+              id: '260921',
+              dir: 'C:\\会议\\260921',
+              mode: 'both',
+              frozen: true,
+              elapsed_seconds: 100,
+              started_at: '2026-09-21T21:00:00+08:00',
+            },
+      sources: [],
+      alerts: { critical: null, hints: [] },
+      transcript: { health: 'stopped', backlog: 0, last_line_at: null },
+      ended: {
+        phase: over.phase ?? 'done',
+        error: null,
+        steps: ['flush', 'transcode', 'log', 'post'].map((id, index) => ({
+          id,
+          status: statuses[index],
+          detail: '',
+          error: null,
+        })),
+      },
+      settings: {
+        alarm_sound: false,
+        heartbeat_interval_seconds: 10,
+        asr: {
+          segment_seconds: 30,
+          timeout_seconds: 30,
+          max_tokens: 256,
+          max_cycles: 2,
+          coverage_ratio: 0.5,
+        },
+        devices: { mic: null, loopback: null },
+      },
+    } as unknown as Snapshot;
+  }
+
+  it('空闲态（没有场次）→ 工作台', () => {
+    expect(showsWorkspaceHome(snapshot({ top_state: 'idle', hasSession: false }))).toBe(true);
+  });
+
+  it('收尾四步落定（post 停在 waiting）→ 回工作台', () => {
+    expect(showsWorkspaceHome(snapshot({ phase: 'done' }))).toBe(true);
+    expect(drainSettled(snapshot({ phase: 'done' }))).toBe(true);
+  });
+
+  it('收尾有失败步、phase 停在 draining、post 停在 waiting → 也回工作台', () => {
+    const snap = snapshot({ phase: 'draining', statuses: ['skipped', 'skipped', 'failed', 'waiting'] });
+    expect(showsWorkspaceHome(snap)).toBe(true);
+  });
+
+  it('收尾还在跑（post 停在 running）→ 留在会中那一屏', () => {
+    const snap = snapshot({ phase: 'draining', statuses: ['done', 'done', 'done', 'running'] });
+    expect(showsWorkspaceHome(snap)).toBe(false);
+  });
+
+  it('前三步还没轮到（waiting）→ 留在会中那一屏', () => {
+    const snap = snapshot({
+      phase: 'draining',
+      statuses: ['waiting', 'waiting', 'waiting', 'waiting'],
+    });
+    expect(showsWorkspaceHome(snap)).toBe(false);
+  });
+
+  it('正在录 / 告警 → 留在会中那一屏', () => {
+    for (const top of ['recording', 'alert'] as const) {
+      expect(showsWorkspaceHome(snapshot({ top_state: top }))).toBe(false);
+    }
   });
 });
 

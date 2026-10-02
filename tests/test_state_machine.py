@@ -32,17 +32,20 @@ from tests import _helpers as helpers
 from meeting import config as config_module
 from meeting.config import ConfigValueError
 from meeting.service import app as service_app
+from meeting.service import runtime as runtime_module
 from meeting.state import (
     DRAIN_STEP_IDS,
     ENDED_PHASE,
     ENVELOPE_BAR_COUNT,
     ENVELOPE_BAR_SECONDS,
+    POST_DRAIN_STEP_ID,
     PROBE_STATUS,
     SESSION_STATE,
     SOURCE_HEALTH,
     TOP_STATE,
     Alert,
     AlertState,
+    DrainStateError,
     InvalidTransitionError,
     SessionInfo,
     Snapshot,
@@ -539,10 +542,9 @@ def test_finish_drain_keeps_top_state_ended(tmp_path):
     `ended`、`session` 保留（本场时长冻结）、`ended` 摘要留到下一场 `start` 才清空、
     盘上 `state == "done"`。
 
-    `post.hook` 显式取 `null`：会后钩子（`7c6952e5` phase2 的 `PostProcessHook`）落地之后，
-    产品缺省 `auto` 会让第 4 步真的起一条后台线程跑会后链 —— 本用例数的是**收尾编排**的账，
-    第 4 步按缺席记 `skipped` 才是这一场该看到的样子。有实现那一档在
-    `tests/test_post_hook.py` 里验。
+    **第 4 步 `post` 停在 `waiting`**（R26：按「结束录音」之后会后一个动作都不自动跑）：
+    这一步跑完它该做的（释放会中模型）就如实空着等人按按钮，`post.hook` 取什么值都一样。
+    别的三步照旧：采集替身那两步 `skipped`、`log` 是 `done`。
     """
     stack, client, runtime = build_live_client(
         tmp_path, {"capture.backend": "dev", "post.hook": "null"}
@@ -559,10 +561,10 @@ def test_finish_drain_keeps_top_state_ended(tmp_path):
         # `session` 保留（本场时长冻结）
         assert snapshot["session"] is not None
         assert snapshot["session"]["frozen"] is True
-        # 四步都有终态，且都落在 done / skipped 上；`log` 这一步必须是 done
+        # 前三步都有终态；第 4 步如实停在「等你动手」那一格
         steps = {step["id"]: step["status"] for step in snapshot["ended"]["steps"]}
         assert steps == {
-            "flush": "skipped", "transcode": "skipped", "log": "done", "post": "skipped",
+            "flush": "skipped", "transcode": "skipped", "log": "done", "post": "waiting",
         }
         # 成功档里两路从 stopped 回到 unprobed
         assert {item["health"] for item in snapshot["sources"]} == {"unprobed"}
@@ -588,25 +590,52 @@ def test_finish_drain_keeps_top_state_ended(tmp_path):
         stack.close()
 
 
-def test_finish_drain_failure_branch_keeps_draining(tmp_path):
+def test_only_the_post_step_may_settle_waiting(tmp_path):
+    """`waiting` 只能当 `post` 那一格的落定结果，别的三步落回去一律抛错（复审 m4）。
+
+    这条规则的价值正在「别的步骤不许落回 `waiting`」：`waiting` 说的是「这一步空着等人
+    按按钮」（R26 的会后那一格），若 `flush` / `transcode` / `log` 也能落它，
+    「收尾协程被取消、四步都还没轮到」与「这一步不归我管」就混成同一副面孔了。
+    """
+    snapshot = new_snapshot()
+    session = SessionInfo(id="250906", dir="d", started_at="t0", mode="both")
+    start_recording(snapshot, session=session, mode="both")
+    begin_drain(snapshot, reason="user")
+
+    # `post` 那一格：`waiting` 是它的合法落定值
+    finish_drain_step(POST_DRAIN_STEP_ID, "waiting", snapshot=snapshot)
+    assert snapshot.drain_step(POST_DRAIN_STEP_ID).status == "waiting"
+
+    # 其余三步：逐个各来一次，逐条都要抛错（别只测一条）
+    for step_id in DRAIN_STEP_IDS:
+        if step_id == POST_DRAIN_STEP_ID:
+            continue
+        with pytest.raises(DrainStateError, match="只能作为"):
+            finish_drain_step(step_id, "waiting", snapshot=snapshot)
+        assert snapshot.drain_step(step_id).status == "waiting", (
+            f"{step_id} 那一步被拒之后该保持原样（`begin_drain()` 落的 waiting）"
+        )
+
+
+def test_finish_drain_failure_branch_keeps_draining(tmp_path, monkeypatch):
     """失败分支：有任一步 `failed` → `phase` 保持 `draining`、`top_state` 停在 `ended`。
 
-    造法（进程内，不起第二个服务）：把第 4 步 `post` 的会后钩子换成一个 `launch()` 抛错的
-    替身，并把 `post_resolution` 标成「在场」——**缺席记 `skipped`、在场却抛错记 `failed`**，
-    这正是 §3.0 那条边界。
+    造法（进程内，不起第二个服务）：把 `log` 那一步写**场次日志结束标记**的落点换成一个抛错的
+    替身 ——「有实现却抛错 → `failed`」这一档（§3.0 的边界）在收尾四步里由它来演。
+    第 4 步 `post` 现在停在 `waiting`（会后一个动作都不自动跑，R26），它不再产生失败步；
+    而失败步的账目形状（`error` 里带可复制命令与 log 路径、`start` 被 409 拒）一个字没变。
     """
     stack, client, runtime = build_live_client(tmp_path, {"capture.backend": "dev"})
     try:
         assert post(client, "start").status_code == 200
         session_dir = Path(runtime.snapshot.session.dir)
 
-        class BoomHook:
-            def launch(self, target: str) -> None:
-                raise RuntimeError("假会后钩子：按测试要求抛错")
+        def boom_end_marker(*args, **kwargs):
+            raise RuntimeError("假场次日志接缝：按测试要求抛错")
 
-        runtime.post_hook = BoomHook()
-        runtime.post_resolution.implementation = runtime.post_hook
-        runtime.post_resolution.has_implementation = True
+        monkeypatch.setattr(
+            runtime_module.logging_setup, "write_session_end_marker", boom_end_marker
+        )
 
         assert post(client, "stop").status_code == 200
         snapshot = _wait(
@@ -614,7 +643,7 @@ def test_finish_drain_failure_branch_keeps_draining(tmp_path):
                 s["ended"] is not None
                 and s["ended"]["phase"] == "draining"
                 and any(step["status"] == "failed" for step in s["ended"]["steps"])
-                and all(step["status"] in ("done", "failed", "skipped")
+                and all(step["status"] in ("done", "failed", "skipped", "waiting")
                         for step in s["ended"]["steps"])
             ) else None)(snapshot_of(client)),
             timeout=STATE_POLL_TIMEOUT_SECONDS,
@@ -625,15 +654,14 @@ def test_finish_drain_failure_branch_keeps_draining(tmp_path):
         assert snapshot["ended"]["phase"] == "draining"
         assert snapshot["session"] is not None
         failed = [step for step in snapshot["ended"]["steps"] if step["status"] == "failed"]
-        assert [step["id"] for step in failed] == ["post"]
+        assert [step["id"] for step in failed] == ["log"]
         assert "meeting post" in failed[0]["error"]
         assert runtime.log_path in failed[0]["error"]
         assert snapshot["ended"]["error"]
 
-        # 盘上落 `failed`（**绝不写 done**）、`ended_at` 有值
+        # 盘上落 `failed`（**绝不写 done**）
         record = json.loads((session_dir / "session.json").read_text(encoding="utf-8"))
         assert record["state"] == "failed"
-        assert record["ended_at"]
 
         # 这一档下新的 `start` 一律 `draining`(409)，带失败步与场次 log 路径
         rejected = post(client, "start")
@@ -642,7 +670,7 @@ def test_finish_drain_failure_branch_keeps_draining(tmp_path):
         detail = rejected.json()["detail"]
         assert detail["session_id"] == record["session_id"]
         assert detail["dir"] == str(session_dir)
-        assert [item["id"] for item in detail["failed_steps"]] == ["post"]
+        assert [item["id"] for item in detail["failed_steps"]] == ["log"]
         assert detail["log_path"] == runtime.log_path
         # 服务不自杀：快照照常应答、进程还在
         assert snapshot_of(client)["top_state"] == "ended"
@@ -653,6 +681,7 @@ def test_finish_drain_failure_branch_keeps_draining(tmp_path):
 def test_cancelled_drain_keeps_the_same_face_without_done(tmp_path):
     """取消分支（四步未全部落定）与失败档同一副面孔，只多一处 `interrupted: true` 的差别。"""
     stack, client, runtime = build_live_client(tmp_path, {"capture.backend": "dev"})
+    original_release = None
     try:
         assert post(client, "start").status_code == 200
         session_dir = Path(runtime.snapshot.session.dir)
@@ -666,33 +695,29 @@ def test_cancelled_drain_keeps_the_same_face_without_done(tmp_path):
         second_dir = Path(runtime.snapshot.session.dir)
         assert second_dir != session_dir
 
-        class PinHook:
-            """把这一步钉在 `running` 上，直到用例放行（phase3 §3.8 的同一手法）。
+        class PinRelease:
+            """把第 4 步钉在 `running` 上，直到用例放行（phase3 §3.8 的同一手法）。
 
-            **同步调用不落在事件循环上**：收尾的这一步由 `_drain_wait()` 经运行时的
-            **收尾专用执行器**（`loop.run_in_executor(...)`）提交到**工作线程**，
-            `launch()` 于是在那条线程里堵着、事件循环空着 —— `/api/state` 照常应答，
+            这一步现在只做一件事：让会中模型退出显存（会后归两个按钮，R26）。堵点因此落在
+            `release_gpu()` 上 —— **同步调用不落在事件循环上**：收尾的这一步由 `_drain_wait()`
+            经运行时的**收尾专用执行器**（`loop.run_in_executor(...)`）提交到**工作线程**，
+            `release_gpu()` 于是在那条线程里堵着、事件循环空着 —— `/api/state` 照常应答，
             「轮询到某步处于 running」这个同步点因此等得到。同步阻塞若真落在事件循环里，
             这个窗口根本不会出现（收尾期间状态接口停摆）。
-
-            **这一格在 phase3 的接线来源（第七轮审查 m4）**：phase2 时收尾的这一步经
-            `ServiceRuntime._call_step()` 这个内部接缝调用；phase3 把等待上限收进
-            `_drain_wait()`，`_call_step` 随之删除。授权来源：phase3 的 `_drain_wait` 取代
-            `_call_step`。
             """
 
             def __init__(self) -> None:
                 self.started = threading.Event()
                 self.release = threading.Event()
 
-            def launch(self, target: str) -> None:
+            def release_gpu(self) -> bool:
                 self.started.set()
                 self.release.wait(timeout=CANCEL_PIN_SECONDS)
+                return True
 
-        hook = PinHook()
-        runtime.post_hook = hook
-        runtime.post_resolution.implementation = runtime.post_hook
-        runtime.post_resolution.has_implementation = True
+        hook = PinRelease()
+        original_release = getattr(runtime.transcriber_backend, "release_gpu", None)
+        runtime.transcriber_backend.release_gpu = hook.release_gpu  # type: ignore[method-assign]
 
         async def stop_then_cancel():
             # `stop_session` 必须在事件循环里调（收尾协程要挂在这一条循环上才跑得起来）
@@ -704,7 +729,7 @@ def test_cancelled_drain_keeps_the_same_face_without_done(tmp_path):
             #   ② 它的调用随后经运行时的**收尾专用执行器**交到工作线程（`_drain_wait()` 里
             #      那一句 `loop.run_in_executor(...)`），工作线程一进去就置 `hook.started`
             #      —— 等这个事件，就是把「调用真的开始了」等实；
-            #   ③ 此时 `launch()` 还堵在 `hook.release` 上（上限 CANCEL_PIN_SECONDS），
+            #   ③ 此时 `release_gpu()` 还堵在 `hook.release` 上（上限 CANCEL_PIN_SECONDS），
             #      于是取消一定落在「post 停在 running」这一格上。
             # 收尾的这一步一定经 `_drain_wait()` 的等待层（`invoke=True`）交到工作线程，
             # 因此②一定会发生；这里等它，而不是抢在它之前断言。
@@ -744,6 +769,8 @@ def test_cancelled_drain_keeps_the_same_face_without_done(tmp_path):
             except asyncio.CancelledError:
                 pass
             finally:
+                # 放行钉住的那条工作线程：取消已经在上一行传导到这一步（`await task` 收的就是
+                # 那次取消），因此这里放行不会把 post 那一步补成终态。
                 hook.release.set()
 
         asyncio.run(stop_then_cancel())
@@ -766,6 +793,8 @@ def test_cancelled_drain_keeps_the_same_face_without_done(tmp_path):
         # 新的 `start` 拒之门外
         assert post(client, "start").status_code == 409
     finally:
+        if original_release is not None:
+            runtime.transcriber_backend.release_gpu = original_release
         stack.close()
 
 

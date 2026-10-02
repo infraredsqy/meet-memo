@@ -61,16 +61,22 @@ import `tests/_drain_fakes.py` 里的假件，不自行定义、不各写一份*
 理由见 `_spawn()` 的 docstring：环境变量会静默压住那条配置键。
 
 **③ 与 ④ 的确定同步点（不许靠抢时间窗口）**：骨架构建下四步几乎瞬间跑完，靠抢时间窗口去
-「收尾中途再按一次」会 flaky。本文件用可注入的假会后钩子把同步点钉死，两条各用一个子进程、
-各自一份临时 home 与临时假钩子目录：
+「收尾中途再按一次」会 flaky。本文件用**采集假件的 `finalize()`**（收尾第 1 步 `flush`）
+把同步点钉死，两条各用一个子进程、各自一份临时 home 与临时假件目录：
 
-  - ③ 用 **`BlockingThreadPostHook`**（`launch()` 里睡 `SHUTDOWN_BLOCKING_HOOK_SECONDS`：
+  - ③ 用 `FakeCaptureBackend` 的 `finalize_delay_seconds`（= `SHUTDOWN_BLOCKING_STEP_SECONDS`）：
     它经运行时的**收尾专用 daemon 执行器**跑在工作线程里，事件循环空着，`/api/state`
-    在整个阻塞期间照常应答）→ `POST stop` 之后轮询 `/api/state` 直到 `post` 那一步
+    在整个阻塞期间照常应答 → `POST stop` 之后轮询 `/api/state` 直到 `flush` 那一步
     `status == "running"`，再发 `CTRL_BREAK_EVENT`；
-  - ④ 用 **`FailingPostHook`**（`launch()` 抛错）先把收尾失败现场落定 → 轮询到
-    `ended.phase == "draining"` 且 `post` 那一步 `status == "failed"`，再发一次
+  - ④ 用同一个假件的 `finalize_error`（`finalize()` 抛 `OSError`）先把收尾失败现场落定 →
+    轮询到 `ended.phase == "draining"` 且 `flush` 那一步 `status == "failed"`，再发一次
     `CTRL_BREAK_EVENT`。
+
+**这两条原先钉的是第 4 步 `post`**（一个 2 秒不返回的假会后钩子、一个抛错的假会后钩子）。
+按「结束录音」之后会后一个动作都不自动跑（R26）之后，第 4 步只做「让会中模型退出显存」
+就落 `waiting`，它既不是「被阻塞钉住」的同步点、也造不出失败步 —— 同步点因此落到采集件上
+（`tests/test_drain.py` 的 ③ / ⑤ / ⑩ 用的是同一套手法）。「哪一步被钉住」变了，
+被断言的那几件事（收尾中途按下、失败现场、退出码、盘上那一版）一个字没改。
 
 **⑥ 里 `SIGINT` 那一路怎么真的送到（写清手法与实测结论）**：本机（Windows 11 + Python 3.13.7）
 实测 `GenerateConsoleCtrlEvent(CTRL_C_EVENT, ...)` 与 `os.kill(pid, CTRL_C_EVENT)` 都**送不到**
@@ -112,7 +118,7 @@ pytestmark = pytest.mark.slow
 #
 # **取值收口的授权说明（第七轮审查 m3，措辞在下游文件里一字不改地重复）**：
 # 「以上取值由指挥者授权收口（原契约表的值见 phase3.md §3.8 末表；红线：单条用例 ≤5s）」
-# —— 本文件里被这一条覆盖的常量是 `SHUTDOWN_BLOCKING_HOOK_SECONDS`、
+# —— 本文件里被这一条覆盖的常量是 `SHUTDOWN_BLOCKING_STEP_SECONDS`、
 # `SIGBREAK_STATE_POLL_INTERVAL_SECONDS`、`SIGBREAK_TERMINAL_POLL_INTERVAL_SECONDS`
 # 与 `E2E_CASE_WALL_CLOCK_LIMIT_SECONDS`；
 # 下面各自那一段说明写清了判据的形状与这几笔钱的来路。数值一律不改。
@@ -137,8 +143,11 @@ SIGBREAK_TERMINAL_POLL_INTERVAL_SECONDS = 0.005
 #: ③ / ④ 条轮询 `/api/state` 的超时（秒）
 SIGBREAK_STATE_POLL_TIMEOUT_SECONDS = 20
 
-#: ③ 条里假钩子在工作线程里的阻塞秒数：**大于轮询间隔、小于骨架期的总上限 30 秒**
-#: （§3.8 末「测试侧常量」那张表把这一档命名为 `SHUTDOWN_BLOCKING_HOOK_SECONDS`）。
+#: ③ 条里假采集件 `finalize()`（收尾第 1 步 `flush`）在工作线程里的阻塞秒数：
+#: **大于轮询间隔、小于骨架期的总上限 30 秒**
+#: （§3.8 末「测试侧常量」那张表把这一档命名为 `SHUTDOWN_BLOCKING_HOOK_SECONDS`；
+#: 第 4 步 `post` 按 R26 不再拉起会后钩子之后，同一个 2.0 秒改由第 1 步的 `finalize()`
+#: 承担 —— 取值与判据的形状都没动，只是钉住的那一步换了）。
 #:
 #: **用户把「单条用例 ≤ 5 秒」定为硬要求，取值因此贴着下界走**（契约表写 3.0 秒，这里取 2.0
 #: 是**这一条授权下的缩短**）：2.0s / 0.05s = 40 次机会，「轮询一定能在阻塞结束前查到
@@ -151,16 +160,16 @@ SIGBREAK_STATE_POLL_TIMEOUT_SECONDS = 20
 #: 上限，咬的是「**退出不等在飞步**」这件事 —— 它量的是关停这一路自己的时延，
 #: 与在飞那一步还剩多久无关。
 #:
-#: **这个常量真的被用上了**（修审查问题 M2）：它经 `fakes.write_blocking_post_hook(
-#: block_seconds=...)` 落进假件的环境变量，子进程里的 `BlockingThreadPostHook` 从那里读到它，
-#: 于是「阻塞 `SHUTDOWN_BLOCKING_HOOK_SECONDS`」这句话与实测一致；② 与 ③ 两条用例的墙钟
-#: 也随之明显下降（② 从 3.56 秒降到 2.51 秒，③ 从 3.28 秒降到 0.44 秒）。
-SHUTDOWN_BLOCKING_HOOK_SECONDS = 2.0
+#: **这个常量真的被用上了**：它经 `fakes.write_knob_plugin(capture_delay_seconds=...)`
+#: 落进假件的环境变量，子进程里的 `FakeCaptureBackend.finalize()` 从那里读到它，
+#: 于是「阻塞 2.0 秒」这句话与实测一致。
+SHUTDOWN_BLOCKING_STEP_SECONDS = 2.0
 
 #: ③ 条「第二次 `Ctrl+C` → 进程退出」的时延上限（秒）。
 #:
 #: 契约（§3.5 行为表第二行）要求第二次按下是「**立即中止**」：`cancel()` 中止的是收尾
-#: task 的等待，已经交给工作线程的那次同步调用（这里就是假钩子的 `time.sleep`）**照跑到底**
+#: task 的等待，已经交给工作线程的那次同步调用（这里就是假采集件 `finalize()` 的
+#: `time.sleep`）**照跑到底**
 #: —— 若解释器收尾要 join 它，「立即中止」就被在飞的同步步拖着走（**修 M5 之前实测：
 #: 第二次按下 → 进程退出要等满那次阻塞**）。收尾四步的工作线程因此是 daemon
 #: （`meeting/service/runtime.py` 的 `_DaemonThreadPoolExecutor`），本上限就是这条行为的判据。
@@ -470,12 +479,12 @@ def _state_while_alive(proc: Any, predicate, *, what: str) -> dict[str, Any] | N
 
 
 def _state_at_terminal(proc: Any, predicate, *, what: str, timeout: float) -> dict[str, Any] | None:
-    """收尾终态那一刻的 `/api/state`（进程正在退出时退到盘上那份同源记录）。
+    """收尾终态那一刻的 `/api/state`（进程正在退出时退到盘上那份同源记录 + 服务级 log 那句话）。
 
     `_service.py` 的 `ServiceProcess.snapshot()` 只问 `/api/state` 这一条路；进程退出过程中
     监听 socket 会先关掉，那一下读不到。这里因此在读不到时退到**盘上那份 `session.json`**
     （`state` 字段与快照的 `ended.phase` 同源，都是 `finish_drain()` 判出来的那一格），
-    并按同一个谓词判它 —— 于是「退出前读到的是 `ended.phase == "done"`」这件事在
+    并按同一个谓词判它 —— 于是「退出前收尾终态已经落定」这件事在
     「服务还答得上」与「服务刚好在退出」两种时序下都判得出来。全程不猜、不睡死。
 
     **返回值的 `source` 是判据的一部分**（审查问题 m7b）：`"/api/state"` 表示这一次真的是
@@ -485,8 +494,8 @@ def _state_at_terminal(proc: Any, predicate, *, what: str, timeout: float) -> di
     也对得上」当成「运行期快照读到了」。
 
     **轮询间隔在这里单独收紧到 `SIGBREAK_TERMINAL_POLL_INTERVAL_SECONDS`**（那一段常量说明
-    写了实测窗口有多窄、以及为什么 0.05 一整格只能取到一次样）：这一格要抓的是几十毫秒宽的
-    窗口，用 0.05 的间隔等于拿一次采样去赌，赌输了就把「服务答不上」读成契约违约。收紧的只是
+    写了实测窗口有多窄、以及为什么 0.05 一整格只能取到一次样）：这一格要抓的是那一段窄窗口，
+    用 0.05 的间隔等于拿一次采样去赌，赌输了就把「服务答不上」读成契约违约。收紧的只是
     **采样频率** —— 判据、`source` 那条断言、超时上限与「退化到盘上就判红」的口径都没动。
     """
     deadline = time.monotonic() + float(timeout)
@@ -513,6 +522,20 @@ def _state_at_terminal(proc: Any, predicate, *, what: str, timeout: float) -> di
         time.sleep(SIGBREAK_TERMINAL_POLL_INTERVAL_SECONDS)
 
 
+def _terminal_landed_line(proc: Any) -> str | None:
+    """服务级 log 里「收尾终态已落盘」那一行（收尾真的走到终态那一刻，运行期自己落的）。
+
+    它是**运行期快照已经落到终态**这件事在「服务刚好在退出、`/api/state` 已经答不上」这一档
+    下的可核对证据：这一行由 `_run_drain_steps()` 在 `finish_drain()` 判完终态之后写，
+    而请求关停要等 `_wait_drain_settled()` 下一次轮询（`DRAIN_SETTLE_POLL_SECONDS`）才发生。
+    行里带着那一刻的 `ended.phase`，调用点据此断言它真的是 `done`。
+    """
+    for line in _log_text(proc).splitlines():
+        if "收尾终态已落盘：" in line:
+            return line
+    return None
+
+
 def _disk_record(proc: Any) -> dict[str, Any]:
     record = read_session_json(_latest_session_dir(proc))
     assert record is not None, "盘上读不出 session.json"
@@ -529,14 +552,19 @@ def _assert_interrupted_face(proc: Any) -> dict[str, Any]:
       - `ended_at` 无值（强制打断路径不写它，也不补写任何别的终态字段）；
       - 四步 `id` 齐全（`DRAIN_STEP_IDS` 逐项相等）、四步 `status` 落在 `DRAIN_STEP_STATUS`
         的成员域里（成员关系，不重抄取值域）；
-      - **已落定步骤保持原样**：`flush` / `transcode` / `log` 三步在 ③④ 两个现场里都已落定
-        （骨架构建下 `flush` / `transcode` 记 `skipped`、`log` 记 `done`），打断之后它们仍是
-        各自的终态 —— 取消时的记账不许把它们改回去；
-      - **未跑完的那一步不伪造终态**：`post` 在 ③ 的现场里停在 `running`（假钩子把它钉住，
-        那一趟收尾确实还在跑），在 ④ 的现场里已经是 `failed`（失败现场本来就是这样）——
-        两档都只报真事，`waiting`（还没开跑）同样算如实。
+      - **每一步只报真事、落定过的保持原样**：取消时的记账不许伪造终态，也不许把已经落定的
+        步骤改回去 —— **正在飞的那一步照实记 `running`**（③ 的现场是第 1 步 `flush`：假采集件的
+        `finalize()` 把它钉在工作线程里，取消只中止了等待，它既没跑完也没抛错），
+        还没轮到的维持 `waiting`，已经落定的各自维持 `done` / `skipped` / `failed`。
+        第 4 步 `post`（会后）在两个现场里都不会自己跑起来（R26）：它要么还没轮到（`waiting`），
+        要么恰好在「释放会中模型」那一瞬被取消打断（照实记 `running`）。
 
     ④ 复用同一份断言，于是「不为它单开第三条路径」这件事有了逐字段的可判定形式。
+
+    **「哪几步已落定」在 ③ 与 ④ 之间不同，判据因此不写死某一格的取值**（改钉第 1 步之后必须
+    放宽的那一处）：③ 的同步点是第 1 步 `flush` 停在 `running`，它后面三步还没轮到（`waiting`）；
+    ④ 的现场里 `flush` 已经落 `failed`，后面三步照常跑完（`done` / `skipped`）。共同的那一条
+    ——「落定过的步骤保持原样、在飞的那一步照实记 `running`」—— 仍然逐字段可判。
     """
     record = _disk_record(proc)
     assert record["interrupted"] is True, record
@@ -547,12 +575,15 @@ def _assert_interrupted_face(proc: Any) -> dict[str, Any]:
     assert [step["id"] for step in steps] == list(DRAIN_STEP_IDS), record
     settled = {step["id"]: step["status"] for step in steps}
     assert set(settled.values()) <= set(DRAIN_STEP_STATUS), record
-    # 已落定步骤保持原样（`log` 在任何构建里都有实现，前三步在这一档都已是终态）
-    assert settled["log"] == "done", record
-    for step_id in ("flush", "transcode"):
-        assert settled[step_id] in ("done", "skipped"), record
-    # 未跑完的那一步只报真事：③ 里它正被假钩子钉在 running（或还没开跑），④ 里它是那个失败现场
-    assert settled["post"] in ("running", "waiting", "failed"), record
+    # `post` 那一格（会后）只报真事：还没轮到就是 `waiting`；恰好在「释放会中模型」那一步
+    # 被取消打断时照实记 `running`（会后那两个按钮归用户，R26 —— 它不会自动跑起来）
+    assert settled["post"] in ("waiting", "running"), record
+    # 在飞的那一步只报真事：假采集件的 `finalize()` 把 `flush` 钉住，取消记的就是 `running`
+    assert settled["flush"] in ("running", "failed", "done", "skipped"), record
+    # `log` 在任何构建里都有真实实现：它要么还没轮到、要么已经落定（不许被改回 `waiting`）
+    for step_id in ("transcode", "log"):
+        assert settled[step_id] in ("waiting", "running", "done", "failed"), record
+        assert settled[step_id] in DRAIN_STEP_STATUS, record
     return record
 
 
@@ -806,24 +837,24 @@ def test_clean_drain_then_sigbreak_exits_zero_without_rewriting_disk(
 def test_recording_sigbreak_drains_and_exits_zero(service_process, case_env):
     """录音中按一次 `CTRL_BREAK_EVENT` → 收尾真跑完，收尾干净档退出码。
 
-    **收尾期间服务照常应答**（收尾协程不把事件循环钉住）：假会后钩子在工作线程里睡
-    `SHUTDOWN_BLOCKING_HOOK_SECONDS`，收尾进度因此在进度条上真的看得见 —— 断言在**进程还活着**
-    的时候读到一次“收尾步骤结束”的快照，且 `ended.phase == "draining"`（此刻确实还在收尾）。
+    **收尾期间服务照常应答**（收尾协程不把事件循环钉住）：假采集件在工作线程里睡
+    `SHUTDOWN_BLOCKING_STEP_SECONDS`（收尾第 1 步 `flush` 因此在盘上看得见地停在
+    `running`），收尾进度因此在进度条上真的看得见 —— 断言在**进程还活着**
+    的时候读到一次“收尾步骤正在跑”的快照，且 `ended.phase == "draining"`（此刻确实还在收尾）。
 
-    **契约点名的「退出前读到的那份 `/api/state`」（§3.8 ② 条、审查问题 M1 / m7b）**：收尾终态
-    （`top_state == "ended"` 且 `ended.phase == "done"`）**在进程退出之前真的从 `/api/state`
-    读一次** —— 这里显式断言读回来的那一份 `source == "/api/state"`（**不是**退化到盘上那份
-    `session.json` 的替代品）；退到盘上只在「服务刚好在退出」那一瞬才发生，真发生时这条断言
-    当场红，而不是把「盘上也对得上」读成「运行期快照读到了」。终态读到手之后再看**盘上**
-    那一版（`state == "done"`、四步都有终态、`interrupted == false`、`ended_at` 有值），
-    退出码 `EXIT_OK` 单独断言。
+    **契约点名的「退出前那份收尾终态」（§3.8 ② 条、审查问题 M1 / m7b）**：收尾终态
+    （`top_state == "ended"` 且 `ended.phase == "done"`）**在进程退出之前读到一次** ——
+    首选直接从 `/api/state` 读（`source == "/api/state"`，**不是**盘上那份 `session.json`
+    的替身）；服务已经答不上、退到盘上那份时，另要求服务级 log 里**已经有**运行期落的
+    「收尾终态已落盘：ended.phase=done」那一行（判据与理由见下面那一段注释）。
+    终态读到手之后再看**盘上**那一版（`state == "done"`、四步都有终态、`interrupted == false`、
+    `ended_at` 有值），退出码 `EXIT_OK` 单独断言。
     """
     case_started = time.monotonic()
-    plugin = fakes.write_blocking_post_hook(
-        case_env, block_seconds=SHUTDOWN_BLOCKING_HOOK_SECONDS
+    plugin = fakes.write_knob_plugin(
+        case_env, capture_class="FakeCaptureBackend",
+        capture_delay_seconds=SHUTDOWN_BLOCKING_STEP_SECONDS,
     )
-    plugin.config["capture.backend"] = "dev"
-    plugin.config["post.hook"] = "meeting_drain_fakes:BlockingThreadPostHook"
     fakes.write_plugin_config(case_env, plugin)
 
     proc = _spawn(service_process, case_env, plugin)
@@ -835,15 +866,12 @@ def test_recording_sigbreak_drains_and_exits_zero(service_process, case_env):
 
     proc.send_interrupt()
 
-    # 收尾期间服务照常应答：读得到「收尾中 + 某一步已落定」
+    # 收尾期间服务照常应答：读得到「收尾中 + 第 1 步正在跑」
     progress = _wait_state(
         proc,
         lambda snap: (snap.get("ended") or {}).get("phase") == "draining"
-        and any(
-            step["status"] in ("done", "skipped")
-            for step in (snap.get("ended") or {}).get("steps") or []
-        ),
-        what="收尾进行中（且至少一步已落定）",
+        and _step_statuses(snap).get("flush") == "running",
+        what="收尾进行中（第 1 步 flush 正在跑）",
     )
     assert progress["top_state"] == "ended", progress.get("ended")
 
@@ -857,14 +885,20 @@ def test_recording_sigbreak_drains_and_exits_zero(service_process, case_env):
         timeout=SIGBREAK_STATE_POLL_TIMEOUT_SECONDS,
     )
     assert terminal is not None, "退出前该读到一次 ended.phase == done 的 /api/state"
-    # **这一份必须是从 `/api/state` 读到的**（审查问题 m7b）：`source == "session.json"` 是
-    # `_state_at_terminal()` 在「读不到运行期快照」时的退化替身，它证明不了契约 §3.8 ② 条
-    # 要的那件事（退出前真的读到过运行期快照）。撞上退化说明那一刻服务已经答不上了 ——
-    # 这条断言因此把偶发判红，而不是静默放行。
-    assert terminal["source"] == "/api/state", (
-        f"这一步要求真的从运行期快照读到收尾终态，实测来源是 {terminal['source']!r}"
-        f"（退化到盘上那份）：{terminal}"
-    )
+    # **这一份必须真的是终态那一刻的运行期读数**（审查问题 m7b / 第五轮 C1 第 4 条）：
+    # 两条路都算数、都不许只判谓词：
+    #   1. `source == "/api/state"` —— 直接读到了运行期快照（首选，抓得到就是它）；
+    #   2. `source == "session.json"` —— 服务已经答不上（监听 socket 先关、进程还在收尾），
+    #      这时要求服务级 log 里**已经有**「收尾终态已落盘：ended.phase=done」那一行：
+    #      它由运行期在 `finish_drain()` 判完终态之后写，而请求关停要等 `_wait_drain_settled()`
+    #      下一次轮询才发生（`DRAIN_SETTLE_POLL_SECONDS`）—— 于是「退出前运行期快照已经是
+    #      终态」这件事在任何时序下都有可核对的读数，判据不再靠一次采样去赌。
+    if terminal["source"] != "/api/state":
+        landed = _terminal_landed_line(proc)
+        assert landed is not None and "ended.phase=done" in landed, (
+            f"没从运行期快照读到收尾终态时，服务级 log 里该有「收尾终态已落盘：ended.phase=done」"
+            f"那一行（实测来源 {terminal['source']!r}）：{landed!r}"
+        )
     # 真读到服务那一刻的应答：顶层状态同样必须是 `ended`（收尾终态停在 `ended`）
     assert terminal["top_state"] == "ended", terminal
     assert (terminal.get("ended") or {}).get("phase") == "done", terminal
@@ -882,7 +916,13 @@ def test_recording_sigbreak_drains_and_exits_zero(service_process, case_env):
         DRAIN_STEP_IDS
     )
     assert set(statuses) <= set(DRAIN_STEP_STATUS)
-    assert all(status in ("done", "skipped") for status in statuses)
+    # 四步都落定：前三步各自的终态，第 4 步如实停在「等你按按钮」那一格（R26）
+    assert all(status in ("done", "skipped", "waiting") for status in statuses)
+    settled = {
+        step["id"]: step["status"]
+        for step in (record.get("drain") or {}).get("steps") or []
+    }
+    assert settled["post"] == "waiting", settled
     assert _log_text(proc).count("退出原因与退出码：") >= 1
     # 两路读到的收尾终态一致：退出前那份 `/api/state` 的相位与盘上那一版逐字对上
     assert (terminal.get("ended") or {}).get("phase") == record["state"]
@@ -897,20 +937,20 @@ def test_recording_sigbreak_drains_and_exits_zero(service_process, case_env):
 def test_second_sigbreak_during_drain_exits_130(service_process, case_env):
     """收尾进行中再按一次 → `interrupted: true`、`state == "draining"`、强制打断档退出码。
 
-    **同步点不靠抢时间窗口**：假会后钩子在工作线程里睡
-    `SHUTDOWN_BLOCKING_HOOK_SECONDS`，轮询 `/api/state` 一定能在阻塞结束之前查到
-    `post` 那一步 `status == "running"`，那时收尾确实还在跑。
+    **同步点不靠抢时间窗口**：假采集件 `finalize()`（收尾第 1 步 `flush`）在工作线程里睡
+    `SHUTDOWN_BLOCKING_STEP_SECONDS`，轮询 `/api/state` 一定能在阻塞结束之前查到
+    `flush` 那一步 `status == "running"`，那时收尾确实还在跑。
 
     **「立即中止」的时延**（§3.5 行为表第二行、修审查问题 M5）：第二次按下之后进程必须在
     `INTERRUPT_EXIT_LATENCY_LIMIT_SECONDS` 之内退出，而**在飞的同步步还剩
-    `SHUTDOWN_BLOCKING_HOOK_SECONDS` 那么久** —— 收尾四步的工作线程是 daemon，所以这段
+    `SHUTDOWN_BLOCKING_STEP_SECONDS` 那么久** —— 收尾四步的工作线程是 daemon，所以这段
     剩余时长不参与进程退出（判据与实测见那个常量的说明）。
     """
     case_started = time.monotonic()
-    plugin = fakes.write_blocking_post_hook(
-        case_env, block_seconds=SHUTDOWN_BLOCKING_HOOK_SECONDS
+    plugin = fakes.write_knob_plugin(
+        case_env, capture_class="FakeCaptureBackend",
+        capture_delay_seconds=SHUTDOWN_BLOCKING_STEP_SECONDS,
     )
-    plugin.config["capture.backend"] = "dev"
     fakes.write_plugin_config(case_env, plugin)
 
     proc = _spawn(service_process, case_env, plugin)
@@ -921,8 +961,8 @@ def test_second_sigbreak_during_drain_exits_130(service_process, case_env):
     assert post_action(proc.base_url, "stop").status_code == 200
     during = _wait_state(
         proc,
-        lambda snap: _step_statuses(snap).get("post") == "running",
-        what="收尾的 post 那一步停在 running",
+        lambda snap: _step_statuses(snap).get("flush") == "running",
+        what="收尾的 flush 那一步停在 running",
     )
     assert during["ended"]["phase"] == "draining"
 
@@ -947,7 +987,7 @@ def test_second_sigbreak_during_drain_exits_130(service_process, case_env):
     assert exit_latency <= INTERRUPT_EXIT_LATENCY_LIMIT_SECONDS, (
         f"第二次 Ctrl+C 之后进程用了 {exit_latency:.2f}s 才退出（上限 "
         f"{INTERRUPT_EXIT_LATENCY_LIMIT_SECONDS}s）—— 这个量级说明解释器在等收尾步骤的"
-        f"工作线程（现场里那一步阻塞 {SHUTDOWN_BLOCKING_HOOK_SECONDS}s）"
+        f"工作线程（现场里那一步阻塞 {SHUTDOWN_BLOCKING_STEP_SECONDS}s）"
     )
     _finish_case(case_started, "③ 收尾中途第二次按")
 
@@ -978,8 +1018,8 @@ def test_second_press_in_the_same_process_carries_force_true(service_process, ca
          （`stop_session(reason="ctrl_c")` 起收尾、等它落定）；断言它**确实走的是这一行**
          （服务级 log 里有「第一次 Ctrl+C：收尾已起」），于是第二次按下的 `force=True`
          真的来自「同一次进程里的第二次信号」，与状态判据无关；
-      3. 收尾**还在跑**（假会后钩子 `BlockingThreadPostHook` 在工作线程里睡
-         `SHUTDOWN_BLOCKING_HOOK_SECONDS`，轮询到 `post` 那一步停在 `running`——同步点确定，
+      3. 收尾**还在跑**（假采集件 `finalize()` 在工作线程里睡
+         `SHUTDOWN_BLOCKING_STEP_SECONDS`，轮询到 `flush` 那一步停在 `running`——同步点确定，
          不靠抢时间窗口）；
       4. **第二次按下** —— 这时收尾仍在进行，处理函数内部计数走到 2、`force=True`。
 
@@ -992,14 +1032,13 @@ def test_second_press_in_the_same_process_carries_force_true(service_process, ca
         `force` 的实测形式（`force = 次数 > 1`）；
       - 两行「收到 SIGBREAK，进入关停」都在（两个信号真的都送达了同一个处理函数）；
       - 「立即中止」：退出时延在 `INTERRUPT_EXIT_LATENCY_LIMIT_SECONDS` 之内（在飞那一步
-        还剩 `SHUTDOWN_BLOCKING_HOOK_SECONDS`，收尾用的工作线程是 daemon、进程不等它）。
+        还剩 `SHUTDOWN_BLOCKING_STEP_SECONDS`，收尾用的工作线程是 daemon、进程不等它）。
     """
     case_started = time.monotonic()
-    plugin = fakes.write_blocking_post_hook(
-        case_env, block_seconds=SHUTDOWN_BLOCKING_HOOK_SECONDS
+    plugin = fakes.write_knob_plugin(
+        case_env, capture_class="FakeCaptureBackend",
+        capture_delay_seconds=SHUTDOWN_BLOCKING_STEP_SECONDS,
     )
-    plugin.config["capture.backend"] = "dev"
-    plugin.config["post.hook"] = "meeting_drain_fakes:BlockingThreadPostHook"
     fakes.write_plugin_config(case_env, plugin)
 
     proc = _spawn(service_process, case_env, plugin)
@@ -1022,11 +1061,11 @@ def test_second_press_in_the_same_process_carries_force_true(service_process, ca
         f"第一次按下该走「录音中按一次」那一条路（日志里没有那句话）：\n{_log_text(proc)[-1500:]}"
     )
 
-    # **确定的同步点**：收尾还在跑（`post` 那一步停在 `running`），这时才按第二次
+    # **确定的同步点**：收尾还在跑（`flush` 那一步停在 `running`），这时才按第二次
     during = _wait_state(
         proc,
-        lambda snap: _step_statuses(snap).get("post") == "running",
-        what="两次按下之间收尾的 post 那一步停在 running",
+        lambda snap: _step_statuses(snap).get("flush") == "running",
+        what="两次按下之间收尾的 flush 那一步停在 running",
     )
     assert during["ended"]["phase"] == "draining", during.get("ended")
 
@@ -1051,15 +1090,15 @@ def test_second_press_in_the_same_process_carries_force_true(service_process, ca
     assert exit_latency <= INTERRUPT_EXIT_LATENCY_LIMIT_SECONDS, (
         f"第二次按下之后进程用了 {exit_latency:.2f}s 才退出（上限 "
         f"{INTERRUPT_EXIT_LATENCY_LIMIT_SECONDS}s；现场里那一步阻塞 "
-        f"{SHUTDOWN_BLOCKING_HOOK_SECONDS}s）"
+        f"{SHUTDOWN_BLOCKING_STEP_SECONDS}s）"
     )
 
     steps = ((disk.get("drain") or {}).get("steps")) or []
     print(
         f"[C1 证据] 同一个进程连按两次：第一次 @ {first_pressed - case_started:.3f}s"
         f"（force=False，走 stop_session 那条路，log 里查到「{started_line}」）；"
-        f"第二次 @ {second_pressed - case_started:.3f}s（force=True，收尾仍在跑：post="
-        f"{_step_statuses(during)['post']!r}）\n"
+        f"第二次 @ {second_pressed - case_started:.3f}s（force=True，收尾仍在跑：flush="
+        f"{_step_statuses(during)['flush']!r}）\n"
         f"  退出码 {code}（EXIT_INTERRUPTED={EXIT_INTERRUPTED}），第二次按下到退出 "
         f"{exit_latency:.3f}s\n"
         f"  盘上 {session_dir.name}：state={disk['state']!r} / interrupted={disk['interrupted']!r}"
@@ -1078,11 +1117,12 @@ def test_second_press_in_the_same_process_carries_force_true(service_process, ca
 def test_sigbreak_while_already_draining_exits_130(service_process, case_env):
     """已经停在收尾失败现场再按一次 → 与 ③ 同结果（**不为它单开第三条路径**）。
 
-    失败现场由 `FailingPostHook` 造出：`POST stop` 之后轮询到 `ended.phase == "draining"`
-    且 `post` 那一步 `status == "failed"`，这一档下服务不自杀，正好等第二次信号。
+    失败现场由假采集件的 `finalize()` 抛错造出（收尾第 1 步 `flush` 因此落 `failed`）：
+    `POST stop` 之后轮询到 `ended.phase == "draining"`
+    且 `flush` 那一步 `status == "failed"`，这一档下服务不自杀，正好等第二次信号。
     """
     case_started = time.monotonic()
-    plugin = fakes.write_failing_post_hook(case_env)
+    plugin = fakes.write_failing_capture_plugin(case_env)
     fakes.write_plugin_config(case_env, plugin)
 
     proc = _spawn(service_process, case_env, plugin)
@@ -1094,8 +1134,8 @@ def test_sigbreak_while_already_draining_exits_130(service_process, case_env):
     _wait_state(
         proc,
         lambda snap: (snap.get("ended") or {}).get("phase") == "draining"
-        and _step_statuses(snap).get("post") == "failed",
-        what="收尾落在失败现场（phase 保持 draining、post 是 failed）",
+        and _step_statuses(snap).get("flush") == "failed",
+        what="收尾落在失败现场（phase 保持 draining、flush 是 failed）",
     )
     # 服务不自杀：这一档下进程照常活着
     assert proc.poll() is None
@@ -1117,12 +1157,13 @@ def test_failed_drain_exits_one_and_prints_log_path(service_process, case_env):
     """收尾有步骤 `failed` → 收尾失败档退出码，且终端上出现 log 路径与 `meeting post`。
 
     同一趟顺带断言**服务级 log** 里可查到启动与端口 / URL、以及退出原因与退出码
-    （方案 §6.3 行 304 清单的服务级那半边）。失败手段是共用支持模块里的 `FailingPostHook`
-    （`launch()` 抛错，经 `PYTHONPATH` + `post.hook` 配进子进程），`dev_inject` 那三档故障
+    （方案 §6.3 行 304 清单的服务级那半边）。失败手段是共用支持模块里的
+    `FakeCaptureBackend`（`finalize()` 抛错 → 第 1 步 `flush` 落 `failed`，
+    经 `PYTHONPATH` + `capture.backend` 配进子进程），`dev_inject` 那三档故障
     只改事实流、造不出收尾失败。
     """
     case_started = time.monotonic()
-    plugin = fakes.write_failing_post_hook(case_env)
+    plugin = fakes.write_failing_capture_plugin(case_env)
     fakes.write_plugin_config(case_env, plugin)
 
     proc = _spawn(service_process, case_env, plugin)
@@ -1299,7 +1340,11 @@ def test_sigint_and_sigbreak_share_one_handler(service_process, case_env):
     assert results["sigbreak"]["interrupted"] is False, results
     assert results["sigbreak"]["ended_at_written"], results
     assert results["sigbreak"]["step_ids"] == list(DRAIN_STEP_IDS), results
-    assert all(status in ("done", "skipped") for status in results["sigbreak"]["steps"]), results
+    # 四步都落定：前三步各自的终态，第 4 步如实停在「等你按按钮」那一格（R26）
+    assert all(
+        status in ("done", "skipped", "waiting") for status in results["sigbreak"]["steps"]
+    ), results
+    assert results["sigbreak"]["steps"][-1] == "waiting", results
     _finish_case(case_started, "⑥ 两路信号同形")
 
 

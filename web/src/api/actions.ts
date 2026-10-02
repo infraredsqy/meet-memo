@@ -1,6 +1,7 @@
 import {
   actionBodySchema,
   actionOkSchema,
+  postOkSchema,
   settingsUpdateOkSchema,
   summarizeOkSchema,
   workspaceOkSchema,
@@ -8,6 +9,7 @@ import {
   type ActionDetail,
   type ActionOk,
   type ErrorCode,
+  type PostOk,
   type SettingsUpdateOk,
   type SummarizeOk,
   type WorkspaceOk,
@@ -78,12 +80,13 @@ export class ActionProtocolError extends Error {
 
 /**
  * 动作结果：成功给 `revision`（`settings_update` 另给两个数组、`summarize` 另给一个
- * `summary` 子对象），失败按 `code` 分派。
+ * `summary` 子对象、会后那两个按钮另给一个 `post` 子对象），失败按 `code` 分派。
  */
 export type ActionResult =
   | ({ kind: 'ok' } & ActionOk)
   | ({ kind: 'settings_update' } & SettingsUpdateOk)
   | ({ kind: 'summarize' } & SummarizeOk)
+  | ({ kind: 'post' } & PostOk)
   | ({ kind: 'workspace' } & WorkspaceOk);
 
 export interface PostActionOptions {
@@ -120,6 +123,10 @@ function parseEnvelope(status: number, text: string): ActionResult {
     if (workspace.success) {
       return { kind: 'workspace', ...workspace.data };
     }
+    const post = postOkSchema.safeParse(body);
+    if (post.success) {
+      return { kind: 'post', ...post.data };
+    }
     const settings = settingsUpdateOkSchema.safeParse(body);
     if (settings.success) {
       return { kind: 'settings_update', ...settings.data };
@@ -132,8 +139,8 @@ function parseEnvelope(status: number, text: string): ActionResult {
 
 /**
  * 打一个动作。成功返 `{kind:'ok', ok, revision}`（`settings_update` 另带
- * `applied` / `pending_restart`，`summarize` 另带 `summary`，`workspace_open` /
- * `workspace_remove` 另带 `workspace`），失败抛 `ActionFailedError`
+ * `applied` / `pending_restart`，`summarize` 另带 `summary`，会后那两个按钮另带 `post`，
+ * `workspace_open` / `workspace_remove` 另带 `workspace`），失败抛 `ActionFailedError`
  * （带 `code` / `message` / `detail`）。
  */
 export async function postAction(

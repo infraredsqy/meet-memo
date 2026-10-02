@@ -181,13 +181,17 @@ def test_a_successful_run_writes_the_inputs_the_chunks_and_the_status(tmp_path: 
         "log": ARTIFACT_LOG,
     }
     assert document["dsh"]["exit_code"] == 0
-    assert document["chunks"]["mic"]["total_lines"] == 22, "两条都在时切的是会后那份权威稿"
-    assert document["chunks"]["mic"]["chunk_count"] == 1
-    assert document["chunks"]["loopback"]["chunk_count"] == 1
+    assert document["chunks"]["mic"]["live"]["total_lines"] == 25, "会中稿那一份的行数"
+    assert document["chunks"]["mic"]["offline"]["total_lines"] == 22, "会后稿那一份的行数"
+    assert document["chunks"]["mic"]["live"]["chunk_count"] == 1
+    assert document["chunks"]["mic"]["offline"]["chunk_count"] == 1
+    assert document["chunks"]["loopback"]["live"]["chunk_count"] == 1
+    assert "offline" not in document["chunks"]["loopback"], "这一路没有会后稿：不伪造一份"
     assert launcher.calls and launcher.calls[0]["session_dir"] == session
-    # 盘上的四样
+    # 盘上的四样（两份稿的块各占一个目录）
     assert (session / "working" / "inputs.json").is_file()
-    assert (session / "working" / "mic" / "00_index.md").is_file()
+    assert (session / "working" / "mic" / "live" / "00_index.md").is_file()
+    assert (session / "working" / "mic" / "offline" / "00_index.md").is_file()
     assert (session / "working" / "run_prompt.md").is_file()
     assert (session / STATUS_NAME).is_file()
 
@@ -396,8 +400,9 @@ def test_chunk_lines_from_the_config_reaches_the_chunker(tmp_path: Path) -> None
 
     document = runner_module.run(session, launcher=launcher, config=loaded)
 
-    assert document["chunks"]["mic"]["chunk_count"] == 3, "22 行按 10 行一块切"
-    assert document["chunks"]["loopback"]["chunk_count"] == 2, "15 行按 10 行一块切"
+    assert document["chunks"]["mic"]["offline"]["chunk_count"] == 3, "22 行按 10 行一块切"
+    assert document["chunks"]["mic"]["live"]["chunk_count"] == 3, "25 行按 10 行一块切"
+    assert document["chunks"]["loopback"]["live"]["chunk_count"] == 2, "15 行按 10 行一块切"
 
 
 def test_minutes_hook_null_passes_validation_and_resolves_to_absent(tmp_path: Path) -> None:

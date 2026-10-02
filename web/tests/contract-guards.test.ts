@@ -419,10 +419,9 @@ describe('detail 键集合与 4.4 表逐条相等（M1，样本层精确）', ()
     expect([...seen].sort()).toEqual([...ERROR_CODES].sort());
   });
 
-  it('独档的六个 code：样本的 detail 键集合与 4.4 表精确相等', () => {
+  it('独档的五个 code：样本的 detail 键集合与 4.4 表精确相等', () => {
     const samples: Record<string, string> = {
       already_recording: 'fail-already-recording',
-      draining: 'fail-draining',
       not_recording: 'fail-not-recording',
       persist_failed: 'fail-persist-failed',
       action_unavailable: 'fail-action-unavailable',
@@ -438,6 +437,26 @@ describe('detail 键集合与 4.4 表逐条相等（M1，样本层精确）', ()
         [...(expected ?? [])].sort(),
       );
     }
+  });
+
+  it('draining 两档：样本落在 4.4 写的那一档上，重复按「直接出纪要」那一档的键也在表里', () => {
+    const { detail } = failureOf('fail-draining');
+    const variants = ACTION_DETAIL_VARIANTS['draining'] ?? [];
+    const keys = Object.keys(detail).sort();
+    const matched = variants.some((variant) => variant.slice().sort().join(',') === keys.join(','));
+    expect(matched, `draining 样本的键 ${keys.join(',')} 不在 4.4 的两档里`).toBe(true);
+
+    // 两档的键并集就是 4.4 表里列出来的那七个：多一个键就落不进任何一档。
+    const union = new Set(variants.flat());
+    expect([...union].sort()).toEqual([
+      'dir',
+      'failed_steps',
+      'kind',
+      'log_path',
+      'reason',
+      'session_id',
+      'status_path',
+    ]);
   });
 
   it('capture_unavailable 三档：每个样本各落在 4.4 写的某一档上', () => {
@@ -526,7 +545,7 @@ describe('detail 键集合与 4.4 表逐条相等（M1，样本层精确）', ()
  * （`reprobe` 落地时就漏在这里）。下面两条一条钉枚举、一条钉它**覆盖得住服务报的 `known`**。
  */
 describe('动作名清单与样本里的 known 对齐（看守）', () => {
-  it('`ACTION_NAMES` 逐字九个，`actionNameSchema` 就是这一份', () => {
+  it('`ACTION_NAMES` 逐字十一个，`actionNameSchema` 就是这一份', () => {
     expect([...ACTION_NAMES]).toEqual([
       'start',
       'stop',
@@ -537,11 +556,13 @@ describe('动作名清单与样本里的 known 对齐（看守）', () => {
       'summarize',
       'workspace_open',
       'workspace_remove',
+      'post_offline',
+      'post_minutes',
     ]);
     expect(actionNameSchema.options).toEqual([...ACTION_NAMES]);
   });
 
-  it('九个名字全过 schema，清单外的名字与大小写变体被拒', () => {
+  it('十一个名字全过 schema，清单外的名字与大小写变体被拒', () => {
     expectVerdicts(
       actionNameSchema,
       ['pause', 'resume', 'START', 'Summarize', ''],
@@ -555,7 +576,7 @@ describe('动作名清单与样本里的 known 对齐（看守）', () => {
     );
     if (unknown.body.ok) throw new Error('样本该是失败档');
     const known = unknown.body.detail.known ?? [];
-    // 服务报的七个名字逐个必须是本层认得的动作名（少一名当场红）。
+    // 服务报的每一个名字逐个必须是本层认得的动作名（少一名当场红）。
     for (const name of known) {
       expect(actionNameSchema.safeParse(name).success, `known 里的 ${name}`).toBe(true);
     }

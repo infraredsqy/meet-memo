@@ -1,11 +1,17 @@
 """按行切块 + 行号区间表（`41465462` spec「交付物形状」里的
-`working/<source>/chunks/chunk_NN.md` 与 `working/<source>/00_index.md`）。
+`working/<source>/<kind>/chunks/chunk_NN.md` 与 `working/<source>/<kind>/00_index.md`）。
 
 这个模块服务 spec 里这一条：主 agent 不读原始转写，由子 agent 分工读**块**；块与行号的对应
 关系落在 `00_index.md` 的区间表里，读块的人因此随时能说出「这一句在原文件的第几行」。
 
-**落盘路径本轮钉死一套**（V1 三种写法并存全是错的）：块在 `working/<source>/chunks/chunk_NN.md`，
-区间表在 `working/<source>/00_index.md`。
+**落盘路径本轮钉死一套**（V1 三种写法并存全是错的）：块在
+`working/<source>/<kind>/chunks/chunk_NN.md`，区间表在 `working/<source>/<kind>/00_index.md`。
+
+**`<kind>` 那一层是「两份稿子对拍」的承载**（`docs/design-intent.md` 第 11 条、R11）：
+`live` 是会中稿（`meeting_transcript_<source>.md`）、`offline` 是会后稿
+（`meeting_offline_transcript_<source>.md`）。两条都在时**两份都切、都留在盘上**，
+两路永不合并、两份稿也永不合并；某一档缺席时那一档不切（不伪造空块目录）。
+两路的行号空间各算各的，两份稿的行号空间同样各算各的（各自数自己那一路的行）。
 
 三条与 V1 脚本（`split_chunks.py`，A5）不同的地方，各自都有理由：
 
@@ -28,12 +34,16 @@ from pathlib import Path
 from meeting.minutes.lines import count_lines
 
 #: 转写文件名的两个模板（上游已冻结的契约，本模块**按名字找、不猜**）。
-#: 会中临时稿由 `meeting/asr/pipeline.py` 写，会后权威稿由 `meeting/offline/artifacts.py` 写。
+#: 会中临时稿由 `meeting/asr/pipeline.py` 写，会后稿由 `meeting/offline/artifacts.py` 写。
 LIVE_TRANSCRIPT_TEMPLATE = "meeting_transcript_{source}.md"
 OFFLINE_TRANSCRIPT_TEMPLATE = "meeting_offline_transcript_{source}.md"
 
 #: 两路的取值（spec：这一段落的 `<source>` 只有这两个值）
 SOURCE_IDS: tuple[str, ...] = ("mic", "loopback")
+
+#: 两份稿的取值（**平级**，没有任何一份更可信的排序）：`live` 会中稿 / `offline` 会后稿。
+#: `working/<source>/<kind>/` 的那一层目录名就是它。
+KIND_IDS: tuple[str, ...] = ("live", "offline")
 
 #: 输入档位：两条一起 / 只有会中稿 / 只有会后稿
 MODES: tuple[str, ...] = ("both", "live_only", "offline_only")
@@ -79,14 +89,19 @@ class ChunkRecord:
 
 @dataclass(frozen=True)
 class SourceChunks:
-    """一条输入切完之后的账：转写文件名、总行数、每块的区间、区间表全文。"""
+    """**一份稿**切完之后的账：哪一路、哪一份稿、转写文件名、总行数、每块的区间、区间表全文。"""
 
     source: str
+    kind: str
     transcript: str
     total_lines: int
     chunk_lines: int
     chunks: tuple[ChunkRecord, ...]
     index_text: str
+
+    def __post_init__(self) -> None:
+        if self.kind not in KIND_IDS:
+            raise ChunkError(f"稿别只认 {KIND_IDS}，收到 {self.kind!r}")
 
     @property
     def chunk_count(self) -> int:
@@ -97,16 +112,22 @@ class SourceChunks:
         """块目录（相对本源工作目录），区间表 `- chunk_dir:` 那一格用的就是它。"""
         return f"{CHUNK_DIR_NAME}/"
 
+    @property
+    def base_dir(self) -> str:
+        """这一份稿的工作目录（相对场次目录）：`working/<source>/<kind>`。"""
+        return f"{WORKING_DIR}/{self.source}/{self.kind}"
+
     def as_dict(self) -> dict:
-        """给 `json.dumps()` 用的形状（phase2 往 `inputs.json` 里记分块结果时用）。"""
+        """给 `json.dumps()` 用的形状（两条稿的账各答一份，调用方按 source + kind 收）。"""
         return {
             "source": self.source,
+            "kind": self.kind,
             "transcript": self.transcript,
             "total_lines": self.total_lines,
             "chunk_lines": self.chunk_lines,
             "chunk_count": self.chunk_count,
-            "chunk_dir": f"{WORKING_DIR}/{self.source}/{CHUNK_DIR_NAME}",
-            "index": f"{WORKING_DIR}/{self.source}/{INDEX_NAME}",
+            "chunk_dir": f"{self.base_dir}/{CHUNK_DIR_NAME}",
+            "index": f"{self.base_dir}/{INDEX_NAME}",
             "chunks": [
                 {
                     "file": record.file,
@@ -206,14 +227,21 @@ def chunk_source(
     out_dir: str | Path,
     *,
     chunk_lines: int = DEFAULT_CHUNK_LINES,
+    kind: str = "live",
 ) -> SourceChunks:
-    """把一条转写切成 `out_dir/chunks/chunk_NN.md`，并把区间表写到 `out_dir/00_index.md`。
+    """把**一份稿**切成 `out_dir/chunks/chunk_NN.md`，并把区间表写到 `out_dir/00_index.md`。
 
     读盘用 `errors="replace"`；块文件里**只有原始行**（`"\\n".join(块的行)` 加一个结尾换行）；
     写之前**先删掉本目录里既有的 `chunk_*.md`**（重跑时会议变短，旧块留在盘上会让子 agent 读到
     一段不存在的会议）。
+
+    `out_dir` 由调用方给：产品路径是 `working/<source>/<kind>`（见 `chunk_session()`），
+    两份稿因此各占一个目录、块文件名不会互撞。`kind` 记进返回值（`SourceChunks.kind`），
+    只影响账目，不影响切法。
     """
     size = _validate_chunk_lines(chunk_lines)
+    if kind not in KIND_IDS:
+        raise ChunkError(f"稿别只认 {KIND_IDS}，收到 {kind!r}")
     target = Path(transcript_path)
     lines = read_transcript_text(target).splitlines()
     total = len(lines)
@@ -221,7 +249,8 @@ def chunk_source(
     out = Path(out_dir)
     chunk_dir = out / CHUNK_DIR_NAME
     chunk_dir.mkdir(parents=True, exist_ok=True)
-    # 先清本源：只动 `chunks/` 里 `chunk_*.md` 这一族，别的文件（含别的 source 的产物）一个字节不碰
+    # 先清本目录：只动 `chunks/` 里 `chunk_*.md` 这一族，别的文件（含另一路、另一份稿的
+    # 产物）一个字节不碰
     for stale in sorted(chunk_dir.glob(CHUNK_GLOB)):
         stale.unlink()
 
@@ -250,6 +279,7 @@ def chunk_source(
     (out / INDEX_NAME).write_text(index_text, encoding="utf-8")
     return SourceChunks(
         source=source,
+        kind=kind,
         transcript=target.name,
         total_lines=total,
         chunk_lines=size,
@@ -326,51 +356,57 @@ def chunk_session(
     inputs: Iterable[InputSpec | Mapping[str, object]],
     *,
     chunk_lines: int = DEFAULT_CHUNK_LINES,
-) -> dict[str, SourceChunks]:
-    """按 spec 钉死的路径给每一条输入切块，返回 `{source: SourceChunks}`。
+) -> dict[str, dict[str, SourceChunks]]:
+    """给每一条输入**手上的每一份稿**各切一套块，返回 `{source: {kind: SourceChunks}}`。
 
-    落盘：`<场次目录>/working/<source>/chunks/chunk_NN.md` 与
-    `<场次目录>/working/<source>/00_index.md`。**本函数不写 `inputs.json`**，那是 phase2 的活
-    （它才判得出档位、才数得清两条各自的行数）。
+    落盘：`<场次目录>/working/<source>/<kind>/chunks/chunk_NN.md` 与
+    `<场次目录>/working/<source>/<kind>/00_index.md`（`<kind>` 取 `live` / `offline`）。
+    **本函数不写 `inputs.json`**，那是 phase2 的活（它才判得出档位、才数得清两条各自的行数）。
 
     `inputs` 既收 `InputSpec`，也收 `inputs.json` 里那种逐条映射（`{"source": …, "live": {"file": …}}`），
-    因此 phase2 可以直接把自己写下的那份清单交进来。**每一条输入各切各的**：会中与会后两条都在时，
-    这一路切的是会后那份权威稿（离线那条是权威），缺席时退回会中稿。
+    因此 phase2 可以直接把自己写下的那份清单交进来。
+
+    **两条稿都在时两份都切、都留在盘上**（R11 / `docs/design-intent.md` 第 11 条）：
+    这一层不再挑「哪一份更可信」，挑了就等于替模型下结论，而实测并不保证某一份稳定更好。
+    某一份不在盘上时那一格不出现在返回值里（不建空目录、不伪造一份空块）。
     """
     session = Path(session_dir)
     working = session / WORKING_DIR
-    result: dict[str, SourceChunks] = {}
+    result: dict[str, dict[str, SourceChunks]] = {}
     for spec in inputs:
-        source, name = _transcript_of(spec)
-        base = working / source
-        result[source] = chunk_source(
-            source,
-            session / name,
-            base,
-            chunk_lines=chunk_lines,
-        )
+        for source, kind, name in _transcripts_of(spec):
+            result.setdefault(source, {})[kind] = chunk_source(
+                source,
+                session / name,
+                working / source / kind,
+                chunk_lines=chunk_lines,
+                kind=kind,
+            )
     return result
 
 
-def _transcript_of(spec: InputSpec | Mapping[str, object]) -> tuple[str, str]:
-    """从 `InputSpec` 或 `inputs.json` 的逐条映射里取 `(source, 转写文件名)`。
+def _transcripts_of(spec: InputSpec | Mapping[str, object]) -> list[tuple[str, str, str]]:
+    """从 `InputSpec` 或 `inputs.json` 的逐条映射里取 `[(source, kind, 转写文件名), …]`。
 
-    取的是**会后那份权威稿优先、缺席时退回会中稿**：分块这一步只服务阶段 3 的逐段总结，
-    而阶段 3 读的是「这一路在的那一份」。两条都在时读权威稿（spec：离线那条是权威）。
+    **两份稿都取、一个不落**（会中稿在前、会后稿在后，与会中那条链的写法次序一致）。
+    只取在盘上写着名字的那几份：某一份文件名缺席时它不出现在返回值里 —— 「切一份」与
+    「这一份不在」是两件事，只有后者才该少切一套。
+
+    `offline` 优先的旧口径（`spec.offline or spec.live`）在这里退场：它把「会后那份是权威」
+    写死在代码里，而 R11 要的是两份放在一起对拍、由模型按内容判。
     """
     if isinstance(spec, InputSpec):
         source = spec.source
-        name = spec.offline or spec.live
+        found = [("live", spec.live), ("offline", spec.offline)]
     else:
         source = str(spec.get("source") or "")
-        offline = spec.get("offline")
-        live = spec.get("live")
-        name = _name_in(offline) or _name_in(live)
+        found = [("live", _name_in(spec.get("live"))), ("offline", _name_in(spec.get("offline")))]
     if not source:
         raise ChunkError(f"输入清单里有一条说不出 source 的记录：{spec!r}")
-    if not name:
+    picked = [(source, kind, str(name)) for kind, name in found if name]
+    if not picked:
         raise ChunkError(f"输入 {source!r} 里没有任何一份转写文件名（live / offline 都是空）")
-    return source, name
+    return picked
 
 
 def _name_in(entry: object) -> str | None:
@@ -421,12 +457,13 @@ def main(argv: Sequence[str] | None = None, *, prog: str = "python -m meeting.mi
     except ChunkError as exc:
         print(f"切块失败：{exc}", file=sys.stderr)
         return 1
-    for source, report in chunks.items():
-        print(
-            f"{source}: {report.transcript} {report.total_lines} 行 → "
-            f"{report.chunk_count} 块（每块 {report.chunk_lines} 行），"
-            f"区间表 {WORKING_DIR}/{source}/{INDEX_NAME}"
-        )
+    for source, per_kind in chunks.items():
+        for kind, report in per_kind.items():
+            print(
+                f"{source}/{kind}: {report.transcript} {report.total_lines} 行 → "
+                f"{report.chunk_count} 块（每块 {report.chunk_lines} 行），"
+                f"区间表 {WORKING_DIR}/{source}/{kind}/{INDEX_NAME}"
+            )
     print(f"档位：{mode}")
     return 0
 
@@ -441,6 +478,7 @@ __all__ = [
     "CHUNK_GLOB",
     "DEFAULT_CHUNK_LINES",
     "INDEX_NAME",
+    "KIND_IDS",
     "LIVE_TRANSCRIPT_TEMPLATE",
     "MAX_CHUNK_LINES",
     "MIN_CHUNK_LINES",

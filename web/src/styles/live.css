@@ -1829,7 +1829,35 @@ input[type="checkbox"] {
   font-size: var(--size-small);
 }
 
-/* 6. 弹窗：目录选择器与确认共用一层 */
+/* 6. 会后那两块（R26：两个按钮都不按，这一场就什么都不跑） */
+.wspane__post {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: var(--size-divider) solid var(--t-rule-hair);
+}
+
+.wspane__posttitle {
+  font-size: var(--size-micro);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+  color: var(--t-ink-faint);
+}
+
+.wspane__postacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.wspane__postline {
+  color: var(--t-ink-mid);
+  font-size: var(--size-small);
+  line-height: var(--line-normal);
+}
+
+/* 7. 弹窗：目录选择器与确认共用一层 */
 .dlg__layer {
   position: fixed;
   inset: 0;

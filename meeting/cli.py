@@ -11,8 +11,9 @@
 （PCM → MP3，复用 `meeting/capture/archive.py` 那一份转码）→ 跑离线那一趟 → 等纪要那一层的
 终态 → 把每层的结论与产物**绝对路径**汇总成一份可读摘要。`post()` 只做三件事：解析参数 →
 调 `run_post()` → 按返回的 `exit_code` 挑 `sys.exit(<常量>)` 并打终端输出。
-**两条入口共用同一段编排**：开会结束时自动跑的那一遍（`meeting/backends/post.py` 的
-`PostProcessHook._run()`）也调 `run_post()`，两处因此不会分叉。
+**编排的共用面**：`run_post()` 是 `meeting post` 这条入口的编排；`meeting/backends/post.py`
+的 `PostProcessHook._run()` 调的也是它（`7c6952e5`），但那个钩子当前没有调用方 ——
+收尾第 4 步不再拉起任何会后动作，「生成会后精细稿」按钮走 `run_session` 直路。
 
 `config.py` / `logging_setup.py` **不定义退出码常量**：它们只抛本 Phase 已定的异常
 （配置损坏、值级非法、主 log 不可写），由 `main()` 映射成 §3.4 的常量后 `sys.exit`。
@@ -78,7 +79,8 @@ POST_USAGE = (
 POST_FLAGS: tuple[str, ...] = ("--force",)
 
 # ---------------------------------------------------------------------------
-# 会后编排（`meeting post` 与「开会结束时自动跑的那一遍」共用这一段）
+# 会后编排（`meeting post` 这条入口的 run_post()；`PostProcessHook._run()` 也调它，
+# 但该钩子当前没有调用方——收尾不自动跑、按钮走 run_session 直路）
 # ---------------------------------------------------------------------------
 
 #: 归档那一层的三种结论文档名
@@ -519,8 +521,9 @@ def run_post(
 
       - **两层都到终态**（且音频已归档）→ 打印「无待办」，`EXIT_OK`，**一个引擎调用、
         一个子进程都不产生**；
-      - **只差一层** → 只跑那一层（`run_session(..., offline=False)` 时离线段一个引擎都不调，
-        `minutes=False` 时那一道 `_announce_minutes()` 不拉起子会话）；
+      - **只差一层** → 只跑那一层（`run_session(..., minutes=False)` 时那一道
+        `_announce_minutes()` 不拉起子会话，「生成会后精细稿」那个按钮走的正是这一档）；
+        `meeting post` 这一条入口照旧两层都办（R15：命令行只有这两个词，不给分层开关）；
       - **任一层停在 `running`** → 默认**拒绝这一趟**（`EXIT_REJECTED`），提示里点名那一个
         状态文件并给出「加 `--force` 再来」—— 两个 `meeting post` 对同一目录齐发时，
         第二趟因此不会跟着拉起第二个子会话；

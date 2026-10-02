@@ -113,15 +113,18 @@ def _entry_of(record: Mapping[str, Any]) -> tuple[str, int] | None:
 
 
 def expected_lines_from_inputs(document: Mapping[str, Any]) -> dict[str, int]:
-    """从 `working/inputs.json` 的内容里取「每条 source 的真实行数」。
+    """从 `working/inputs.json` 的内容里取「每条 source 的真实行数」（**会中稿那一份**）。
 
-    这条是 `validate_segmentation()` 的 `expected_lines` 那条路（**以输入清单为准**）：
-    每一路取哪一份稿的数，与切块那一步取哪一份稿**同一条口径**——会后那份权威稿优先
-    （`chunk.chunk_session()` 切的就是它），离线那条缺席时退回会中稿。
+    划段的自检（`validate_segmentation()` 的 `expected_lines` 那条路）只认真实行数，而
+    「这一路该盖到第几行」的分母是**会中稿**那一份：会中稿每一路都有（离线那一趟是可选的，
+    R9），两份稿的行号空间又各算各的，拿会后那一份的数去核会中稿划出来的段必然对不上。
+    这一条与提示词阶段 2 那句「划段按这一路在场那份稿的行号空间来：两份都在按会中稿，
+    只有会后稿的场次按会后稿」是同一个口径。
 
-    **说不出行数的那一条 source 整个不出现**（那一格缺 `lines`、或两条稿都不在）：
-    契约校验在这一档下只核说得出真实行数的那几条，剩下的几条退回方案自己声明的
-    `total_lines`（对象形状），而不是拿一个猜的数去核。
+    **说不出行数的那一条 source 整个不出现**（那一格缺 `lines`、或会中稿不在）：契约校验在
+    这一档下只核说得出真实行数的那几条，剩下的几条退回方案自己声明的 `total_lines`（对象形状），
+    而不是拿一个猜的数去核。一路只有会后稿、没有会中稿时退回会后稿那一格的行数 ——
+    那一档下它是这一路唯一在手的稿，划段的分母只能是它。
     """
     sources = document.get("sources")
     if not isinstance(sources, Sequence) or isinstance(sources, (str, bytes)):
@@ -137,7 +140,7 @@ def expected_lines_from_inputs(document: Mapping[str, Any]) -> dict[str, int]:
         source = record.get("source")
         if not isinstance(source, str) or not source:
             raise SegmentationContractError(f"输入清单 sources 第 {index} 条说不出 source")
-        entry = _entry_of(record.get("offline")) or _entry_of(record.get("live"))
+        entry = _entry_of(record.get("live")) or _entry_of(record.get("offline"))
         if entry is not None:
             result[source] = entry[1]
     return result
@@ -412,18 +415,29 @@ def load_segmentation(
     return dict(payload)
 
 
-def expected_lines_from_chunks(chunks: Mapping[str, Any]) -> dict[str, int]:
-    """从 `chunk_session()` 的返回值里取「每条 source 的真实行数」。
+def expected_lines_from_chunks(chunks: Mapping[str, Any]) -> dict[str, dict[str, int]]:
+    """从 `chunk_session()` 的返回值里取「每一路每一份稿的真实行数」。
 
-    phase2 的 runner 手上正好有那两份 `SourceChunks`；把这一步收成一个小函数，是为了让
+    `chunk_session()` 的返回值形状是 `{source: {kind: SourceChunks}}`（两份稿各一套块），
+    交回来的账因此也逐份回答：`{"mic": {"live": 25, "offline": 22}}`。
     「真实行数」只有一种取法（`SourceChunks.total_lines`，也就是 `lines.count_lines()` 的数法）。
+
+    划段那一层用的分母是**会中稿**那一份（提示词的阶段 2 写着这一条）；
+    本函数只如实报手上两份各几行，选哪一份由调用方自己说。
     """
-    result: dict[str, int] = {}
-    for source, report in chunks.items():
-        total = getattr(report, "total_lines", None)
-        if total is None:
-            raise SegmentationContractError(f"source {source!r} 的切块结果里没有 total_lines")
-        result[str(source)] = int(total)
+    result: dict[str, dict[str, int]] = {}
+    for source, reports in chunks.items():
+        if not isinstance(reports, Mapping):
+            raise SegmentationContractError(f"source {source!r} 的切块结果该是逐份稿的对象")
+        per_kind: dict[str, int] = {}
+        for kind, report in reports.items():
+            total = getattr(report, "total_lines", None)
+            if total is None:
+                raise SegmentationContractError(
+                    f"source {source!r} 的 {kind!r} 切块结果里没有 total_lines"
+                )
+            per_kind[str(kind)] = int(total)
+        result[str(source)] = per_kind
     return result
 
 

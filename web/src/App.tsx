@@ -1035,8 +1035,8 @@ export function LiveView(): ReactNode {
             </div>
             <div className="alert__body">
               {snapshot.ended.phase === 'done'
-                ? '音频与日志均已落盘，会后处理已启动，可以关机。'
-                : '音频仍在转码、落盘，会后处理也刚启动。这些步骤走完之前，数据还没有落好。'}
+                ? '音频与日志均已落盘，可以关机。会后那两趟回工作台按按钮。'
+                : '音频仍在转码、落盘。这些步骤走完之前，数据还没有落好。'}
             </div>
             <div className="alert__acts">
               <span className="kv__v">

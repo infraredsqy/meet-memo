@@ -25,11 +25,16 @@
 它们在填进正文之前先被替换掉。
 
 **档位与说明段都按「逐 source」口径**（`41465462` phase2 第 0 节 M1 的定案）：每一条输入各自
-判它有哪几条稿（`both` / `live_only` / `offline_only`），说明段**逐 source 各写一句**它这一路
-有什么；整体 `{{MODE}}` 取「两路合并后的公共档位」，两路不同时取 `both`（至少有一条真·离线稿
-在，不许再把整场说成降级）。此前那一版在「一路两条都在、另一路只有会中稿」时会渲染出
-自相矛盾的提示词：说明段说「本次只有会中临时稿、不要为任何人名给出推断」，同一份提示词的
+判它手上有哪几份稿（`both` / `live_only` / `offline_only`），说明段**逐 source 各写一句**它这一路
+有什么；整体 `{{MODE}}` 取「两路合并后的公共档位」，两路不同时取 `both`（至少有一份真·会后稿
+在，不许再把整场说成降级）。此前那一版在「一路两份都在、另一路只有会中稿」时会渲染出
+自相矛盾的提示词：说明段说「本次只有会中稿、不要为任何人名给出推断」，同一份提示词的
 清单里却写着另一路「带聚类编号」。
+
+**两份稿平级、一起喂**（`docs/design-intent.md` 第 11 条、R11 / R12）：清单里**逐份稿印一条**
+（同一路两份都在时两行），块落在 `working/<source>/<kind>/`（`<kind>` = `live` / `offline`），
+`{{MODE_NOTE}}` 只陈述事实。**这一层里不存在任何"哪一份更可信 / 更权威"的排序** ——
+实测并不保证会后那份更好，把结论写进提示词就是替模型下判断。
 """
 
 from __future__ import annotations
@@ -43,6 +48,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from meeting.minutes.chunk import (
+    CHUNK_DIR_NAME,
     INDEX_NAME,
     MODES,
     WORKING_DIR,
@@ -89,12 +95,17 @@ SPEAKER_SHAPE_NOTES: dict[str, str] = {
     "offline": "带聚类编号（每行形如 `[HH:MM] **S01**: 正文`）",
 }
 
-#: 清单里每条输入印哪种稿的说明。**按输入的语义字段判、不按文件名的子串判**
-#: （phase2 第 0 节 M2 的定案）：加一层目录、换一种命名都会让「名字里有没有 `offline`」
-#: 这个隐式约定说错话，而 `InputSpec` 里本来就分着 `live` / `offline` 两条语义。
+#: 两份稿的人话标签。**只有这两份稿这一个维度，没有排序**：谁也不叫"权威"、谁也不"优先"
+#: （`docs/design-intent.md` 第 11 条、R11 —— 实测并不保证某一份稳定更好）。
 KIND_LABELS: dict[str, str] = {
-    "live": "会中临时稿",
-    "offline": "会后权威稿",
+    "live": "会中稿",
+    "offline": "会后稿",
+}
+
+#: 两份稿的文件名模板（写进清单，读的人据此回原始文件核）
+KIND_FILE_TEMPLATES: dict[str, str] = {
+    "live": "meeting_transcript_<source>.md",
+    "offline": "meeting_offline_transcript_<source>.md",
 }
 
 #: 两路各自的稿型（判逐 source 档位与列表说明用）
@@ -104,13 +115,52 @@ KINDS: tuple[str, ...] = ("live", "offline")
 #: 只有会后。清单与说明段都按它说话，`kinds_per_source()` 的分类也落在这三个词上。
 INPUT_KINDS: tuple[str, ...] = ("both", "live_only", "offline_only")
 
-#: 稿型 → 说明段里那一句该怎么写：两条都在时把两种形态各说一句（读的人据此知道
-#: 这一路的每一份稿长什么样）。
-SOURCE_KIND_NOTES: dict[str, tuple[str, ...]] = {
-    "both": ("live", "offline"),
-    "live_only": ("live",),
-    "offline_only": ("offline",),
-}
+#: 一份稿的形态说明（写进清单与说明段：这一份长什么样）
+def shape_of(kind: str) -> str:
+    """某一份稿的形态说明（`会中稿，无说话人标签（…）`）。"""
+    return f"{KIND_LABELS[kind]}，{SPEAKER_SHAPE_NOTES[kind]}"
+
+
+def kind_for(kinds: Sequence[str]) -> str:
+    """这一路**手上有哪几份稿** → `both` / `live_only` / `offline_only`。
+
+    只按「哪几份在」判，不排先后、不说哪一份更好（R11：两份平级）。
+    """
+    present = set(kinds)
+    if present == {"live", "offline"}:
+        return "both"
+    if present == {"live"}:
+        return "live_only"
+    if present == {"offline"}:
+        return "offline_only"
+    raise PromptTemplateError(f"这一路的稿别说不出（收到 {sorted(present)}）")
+
+
+def _note_sentence(source: str, kinds: Sequence[str]) -> str:
+    """说明段里**某一路**那一句：它这一路手上有哪几份稿、每一份长什么样。
+
+    **逐条写清、不做排序**：两条都在时把两份的名字与形态各说一句，并明说「不合并、没有先后」；
+    缺一条时如实写缺的是哪一份（以及缺的那一步对不上），**不把缺的那一条说成不可信**。
+    """
+    kind = kind_for(kinds)
+    if kind == "both":
+        shape = "；".join(shape_of(item) for item in ("live", "offline"))
+        return (
+            f"> `{source}` 这一路的稿：{shape}。两份都在，**平级、不合并**，"
+            "逐块对照那一步两份都要读。"
+        )
+    only = kinds[0]
+    if kind == "live_only":
+        return (
+            f"> `{source}` 这一路本次只有{shape_of(only)}。会后稿不在这台机器上，"
+            "逐块对照那一步没有第二条可对。附录里如实写明「这一路分不出个人」，"
+            "不要为任何人名给出推断。"
+        )
+    return (
+        f"> `{source}` 这一路本次只有{shape_of(only)}。会中稿不在这台机器上，"
+        "逐块对照那一步没有第二条可对。附录里如实写明「这一路分不出个人」，"
+        "不要为任何人名给出推断。"
+    )
 
 
 class PromptTemplateError(ValueError):
@@ -123,35 +173,41 @@ class PromptTemplateError(ValueError):
 
 @dataclass(frozen=True)
 class PromptInput:
-    """提示词清单里的一条输入。
+    """提示词清单里的一条：**某一路的某一份稿**（`live` 或 `offline`）。
 
-    `transcript` 是**相对场次目录**的转写路径，`index` / `chunk_dir` 是分块产物的相对路径。
+    `transcript` 是**相对场次目录**的转写路径（那一份稿的原始文件），`index` / `chunk_dir`
+    是那一份稿的分块产物（`working/<source>/<kind>/…`）。这条稿在不在盘上由这一格回答 ——
+    **两条都在时它出现两次（两条各一条），谁也不替谁**（R11：两份稿平级、一起喂给模型）。
     路径一律正斜杠（构造时就把反斜杠换掉，见 `_posix()`）：渲染器任何一处都不该把反斜杠漏出去。
 
-    `kind` 是这一条是**哪种稿**（`both` / `live_only` / `offline_only`），由调用方从输入的
-    语义字段给出来（`InputSpec.live` / `InputSpec.offline` 两条字段在不在）。它是
-    `{{MODE}}` 那一格与清单里那句说话人形态说明的**唯一依据**：清单不再去猜文件名的子串。
+    `kind` 是这一条是**哪一份稿**（`live` / `offline`）：`{{MODE}}` 那一格、清单里那句
+    说话人形态说明与说明段都按它说话，**不拿文件名的子串猜**。
     """
 
     source: str
+    kind: str
     transcript: str
     lines: int
     chunk_count: int
     index: str
     chunk_dir: str
-    kind: str
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "transcript", _posix(self.transcript))
         object.__setattr__(self, "index", _posix(self.index))
         object.__setattr__(self, "chunk_dir", _posix(self.chunk_dir))
-        if self.kind not in INPUT_KINDS:
-            raise PromptTemplateError(f"稿型只认 {INPUT_KINDS}，收到 {self.kind!r}")
+        if self.kind not in KINDS:
+            raise PromptTemplateError(f"稿别只认 {KINDS}，收到 {self.kind!r}")
+
+    @property
+    def label(self) -> str:
+        """这一份稿的人话标签（会中稿 / 会后稿）。"""
+        return KIND_LABELS[self.kind]
 
 
 @dataclass(frozen=True)
 class InputsListing:
-    """渲染一份提示词需要的全部输入事实（一到两条）。"""
+    """渲染一份提示词需要的全部输入事实（一到两路，每路一到两份稿，逐份一条）。"""
 
     session_dir: str
     mode: str
@@ -159,16 +215,24 @@ class InputsListing:
 
     @property
     def sources(self) -> tuple[str, ...]:
-        return tuple(item.source for item in self.inputs)
+        """出现过的 source（按出现序，同一个 source 只答一次）。"""
+        seen: list[str] = []
+        for item in self.inputs:
+            if item.source not in seen:
+                seen.append(item.source)
+        return tuple(seen)
+
+    def kinds_of(self, source: str) -> tuple[str, ...]:
+        """这一路手上有哪几份稿（`("live",)` / `("live", "offline")` …）。"""
+        return tuple(item.kind for item in self.inputs if item.source == source)
 
     def kinds_per_source(self) -> tuple[tuple[str, str], ...]:
         """逐 source 的稿型：`(("mic", "both"), ("loopback", "live_only"))`。
 
-        每一条输入的 `kind` 本来就是这三个词之一（两条都在 / 只有会中 / 只有会后），
-        这里只按出现序答一遍。**同一条 source 出现两次是渲染器的另一条错**
-        （`render_prompt()` 拦），这里不做去重、只按顺序答。
+        每一条 source 答一格（同一个 source 的两份稿在这三格里合成一个词），
+        说明段与整场档位都按它说话。
         """
-        return tuple((item.source, item.kind) for item in self.inputs)
+        return tuple((source, kind_for(self.kinds_of(source))) for source in self.sources)
 
 
 def _posix(value: object) -> str:
@@ -176,56 +240,59 @@ def _posix(value: object) -> str:
     return str(value).replace("\\", "/")
 
 
-def _note_sentence(source: str, kind: str) -> str:
-    """说明段里**某一路**那一句（它这一路有哪几份稿、每一份长什么样）。"""
-    kinds = SOURCE_KIND_NOTES[kind]
-    if kind == "both":
-        shape = "；".join(
-            f"{KIND_LABELS[item]}（{SPEAKER_SHAPE_NOTES[item]}）" for item in kinds
-        )
-        return f"> `{source}` 这一路的稿：{shape}。"
-    only = kinds[0]
-    if kind == "live_only":
-        return (
-            f"> `{source}` 这一路本次只有{KIND_LABELS[only]}，{SPEAKER_SHAPE_NOTES[only]}。"
-            "附录里如实写明「这一路分不出个人」，不要为任何人名给出推断。"
-        )
-    return (
-        f"> `{source}` 这一路本次只有{KIND_LABELS[only]}，{SPEAKER_SHAPE_NOTES[only]}。"
-        "会中临时稿不在这台机器上，逐块对照那一步没有第二条可对。"
-    )
-
-
 def mode_note_text(mode: str, per_source: Sequence[tuple[str, str]]) -> str:
-    """档位说明段（`both` 档、且每一路两条都在时给空字符串：那一档没有降级要说）。
+    """档位说明段（`both` 档、且每一路两份都在时也**逐路写一句事实**）。
 
     `per_source` 是**逐 source 的稿型**（`InputsListing.kinds_per_source()` 那个形状），
     说明段因此逐 source 各写一句它这一路有哪几份稿。整体 `mode` 决定这一段说的是哪一种话：
 
-      - `both`：两路合并后的公共档位。每一路两条都在时这一段是空的（没有降级要说）；
-        某一两路缺稿时逐 source 各写一句它缺的是哪一份 —— **不许出现与清单不符的话**
+      - `both`：两路合并后的公共档位。每一路两份都在时这一段写一句「两路两份都在」的
+        事实句（`post/loopback` 这类名字逐路列出来）；某一两路缺稿时逐 source 各写一句
+        它缺的是哪一份 —— **不许出现与清单不符的话**
         （phase2 第 0 节 M1：这个混合形状曾经渲染出自相矛盾的提示词）；
-      - `live_only` / `offline_only`：整场只有哪一种稿，那句话把两路的名字一起列出来，
+      - `live_only` / `offline_only`：整场只有哪一份稿，那句话把两路的名字一起列出来，
         再嘱咐附录如实写「这一路分不出个人」。
 
-    这一层是**事实陈述**：写出来的每句话都要在清单里找得到依据。
+    这一层是**事实陈述**：写出来的每句话都要在清单里找得到依据，且**不出现任何
+    「哪一份更可信 / 更权威」的排序**（R11、`docs/design-intent.md` 第 11 条）。
     """
     if mode not in MODES:
         raise PromptTemplateError(f"档位只认 {MODES}，收到 {mode!r}")
     where = "、".join(source for source, _ in per_source) if per_source else "（没有输入）"
     if mode == "both":
         if all(kind == "both" for _, kind in per_source) and per_source:
-            return ""
-        return "\n".join(_note_sentence(source, kind) for source, kind in per_source)
+            # 两份都全这一档不再是空的（复审 m9）：spec 完成判定第 3 条要求「说明段逐条写清
+            # 这一场手上有哪几份」，只有这一档原先什么都没写、那一格渲染成空白行。
+            shape = "；".join(shape_of(item) for item in ("live", "offline"))
+            return (
+                f"> 本次这两路两份都在（{where}）：{shape}。两份**平级、不合并**，"
+                "逐块对照那一步两份都要读。"
+            )
+        return "\n".join(_note_sentence(source, _kinds_of(kind)) for source, kind in per_source)
     if mode == "live_only":
         return (
-            f"> 本次只有会中临时稿（{where}），没有说话人标签。"
-            "附录里如实写明「这一路分不出个人」，不要为任何人名给出推断。"
+            f"> 本次两路都只有{shape_of('live')}。会后稿不在这台机器上，"
+            "逐块对照那一步没有第二条可对。附录里如实写明「这一路分不出个人」，"
+            "不要为任何人名给出推断。"
+            f"（这一档的两路：{where}。）"
         )
     return (
-        f"> 本次只有会后权威稿（{where}）。会中临时稿不在这台机器上，"
-        "逐块对照那一步没有第二条可对。"
+        f"> 本次两路都只有{shape_of('offline')}。会中稿不在这台机器上，"
+        "逐块对照那一步没有第二条可对。附录里如实写明「这一路分不出个人」，"
+        "不要为任何人名给出推断。"
+        f"（这一档的两路：{where}。）"
     )
+
+
+def _kinds_of(kind: str) -> tuple[str, ...]:
+    """稿型那一个词 → 它在场的那几份稿（`_note_sentence()` 只收「哪几份在」）。"""
+    if kind == "both":
+        return ("live", "offline")
+    if kind == "live_only":
+        return ("live",)
+    if kind == "offline_only":
+        return ("offline",)
+    raise PromptTemplateError(f"稿型只认 {INPUT_KINDS}，收到 {kind!r}")
 
 
 def build_inputs_text(listing: InputsListing) -> str:
@@ -234,32 +301,35 @@ def build_inputs_text(listing: InputsListing) -> str:
     清单给两条读法：一段人话（一眼看清这一轮吃什么）与一份 JSON（模型与程序都能照字段读）。
     路径都是**相对场次目录**的，模型的工作目录就是那个场次目录。
 
-    每条输入印两种稿里的哪一种，**按它的 `kind` 字段判**（`InputSpec` 的语义字段），
-    不拿文件名的子串猜。
+    **逐份稿印一条**：同一路两条稿都在时它出现两行（会中稿一行、会后稿一行），
+    每行写清它那一份的文件名、行数、块数与区间表 —— 模型照清单读得到两份，
+    不必自己去猜另一份在哪（R11 / R29 的提示词这一侧）。
     """
     lines = [
-        f"本轮输入 {len(listing.inputs)} 条，工作目录是场次目录本身，下面所有路径都相对它：",
-        "- 转写文件：各自的名字见下表（会中稿是临时稿，会后稿是权威稿）",
-        f"- 分块产物：`{WORKING_DIR}/<source>/{INDEX_NAME}` 是行号区间表，"
-        f"块文件在 `{WORKING_DIR}/<source>/chunks/chunk_NN.md`",
+        f"本轮输入 {len(listing.sources)} 路、共 {len(listing.inputs)} 份稿，"
+        "工作目录是场次目录本身，下面所有路径都相对它：",
+        "- 转写文件：两份稿**平级**（会中稿 / 会后稿），没有哪一份更可信，"
+        "清单里逐份写清在不在、在哪",
+        f"- 分块产物：`{WORKING_DIR}/<source>/<kind>/{INDEX_NAME}` 是那一份稿的行号区间表，"
+        f"块文件在 `{WORKING_DIR}/<source>/<kind>/chunks/chunk_NN.md`"
+        f"（`<kind>` 取 `{'` / `'.join(KINDS)}`）",
         "",
     ]
-    table = ["| source | 转写文件 | 行数 | 块数 | 区间表 |", "| --- | --- | --- | --- | --- |"]
+    table = [
+        "| source | 稿 | 转写文件 | 行数 | 块数 | 区间表 |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
     for item in listing.inputs:
         table.append(
-            f"| {item.source} | {item.transcript} | {item.lines}"
+            f"| {item.source} | {item.label} | {item.transcript} | {item.lines}"
             f" | {item.chunk_count} | {item.index} |"
         )
     lines.extend(table)
     lines.append("")
     for item in listing.inputs:
-        shape = "；".join(
-            f"{KIND_LABELS[kind]}，{SPEAKER_SHAPE_NOTES[kind]}"
-            for kind in SOURCE_KIND_NOTES[item.kind]
-        )
         lines.append(
-            f"`{item.source}`：{item.transcript}（{item.lines} 行，{shape}），"
-            f"切了 {item.chunk_count} 块，"
+            f"`{item.source}` 的{item.label}：{item.transcript}（{item.lines} 行，"
+            f"{SPEAKER_SHAPE_NOTES[item.kind]}），切了 {item.chunk_count} 块，"
             f"块文件在 `{item.chunk_dir}/`，区间表 `{item.index}`。"
         )
     lines.append("")
@@ -276,22 +346,30 @@ def build_inputs_text(listing: InputsListing) -> str:
 
 
 def _listing_payload(listing: InputsListing) -> dict:
-    """清单的 JSON 读法（字段名与 `working/inputs.json` 的逐条形状对齐）。"""
+    """清单的 JSON 读法（逐 source 一格，稿别在 `kinds` 里逐份列出）。"""
     return {
         "session_dir": _posix(listing.session_dir),
         "mode": listing.mode,
-        "source_count": len(listing.inputs),
+        "source_count": len(listing.sources),
         "sources": [
             {
-                "source": item.source,
-                "transcript": item.transcript,
-                "kind": item.kind,
-                "lines": item.lines,
-                "chunk_count": item.chunk_count,
-                "chunk_dir": item.chunk_dir,
-                "index": item.index,
+                "source": source,
+                "kind": kind_for(listing.kinds_of(source)),
+                "kinds": [
+                    {
+                        "kind": item.kind,
+                        "label": item.label,
+                        "transcript": item.transcript,
+                        "lines": item.lines,
+                        "chunk_count": item.chunk_count,
+                        "chunk_dir": item.chunk_dir,
+                        "index": item.index,
+                    }
+                    for item in listing.inputs
+                    if item.source == source
+                ],
             }
-            for item in listing.inputs
+            for source in listing.sources
         ],
     }
 
@@ -343,9 +421,9 @@ def render_prompt(
             raise PromptTemplateError(f"输入 {item.source!r} 的转写路径是空的")
         if not item.index.strip() or not item.chunk_dir.strip():
             raise PromptTemplateError(f"输入 {item.source!r} 的分块产物路径是空的")
-    sources = listing.sources
-    if len(set(sources)) != len(sources):
-        raise PromptTemplateError(f"输入清单里有重复的 source：{list(sources)}")
+    pairs = [(item.source, item.kind) for item in listing.inputs]
+    if len(set(pairs)) != len(pairs):
+        raise PromptTemplateError(f"输入清单里有重复的 (source, kind)：{pairs}")
 
     #: 占位符的名字与它的字面量（渲染时逐个替换）
     defined = {name: "{{" + name + "}}" for name in PLACEHOLDER_NAMES}
@@ -431,9 +509,11 @@ def render_session_prompt(
 def listing_for_session(session_dir: str | Path, *, mode: str | None = None) -> InputsListing:
     """按盘上的转写与分块产物拼出一份 `InputsListing`。
 
-    每条输入的块数与行数从 `working/<source>/00_index.md` 读（`- total_lines:` 与
-    `- chunk_count:` 两条 bullet）；区间表还没切出来时块数记 0，行数退回数转写本身的行数 ——
-    刚录完、还没切块时渲染一次提示词是正常用法，这一档不该抛错。
+    每条输入的块数与行数从**那一份稿自己的** `working/<source>/<kind>/00_index.md` 读
+    （`- total_lines:` 与 `- chunk_count:` 两条 bullet；那一份是这一路唯一在手的稿时，旧位置
+    `working/<source>/00_index.md` 是它的退路，见 `_prompt_inputs()`）；区间表还没切出来时
+    块数记 0，行数退回数转写本身的行数 —— 刚录完、还没切块时渲染一次提示词是正常用法，
+    这一档不该抛错。
     """
     session = Path(session_dir)
     specs = discover_inputs(session)
@@ -442,55 +522,65 @@ def listing_for_session(session_dir: str | Path, *, mode: str | None = None) -> 
         raise PromptTemplateError(
             f"场次目录里没有任何一条转写，不渲染提示词（不启动子会话）：{session}"
         )
-    inputs = tuple(_prompt_input(session, spec) for spec in specs)
+    inputs = tuple(item for spec in specs for item in _prompt_inputs(session, spec))
     return InputsListing(session_dir=str(session), mode=resolved, inputs=inputs)
 
 
-def _prompt_input(session: Path, spec: InputSpec) -> PromptInput:
-    """一条输入的分块产物读数（转写优先取会后那份权威稿）。
+def _prompt_inputs(session: Path, spec: InputSpec) -> tuple[PromptInput, ...]:
+    """一条输入的分块产物读数：**它手上每一份稿各答一条**（顺序恒为 `live` → `offline`）。
 
-    `kind` 走 `_spec_kind()`：这一路有哪几条稿由 `spec` 的语义字段回答
-    （`live` / `offline` 两条字段在不在），**不拿文件名的子串猜**。
-    选中的那一份转写不在盘上时抛 `PromptTemplateError`（与渲染器其它坏输入同档），
-    不把裸 `OSError` 漏给调用方。
+    两份都在时交出两条 —— 清单与说明段因此逐份说清，模型读得到两份（R11 / R29）。
+    某一份缺席时那一条不出现在返回值里（不编一份不在的稿）。
+
+    块数与行数从**那一份稿自己的** `working/<source>/<kind>/00_index.md` 读
+    （`- total_lines:` 与 `- chunk_count:` 两条 bullet）；区间表还没切出来时块数记 0、
+    行数退回数那一份转写本身的行数 —— 刚录完、还没切块时渲染一次提示词是正常用法，
+    这一档不该抛错。**某一档缺席时的退路**是这条 source 名下的旧位置（`working/<source>/`，
+    两份稿只切了一套时的历史产物）：只在那一份就是这一路**唯一**在手的稿时兜一次，
+    免得旧场次目录渲染不出提示词。
+
+    这一份稿的文件名在盘上不在、区间表也没有时抛 `PromptTemplateError`
+    （与渲染器其它坏输入同档），不把裸 `OSError` 漏给调用方。
     """
-    name = spec.offline or spec.live
-    if not name:
+    found: list[PromptInput] = []
+    for kind, name in (("live", spec.live), ("offline", spec.offline)):
+        if not name:
+            continue
+        base = f"{WORKING_DIR}/{spec.source}/{kind}"
+        lines, chunk_count = _read_index(session / base / INDEX_NAME)
+        if lines is None and _is_the_only_kind(spec):
+            base = f"{WORKING_DIR}/{spec.source}"
+            lines, chunk_count = _read_index(session / base / INDEX_NAME)
+        if lines is None:
+            transcript = session / name
+            try:
+                text = transcript.read_text(encoding="utf-8", errors="replace")
+            except OSError as exc:
+                raise PromptTemplateError(
+                    f"输入 {spec.source!r} 的{kind}转写读不动：{transcript}"
+                    f"（{type(exc).__name__}: {exc}）"
+                ) from exc
+            lines = count_lines(text)
+            chunk_count = 0
+        found.append(
+            PromptInput(
+                source=spec.source,
+                kind=kind,
+                transcript=name,
+                lines=lines,
+                chunk_count=chunk_count or 0,
+                index=f"{base}/{INDEX_NAME}",
+                chunk_dir=f"{base}/{CHUNK_DIR_NAME}",
+            )
+        )
+    if not found:
         raise PromptTemplateError(f"输入 {spec.source!r} 里没有任何一份转写文件名")
-    kind = _spec_kind(spec)
-    index = session / WORKING_DIR / spec.source / INDEX_NAME
-    lines, chunk_count = _read_index(index)
-    if lines is None:
-        transcript = session / name
-        try:
-            text = transcript.read_text(encoding="utf-8", errors="replace")
-        except OSError as exc:
-            raise PromptTemplateError(
-                f"输入 {spec.source!r} 的转写读不动：{transcript}"
-                f"（{type(exc).__name__}: {exc}）"
-            ) from exc
-        lines = count_lines(text)
-        chunk_count = 0
-    return PromptInput(
-        source=spec.source,
-        transcript=name,
-        lines=lines,
-        chunk_count=chunk_count or 0,
-        index=f"{WORKING_DIR}/{spec.source}/{INDEX_NAME}",
-        chunk_dir=f"{WORKING_DIR}/{spec.source}/chunks",
-        kind=kind,
-    )
+    return tuple(found)
 
 
-def _spec_kind(spec: InputSpec) -> str:
-    """这一路自己有哪几条稿：`both` / `live_only` / `offline_only`。
-
-    这里问的是**盘上两条都在不在**（`spec` 的两个字段），与 `chunk_session()` 切的是哪一份
-    无关：切成会后那份权威稿是为了读，两条都在这件事本身要如实写在清单与说明段里。
-    """
-    if spec.live and spec.offline:
-        return "both"
-    return "live_only" if spec.live else "offline_only"
+def _is_the_only_kind(spec: InputSpec) -> bool:
+    """这一路是不是只有一份稿在（只有它时才允许退回 `working/<source>/` 的旧位置）。"""
+    return bool(spec.live) != bool(spec.offline)
 
 
 #: 区间表里那两个数（`- total_lines: 738` / `- chunk_count: 5`）
@@ -555,22 +645,24 @@ __all__ = [
     "DEFAULT_TEMPLATE",
     "INPUT_KINDS",
     "KINDS",
+    "KIND_FILE_TEMPLATES",
     "KIND_LABELS",
     "MODEL_CWD",
     "PHASE_BODY_BEGIN",
     "PHASE_BODY_END",
     "PLACEHOLDER_NAMES",
     "PLACEHOLDER_RE",
-    "SOURCE_KIND_NOTES",
     "SPEAKER_SHAPE_NOTES",
     "InputsListing",
     "PromptInput",
     "PromptTemplateError",
     "build_inputs_text",
     "extract_phase_body",
+    "kind_for",
     "listing_for_session",
     "main",
     "mode_note_text",
     "render_prompt",
     "render_session_prompt",
+    "shape_of",
 ]

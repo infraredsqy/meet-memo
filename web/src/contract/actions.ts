@@ -30,7 +30,10 @@ export const actionRequestSchema = z
  * 逐条对着 4.4 的表：
  *
  * - `already_recording`：`{session_id, dir, elapsed_seconds}`；
- * - `draining`：`{session_id, dir, failed_steps, log_path}`；
+ * - `draining` **两档**：`{session_id, dir, failed_steps, log_path}`（这一场还没结束 /
+ *   已经有一趟会后活没跑完）、`{kind, dir, status_path, reason}`（纪要那一层的账停在
+ *   `running`：重复按「直接出纪要」拿到的是这一档，见 `docs/contract.md` 4.3）——
+ *   两档并起来是这七个键；
  * - `capture_unavailable` 三档（空对象 / `{session_id, dir, error}` /
  *   `{session_id, dir, reason}`）**并起来**是这四个键（`dir` / `error` / `reason` /
  *   `session_id`）—— 样本按它自己那一档写，各档的键都是这四个的子集；
@@ -50,7 +53,7 @@ export const ACTION_DETAIL_KEYS: Readonly<
   Record<z.infer<typeof errorCodeSchema>, readonly string[] | null>
 > = {
   already_recording: ['session_id', 'dir', 'elapsed_seconds'],
-  draining: ['session_id', 'dir', 'failed_steps', 'log_path'],
+  draining: null,
   capture_unavailable: null,
   not_recording: [],
   invalid_setting: null,
@@ -71,6 +74,11 @@ export const ACTION_DETAIL_VARIANTS: Readonly<
 > = {
   // 空对象；第一版 session.json 写不进去；采集起不来。
   capture_unavailable: [[], ['session_id', 'dir', 'error'], ['session_id', 'dir', 'reason']],
+  // 这一场还没结束 / 有一趟会后活没跑完；纪要那一层的账停在 running（重复按「直接出纪要」）。
+  draining: [
+    ['session_id', 'dir', 'failed_steps', 'log_path'],
+    ['kind', 'dir', 'status_path', 'reason'],
+  ],
   // 值非法；dev_inject 的取值非法；空；未知动作名。
   invalid_setting: [
     ['key', 'value', 'legal'],
@@ -158,6 +166,27 @@ export const summarizeOkSchema = z
   .strict();
 
 /**
+ * 会后两个按钮（`post_offline` / `post_minutes`）的成功体：通用信封 + 一个 `post` 键。
+ *
+ * 这一格说的是「这一趟跑的是**哪一场**、跑的**哪一趟**」（`{kind, dir}`），回执里
+ * **没有**「跑完了没有」这一格 —— 那一趟可能跑一小时，跑成什么样由这一场盘上的
+ * 状态文件回答（`meeting_offline_status.json` / `meeting_minutes_status.json`，
+ * 见 `docs/requirements.md` R26 与 R27）。
+ */
+export const postOkSchema = z
+  .object({
+    ok: z.literal(true),
+    revision: z.number().int(),
+    post: z
+      .object({
+        kind: z.enum(['offline', 'minutes']),
+        dir: z.string(),
+      })
+      .strict(),
+  })
+  .strict();
+
+/**
  * 逐档 `detail` 形状（4.4）。`detail` **恒是对象** —— 没有补充信息时给**空对象 `{}`**，
  * 所以基档就是 `{}`，各档在它上面补键。补出来的键一律 `optional()`：
  * `capture_unavailable` 有三档、`invalid_setting` 有四档，界面按**有哪个键就显示哪个键**来画。
@@ -203,7 +232,7 @@ export const describeFailure = z
   .object({
     // already_recording: {session_id, dir, elapsed_seconds}
     // capture_unavailable 第一/三档: {session_id, dir, error|reason}
-    // draining: {session_id, dir, failed_steps, log_path}
+    // draining 第一档: {session_id, dir, failed_steps, log_path}
     session_id: z.string().optional(),
     dir: z.string().optional(),
     elapsed_seconds: z.number().optional(),
@@ -221,8 +250,12 @@ export const describeFailure = z
     log_path: z.string().optional(),
     // capture_unavailable 第二档（第一版 session.json 写不进去）
     error: z.string().optional(),
-    // capture_unavailable 第三档（采集起不来）
+    // capture_unavailable 第三档（采集起不来）与 draining 第二档（纪要那一层的账停在 running）
+    // 共用这一格
     reason: z.string().optional(),
+    // draining 第二档：这一趟跑的是哪一层、那一层的状态文件落在哪、既有那一版为什么拒跑
+    kind: z.enum(['offline', 'minutes']).optional(),
+    status_path: z.string().optional(),
     // invalid_setting 第一档（值非法）
     key: z.string().optional(),
     value: z.unknown().optional(),
@@ -261,6 +294,7 @@ export const actionErrorSchema = z
 export const actionBodySchema = z.union([
   summarizeOkSchema,
   workspaceOkSchema,
+  postOkSchema,
   settingsUpdateOkSchema,
   actionOkSchema,
   actionErrorSchema,
@@ -281,6 +315,7 @@ export const actionFixtureSchema = z
 
 export type ActionRequest = z.infer<typeof actionRequestSchema>;
 export type ActionOk = z.infer<typeof actionOkSchema>;
+export type PostOk = z.infer<typeof postOkSchema>;
 export type SettingsUpdateOk = z.infer<typeof settingsUpdateOkSchema>;
 export type SummarySections = z.infer<typeof summarySectionsSchema>;
 export type SummarizeResult = z.infer<typeof summarizeResultSchema>;

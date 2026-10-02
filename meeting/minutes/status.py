@@ -257,9 +257,10 @@ def mark_running(
     """**把「这一层在飞」写到盘上**，返回那一版状态；已经在飞时抛 `AlreadyRunningError`。
 
     这是纪要那一层「正在跑」这件事的**唯一持久落点**，供拉起方（
-    `meeting/backends/minutes.py::MinutesHook.launch()`）在**建线程之前**同步调用一次：
-    调用返回时，盘上那份 `meeting_minutes_status.json` 已经读得出 `state = "running"`，
-    于是另一个进程（用户随后手敲的 `meeting post`、或开会结束时自动跑的那一趟）当场
+    `meeting/backends/minutes.py::MinutesHook` 的 `claim()` / `launch()`）在**建线程之前**
+    同步调用一次：调用返回时，盘上那份 `meeting_minutes_status.json` 已经读得出
+    `state = "running"`，于是另一趟（用户随后手敲的 `meeting post` 是另一个进程；
+    工作台「直接出纪要」按钮那一趟也在起线程之前经 `claim()` 同步走到这里）当场
     就能看见「上一趟还在跑」，按现成的 `running` 拒跑档收场 —— 拉起与拒跑因此落在同一份
     账上，谁也漏不掉。
 

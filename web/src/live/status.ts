@@ -55,7 +55,12 @@ export function statusView(
       };
     case 'ended':
       return endedPhase === 'done'
-        ? { name: '已结束 · 已完成', note: '可以关机', glyph: 'glyph--done', tone: 'off' }
+        ? {
+            name: '已结束 · 已完成',
+            note: '可以关机；会后那两趟回工作台按按钮',
+            glyph: 'glyph--done',
+            tone: 'off',
+          }
         : {
             name: '已结束 · 收尾中',
             note: '正在落盘，先别关机',

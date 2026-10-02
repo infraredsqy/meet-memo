@@ -1,19 +1,20 @@
-"""会后钩子（`7c6952e5` phase2）：收尾第 4 步的落点。
+"""会后钩子（`7c6952e5` phase2）：会后离线转写那一层的解析落点。
 
 `registry.resolve_post_hook()` 按 `post.hook` 找的就是本模块的 `PostProcessHook`
-（`DEFAULT_PATHS["post.hook"]` 那条约定路径）。本模块就位之后，`post.hook = auto`
-的构建里收尾第 4 步从 `skipped` 翻成 `done`，服务侧一行都不用改。
+（`DEFAULT_PATHS["post.hook"]` 那条约定路径）。**它现在没有自动调用方**：收尾第 4 步
+不再拉起任何会后动作（那一格做完释放显存就停在 `waiting`），「生成会后精细稿」按钮走
+`offline.runner.run_session(..., minutes=False)` 的直路也不经它 —— `post.hook` 在那一侧
+只答「这一层接没接」（`null` → 按钮 404 `action_unavailable`）。
 
 ## 契约（`docs/backend-protocols.md`）
 
   - `launch(session_dir)` **返回即算启动成功**：活儿交给一条 **daemon 线程**，
-    调用方（收尾第 4 步）不等它跑完；
+    调用方不等它跑完；
   - 线程里跑的是 `meeting.cli.run_post()` —— **与 `meeting post` 同一段编排**
-    （`65dd3e4c` phase1 把「跑会后一套」收成一条两条入口共用的函数：音频归档补齐 →
-    离线那一趟 → 等纪要终态 → 汇总），因此两条入口的语义不会分叉；
+    （`65dd3e4c` phase1 把「跑会后一套」收成一条共用的函数：音频归档补齐 →
+    离线那一趟 → 等纪要终态 → 汇总）；
   - 线程里的任何异常都落进 `meeting_offline_status.json` 的 `error`，
-    **不许把异常抛回收尾流程** —— 收尾那一步记 `done`（启动成功），跑不跑得成
-    由状态文件回答；
+    **不许把异常抛给调用方** —— 跑不跑得成由状态文件回答；
   - 会话级 `session.json` 归收尾流程写，这条后台线程**不去碰它**；
   - **重依赖在函数体内 import**（`torch` / `transformers` / `av` 都在
     `meeting.offline` 的那几个模块里，本模块自己一条都不拉）：
@@ -50,14 +51,16 @@ class PostProcessHook:
     """
 
     def launch(self, session_dir: str) -> None:
-        """收尾第 4 步调它，**返回即算启动成功**（不等它跑完）。
+        """**返回即算启动成功**（不等它跑完）。
 
+        当前没有产品路径调用它（收尾第 4 步不再拉起任何会后动作，按钮那一侧走
+        `run_session` 直路）；`post.hook` 的解析结论只答「这一层接没接」。
         `session_dir` 是这一场的场次目录。起一条 daemon 线程跑
         `meeting.offline.runner.run_session(session_dir)`，随即返回。
         """
         target = str(session_dir or "")
         if not target:
-            # 没有场次目录就没有落点：如实报错，让收尾那一步按「有实现却跑不成」记 failed
+            # 没有场次目录就没有落点：如实报错（有调用方时按「有实现却跑不成」记账）
             raise ValueError("launch() 需要场次目录（收到空值）")
         thread = threading.Thread(
             target=self._run,
@@ -72,8 +75,8 @@ class PostProcessHook:
     def _run(self, session_dir: str) -> None:
         """线程体：跑完整条会后链；**任何异常都落进状态文件，绝不外传**。
 
-        `meeting.cli.run_post()` 就是「跑会后一套」那一段共用的编排（`meeting post` 与
-        本钩子两条入口走的是同一份实现），它自己会把离线状态文件从 `running` 落到终态
+        `meeting.cli.run_post()` 是「跑会后一套」那一段共用的编排（`meeting post` 那条入口
+        走的就是它，本线程体也调它），它自己会把离线状态文件从 `running` 落到终态
         （离线段归 `meeting.offline.runner.run_session()`）。它整个抛出来时（进程被杀、
         磁盘写不进去这类），这里把状态文件补成 `failed` 并写上原因，那一格于是不会永远
         停在 `running`。

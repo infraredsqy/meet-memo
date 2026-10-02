@@ -95,7 +95,12 @@ from meeting.state import (
     start_recording,
     validate_health,
 )
-from meeting.workspace import WorkspaceRegistry, canonical_dir, classify_workspace_dir
+from meeting.workspace import (
+    WorkspaceRegistry,
+    canonical_dir,
+    classify_workspace_dir,
+    has_offline_transcript,
+)
 
 _log = logging.getLogger("meeting.service.runtime")
 
@@ -350,7 +355,8 @@ ACTION_CODES: tuple[str, ...] = (
 )
 
 #: 动作名清单（phase2 §3.13 + `dca4539b` 的 `reprobe` + `1987cb20` phase2 的 `summarize`
-#: + 工作台收编节点的 `workspace_open` / `workspace_remove`）
+#: + 工作台收编节点的 `workspace_open` / `workspace_remove` + 本节点的两个会后按钮
+#: `post_offline` / `post_minutes`）
 ACTION_NAMES: tuple[str, ...] = (
     "start",
     "stop",
@@ -361,6 +367,8 @@ ACTION_NAMES: tuple[str, ...] = (
     "summarize",
     "workspace_open",
     "workspace_remove",
+    "post_offline",
+    "post_minutes",
 )
 
 #: `start` 的 `mode` 取值域与缺省
@@ -491,6 +499,16 @@ class ServiceRuntime:
         #: 会中总结那一次模型调用的**同步调用专用**执行器（工作线程是 daemon，
         #: 与收尾四步那台分属两台池，见 `_DaemonThreadPoolExecutor` 的说明）
         self._summary_executor: _DaemonThreadPoolExecutor | None = None
+
+        # -- 会后的两趟活（人按才起，`d63b0f4a` 的两个按钮）--------------------
+        #
+        # `self.post_job` 记**这一趟会后活跑到哪一档**（`None` = 没有在跑的）：
+        #   {"kind": "offline"|"minutes", "dir": …, "thread": <Thread>, "started_at": …}
+        # 它**不写快照、不落盘**：这一格是服务进程自己的现场（界面问「有没有会后精细稿」
+        # 走 `GET /api/sessions` 的 `has_offline`，那一条读盘，与本字段无关）。
+        # 「一趟没跑完就按第二个按钮」当场拒（409 `draining`）：一张显卡上不该同时开两份模型
+        # （`docs/design-intent.md` 第 21 条）。
+        self.post_job: dict[str, Any] | None = None
 
     # -- 只读小接口 -------------------------------------------------------
 
@@ -1988,6 +2006,12 @@ class ServiceRuntime:
         `session.json` 读得出来时带值（四档之外如实为 `null`，不反查映射）。
         `recent` 是最近一次被打开/切换的那一条的目录（**只从注册表读**，不扫任何场次
         目录 —— 启动序列对它的口径见 `docs/state.md`「重启自洽」）。
+
+        `has_offline` 是「这一场有没有会后精细稿」那一格（R29）：判据是场次目录里在不在
+        `meeting_offline_transcript_<source>.md`（`workspace.has_offline_transcript()`，
+        只看名目、不读内容）。「出纪要」那个按钮按它渲染 —— 界面因此一眼看得出 AI 手上
+        有没有那份更细的稿。**这一格走本端点，不塞进快照**（推送出去的东西只认那九个顶层键，
+        前端两道硬门钉着）。
         """
         rows: list[dict[str, Any]] = []
         for entry in self.registry.entries():
@@ -2013,6 +2037,7 @@ class ServiceRuntime:
                     "state": state,
                     "date": date,
                     "mode": mode,
+                    "has_offline": has_offline_transcript(path),
                     "added_at": entry["added_at"],
                     "last_opened_at": entry["last_opened_at"],
                 }
@@ -2022,6 +2047,334 @@ class ServiceRuntime:
             "sessions": rows,
             "recent": None if recent is None else str(recent["dir"]),
         }
+
+    # -- 会后的两趟活（人按才起：`post_offline` / `post_minutes` 两个动作）-----
+
+    def post_job_state(self) -> dict[str, Any] | None:
+        """会后那两趟活的现场读数（`None` = 没有在跑的）。
+
+        `running` 由线程自己落（跑完那一刻清掉），因此这一格不会永远停在"在跑"。
+        它只进动作回执与 log，不进快照、不落盘（快照九键一个字不动）。
+        """
+        job = self.post_job
+        if job is None:
+            return None
+        if not job["thread"].is_alive():
+            self.post_job = None
+            return None
+        return {
+            "kind": job["kind"],
+            "dir": job["dir"],
+            "started_at": job["started_at"],
+        }
+
+    def _reject_post_job(self) -> None:
+        """会后那两趟活的两道闸：还会中动作在跑，或已经有一趟没跑完。
+
+        「还会中动作在跑」按 `draining` 档报（409）：会后那两个按钮要等收尾走完才轮得到
+        （收尾本身还在落盘、音频还没归档好，此刻起会后是白跑）。**收尾落定之后**
+        （四步都到了 `done` / `skipped` / `waiting` 那一格）就放行 —— 那一格正是
+        「工作区回到没有进行中的会议」的现场：`ended.phase` 可能还是 `draining`
+        （收尾里有失败步时它本来就停在那一档），但会后该不该跑与那一步的成败无关。
+        「已经有一趟在飞」同样按 `draining` 报：一张显卡上不并排开两份模型
+        （`docs/design-intent.md` 第 21 条）。`action_unavailable`（404）留给
+        「这台机器上没接这一层的实现」那一档。
+        """
+        job = self.post_job_state()
+        if job is not None:
+            raise ActionError(
+                "draining",
+                f"会后的活儿正在跑（{job['kind']}）：{job['dir']}；等它跑完再按",
+                status=409,
+                detail={"kind": job["kind"], "dir": job["dir"], "started_at": job["started_at"]},
+            )
+        draining = self.snapshot.top_state in ("recording", "alert") or (
+            self.snapshot.ended is not None and not self.drain_has_settled()
+        )
+        if draining:
+            raise ActionError(
+                "draining",
+                "这一场还没结束（或收尾还没走完）：会后的两个按钮要等收尾落定",
+                status=409,
+                detail={
+                    "top_state": self.snapshot.top_state,
+                    "session_id": None if self.snapshot.session is None else self.snapshot.session.id,
+                    "dir": None if self.snapshot.session is None else self.snapshot.session.dir,
+                },
+            )
+
+    def _registry_entry_for(self, target: str) -> dict[str, Any] | None:
+        """`target` 在注册表里那一条（判据与 `GET /api/sessions` **同一套**：`normcase` 后的
+        规范路径）。没登记过 → `None`。"""
+        wanted = os.path.normcase(canonical_dir(target))
+        for entry in self.registry.entries():
+            if os.path.normcase(canonical_dir(str(entry["dir"]))) == wanted:
+                return entry
+        return None
+
+    def _session_dir_for_post(self, args: dict[str, Any] | None = None) -> str:
+        """这两个按钮跑的是哪一场。
+
+        **给了 `args["dir"]` 就按它指定的那一场跑**（工作台里选中并按下按钮的那一行就是
+        这一场：界面那一格 `has_offline` 说的也是它，动作与界面因此同源），该路径要过与
+        `GET /api/sessions` 同一套注册表 / 目录判读的校验 —— 不在注册表里、目录不在原地、
+        或盘上还停在 `recording` / `draining`（这一场还没结束）都按 `invalid_setting`(400)
+        如实回错档；**没给 `dir` 时退回原来那条**：跑**收尾刚走完、盘上停着的那一场**
+        （`session` 还在，命令行与既有用例都走这一路）。
+
+        没有场次时按 `draining` 档拒（见 `_reject_post_job()` 的第二道闸）。
+        """
+        raw = None if args is None else args.get("dir")
+        if raw is not None and str(raw).strip():
+            target = canonical_dir(raw)
+            entry = self._registry_entry_for(target)
+            probe = classify_workspace_dir(target)
+            record = self.store.read_session_json(target)
+            disk_state = None if record is None else str(record.get("state") or "")
+            why: str | None = None
+            if entry is None:
+                why = ("这一场不在工作台清单里（`GET /api/sessions` 读的就是那份注册表）："
+                       "先在界面上把它打开，或把 `dir` 指到清单里的一行")
+            elif probe["kind"] == "missing":
+                why = "这一场的目录已不在原地"
+            elif disk_state in ("recording", "draining"):
+                why = f"这一场还没结束（盘上 state={disk_state}）：等收尾落定再按"
+            if why is not None:
+                raise ActionError(
+                    "invalid_setting",
+                    why,
+                    status=400,
+                    detail={
+                        "key": "dir",
+                        "value": str(raw),
+                        "legal": [
+                            "工作台清单里、目录还在原地、盘上 state 不是 recording / draining "
+                            "的一场；省略时跑收尾刚落定的那一场",
+                        ],
+                        "dir": target,
+                        "kind": probe["kind"],
+                        "state": disk_state or None,
+                    },
+                )
+            return target
+        session = self.snapshot.session
+        if session is None:
+            raise ActionError(
+                "draining",
+                "现在没有可以跑后会的场次（先录一场、再按结束录音）",
+                status=409,
+                detail={"session_id": None, "dir": None},
+            )
+        return str(session.dir)
+
+    def _start_post_job(self, kind: str, target: str, *, claimed_minutes: bool = False) -> None:
+        """起一条 daemon 线程跑这一趟，并把它记进 `post_job`。
+
+        线程体里的异常**只落 log**：这一趟的成不成由盘上的产物与状态文件回答
+        （`meeting_offline_status.json` / `meeting_minutes_status.json`），
+        与 `PostProcessHook` / `MinutesHook` 那两条既有契约同一姿态。
+
+        `claimed_minutes=True` 表示纪要那一层的 claim 已经在动作本体里同步认过（m2），
+        线程体那一趟因此直接起线程、不再认第二次。
+        """
+        thread = threading.Thread(
+            target=self._run_post_job,
+            args=(kind, target, claimed_minutes),
+            name=f"post-{kind}",
+            daemon=True,
+        )
+        self.post_job = {
+            "kind": kind,
+            "dir": target,
+            "thread": thread,
+            "started_at": now_iso(),
+        }
+        thread.start()
+
+    def _run_post_job(self, kind: str, target: str, claimed_minutes: bool = False) -> None:
+        """线程体：跑会后的某一趟，跑完当场结束（模型用完就关，不留在显存里等下一次）。"""
+        try:
+            if kind == "offline":
+                self._run_post_offline(target)
+            else:
+                self._run_post_minutes(target, claimed=claimed_minutes)
+        except BaseException:  # 后台线程的异常没有别的落点，兜到底
+            _log.exception("会后的活儿（%s）抛出来了：%s", kind, target)
+        finally:
+            self.post_job = None
+            _log.info("会后的活儿（%s）收工：%s", kind, target)
+
+    def _run_post_offline(self, target: str) -> None:
+        """「生成会后精细稿」那一趟：**只跑离线那一条链，纪要一动不动**（R26）。
+
+        跑的是与 `meeting post` 同一段实现（`offline.runner.run_session()`），但
+        `minutes=False`：这一趟**不通知纪要那一层**（尾巴上那道
+        `_announce_minutes()` 不拉起子会话）—— 纪要归另一个按钮。
+        引擎按 `post.engine` / `post.model` / `post.dtype` 现造（缺省就是真离线模型）。
+        """
+        from meeting.offline import runner as offline_runner
+
+        _log.info("按「生成会后精细稿」起这一趟离线链：%s", target)
+        offline_runner.run_session(target, minutes=False)
+
+    def _run_post_minutes(self, target: str, *, claimed: bool = False) -> None:
+        """「直接出纪要」那一趟：把**手上有的稿子**交给 DSH（R9：缺会后稿就按现有档位降级）。
+
+        拉起点按 `minutes.hook` 解析（与收尾第 4 步原来那一处同源）；解析不出实现时
+        没东西可拉，如实抛出去、由线程体记一条 log —— 动作本身在起线程之前就已经
+        把「有没有实现」答完了（见 `post_minutes()`）。
+
+        `claimed=True`：那一版 claim 已经由 `post_minutes()` 同步认过（m2），这里不再
+        重复认一次 —— 否则会读到自己刚落下的 `running`、把这一趟自己拒掉。
+        """
+        from meeting.backends.registry import resolve_minutes_hook
+
+        resolution = resolve_minutes_hook()
+        if not resolution.has_implementation:
+            raise RuntimeError(
+                f"minutes.hook 解析不出实现（selector={resolution.selector}）：这一场不产生纪要"
+            )
+        _log.info("按「直接出纪要」拉起纪要那一层：%s（%s）", target, resolution.selector)
+        if claimed:
+            resolution.implementation.launch(target, claimed=True)
+        else:
+            resolution.implementation.launch(target)
+
+    def post_offline(self, args: dict[str, Any] | None = None) -> dict[str, Any]:
+        """`post_offline` 动作：「生成会后精细稿（走离线模型）」。
+
+        跑的是会后**离线**那一条链（慢、占显卡、出带说话人编号的那一份稿）；这一趟
+        **不碰纪要**（R26 的两个独立按钮）。起一条 daemon 线程即算启动成功，
+        这一趟跑多久由 `/api/state` 与盘上的离线状态文件回答。
+
+        这台机器上没接会后钩子（`post.hook = null`）时当场拒（404 `action_unavailable`）：
+        按钮按下去什么都不发生比报一句实话更坏。
+
+        `args["dir"]` 给定时跑它指定的那一场（校验见 `_session_dir_for_post()`）。
+        """
+        self._reject_post_job()
+        resolution = self.post_resolution
+        if resolution is None or resolution.skipped():
+            raise ActionError(
+                "action_unavailable",
+                "这台机器上没有接会后精细稿这一层（post.hook 缺席或写成 null）",
+                status=404,
+                detail={"key": "post.hook", "selector": None if resolution is None else resolution.selector},
+            )
+        target = self._session_dir_for_post(args)
+        self._start_post_job("offline", target)
+        return {"kind": "offline", "dir": target}
+
+    def post_minutes(self, args: dict[str, Any] | None = None) -> dict[str, Any]:
+        """`post_minutes` 动作：「直接出纪要（拿手上有的稿子交给 DSH）」。
+
+        **不补跑离线那一层**（R9 的「这一条是可选的」）：手上有会中稿就拿它出纪要，
+        会后稿在的话两份一起给（R11 的两份对拍）；两份都没有时由纪要那一层按现成档位
+        记 `failed` + 原因，不静默出一份空纪要。起一条 daemon 线程即算启动成功。
+
+        `minutes.hook = null`（这台机器上不接纪要这一层）时当场拒（404 `action_unavailable`）。
+
+        `args["dir"]` 给定时跑它指定的那一场（校验见 `_session_dir_for_post()`）。
+
+        **在飞判据是同步的**（m2）：起线程之前先按 `minutes` 那一层**盘上的 claim 闸**
+        （`MinutesHook.claim()` → `meeting/minutes/status.py::mark_running()`，既有那一把锁，
+        不另发明一套）同步认一次账 —— 上一趟还在飞时当场按 409 `draining`
+        如实回一句「已经在飞」，而不是回 `{kind: 'minutes'}` 那个假成功（线程体里那条
+        `AlreadyRunningError` 原先只落一条 log，动作本体早就把「已起」答出去了）。
+        """
+        self._reject_post_job()
+        from meeting.backends.registry import resolve_minutes_hook
+
+        resolution = resolve_minutes_hook()
+        if not resolution.has_implementation:
+            raise ActionError(
+                "action_unavailable",
+                "这台机器上没有接纪要这一层（minutes.hook 缺席或写成 null）",
+                status=404,
+                detail={"key": "minutes.hook", "selector": resolution.selector},
+            )
+        target = self._session_dir_for_post(args)
+        claimed = self._claim_minutes_layer(resolution, target)
+        try:
+            self._start_post_job("minutes", target, claimed_minutes=claimed)
+        except BaseException as exc:
+            # 线没起来（`threading.Thread(...)` / `thread.start()` 这一类）：刚认下的那一版
+            # claim 不能留在盘上 —— 留着就是一个永远在飞的账，之后每一次按「直接出纪要」都被
+            # claim 闸按 409 拒，界面上没有出路（m4）。退回它、再把异常原样上抛。
+            if claimed:
+                self._release_minutes_claim(resolution, target, exc)
+            raise
+        return {"kind": "minutes", "dir": target}
+
+    def _claim_minutes_layer(self, resolution: Any, target: str) -> bool:
+        """起线程之前**同步**认一次「纪要这一层在飞」的账（m2），**返回认没认成**。
+
+        判据复用 `meeting/minutes/status.py` 那把 claim 闸（实现经 `claim()` 暴露它，
+        没有 `claim()` 的实现照旧走线程体那条路，返回值是 `False`）：盘上停着一版 `running`
+        时这一趟当场按 409 `draining` 拒，`detail` 带上那一层的状态文件落点与既有那一版的原因。
+        """
+        claim = getattr(resolution.implementation, "claim", None)
+        if not callable(claim):
+            return False
+        from meeting.backends.minutes import AlreadyRunningError
+        from meeting.minutes.status import status_path
+
+        try:
+            claim(target)
+        except AlreadyRunningError as exc:
+            raise ActionError(
+                "draining",
+                f"纪要这一层已经在飞（{status_path(target).name} 停在 running）：这一趟不再拉起子会话",
+                status=409,
+                detail={
+                    "kind": "minutes",
+                    "dir": target,
+                    "status_path": str(status_path(target)),
+                    "reason": str(exc),
+                },
+            ) from exc
+        return True
+
+    def _release_minutes_claim(
+        self, resolution: Any, target: str, exc: BaseException
+    ) -> None:
+        """起线程那一步抛出来时，把刚认下的那一版 claim **如实退回**（m4）。
+
+        这一版是 `claim()` 同步落下的（`meeting/minutes/status.py` 那把既有 claim 锁）；线没起来
+        的话就没有人来收它，盘上会永远停在 `running`，之后每一趟都被 claim 闸按 409 拒
+        （`--force` 是命令行那一趟的出路，界面上没有）。这里按 `MinutesHook._mark_failed()`
+        那支**既有写法**把它补成 `failed` + 原因（同一份状态文件、同一个写入函数，
+        不另发明一套锁、也不动 `claim()` 的语义），随后调用方原样上抛异常。
+
+        实现没有 `_mark_failed()` 时（`claim()` 是可选能力，替身可以只实现它）直接按同一份
+        状态文件的既有写法补一版：退回这一步失败只留一条 log，不掩盖原来那个异常。
+        """
+        mark_failed = getattr(resolution.implementation, "_mark_failed", None)
+        if callable(mark_failed):
+            mark_failed(target, exc)
+            return
+        try:
+            from meeting.minutes import status as status_module
+
+            path = status_module.status_path(target)
+            existing: dict[str, Any] = {}
+            if path.exists():
+                try:
+                    existing = status_module.read_status(path)
+                except status_module.StatusError:
+                    existing = {}
+            status_module.write_session_status(
+                target,
+                state="failed",
+                mode=str(existing.get("mode") or "none"),
+                branch=str(existing.get("branch") or "headless"),
+                started_at=str(existing.get("started_at") or now_iso()),
+                error=f"{type(exc).__name__}: {exc}",
+                artifacts=dict(existing.get("artifacts") or {}),
+                dsh=dict(existing.get("dsh") or {}),
+            )
+        except Exception:  # pragma: no cover - 退回这一步失败时不掩盖原来那个异常
+            _log.exception("会后纪要这一版的 claim 退不回去（原异常照上面那条 log）")
 
     def dirs_listing(self, dir: Any) -> dict[str, Any]:
         """`GET /api/dirs` 的应答体：目录选择器的一个现场（起点是用户主目录）。
@@ -2359,6 +2712,10 @@ class ServiceRuntime:
 
         没有 `ended`（重启现场那一档，此时也没有收尾在跑）时什么也不做；四步恰好已全部落定时
         也不补这一笔（那一档盘上最终值由 `_finish_drain(cancelled=True)` 那一趟收口，§3.5 第 3 条）。
+
+        **在飞的是 `post` 那一格时照实记 `running`**（与别的步骤同一个口径：取消打断的只是
+        "还在跑"这件事本身，不许伪造终态）。终态判定另有一格认它 —— `finish_drain(cancelled=True)`
+        收到取消读数时一律保持 `draining`，于是这一笔不会被误读成"收尾走完了"。
         """
         ended = self.snapshot.ended
         if ended is None:
@@ -2692,26 +3049,26 @@ class ServiceRuntime:
         )
 
     async def _drain_post(self, deadline: float) -> None:
-        """第 4 步 `post`：让会中模型退出显存 → 拉起会后流程（**启动即算完成，不等它跑完**）；钩子缺席记 `skipped`。"""
+        """第 4 步 `post`：让会中模型退出显存，**把会后留给用户按按钮**。
+
+        按「结束录音」之后**什么都不发生**（R26 / `docs/design-intent.md` 第 10 条）：
+        这一步原先无条件 `post_hook.launch()`，现在**一个会后动作都不启动** ——
+        会后离线那条链与纪要那一层各有各的按钮（`post_offline` / `post_minutes` 两个动作），
+        用户按哪一个才跑哪一个，两个都不按这一场就什么都不跑。
+
+        **这一格因此如实停在 `waiting`**（＝界面上那句"等你动手"）：它是「这一步还没做」
+        的诚实读数，而不是「做完了」。`DRAIN_STEP_IDS` 与 `DRAIN_STEP_STATUS` 的取值域一个字不改
+        （`"waiting"` 本来就在域里，收尾"落定"的判据里 `waiting` / `running` 都不算落定，
+        见 `drain_has_settled()`）；用户按了按钮之后由那一趟把它推成 `running`。
+
+        **释放显存照做**：会中那个模型用完了就该当场退出显卡（`docs/design-intent.md` 第 21 条），
+        这件事与"要不要跑会后"无关。它照旧包在 try/except 里：释放失败只留一条 log，
+        不把整场收尾拖成 `failed`。
+
+        `deadline` 只给释放那一步用（与其余几步同一份预算）。
+        """
         step_id = "post"
-        self._begin_step(step_id, "拉起会后流程（启动即算完成，不等它跑完）")
-        resolution = self.post_resolution
-        if resolution is None or resolution.skipped():
-            self._skip_step(step_id, "会后流程还没接入（PostProcessHook 缺席，归 65dd3e4c）", resolution)
-            return
-        session_dir = self.snapshot.session.dir if self.snapshot.session else None
-        # **先让会中模型退出显存，再拉起会后流程**（顺序是这一步的全部要点）：
-        # `post.launch()` 一返回，那条 daemon 线程就已经在跑 `run_session()`，会后离线链
-        # （MOSSTD）的加载紧接着就开始 —— 释放放在 `launch()` 之后等于没做。16 GB 卡上两份
-        # 模型同住才是真风险，而「会中用哪个模型、会后用哪个模型」正是本节要的那一处交接。
-        #
-        # **防御式取法**：`release_gpu()` 只长在 `TranscriberBackend` 这一个具体后端上
-        # （不在 `backends.base` 的协议里），收尾用例挂的那些替身后端没有它 —— 取不到就
-        # 什么都不做。挂假件的用例因此不受这一处接线影响。
-        #
-        # **不新增 step_id**：这一次释放的耗时算在 `"post"` 这一步的记账之内（`state.py` 的
-        # 取值域只有 flush / transcode / log / post）。释放里抛异常照收尾相邻几步的既有姿态办：
-        # 包住、收成一条 log、照旧往下走 —— 释放失败不该把整场收尾拖成 `failed`。
+        self._begin_step(step_id, "释放会中模型；会后流程等你按按钮（这一格停在 waiting）")
         release = getattr(self.transcriber_backend, "release_gpu", None)
         if callable(release):
             try:
@@ -2722,17 +3079,21 @@ class ServiceRuntime:
                 # 取消是强制打断路径（§3.5）：记账交回取消路径，这里不吞
                 raise
             except Exception:
-                _log.exception(
-                    "会中模型退出显存失败（如实记账，不静默；会后流程照常拉起）"
-                )
-        try:
-            _value, elapsed = await self._drain_wait(
-                step_id, lambda: self.post_hook.launch(session_dir), deadline=deadline, invoke=True
-            )
-        except Exception as exc:
-            self._fail_step(step_id, exc, resolution, "会后流程启动失败")
-            return
-        self._done_step(step_id, "会后流程已启动（不等它跑完）", resolution, elapsed=elapsed)
+                _log.exception("会中模型退出显存失败（如实记账，不静默）")
+        # 这一格**如实停在 `waiting`**（＝界面上那句「等你动手」）：会后那两趟活各有各的按钮，
+        # 用户按了哪一个才跑哪一个。落定这一笔照走 `_settle_step()`（写盘 + 提交都在它里面），
+        # 于是前端那一条步骤带当场读到「post：waiting」。
+        self._settle_step(
+            step_id,
+            "waiting",
+            "会后不自动跑：按「生成会后精细稿」或「直接出纪要」才起（这一格等你动手）",
+            None,
+            self.post_resolution,
+        )
+        _log.info(
+            "收尾第 4 步：会后流程不自动拉起（这一格停在 waiting，两个按钮归用户按）：%s",
+            self.snapshot.session.dir if self.snapshot.session else "?",
+        )
 
     # -- 收尾记账（写盘 + 提交都收在这几个方法里） -------------------------
 
@@ -2835,9 +3196,13 @@ class ServiceRuntime:
         self._settle_step(step_id, "failed", what, error, resolution, elapsed=elapsed)
 
     def _finish_drain(self, *, cancelled: bool = False) -> str:
-        """调**收尾的唯一出口** `finish_drain()` 判终态；失败档把两条出路写进 log。"""
+        """调**收尾的唯一出口** `finish_drain()` 判终态；失败档把两条出路写进 log。
+
+        `cancelled=True`（取消那一趟）一路传到终态判定：被取消的收尾没有跑完，
+        `ended.phase` 该保持 `draining`。
+        """
         session_dir = self.snapshot.session.dir if self.snapshot.session else None
-        final_state = finish_drain(self.snapshot)
+        final_state = finish_drain(self.snapshot, cancelled=cancelled)
         ended = self.snapshot.ended
         if final_state == "done":
             _log.info("收尾完成：四步全部落定且没有失败步（ended.phase=done，top_state 停在 ended）")
@@ -2907,11 +3272,16 @@ class ServiceRuntime:
         return written
 
     def drain_has_settled(self) -> bool:
-        """四步是否全部落定（盘上术语：`waiting` / `running` 都不算落定）。"""
+        """四步是否全部落定（`running` 不算落定；`waiting` 是 `post` 那一格的终态，算）。
+
+        第 4 步 `post` 按「结束录音」之后不自动拉起会后（R26），它做完该做的（释放会中模型）
+        就停在 `waiting`（＝界面上那句"等你动手"）。因此这一格与 `finish_drain()` 同口径：
+        `waiting` 是落定，`running` 还在跑。
+        """
         ended = self.snapshot.ended
         if ended is None:
             return False
-        return all(step.status in ("done", "skipped", "failed") for step in ended.steps)
+        return all(step.status in ("done", "skipped", "failed", "waiting") for step in ended.steps)
 
     def drain_finished(self) -> bool:
         """这一趟收尾是否**走完且终态已定**（`ended.phase == "done"`，收尾 task 句柄已置空）。

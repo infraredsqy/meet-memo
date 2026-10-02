@@ -31,6 +31,7 @@ import pytest
 
 from meeting import config as config_module
 from meeting.backends.base import ReadOnlyConfig, TranscriptLine
+from meeting.service import runtime as runtime_module
 from meeting.service.hub import SUBSCRIBER_QUEUE_SIZE
 from meeting.state import ENVELOPE_BAR_COUNT
 from tests import _contract
@@ -394,14 +395,13 @@ def test_capture_alert_snapshot(tmp_path, make_client, contract_regen):
 
 
 def test_capture_ended_done(tmp_path, make_client, contract_regen):
-    """ended·done 快照 + stop 成功体（收尾四步走完的终态）。
+    """ended·done 快照 + stop 成功体（收尾前三步走完、第 4 步停在「等你动手」的终态）。
 
-    `post.hook` 显式取 `null`：会后钩子（`7c6952e5` phase2 的 `PostProcessHook`）落地之后，
-    产品缺省 `auto` 会让第 4 步真的起一条后台线程跑会后链、往场次目录里多落四五份产物，
-    于是 `ended-done` 这份 golden 样本里第 4 步的状态与采集到的目录内容都不再稳定。
-    这一步的「有实现就 done」另有 `tests/test_post_hook.py` 与 `tests/test_drain.py` 盯着。
+    按「结束录音」之后会后一个动作都不自动跑（R26）：第 4 步 `post` 做完它该做的
+    （释放会中模型）就如实停在 `waiting`，这一格与 `post.hook` 取什么值无关 ——
+    大会后那两趟活归工作台上那两个按钮（`post_offline` / `post_minutes`）。
     """
-    client = make_client({"capture.backend": "dev", "post.hook": "null"})
+    client = make_client({"capture.backend": "dev"})
 
     assert _act(client, "start", {"mode": "both"}).status_code == 200
     _wait_envelope_full(client)
@@ -415,7 +415,7 @@ def test_capture_ended_done(tmp_path, make_client, contract_regen):
     _assert_snapshot_shape(snapshot, top_state="ended", envelope_filled=True)
     assert snapshot["ended"]["error"] is None
     assert [step["status"] for step in snapshot["ended"]["steps"]] == [
-        "skipped", "skipped", "done", "skipped",
+        "skipped", "skipped", "done", "waiting",
     ]
     assert all(step["error"] is None for step in snapshot["ended"]["steps"])
     assert snapshot["session"]["frozen"] is True
@@ -432,7 +432,14 @@ def test_capture_ended_done(tmp_path, make_client, contract_regen):
 
 
 def test_capture_ended_draining(tmp_path, make_client, monkeypatch, contract_regen):
-    """ended·draining 停留档快照 + draining 拒绝（进程内换抛错的假 post 钩子）。"""
+    """ended·draining 停留档快照 + draining 拒绝（进程内把 `log` 那一步的落点换成抛错的替身）。
+
+    失败步的工具箱：第 4 步 `post` 现在**不再自动拉起会后**（R26），它每次都停在 `waiting`
+    —— 拿它演不出失败档。这一条改把 `log` 那一步写**场次日志结束标记**的落点换成抛错的替身：
+    「有实现却抛错 → `failed`」这一档（§3.0 的边界）照旧在收尾里看得见，`post` 那一格仍是
+    `waiting`。快照样本记的是**形状**（哪一步 failed、`detail` 有哪几键），
+    那句话的内容不逐字进 golden。
+    """
     home = tmp_path / "home-drain"
     home.mkdir(parents=True, exist_ok=True)
     plugin = fakes.write_failing_post_hook(home, capture="dev")
@@ -442,15 +449,25 @@ def test_capture_ended_draining(tmp_path, make_client, monkeypatch, contract_reg
     with helpers.app_client(home, values=values) as client:
         client.place_root = tmp_path / "out-drain"
         client.place_root.mkdir(parents=True, exist_ok=True)
+        runtime = client.app.state.runtime
+
+        def boom_end_marker(*args, **kwargs):
+            raise RuntimeError("假场次日志接缝：按样本要求抛错")
+
+        monkeypatch.setattr(
+            runtime_module.logging_setup, "write_session_end_marker", boom_end_marker
+        )
         assert _act(client, "start", {"mode": "both"}).status_code == 200
         _wait_envelope_full(client)
         assert _act(client, "stop").status_code == 200
 
         def settled(snap):
+            """收尾前三步都落定、第 4 步如实停在「等你动手」那一格。
+
+            判据把 `waiting` 算作落定（那一格就是 `post` 的终态，R26），`running` 不算。
+            """
             steps = (snap.get("ended") or {}).get("steps") or []
-            if not steps or any(
-                step["status"] in ("waiting", "running") for step in steps
-            ):
+            if not steps or any(step["status"] == "running" for step in steps):
                 return False
             return snap["top_state"] == "ended"
 
@@ -460,8 +477,10 @@ def test_capture_ended_draining(tmp_path, make_client, monkeypatch, contract_reg
         assert snapshot["ended"]["error"]
         post_step = snapshot["ended"]["steps"][-1]
         assert post_step["id"] == "post"
-        assert post_step["status"] == "failed"
-        assert "假会后钩子" in post_step["error"]
+        assert post_step["status"] == "waiting"
+        failed = [step for step in snapshot["ended"]["steps"] if step["status"] == "failed"]
+        assert [step["id"] for step in failed] == ["log"]
+        assert "假场次日志接缝" in failed[0]["error"]
         # 失败停留档保留 stopped 现场
         assert all(item["health"] == "stopped" for item in snapshot["sources"])
 
@@ -472,7 +491,7 @@ def test_capture_ended_draining(tmp_path, make_client, monkeypatch, contract_reg
         detail = refused_body["detail"]
         assert set(detail) == {"session_id", "dir", "failed_steps", "log_path"}
         assert detail["failed_steps"] == [
-            {"id": "post", "error": post_step["error"]}
+            {"id": "log", "error": failed[0]["error"]}
         ]
 
     emit(

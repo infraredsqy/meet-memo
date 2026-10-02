@@ -47,7 +47,8 @@ DEFAULT_PATHS: dict[str, str] = {
     "capture.backend": "meeting.backends.capture:CaptureBackend",
     "transcriber.backend": "meeting.backends.transcribe:TranscriberBackend",
     "post.hook": "meeting.backends.post:PostProcessHook",
-    # 会后纪要那一格（`41465462` phase2）：挂在离线链的尾巴上，`auto` 按这条路径找
+    # 会后纪要那一格（`41465462` phase2）：`meeting post` 的离线尾巴与「直接出纪要」
+    # 按钮经解析到的实现拉起，`auto` 按这条路径找
     "minutes.hook": "meeting.backends.minutes:MinutesHook",
 }
 
@@ -246,7 +247,8 @@ def resolve_post_hook(explicit: str | None = None) -> BackendResolution:
 
 
 def resolve_minutes_hook(explicit: str | None = None) -> BackendResolution:
-    """`minutes.hook` → 会后纪要钩子；**缺席（`null`）→ 离线那一条链不产生纪要**。
+    """`minutes.hook` → 会后纪要钩子；**缺席（`null`）→「直接出纪要」按钮当场 404
+    `action_unavailable`，`meeting post` 补纪要那一路安静跳过**。
 
     与 `resolve_post_hook()` 同一个形状与同一条口径：显式 `null`（字符串）与**配置里写成
     JSON `null`**（校验层归一成 `None`）都落缺席档，`has_implementation = false`。
@@ -254,20 +256,20 @@ def resolve_minutes_hook(explicit: str | None = None) -> BackendResolution:
 
     **配置级 `null` 靠下面这段提前返回生效**（不是靠 `_target_for()` 认出 `None`）：
     配置里写 JSON `null` 时 `_selector()` 会把它归一成 `auto`，这里在归一之前先看一眼原始值，
-    因此「关掉自动跑」这个配置一个字都不会落空。显式传进来的取值照旧走 `_resolve()`。
+    因此「不接这一层」这个配置一个字都不会落空。显式传进来的取值照旧走 `_resolve()`。
     """
     if explicit is None:
         raw = config_module.get("minutes.hook")
         if raw is None:
             # `minutes.hook = null`：配置里写的是 JSON 的 null（不是字符串 "null"）。
-            # 这一档要落缺席类，不能退回 `auto`（否则「关掉自动跑」这个配置一个字都不生效）。
+            # 这一档要落缺席类，不能退回 `auto`（否则「不接这一层」这个配置一个字都不生效）。
             return BackendResolution(
                 key="minutes.hook",
                 selector="null",
                 target=None,
                 implementation=_AbsentMinutesHook(),
                 has_implementation=False,
-                detail="配置里是 null（缺席：离线跑完不产生纪要）",
+                detail="配置里是 null（缺席：「直接出纪要」按钮 404，meeting post 补纪要安静跳过）",
             )
     return _resolve(
         "minutes.hook",
@@ -291,7 +293,7 @@ class _AbsentMinutesHook:
     """
 
     def launch(self, session_dir: str) -> None:  # pragma: no cover - 缺席档不调用
-        raise NotImplementedError("纪要钩子缺席（minutes.hook = null，离线跑完不产生纪要）")
+        raise NotImplementedError("纪要钩子缺席（minutes.hook = null：按钮 404，meeting post 补纪要安静跳过）")
 
 
 def capabilities_of(implementation: Any) -> dict[str, bool]:

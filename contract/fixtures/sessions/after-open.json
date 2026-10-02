@@ -9,6 +9,7 @@
       "state": null,
       "date": null,
       "mode": null,
+      "has_offline": false,
       "added_at": "<iso>",
       "last_opened_at": "<iso>"
     },
@@ -21,6 +22,7 @@
       "state": "done",
       "date": "2026-09-21",
       "mode": "both",
+      "has_offline": false,
       "added_at": "<iso>",
       "last_opened_at": "<iso>"
     },
@@ -33,6 +35,7 @@
       "state": null,
       "date": null,
       "mode": null,
+      "has_offline": false,
       "added_at": "<iso>",
       "last_opened_at": "<iso>"
     }

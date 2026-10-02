@@ -31,6 +31,9 @@ export const sessionRowSchema = z
     state: z.enum(['recording', 'draining', 'done', 'failed']).nullable(),
     date: z.string().nullable(),
     mode: z.string().nullable(),
+    /** 这一场有没有会后精细稿（`meeting_offline_transcript_<source>.md` 在不在盘上）。
+     *  R29：界面照它渲染「出纪要」按钮上那一格，**不自己猜、不去试文件**。 */
+    has_offline: z.boolean(),
     added_at: isoStringSchema,
     last_opened_at: isoStringSchema,
   })

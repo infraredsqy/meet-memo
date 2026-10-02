@@ -47,7 +47,7 @@ describe('statusView：四态各自的字 + 图形', () => {
     });
     expect(statusView('ended', 'done')).toEqual({
       name: '已结束 · 已完成',
-      note: '可以关机',
+      note: '可以关机；会后那两趟回工作台按按钮',
       glyph: 'glyph--done',
       tone: 'off',
     });

@@ -495,11 +495,13 @@ def test_a_source_with_no_declared_total_lines_at_all_is_not_silently_skipped() 
 # ---------------------------------------------------------------------------
 
 
-def test_expected_lines_from_inputs_prefers_the_offline_transcript() -> None:
-    """与切块同一条取法：会后那份权威稿优先，缺席时退回会中稿。
+def test_expected_lines_from_inputs_uses_the_live_transcript() -> None:
+    """划段的分母是**会中稿**那一份：两份都在时取会中稿的行数，缺席时退回会后稿。
 
-    每一条 source 取**哪一份稿**的数与 `chunk.chunk_session()` 切哪一份是同一件事，
-    所以这里逐条只答一个数。缺 `lines` 或两条稿都不在的那一条整个不出现（不猜）。
+    这一条与提示词阶段 2 那句「划段按这一路在场那份稿的行号空间来：两份都在按会中稿，
+    只有会后稿的场次按会后稿」是同一个口径：会中稿每一路都有（离线那一趟是可选的），
+    两份稿的行号空间又各算各的。缺 `lines` 或两份都不在的那一条
+    整个不出现（不猜）。
     """
     times = 13
     document = {
@@ -517,11 +519,20 @@ def test_expected_lines_from_inputs_prefers_the_offline_transcript() -> None:
                 "kind": "live_only",
                 "live": {"file": "meeting_transcript_mic.md", "lines": 63},
             },
+            {
+                "source": "only_offline",
+                "kind": "offline_only",
+                "offline": {"file": "meeting_offline_transcript_only_offline.md", "lines": 44},
+            },
             {"source": "extra", "kind": "live_only", "live": {"file": "x.md"}},
         ],
     }
 
-    assert expected_lines_from_inputs(document) == {"loopback": 120, "mic": 63}
+    assert expected_lines_from_inputs(document) == {
+        "loopback": times,
+        "mic": 63,
+        "only_offline": 44,
+    }
 
 
 def test_expected_lines_from_inputs_rejects_a_broken_source_list() -> None:
@@ -715,7 +726,7 @@ def test_no_module_advertises_a_segmentation_plan_below_a_source_directory() -> 
 
 
 def test_expected_lines_from_chunks_reads_the_chunk_reports(tmp_path: Path) -> None:
-    """真实行数只有一种取法：切块结果里的 `total_lines`。"""
+    """真实行数只有一种取法：切块结果里的 `total_lines`（**逐份稿各答一格**）。"""
     from meeting.minutes.chunk import chunk_session, discover_inputs
 
     session = tmp_path / "250919"
@@ -724,14 +735,21 @@ def test_expected_lines_from_chunks_reads_the_chunk_reports(tmp_path: Path) -> N
         "\n".join(f"[21:{minute:02d}] 第 {minute} 句。" for minute in range(13)) + "\n",
         encoding="utf-8",
     )
+    (session / "meeting_offline_transcript_loopback.md").write_text(
+        "\n".join(f"[21:{minute:02d}] **S01**: 第 {minute} 句。" for minute in range(9)) + "\n",
+        encoding="utf-8",
+    )
     reports = chunk_session(session, discover_inputs(session), chunk_lines=10)
 
-    assert expected_lines_from_chunks(reports) == {"loopback": 13}
+    assert expected_lines_from_chunks(reports) == {"loopback": {"live": 13, "offline": 9}}
 
 
 def test_expected_lines_from_chunks_rejects_a_report_without_total_lines() -> None:
     """拿不到总行数时当场报错（不许拿一个猜的数去校验契约）。"""
     with pytest.raises(SegmentationContractError, match="没有 total_lines"):
+        expected_lines_from_chunks({"mic": {"live": object()}})
+
+    with pytest.raises(SegmentationContractError, match="该是逐份稿的对象"):
         expected_lines_from_chunks({"mic": object()})
 
 

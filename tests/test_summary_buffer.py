@@ -134,10 +134,16 @@ def wait_until(predicate, *, timeout: float = 15.0, what: str = "条件"):
 
 
 def start_session(client, *, mode: str | None = None) -> None:
-    """开一场（收尾还没落定时 `start` 会被 `draining` 挡下，这里等到落定再开）。"""
+    """开一场（收尾还没落定时 `start` 会被 `draining` 挡下，这里等到落定再开）。
+
+    **`waiting` 算落定**（与运行时 `drain_has_settled()` 同口径）：第 4 步 `post` 按
+    「结束录音」之后不自动拉起会后（R26），做完该做的就停在 `waiting`（＝等你动手），
+    那一格正是收尾跑完时的正常读数。
+    """
     wait_until(
         lambda: (lambda snap: True if snap["ended"] is None or all(
-            step["status"] in ("done", "skipped", "failed") for step in snap["ended"]["steps"]
+            step["status"] in ("done", "skipped", "failed", "waiting")
+            for step in snap["ended"]["steps"]
         ) else None)(client.get("/api/state").json()),
         what="上一场收尾落定",
     )

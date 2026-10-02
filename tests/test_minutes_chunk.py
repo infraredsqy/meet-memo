@@ -18,6 +18,7 @@ import pytest
 
 from meeting.minutes.chunk import (
     INDEX_NAME,
+    KIND_IDS,
     ChunkError,
     InputSpec,
     chunk_session,
@@ -227,21 +228,30 @@ def _write_session(session: Path, *, live: bool = True, offline: bool = False, s
         )
 
 
-def test_chunk_session_writes_under_working_per_source(tmp_path: Path) -> None:
-    """落盘路径钉死：`working/<source>/chunks/` 与 `working/<source>/00_index.md`。"""
+def test_chunk_session_writes_under_working_per_source_and_kind(tmp_path: Path) -> None:
+    """落盘路径钉死：`working/<source>/<kind>/chunks/` 与 `working/<source>/<kind>/00_index.md`。
+
+    两条稿都在时**两份都切、各占一个目录**（R11 的两份稿对拍靠的就是这一层）。
+    """
     session = tmp_path / "250919"
     _write_session(session, live=True, offline=True)
 
     reports = chunk_session(session, discover_inputs(session), chunk_lines=10)
 
     assert sorted(reports) == ["loopback"]
-    working = session / "working" / "loopback"
-    assert (working / INDEX_NAME).is_file()
-    assert sorted(item.name for item in (working / "chunks").glob("chunk_*.md")) == [
-        "chunk_01.md",
-        "chunk_02.md",
-    ]
-    assert reports["loopback"].chunk_count == 2
+    assert sorted(reports["loopback"]) == ["live", "offline"]
+    for kind, name in (("live", "meeting_transcript_loopback.md"),
+                       ("offline", "meeting_offline_transcript_loopback.md")):
+        working = session / "working" / "loopback" / kind
+        assert (working / INDEX_NAME).is_file()
+        assert sorted(item.name for item in (working / "chunks").glob("chunk_*.md")) == [
+            "chunk_01.md",
+            "chunk_02.md",
+        ]
+        assert reports["loopback"][kind].transcript == name
+        assert reports["loopback"][kind].kind == kind
+    assert reports["loopback"]["live"].total_lines == 15
+    assert reports["loopback"]["offline"].total_lines == 12
 
 
 def test_chunk_session_accepts_the_inputs_json_shape(tmp_path: Path) -> None:
@@ -262,9 +272,22 @@ def test_chunk_session_accepts_the_inputs_json_shape(tmp_path: Path) -> None:
 
     reports = chunk_session(session, payload["sources"], chunk_lines=10)
 
-    # 两条都在时切的是会后那份权威稿
-    assert reports["loopback"].transcript == "meeting_offline_transcript_loopback.md"
-    assert reports["loopback"].total_lines == 12
+    # 两条都在时**两份都切**：没有任何一份被当成「更可信的那一份」挑掉
+    assert set(reports["loopback"]) == set(KIND_IDS)
+    assert reports["loopback"]["live"].total_lines == 15
+    assert reports["loopback"]["offline"].transcript == "meeting_offline_transcript_loopback.md"
+    assert reports["loopback"]["offline"].total_lines == 12
+
+
+def test_chunk_session_skips_a_kind_that_is_not_on_disk(tmp_path: Path) -> None:
+    """只有会中稿时只切 `live` 那一档（不建空目录、不伪造一份空块）。"""
+    session = tmp_path / "250919"
+    _write_session(session, live=True, offline=False)
+
+    reports = chunk_session(session, discover_inputs(session), chunk_lines=10)
+
+    assert sorted(reports["loopback"]) == ["live"]
+    assert not (session / "working" / "loopback" / "offline").exists()
 
 
 def test_chunk_session_and_discover_cover_both_sources(tmp_path: Path) -> None:
@@ -276,8 +299,8 @@ def test_chunk_session_and_discover_cover_both_sources(tmp_path: Path) -> None:
     reports = chunk_session(session, discover_inputs(session), chunk_lines=10)
 
     assert sorted(reports) == ["loopback", "mic"]
-    assert (session / "working" / "mic" / INDEX_NAME).is_file()
-    assert (session / "working" / "loopback" / INDEX_NAME).is_file()
+    assert (session / "working" / "mic" / "live" / INDEX_NAME).is_file()
+    assert (session / "working" / "loopback" / "live" / INDEX_NAME).is_file()
 
 
 def test_chunk_session_reports_a_bare_input(tmp_path: Path) -> None:
@@ -336,9 +359,11 @@ def test_main_chunks_a_session_and_reports_the_mode(tmp_path: Path, capsys: pyte
 
     assert code == 0
     printed = capsys.readouterr().out
-    assert "loopback: meeting_offline_transcript_loopback.md 12 行 → 2 块" in printed
+    assert "loopback/live: meeting_transcript_loopback.md 15 行 → 2 块" in printed
+    assert "loopback/offline: meeting_offline_transcript_loopback.md 12 行 → 2 块" in printed
     assert "档位：both" in printed
-    assert (session / "working" / "loopback" / INDEX_NAME).is_file()
+    assert (session / "working" / "loopback" / "live" / INDEX_NAME).is_file()
+    assert (session / "working" / "loopback" / "offline" / INDEX_NAME).is_file()
 
 
 def test_main_answers_a_session_without_any_transcript(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
@@ -374,12 +399,13 @@ def test_minutes_package_never_touches_the_config_chain() -> None:
 
 
 def test_chunks_report_as_dict_is_json_serialisable(tmp_path: Path) -> None:
-    """`SourceChunks.as_dict()` 能直接 `json.dumps`（phase2 往 `inputs.json` 里记分块结果）。"""
+    """`SourceChunks.as_dict()` 能直接 `json.dumps`（逐份稿各答一份账）。"""
     _write_session(tmp_path, live=True)
-    report = chunk_session(tmp_path, discover_inputs(tmp_path), chunk_lines=10)["loopback"]
+    report = chunk_session(tmp_path, discover_inputs(tmp_path), chunk_lines=10)["loopback"]["live"]
 
     text = json.dumps(report.as_dict(), ensure_ascii=False)
 
+    assert '"kind": "live"' in text
     assert '"chunk_count": 2' in text
-    assert '"chunk_dir": "working/loopback/chunks"' in text
+    assert '"chunk_dir": "working/loopback/live/chunks"' in text
     assert '"line_start": 11' in text

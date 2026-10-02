@@ -269,24 +269,24 @@ def test_every_phase_change_writes_the_session_file(tmp_path, monkeypatch):
         ]
 
         # 收尾过程中盘上写「收尾中」，终态写 `done`（四步的 status / detail 各写一次）。
-        # 为了让 `draining` 那一版可确定性观察到，把末尾两步之一的 `post` 换成慢钩子。
-        class SlowHook:
+        # 为了让 `draining` 那一版可确定性观察到，把第 4 步里那一次同步调用（让会中模型退出
+        # 显存）换成慢替身 —— 会后那两趟活现在归用户手上的两个按钮，第 4 步只剩这一件事。
+        class SlowRelease:
             def __init__(self) -> None:
                 self.started = threading.Event()
                 self.release = threading.Event()
 
-            def launch(self, target: str) -> None:
+            def release_gpu(self) -> bool:
                 self.started.set()
                 self.release.wait(timeout=SLOW_HOOK_SECONDS)
+                return True
 
-        hook = SlowHook()
-        runtime.post_hook = hook
-        runtime.post_resolution.implementation = hook
-        runtime.post_resolution.has_implementation = True
+        hook = SlowRelease()
+        runtime.transcriber_backend.release_gpu = hook.release_gpu
 
         # 收尾三步的调用都经 `_drain_wait()` 这一层包装（phase3 的自适应预算就把这里包住）。
         # 本用例把这一层换成「照原样调用、如实回报耗时」的替身：**同步实现放进工作线程**
-        # （与真实现里的 `asyncio.to_thread` 同形），慢钩子因此不会把事件循环钉住，
+        # （与真实现里的 `asyncio.to_thread` 同形），慢替身因此不会把事件循环钉住，
         # `/api/state` 在整个等待里照常应答。
         async def transparent_drain_wait(step_id, call, **kwargs):
             del step_id, kwargs
@@ -312,7 +312,8 @@ def test_every_phase_change_writes_the_session_file(tmp_path, monkeypatch):
         assert steps_during["post"] == "running"
         hook.release.set()
 
-        # 收尾四步各自落定之后盘上落 `done`（每一版都是一份完整可解析的 JSON）
+        # 收尾前三步落定、第 4 步停在「等你动手」之后，盘上落 `done`
+        # （每一版都是一份完整可解析的 JSON）
         done = _wait_for(
             lambda: (lambda r: r if r and r["state"] == "done" else None)(
                 read_json(session_dir / SESSION_FILE_NAME)
@@ -321,7 +322,7 @@ def test_every_phase_change_writes_the_session_file(tmp_path, monkeypatch):
         )
         steps = {step["id"]: step["status"] for step in done["drain"]["steps"]}
         assert steps == {
-            "flush": "skipped", "transcode": "skipped", "log": "done", "post": "done",
+            "flush": "skipped", "transcode": "skipped", "log": "done", "post": "waiting",
         }
         assert done["ended_at"]
         assert done["interrupted"] is False

@@ -105,8 +105,8 @@
       },
       {
         "id": "post",
-        "status": "skipped",
-        "detail": "会后流程还没接入（PostProcessHook 缺席，归 65dd3e4c）",
+        "status": "waiting",
+        "detail": "会后不自动跑：按「生成会后精细稿」或「直接出纪要」才起（这一格等你动手）",
         "error": null
       }
     ],

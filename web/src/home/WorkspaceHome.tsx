@@ -14,6 +14,12 @@ import { postAction } from '../api';
 import { confirmWorkspaceOpen } from './confirmWorkspaceOpen';
 import { browseDirs, fetchSessions } from '../api/sessions';
 import { decisionFor, emptyStateLines, initialSelection, startWhy, statusLabel } from './model';
+import {
+  POST_MINUTES_ACTION,
+  POST_OFFLINE_ACTION,
+  postButtonsView,
+  postIdleNote,
+} from './post';
 import { failureFrom, type ActionFailureView } from '../failure';
 import type { DirsResponse, SessionRow, SessionsResponse } from '../contract';
 
@@ -164,6 +170,12 @@ function DirPicker({
  */
 type PickPath = { dir: string; kind: 'empty' | 'meeting' | 'unknown' | 'missing' };
 
+/** 两个按钮的动作名 → 界面上的名字（与 `docs/requirements.md` R26 的叫法逐字对齐）。 */
+const POST_LABELS: Readonly<Record<string, string>> = {
+  [POST_OFFLINE_ACTION]: '生成会后精细稿',
+  [POST_MINUTES_ACTION]: '直接出纪要',
+};
+
 // ---------------------------------------------------------------------------
 // 首页本体
 // ---------------------------------------------------------------------------
@@ -179,6 +191,8 @@ export function WorkspaceHome(): ReactNode {
   const [confirm, setConfirm] = useState<{ what: 'unknown' | 'remove'; dir: string } | null>(null);
   /** 选择器取数失败的暂存（弹窗里画一行，不顶掉首页的失败块）。 */
   const [browseError, setBrowseError] = useState<string | null>(null);
+  /** 会后那两个按钮的动作回执（一句话：这一趟已起 / 被拒的原因在失败块里）。 */
+  const [postNote, setPostNote] = useState<string | null>(null);
 
   // -- 取数 ---------------------------------------------------------------
 
@@ -254,6 +268,31 @@ export function WorkspaceHome(): ReactNode {
       });
   };
 
+  /**
+   * 会后那两个按钮：各自打一个动作，回执只说「这一趟跑的是哪一场」。
+   *
+   * 起成功之后**不当场宣称跑完了**（那一趟可能跑一小时），只把动作回执如实写在下面，
+   * 并重取一遍列表（`state` / `has_offline` 这些现场读数都从服务来）。
+   */
+  const postSelected = (action: string): void => {
+    if (selection === null) return;
+    setFailure(null);
+    setPostNote(null);
+    setBusy(true);
+    void postAction(action, { dir: selection })
+      .then(
+        () => setPostNote(`${POST_LABELS[action]}：这一趟已起（跑成什么样由这一场盘上的状态回答）。`),
+        (error) => {
+          setFailure(failureFrom(error));
+          setPostNote(null);
+        },
+      )
+      .then(() => {
+        setBusy(false);
+        reloadAfterAction();
+      });
+  };
+
   // -- 选择器换层 -----------------------------------------------------------
 
   const browseInto = (dir: string | null): void => {
@@ -274,6 +313,7 @@ export function WorkspaceHome(): ReactNode {
     (row) => row.dir === selection,
   ) ?? null;
   const whyForSelected = selected === null ? null : startWhy(selected);
+  const post = selected === null ? null : postButtonsView(selected);
   const lines = emptyStateLines();
 
   const openFromPicker = (item: { dir: string; kind: PickPath['kind'] }): void => {
@@ -392,6 +432,36 @@ export function WorkspaceHome(): ReactNode {
                 </p>
               )}
               {whyForSelected !== null && <p className="wspane__why">{whyForSelected}</p>}
+
+              {post !== null && (
+                <div className="wspane__post" aria-label="会后">
+                  <div className="wspane__posttitle">会后</div>
+                  <div className="wspane__postacts">
+                    <button
+                      className="btn btn--primary"
+                      type="button"
+                      disabled={busy || !post.canPostOffline}
+                      title="走离线模型把整段录音重跑一遍，出带说话人编号的那一份稿；慢，占显卡"
+                      onClick={() => postSelected(POST_OFFLINE_ACTION)}
+                    >
+                      生成会后精细稿
+                    </button>
+                    <button
+                      className="btn"
+                      type="button"
+                      disabled={busy || !post.canPostMinutes}
+                      title="把这一场手上有的稿子交给 DSH 出纪要；缺会后稿就按现有档位来"
+                      onClick={() => postSelected(POST_MINUTES_ACTION)}
+                    >
+                      直接出纪要
+                    </button>
+                  </div>
+                  <p className="wspane__postline">{post.offlineNotice}</p>
+                  {post.why !== null && <p className="wspane__why">{post.why}</p>}
+                  {postNote !== null && <p className="wspane__postline">{postNote}</p>}
+                  <p className="hint">{postIdleNote()}</p>
+                </div>
+              )}
             </div>
           )}
           {failure !== null && <HomeFailure failure={failure} />}
