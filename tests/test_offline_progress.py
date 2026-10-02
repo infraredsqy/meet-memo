@@ -225,6 +225,45 @@ def test_a_silent_chunk_and_a_failed_chunk_both_count_as_one_chunk_run(tmp_path)
     assert {row["chunks_total"] for row in loopback} == {3}
 
 
+def test_a_load_failure_still_leaves_a_row_with_the_denominator(tmp_path) -> None:
+    """引擎**加载失手**那一场：账上照旧有一行，读方从盘上读得到分母（`total` 不从 N 塌成 null）。
+
+    `total` 是这一路切了几块（切块计划定下来的那个数），**不因某一块失败而增减**
+    （`docs/contract.md` 4.9）。这一档从前一块都没进逐块循环、账上只剩表头，进程不在场的
+    读方（服务重启后、命令行跑完回头翻这一场）因此看到 `done=0`、`total=null` —— 与
+    「这一路一块都没跑」分不开。补的这一行与**兄弟路径**（切法都算不出来那一条，见
+    `runner._run_one_source()`）同一个理由，行上的块号取**触发探测的那一块**（加载失手
+    就是在这一块上发现的），分母照旧是这一路的总块数。
+    """
+    from tests.test_offline_runner import LoadingEngine, silence_session
+
+    session, _ranges = silence_session(
+        tmp_path, name="load-failure", silent_chunks=(), chunk_seconds=CHUNK_SECONDS
+    )
+    engine = LoadingEngine(load_error="模型快照读不动（合成的失败，没有真模型参与）")
+
+    run_session(
+        session,
+        engine=engine,
+        config=chunked_config(),
+        progress=OfflineProgressLedger(session, session_id=session.name, sources=["mic"]),
+    )
+
+    header, rows = read_ledger(session)
+    assert header is not None
+    assert [row["chunk"] for row in rows] == [1], "加载失手也要在账上留一行"
+    assert rows[0]["state"] == "failed"
+    assert rows[0]["chunks_total"] == 3
+    assert (rows[0]["error"] or "").startswith("engine_load_error")
+
+    # 进程不在场那一档读盘：分母还在（这一条盯的就是它）
+    snapshot = progress_module.snapshot_of(session, sources=["mic"], session_id=session.name)
+    mic = snapshot["sources"][0]
+    assert mic["total"] == 3, "分母由切块计划定：不许因为加载失败塌成 null"
+    assert mic["done"] == 1 and mic["remaining"] == 2
+    assert mic["counts"] == {"transcribed": 0, "silent": 0, "failed": 1, "unjudged": 0}
+
+
 def test_the_ledger_stays_out_of_the_way_when_nobody_asks_for_it(tmp_path) -> None:
     """不给 `progress` 时一个字节都不落（既有那一串调用点的形状不变）。"""
     session = chunked_session(tmp_path)

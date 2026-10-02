@@ -766,7 +766,8 @@ def test_status_file_carries_the_silent_spans_of_the_whole_session(tmp_path) -> 
 
 
 def test_status_file_rejects_an_unknown_state(tmp_path) -> None:
-    """状态只认三档，写别的一律抛（不许在盘上留下一版读不懂的状态）。"""
+    """状态只认四档（`running` / `done` / `partial` / `failed`），写别的一律抛
+    （不许在盘上留下一版读不懂的状态）。"""
     with pytest.raises(ValueError):
         artifacts.write_status(
             tmp_path / "status.json",

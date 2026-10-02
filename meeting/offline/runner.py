@@ -233,6 +233,18 @@ DEFAULT_ENGINE_TARGET = "meeting.offline.engine:MossOfflineEngine"
 REASON_NO_AUDIO = "no_audio"
 REASON_EMPTY_PCM = "empty_pcm"
 REASON_ENGINE_ERROR = "engine_error"
+#: 引擎**加载**失手（`_load_models()` 抛出来的那一档）：这一整趟一次引擎调用都没发生，
+#: 与「引擎跑这一块时抛错」分开记。混进 `engine_error` 的话，读方从失败原因上看不出
+#: 「模型根本没起来」与「模型起来了、某一块没跑成」——那是两件要分别动手的事
+#: （`meeting/offline/engine.py` 的 `load_error`）。
+REASON_ENGINE_LOAD_ERROR = "engine_load_error"
+#: **这一路压根没跑**：`_write_failed_status()` 给「从半路抛出来时还没轮到的那几路」现开
+#: 的那一格。它与 `engine_error` 是两件事：那一格的 `reasons` 是空的、`error` 是 `None`，
+#: 引擎一次都没被喊过（也可能连这一路都没轮到）。兜成 `engine_error` 的话，读方按失败原因
+#: 筛「是不是引擎的锅」时会把「压根没跑起来」算进去，而那一格自己没话可对（`error` 是
+#: `null`）——那正是本节点要消灭的「读方读不出来」。这个兜底词只落在**兜底那一版状态文件**
+#: 的逐路 `reason` 上，不进逐块账、也不进 `reasons` 这个分布。
+REASON_NOT_RUN = "not_run"
 REASON_NO_SEGMENTS = "no_segments"
 #: 分块模式下**每一块都失败**：这一路一段都没留下来（与「一块坏、别的块还在」的
 #: `partial` 分开记，下游按这个词档区分「全丢」与「缺一段」）
@@ -251,6 +263,23 @@ REASON_TRANSCRIBED = "transcribed"
 #: 说了算。这一档什么都没出错，但它必须与「门判过、放行」分得开 —— 少了这一格，一次没门
 #: 可用的运行在产物里与一次健康的运行长得一模一样（见模块头「门判不了的时候」那一节）。
 REASON_GATE_UNJUDGED = "gate_unjudged"
+
+#: 状态文件里逐路那一格 `reason` 的取词次序：一块产物都没落的那一路按它挑**这一个**
+#: 词（挑到第一个就算），因为那一格只说一句话。次序按「这一路是怎么没的」从最靠前
+#: 的原因排到最后：模型没起来 > 这一路没音频 > 引擎/切块抛错 > 一段都没交回。
+#: **`not_run` 在这个次序之外**：它说的是兜底那一版状态文件给没轮到的路现开的那一格
+#: （`_write_failed_status()` 自己把它记进 `reasons`），次序表里这几个词说的都是这一路
+#: **跑过一场**之后怎么没的。把它放进次序表，就等于让「一个词都挑不到」静默地落成它，
+#: 补记的那一格与真跑过一场的那一路从此长得一样。那一档在 `_failed_source_row()`
+#: 里按词自身认（`reasons` 里明写着 `not_run`）。
+_REASON_PRIORITY = (
+    REASON_ENGINE_LOAD_ERROR,
+    REASON_NO_AUDIO,
+    REASON_EMPTY_PCM,
+    REASON_ENGINE_ERROR,
+    REASON_NO_SEGMENTS,
+    REASON_ALL_CHUNKS_FAILED,
+)
 
 #: 数字静音门的判据：峰值的上界（int16 满量程的**格数**）。**半格是开区间**：
 #: 峰值**低于**半格（`peak < SILENT_PEAK_FLOOR`）算静音，正好落在半格上算有声。
@@ -1236,7 +1265,27 @@ def run_session(
     入口照旧走缺省的 `True`。
 
     **一路的失败不带走整场**：那一路的失败原因落进报告与状态文件，另一路照常跑。
-    全部路都失败时整场落 `failed`，否则落 `done`。
+    整场那一档因此有三档：每一路都没交回落 `failed`，至少一路跑成、也至少一路整条
+    没交回落 `partial`，每一路都交回落 `done` —— **只看顶层 `state` 这一格**就分得开
+    「两路都成」与「一路整条没交回」。
+
+    **"一路整条失败"这件事读得出来**：状态文件的 `artifacts.<source>` **每一路都有一格**
+    （跑成的、没跑成的都有），那一格自带 `state` / `reason` / `error` —— 只看这几个字段
+    就分得开「两路都成」与「一路整条失败、缺的是哪一路」，不必去解析顶层 `error` 那句
+    拼接串。没跑成的那一路照旧**一份产物文件都不落**（不留空文件充数），它在状态文件里的
+    那一格是简版（产物名缺席、`state = "failed"`）。同一件事在顶层那一格上也立着：
+    这种场面整场落 `partial`，读方只看 `state` 就读得出「有一路整条没有」。
+
+    **引擎加载失败是单独一档**（`REASON_ENGINE_LOAD_ERROR`）：惰性加载失手时这一趟一次
+    引擎调用都没发生，逐路记的是 `engine_load_error` 而不是笼统的 `engine_error` ——
+    「模型没起来」与「模型起来了、某一块没跑成」是两件要分别动手的事。这一档**只在真
+    有块要送引擎时才现形**：整路都是数字静音时一块都不必送引擎，模型因此一次都不被拉起来
+    （`docs/design-intent.md` 第 21 条），那一场照旧落 `done` + `silent: true`。
+
+    **任何逃出来的异常都落一版 `failed`**：`running` 那一版落得很早，从它之后到终态之间
+    抛出来的任何异常（连 `BaseException` 一并兜）都由 `_write_failed_status()` 在盘上留一档
+    `failed` 与那句话，**原异常照旧上抛** —— 状态文件因此不会永远停在 `running`（更早抛出
+    时也不会压根没有状态文件）。
 
     **没声跳过的那几段不影响终态**：`state` 照样 `done`、`partial` 照样 `false`，
     跳过的区间进摘要与状态文件的 `silent` / `silent_spans`（见模块头「数字静音门」）。
@@ -1263,32 +1312,40 @@ def run_session(
     if progress is not None:
         progress.start(started_at=started_at)
 
-    engine_error: str | None = None
-    if engine is None:
-        try:
-            engine = build_engine(config)
-        except Exception as exc:  # 引擎造不出来：整场如实失败，异常不外传
-            engine_error = f"{type(exc).__name__}: {exc}"
-            _log.error("会后离线引擎解析失败：%s", engine_error)
-
-    # 描述符在引擎**造好之后**才定：`device` 记的是引擎实际解析出来的那个设备
-    # （见 `engine_descriptor`），不是配置里的选择器字符串。
-    descriptor = engine_descriptor(config, engine)
-
-    # 状态文件先落一版 `running`：钩子那边「返回即算启动成功」，界面上这一格当场可读。
-    artifacts.write_status(
-        status_path,
-        session_id=session_id,
-        state="running",
-        started_at=started_at,
-        sources=list(sources),
-        artifacts={},
-    )
-
-    begun = time.monotonic()
     metrics: list[artifacts.SourceMetrics] = []
     per_source: dict[str, dict[str, Any]] = {}
+    begun = time.monotonic()
+    report_path: Path | None = None
+    descriptor: dict[str, Any] = {}
+
     try:
+        # 描述符先按「引擎还不存在」备一版（`engine_descriptor(config, None)` 的 `device`
+        # 落在选择器字符串上）：它自己万一也抛，兜底那一版状态文件与报告都还有内容可读。
+        descriptor = engine_descriptor(config, None)
+        engine_error: str | None = None
+        if engine is None:
+            try:
+                engine = build_engine(config)
+            except Exception as exc:  # 引擎造不出来：整场如实失败，异常不外传
+                engine_error = f"{type(exc).__name__}: {exc}"
+                _log.error("会后离线引擎解析失败：%s", engine_error)
+
+        # 描述符在引擎**造好之后**才定：`device` 记的是引擎实际解析出来的那个设备
+        # （见 `engine_descriptor`），不是配置里的选择器字符串。
+        descriptor = engine_descriptor(config, engine)
+
+        # 状态文件先落一版 `running`：钩子那边「返回即算启动成功」，界面上这一格当场可读。
+        # 落点尽量靠前（就在这一趟要做的事的第一步）：「这一趟跑起来了」这件事先上盘，
+        # 后面无论从哪一步抛出来，兜底那一版都能把 `running` 翻成 `failed`。
+        artifacts.write_status(
+            status_path,
+            session_id=session_id,
+            state="running",
+            started_at=started_at,
+            sources=list(sources),
+            artifacts={},
+        )
+
         for source in sources:
             metrics.append(
                 _run_one_source(
@@ -1303,25 +1360,51 @@ def run_session(
                     progress=progress,
                 )
             )
+        total_wall = time.monotonic() - begun
+
+        report_path = artifacts.write_report(
+            directory / artifacts.REPORT_NAME,
+            session_id=session_id,
+            session_dir=directory,
+            engine=descriptor,
+            metrics=metrics,
+            total_wall_seconds=total_wall,
+        )
+    except BaseException as exc:
+        # **任何从这一趟逃出来的异常都在盘上留一版 `failed`**：原来这里没有这一圈，
+        # 异常一逃出去状态文件就永远停在上一版 `running`（更早抛出时压根没有状态文件），
+        # 读方（界面、`GET /api/sessions/{id}` 的 `offline.state`、`meeting post` 的幂等闸）
+        # 看到的是「还在跑」——最坏的那一档就是它。这里如实记下是什么抛的、写一版终态，
+        # **再把原异常照旧上抛**（调用方的既有契约一个字不改：`meeting post` 接住它、
+        # 线程体接住它，两边都照旧只记一条 log）。
+        _write_failed_status(
+            status_path,
+            session_id=session_id,
+            started_at=started_at,
+            sources=sources,
+            per_source=per_source,
+            failure=exc,
+        )
+        raise
     finally:
         # 这一趟跑完（成了、失败、被打断都算）就把进度账收在终态上：`state` 从 `running`
         # 翻到 `done`，那一份账因此自带"这一趟到此为止"的位置感。收尾这一步不会抛
         # （`finish()` 内部兜住落盘失败），原来那个异常照旧上抛。
         if progress is not None:
             progress.finish(finished_at=_now_iso())
-    total_wall = time.monotonic() - begun
-
-    report_path = artifacts.write_report(
-        directory / artifacts.REPORT_NAME,
-        session_id=session_id,
-        session_dir=directory,
-        engine=descriptor,
-        metrics=metrics,
-        total_wall_seconds=total_wall,
-    )
 
     failed = [item for item in metrics if item.state != "done"]
-    state = "failed" if metrics and len(failed) == len(metrics) else "done"
+    # **顶层那一档必须把「一路整条没交回」立起来**：这一档从前只有 `done` / `failed` 两档，
+    # 一路跑成、一路整条失败时顶层落 `done` —— 读方只看 `state` 这一格，会以为这一层没问题。
+    # 三档的分法：每一路都没交回落 `failed`（一份产物都出不来）；至少一路跑成、至少一路
+    # 整条没交回，落 `partial`（缺的是哪一路看 `artifacts.<source>`）；每一路都交回了落
+    # `done`。**没声跳过那一档不在这里**：那一路的 `state` 仍是 `done`（它什么都没出错）。
+    if metrics and len(failed) == len(metrics):
+        state = "failed"
+    elif failed:
+        state = "partial"
+    else:
+        state = "done"
     error = None
     if failed:
         error = "；".join(f"{item.source}：{item.error or item.state}" for item in failed)
@@ -1347,23 +1430,22 @@ def run_session(
     # 门**在这一场上做成没做成判断**：逐路那一份进状态文件的 `artifacts.<source>`，
     # 整场这一份按路聚合后进顶层 `gate`。一次没门可用的运行因此与健康的运行分得开。
     gate = _aggregate_gate(metrics)
+    # 逐路那一格**每一路都有**（跑成的、没跑成的都有），字段同形：从前那份白名单只转发
+    # 6 键、且只转发落了产物的那几路，于是「哪一路什么都没有」在状态文件里读不出来
+    # （唯一痕迹是顶层 `error` 那句拼接串）。`state` / `reason` / `error` 就是给读方
+    # 分「两路都成」与「一路整条失败、缺的是哪一路」用的那一档。
+    report_name = None if report_path is None else report_path.name
+    artifacts_rows = {
+        source: _status_artifact_row(row, report=report_name)
+        for source, row in per_source.items()
+    }
     artifacts.write_status(
         status_path,
         session_id=session_id,
         state=state,
         started_at=started_at,
         sources=list(sources),
-        artifacts={
-            source: {
-                "transcript": row["transcript"],
-                "speakers": row["speakers"],
-                "report": report_path.name,
-                "silent": row["silent"],
-                "silent_spans": row["silent_spans"],
-                "gate": row["gate"],
-            }
-            for source, row in per_source.items()
-        },
+        artifacts=artifacts_rows,
         finished_at=_now_iso(),
         error=error,
         partial=partial,
@@ -1384,9 +1466,10 @@ def run_session(
         "error": error,
         "total_wall_seconds": round(total_wall, 3),
         "engine": descriptor,
-        "report": report_path.name,
+        "report": report_name,
         "status": status_path.name,
         "transcripts": per_source,
+        "artifacts": artifacts_rows,
         "minutes": (
             _announce_minutes(directory, launcher=minutes_launcher, force=force)
             if minutes
@@ -1702,13 +1785,19 @@ def _run_one_source(
     """跑一路：取音频 → 算切法 → 逐块调引擎 → 编号 → 落两份按路的产物 → 交回度量。
 
     本函数**不抛**：这一路的任何失败都记进度量（`state = "failed"` + `error`），
-    让另一路照常跑完。返回时 `per_source` 里已经补上这一路的产物名。
+    让另一路照常跑完。返回时 `per_source` 里已经补上这一路的产物名 —— **跑成与没跑成
+    都有那一格**（没跑成的那一路是 `_failed_source_row()` 出的简版：`state = "failed"`、
+    `reason` 与 `error`，三份产物名照旧缺席）。
 
     分块由 `post.chunk_seconds` 定（见模块头那一节）：块数为 1 时引擎拿到原始音频路径
     （单趟），块数多于一的时候逐块切、逐块调，块内编号带 `cNN:` 命名空间、时间轴加偏移。
     **有一块失败就落 `partial`**（转写照落，缺哪一段写进状态文件与报告），
     每一块都失败时这一路落 `failed`（`all_chunks_failed`），两块产物照落：转写只剩一条
     写明缺失区间的注释行、对照表是空表，终态与原因写在对照表的 `state` / `error` 上。
+    **引擎加载失败**是另一档（`engine_load_error`）：模型没起来时这一路一块都没交给引擎、
+    一份产物都不落，只有状态文件里那一格与逐块账上那一行（那一行让读方看得到这一路本来
+    切了几块）。整路都是数字静音时这一档**不会现形**：一块都不必送引擎，模型就不加载，
+    终态照旧是 `done` + `silent: true`。
 
     **没声而跳过的块不算失败也不算缺段**（见模块头「数字静音门」）：`state` 仍落 `done`，
     `partial` 仍为 `false`，跳过的区间进 `metric.silent_spans`，逐块记账里 `silent = True`。
@@ -1729,9 +1818,11 @@ def _run_one_source(
         ] = 1
         _log.warning("会后离线：%s 这一路没有可用音频（%s）", source, note)
     elif engine is None:
+        # 引擎压根没造出来（`build_engine()` 那一步就失败了）：同样是**加载**那一档，
+        # 不是「跑这一块时抛错」。这一路因此也落 `engine_load_error`。
         metric.state = "failed"
-        metric.error = f"{REASON_ENGINE_ERROR}：引擎不可用（{engine_error}）"
-        metric.reasons[REASON_ENGINE_ERROR] = 1
+        metric.error = f"{REASON_ENGINE_LOAD_ERROR}：引擎不可用（{engine_error}）"
+        metric.reasons[REASON_ENGINE_LOAD_ERROR] = 1
     else:
         if note:
             _log.info("会后离线：%s 的音频取 %s（%s）", source, paths[0], note)
@@ -1747,7 +1838,7 @@ def _run_one_source(
                 # 分母在**进逐块循环之前**定下来（这一路切了几块）：它来自切块计划，
                 # 不因某一块失败或跳过而增减。
                 progress.start_source(source, len(plan.chunks))
-            segments, runs = _execute_chunks(
+            segments, runs, load_failure = _execute_chunks(
                 directory,
                 source,
                 paths,
@@ -1777,32 +1868,40 @@ def _run_one_source(
                 )
             _log.exception("会后离线：%s 这一路引擎抛错（如实记账，继续跑另一路）", source)
         else:
-            _record_chunk_runs(metric, runs)
-            metric.gate = _chunk_gate(runs)
-            # 零时长段逐路数一遍（逐块那几行的数之和与它一致）：整路那一格在产物里
-            # 与对照表的 `audio.zero_span_segments` 同源，见模块头「零时长的段」。
-            metric.zero_span_segments = sum(run.zero_span_segments for run in runs)
-            # 「跑成了」与「没声跳过」两档都留下了有用的东西（前者有分段、后者是
-            # 「这里本来就没有音频」这个事实），**一块都没剩下**才落 `failed`。
-            ran = any(run.error is None for run in runs)
-            if not ran:
+            if load_failure is not None:
+                # **引擎加载这一档**：这一路一块都没跑（模型压根没起来），失败原因按
+                # `engine_load_error` 记，不折成逐块那句笼统的 `engine_error`——两者是
+                # 两件要分别动手的事（模型没起来 / 模型起来了、某一块没跑成）。
                 metric.state = "failed"
-                metric.error = (
-                    f"{REASON_ALL_CHUNKS_FAILED}：{_chunk_error_note(runs)}"
-                )
-                _log.error(
-                    "会后离线：%s 这一路的 %d 块一块都没跑成（%s）",
-                    source, len(runs), metric.error,
-                )
-            # 真的切了块（块数 > 1）而每一块都没跑成时，两块产物**照落**：留下一份空表，
-            # `state = "failed"` 与 `error` 明写「这一路一段都没转出来」。少了这一档，这一趟
-            # 在场次目录里什么都不留，盘上那份同名文件就是**上一趟**留下的旧表——读方按文件名
-            # 取它，会把上一趟的成功结果当成这一趟的（`250906` 两路跑进同一个目录时撞过这一类事）。
-            #
-            # 单趟（块数 1）失败照旧不落产物：那一档没有「哪几块没成」可说，失败原因在状态文件
-            # 与报告里，与 phase2 立下的口径一致（不留空文件充数）。**没声那一档照落产物**：
-            # 一份 0 段的转写配一条注释，与「引擎没吐东西」是两件事。
-            wrote_artifacts = ran or bool(metric.silent_spans) or len(runs) > 1
+                metric.error = _load_failure_note(engine, load_failure)
+                metric.reasons[REASON_ENGINE_LOAD_ERROR] = 1
+            else:
+                _record_chunk_runs(metric, runs)
+                metric.gate = _chunk_gate(runs)
+                # 零时长段逐路数一遍（逐块那几行的数之和与它一致）：整路那一格在产物里
+                # 与对照表的 `audio.zero_span_segments` 同源，见模块头「零时长的段」。
+                metric.zero_span_segments = sum(run.zero_span_segments for run in runs)
+                # 「跑成了」与「没声跳过」两档都留下了有用的东西（前者有分段、后者是
+                # 「这里本来就没有音频」这个事实），**一块都没剩下**才落 `failed`。
+                ran = any(run.error is None for run in runs)
+                if not ran:
+                    metric.state = "failed"
+                    metric.error = (
+                        f"{REASON_ALL_CHUNKS_FAILED}：{_chunk_error_note(runs)}"
+                    )
+                    _log.error(
+                        "会后离线：%s 这一路的 %d 块一块都没跑成（%s）",
+                        source, len(runs), metric.error,
+                    )
+                # 真的切了块（块数 > 1）而每一块都没跑成时，两块产物**照落**：留下一份空表，
+                # `state = "failed"` 与 `error` 明写「这一路一段都没转出来」。少了这一档，这一趟
+                # 在场次目录里什么都不留，盘上那份同名文件就是**上一趟**留下的旧表——读方按文件名
+                # 取它，会把上一趟的成功结果当成这一趟的（`250906` 两路跑进同一个目录时撞过这一类事）。
+                #
+                # 单趟（块数 1）失败照旧不落产物：那一档没有「哪几块没成」可说，失败原因在状态文件
+                # 与报告里，与 phase2 立下的口径一致（不留空文件充数）。**没声那一档照落产物**：
+                # 一份 0 段的转写配一条注释，与「引擎没吐东西」是两件事。
+                wrote_artifacts = ran or bool(metric.silent_spans) or len(runs) > 1
 
     if wrote_artifacts:
         if metric.state == "running":
@@ -1818,6 +1917,13 @@ def _run_one_source(
             metric=metric,
             per_source=per_source,
         )
+    else:
+        # **一块产物都没落的那一路也要在状态文件里留一格**（`artifacts.<source>`）：
+        # 从前它连键都没有，读方只看得到顶层 `error` 那一句拼接串，看不出缺的是哪一路。
+        # 这一格的字段与落了产物的那一路**同形**（少的是那三个产物名与逐路读数），
+        # 读方按同一套键读，不必先判断这一路是成是败才敢读。产物文件照旧一个都不落
+        # （不留空文件充数）。
+        per_source[source] = _failed_source_row(metric)
 
     metric.wall_seconds = time.monotonic() - started
     if metric.audio_seconds > 0:
@@ -1884,8 +1990,8 @@ def _execute_chunks(
     waveform: Any = None,
     decode_attempted: bool = False,
     progress: OfflineProgressLedger | None = None,
-) -> tuple[list[OfflineSegment], list[ChunkRun]]:
-    """按切法逐块调引擎，交回 `(拼回整场时间轴的分段, 逐块记账)`。
+) -> tuple[list[OfflineSegment], list[ChunkRun], str | None]:
+    """按切法逐块调引擎，交回 `(拼回整场时间轴的分段, 逐块记账, 加载失败原话)`。
 
     `paths` 是这一路的**段路径表**（序号升序 = 连续时间轴）。单趟（块数为 1）时**不切块**：
     恰好一段时把那一段的原始音频路径喂引擎，产物与加 `post.chunk_seconds` 之前逐字一致；
@@ -1909,6 +2015,12 @@ def _execute_chunks(
 
     跑完（或抛出来）都把临时块扫干净：分块目录是这一趟的中间产物，留着只会让下一趟
     分不清哪一份是哪一次的。产物里留下的是**逐块的记账**（`ChunkRun`），音频本身可重切。
+
+    第三个交回值说的是**引擎加载**这一档：非 `None` 时这一路一块都没交给引擎（模型压根
+    没起来），它与逐块那几行 `engine_error` 是两件事，调用方按它记
+    `REASON_ENGINE_LOAD_ERROR`（见 `_run_one_source`）。探测**推迟到第一块真要送引擎的
+    那一刻**：整路都是数字静音时探都不探，模型一次都不加载（`docs/design-intent.md`
+    第 21 条）；真探到加载失败时，这一块在逐块账上留一行（见循环里那一段）。
     """
     audio_paths = _audio_paths(paths)
     steps = plan.chunks
@@ -1930,6 +2042,18 @@ def _execute_chunks(
                 paths, exc_info=True,
             )
     waveform_length = None if waveform is None else len(waveform)
+
+    # **加载这一档单独收，但等第一块真要送引擎时才探**（下面逐块循环里那一次）：引擎
+    # 惰性加载，第一次 `transcribe()` 才落盘 —— 模型起不来时这一整趟一次引擎调用都不会
+    # 发生，那是「引擎加载失败」，与「引擎跑这一块时抛错」是两件事。先探这一次，这一档就
+    # 不会被逐块的 `except` 折叠成笼统的 `engine_error`。
+    # **时机不许提前到进循环之前**：整路都是数字静音时一块都不必送引擎，为了探这一档先把
+    # 几 GB 权重拉进显存是白占（`docs/design-intent.md` 第 21 条），而且那一档原来既不进
+    # 引擎也不加载模型（`docs/state.md` 那一句「跳过的那几段…没花那一次引擎调用」）——
+    # 探早了会把这一场判成加载失败，可静音本身什么都没出错。
+    # 探到的结论只记这一次：失手当即收场，成了则后面每一块按同一份结论走，不回头敲第二遍。
+    load_probed = False
+    load_failure: str | None = None
 
     merged: list[OfflineSegment] = []
     runs: list[ChunkRun] = []
@@ -2004,6 +2128,30 @@ def _execute_chunks(
                 )
                 continue
 
+            # **第一块真要送引擎了，才探这一次加载**（探一次就够：见进循环之前那段说明）。
+            # 探到失手：这一路一块都没交给引擎，按加载那一档收场（调用方记
+            # `REASON_ENGINE_LOAD_ERROR`，不折成逐块那句笼统的 `engine_error`）。
+            if not load_probed:
+                load_probed = True
+                load_failure = _ensure_engine_loaded(engine)
+                if load_failure is not None:
+                    # 这一块照**兄弟路径**（切法都算不出来那一条）在账上留一行：那一档的
+                    # 理由是「否则读方看到的是这一路一块都没跑，与这一路没跑成分不开」，
+                    # 加载失败这条新路径一样成立。少了这一行，盘上这一路只有表头，进程不在
+                    # 场的读方从 4.9 的 `sources[].total` 上看到的是 `null` —— 那个数由切块
+                    # 计划定，不因某一块失败而增减（`docs/contract.md` 4.9）。
+                    run = ChunkRun(
+                        index=step.index,
+                        offset=step.offset,
+                        seconds=step.seconds,
+                        error=_load_failure_note(engine, load_failure),
+                    )
+                    _note_progress(progress, source, run, spans=[])
+                    _log.error(
+                        "会后离线：%s 这一路引擎没加载起来（%s）", source, load_failure
+                    )
+                    return [], [], load_failure
+
             begun = time.monotonic()
             try:
                 produced = list(engine.transcribe(target))
@@ -2075,7 +2223,7 @@ def _execute_chunks(
     finally:
         if materialize or series_concat:
             clear_chunk_dir(directory)
-    return merged, runs
+    return merged, runs, None
 
 
 def _materialize_chunk(
@@ -2369,6 +2517,176 @@ def _failure_reasons(metric: artifacts.SourceMetrics) -> set[str]:
     }
 
 
+def _write_failed_status(
+    status_path: Path,
+    *,
+    session_id: str,
+    started_at: str,
+    sources: Sequence[str],
+    per_source: dict[str, dict[str, Any]],
+    failure: BaseException,
+) -> None:
+    """兜底那一版状态文件：**从这一趟逃出来的任何异常都在盘上落一档 `failed`**。
+
+    三种情况都要落得住：
+
+      - 抛在 `running` 那一版之后（多数）：把那一版翻成 `failed`，逐路已经记下的产物条目
+        原样留着；
+      - 抛在 `running` 那一版之前（引擎都没造出来就炸了）：这一版**连同 `running` 一起**
+        补上，盘上因此不会出现「压根没有状态文件」那一档 —— 读方看到的永远是「跑过、
+        而且失败了」，不是「这一场什么都没发生」；
+      - 已经跑过几路：那些路的产物名照旧带在 `artifacts` 里（盘上真有那两份文件），
+        没跑到的那几路由下面那段补上 `failed` 那一格。读方因此无论从哪一步崩，
+        都读得到「哪几路没成、为什么」。
+
+    **「没跑到」与「跑了没成」必须分得开**：下面现开的那一格 `reasons` 是空的、`error`
+    也是 `None`（引擎一次都没被喊过，原话在顶层 `error` 上），它的 `reason` 因此明写
+    `REASON_NOT_RUN` —— 兜成 `engine_error` 就把「这一路压根没跑」说成了「引擎跑这一块时
+    抛错」，而那一格自己的 `error` 是 `null`，读方无从分辨。跑了没成的那几路照旧带着
+    自己那一个词档（`_failed_source_row()`）。
+
+    **兜底本身不许把原异常换掉**：写盘再失败只记一条 log，原异常由调用方照旧上抛。
+    """
+    rows = dict(per_source)
+    for source in sources:
+        rows.setdefault(
+            source,
+            _failed_source_row(
+                artifacts.SourceMetrics(
+                    source=source, state="failed", reasons={REASON_NOT_RUN: 1}
+                )
+            ),
+        )
+    note = f"{type(failure).__name__}: {failure}"
+    try:
+        artifacts.write_status(
+            status_path,
+            session_id=session_id,
+            state="failed",
+            started_at=started_at,
+            sources=list(sources),
+            artifacts={
+                source: _status_artifact_row(row, report=None)
+                for source, row in rows.items()
+            },
+            finished_at=_now_iso(),
+            error=f"{REASON_ENGINE_ERROR}：这一趟从半路抛出来了（{note}）",
+        )
+    except Exception:  # pragma: no cover - 写盘再失败时只留 log，原异常照旧上抛
+        _log.exception("会后离线：兜底那一版 failed 没写下去（%s）", status_path)
+    else:
+        _log.error("会后离线：这一趟抛出来了，状态文件已如实落成 failed（%s）", note)
+
+
+def _status_artifact_row(row: dict[str, Any], *, report: str | None) -> dict[str, Any]:
+    """状态文件 `artifacts.<source>` 那一格的**唯一一份形状**（跑成与没跑成都走它）。
+
+    三处写方（终态那一版、兜底那一版、简版）都用它，键与键的算法因此只有一处：
+    `_run_one_source` 交给摘要的那份原样有 13 键，这里按状态文件要的那一份收口。
+    `reason` 在跑成的那一路留空（`state` 说完了），没跑成的那一路带着它的词档；真的一个
+    词档都没有时兜 `engine_error`（`_failed_source_row()` 那条路上到不了这里：那一档要么
+    从次序表挑到一个词、要么是 `REASON_NOT_RUN`）。
+    """
+    return {
+        "transcript": row.get("transcript"),
+        "speakers": row.get("speakers"),
+        "report": report,
+        "segments": int(row.get("segments") or 0),
+        "speaker_count": int(row.get("speaker_count") or 0),
+        "audio_seconds": row.get("audio_seconds"),
+        "state": row.get("state") or "failed",
+        "reason": None if row.get("state") == "done" else (row.get("reason") or REASON_ENGINE_ERROR),
+        "partial": bool(row.get("partial")),
+        "missing_spans": [list(item) for item in (row.get("missing_spans") or [])],
+        "silent": bool(row.get("silent")),
+        "silent_spans": [list(item) for item in (row.get("silent_spans") or [])],
+        "gate": dict(row.get("gate") or {}),
+        "error": row.get("error"),
+    }
+
+
+def _failed_source_row(metric: artifacts.SourceMetrics) -> dict[str, Any]:
+    """**一块产物都没落的那一路**在状态文件 `artifacts.<source>` 里的那一格。
+
+    从前这一路在 `artifacts` 里连键都没有，读方只看得到顶层 `error` 那一句拼接串 ——
+    「哪一路什么都没有」这件事因此读不出来。这一格与落了产物的那一路**同形**：
+    同样的键、缺的只是那三个产物名（这一路本来就没落文件）与逐路读数。
+
+    `reason` 取这一路最要紧的那一个词档（加载失败 > 没音频 > 引擎抛错 > 一段都没交回），
+    与 `state` 合起来就是「这一路是怎么没的」；`error` 放着那句话的原话。
+
+    跑过的那一路的 `reasons` 一定有词（每条失败路径都往那里记一笔），也因此**走不到**
+    次序表的兜底：兜底那一版状态文件给没轮到的路现开一格时，自己把 `REASON_NOT_RUN`
+    记进 `reasons`（见 `_write_failed_status()`），下面按词自身认它 —— 于是「这一路压根
+    没跑」在这一格上说得出口，读方按原因筛「是不是引擎的锅」时也不会把它算进去。
+    """
+    if metric.reasons.get(REASON_NOT_RUN):
+        # 兜底那一版给没轮到的路现开的那一格：明写着这个词（引擎一次都没被喊过）。
+        reason = REASON_NOT_RUN
+    elif metric.error is None and not metric.reasons:
+        # 一个词档都没有、连失败原话也没有：这一格说不出「引擎跑这一块时抛错」，
+        # 兜成那个词就把读方按原因筛的那一档引到错的地方（本节点要消灭的正是这一种）。
+        # 产品路径到不了这里（跑过的每一路都至少记一笔 `reasons`），它当的是守卫。
+        reason = REASON_NOT_RUN
+    else:
+        reason = next(
+            (name for name in _REASON_PRIORITY if metric.reasons.get(name)),
+            REASON_ENGINE_ERROR,
+        )
+    return _status_artifact_row(
+        {
+            "transcript": None,
+            "speakers": None,
+            "segments": 0,
+            "speaker_count": 0,
+            "audio_seconds": round(float(metric.audio_seconds), 3),
+            "state": metric.state,
+            "reason": reason,
+            "partial": False,
+            "missing_spans": [],
+            "silent": False,
+            "silent_spans": [],
+            "gate": dict(metric.gate),
+            "error": metric.error,
+        },
+        report=None,
+    )
+
+
+def _ensure_engine_loaded(engine: Any) -> str | None:
+    """探一次引擎加载，交回 `None`（加载好了）或加载失败的原话。
+
+    引擎是惰性加载的：模型直到第一次 `transcribe()` 才落盘，所以「加载失败」这一档
+    只有在真正要用它的时候才现形。真引擎自己记着这件事（`load_error`）；跟着接缝
+    塞进来的假件另有 `_load()`（用例直接验加载那一段）或两样都没有（每次 `transcribe()`
+    自己抛）—— 后面这两种一律探成「没有加载这一档可说」，交给逐块那条既有路径。
+
+    **调用点只有一处**（`_execute_chunks`），而且是在**第一块真要送引擎的那一刻**：
+    这一探会把模型真的拉起来（真引擎那几下就是几 GB 权重），整路都是数字静音时因此
+    一次都不该调它（`docs/design-intent.md` 第 21 条）。
+    """
+    read = getattr(engine, "load_error", None)
+    if read is not None:
+        return str(read)
+    probe = getattr(engine, "_load", None)
+    if callable(probe):
+        try:
+            probe()
+        except Exception as exc:
+            return f"{type(exc).__name__}: {exc}"
+    return None
+
+
+def _load_failure_note(engine: Any, failure: str | None = None) -> str:
+    """加载失败那一句话：`engine_load_error：<原话>`。
+
+    词档与逐块的 `engine_error` 分开：读方从这一句就分得清「模型没起来、这一趟一次
+    都没跑」与「模型起来了、某一块没跑成」（见 `REASON_ENGINE_LOAD_ERROR`）。
+    """
+    detail = failure if failure is not None else _ensure_engine_loaded(engine)
+    return f"{REASON_ENGINE_LOAD_ERROR}：{detail or '引擎没能加载起来'}"
+
+
 def _write_source_artifacts(
     directory: Path,
     source: str,
@@ -2533,9 +2851,11 @@ __all__ = [
     "REASON_DIGITAL_SILENCE",
     "REASON_EMPTY_PCM",
     "REASON_ENGINE_ERROR",
+    "REASON_ENGINE_LOAD_ERROR",
     "REASON_GATE_UNJUDGED",
     "REASON_NO_AUDIO",
     "REASON_NO_SEGMENTS",
+    "REASON_NOT_RUN",
     "REASON_TRANSCRIBED",
     "REASON_ZERO_SPAN_SEGMENTS",
     "SILENT_PEAK_FLOOR",

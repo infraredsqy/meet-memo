@@ -859,6 +859,100 @@ def test_an_exploding_offline_run_is_recorded_and_re_raised(
     assert offline_runner._announce_minutes.__module__ == "meeting.offline.runner"
 
 
+#: 盘上那一版兜底账里那句**更准的原因**（`engine_load_error` 这个词档只在 `runner` 那一版里）。
+#: 用字面量而不是 import 一个常量：这一条要钉的是「这**一句话**别被盖掉」，
+#: 换一份错的原因、或者错在别的档上，都该让这条用例红。
+DISK_SIDE_REASON = "mic：engine_load_error：OSError: 模型快照读不动（合成）"
+
+
+def test_the_callers_ledger_keeps_the_reason_the_runner_wrote_down(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """调用方盖账之后，顶层 `error` 里那个更准的原因**还读得出来**。
+
+    这一条盯的是本节点 m2 那一档：`run_session` 逃出去之前，离线段自己**已经现场写下**
+    一版（`runner._write_failed_status()`），随后 `run_post` 接住异常、调
+    `_mark_offline_failed()` 把同一份文件重写一遍。从前那一版被一句通用串
+    （`RuntimeError: 离线段炸了`）整句替换掉，于是「是加载失败还是跑失败」在顶层这一格上
+    就没了 —— 而那句话一秒前才写好。现在改写前先读回盘上那一版，它已经是终态就沿用它的
+    `error`。
+
+    `run_session` 换成一条替身（真离线段那两条用例在 `tests/test_offline_runner.py`），
+    它做的正是那一版账：落 `failed` + runner 那句原话，再把异常抛出去。
+    """
+    session = synth_session(tmp_path / "250919")
+    status_path = session / OFFLINE_STATUS_NAME
+
+    def an_engine_that_never_loaded(session_dir, **_kwargs):
+        offline_artifacts.write_status(
+            status_path,
+            session_id="250919",
+            state="failed",
+            started_at="2025-09-19T20:00:00",
+            sources=["mic", "loopback"],
+            artifacts={},
+            finished_at="2025-09-19T20:00:03",
+            error=DISK_SIDE_REASON,
+        )
+        raise RuntimeError("离线段炸了")
+
+    monkeypatch.setattr(offline_runner, "run_session", an_engine_that_never_loaded)
+
+    with pytest.raises(RuntimeError, match="离线段炸了"):
+        run_post(session, minutes_launcher=RecordingLauncher())
+
+    written = json.loads(status_path.read_text(encoding="utf-8"))
+    assert written["state"] == "failed"
+    assert DISK_SIDE_REASON in str(written["error"]), written["error"]
+    # 场次编号 / 开始时刻 / 路清单照读回的那一版（补账不改这几格）
+    assert written["session_id"] == "250919"
+    assert written["started_at"] == "2025-09-19T20:00:00"
+    assert written["sources"] == ["mic", "loopback"]
+    assert written["finished_at"], "收工时刻这一次补账要写上新的一版"
+
+
+def test_the_callers_ledger_keeps_a_partial_run_as_it_is(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """盘上那一版是 `partial`（一路整条没交回、另一路跑成了）时，补账**不把它翻成 `failed`**。
+
+    顶层 `failed` 那句话是「每一路都没交回」；用在这里会把「另一路跑成了」这件事抹掉，
+    与逐路那一格也自相矛盾。这一条钉住补账只认「盘上已经是终态」这一点，终态是哪一档照它。
+    """
+    session = synth_session(tmp_path / "250919")
+    status_path = session / OFFLINE_STATUS_NAME
+    dead_row = {
+        "state": "failed",
+        "reason": "engine_error",
+        "error": "mic：engine_error：这一路解不出来",
+    }
+
+    def a_run_that_gave_up_on_one_source(session_dir, **_kwargs):
+        offline_artifacts.write_status(
+            status_path,
+            session_id="250919",
+            state="partial",
+            started_at="2025-09-19T20:00:00",
+            sources=["mic", "loopback"],
+            artifacts={"mic": dict(dead_row), "loopback": {"state": "done", "reason": None}},
+            finished_at="2025-09-19T20:00:09",
+            error="mic：engine_error：这一路解不出来",
+        )
+        raise RuntimeError("收尾那一步炸了")
+
+    monkeypatch.setattr(offline_runner, "run_session", a_run_that_gave_up_on_one_source)
+
+    with pytest.raises(RuntimeError, match="收尾那一步炸了"):
+        run_post(session, minutes_launcher=RecordingLauncher())
+
+    written = json.loads(status_path.read_text(encoding="utf-8"))
+    assert written["state"] == "partial", written["state"]
+    assert "这一路解不出来" in str(written["error"])
+    assert written["artifacts"]["loopback"]["state"] == "done"
+    # 逐路那一格也照读回的那一版（补账只写顶层那几格，逐路一个字不动）
+    assert written["artifacts"]["mic"]["reason"] == "engine_error"
+
+
 def test_post_reports_an_exploding_offline_run_as_a_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

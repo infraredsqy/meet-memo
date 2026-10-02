@@ -202,15 +202,44 @@ class MossOfflineEngine:
         self._torch_dtype = None
         self.processor = None
         self.transcriber = None
+        #: 这一台引擎**第一次加载**失手的原话（`"TypeName: 原话"`）；没失手时是 `None`。
+        #: 它同时是那道「不重试」的闸：一次加载失手之后每一趟 `transcribe()` 当场把它
+        #: 原样抛出来，不回到 `_load_models()` 再试一遍（见 `_load()`）。
+        self._load_failed: str | None = None
 
     # -- 加载 ---------------------------------------------------------------
 
+    @property
+    def load_error(self) -> str | None:
+        """这一台引擎的加载失手了没有（失手时交回原话，否则交回 `None`）。
+
+        调用方据此把「引擎加载失败」与「引擎跑这一块时抛错」分成两档：前者是一整趟
+        都没开始，后者是某一块没成（`runner.REASON_ENGINE_LOAD_ERROR` 那一档）。
+        """
+        return self._load_failed
+
     def _load(self) -> None:
+        """惰性加载：第一次 `transcribe()` 才落盘，加载失败**立成一档、不重试**。
+
+        `transcriber is not None` 才认「已经加载好了」——只有加载成功才会给它赋值。
+        第一次失手之后 `_load_failed` 记着原话，`_load()` 不再回到 `_load_models()`：
+        原来那版「抛出去就忘」在同一个场次目录的第二路上会把同一句加载错误再犯一次
+        （两路各一次、日志里看不出这是同一件事），重试一条真的加载不动的模型还要
+        再花一次显存与时间。**这一档只说「加载失手过一次」**：据此拒掉后续调用，
+        与「这一块跑不动」是两件事（见 `load_error`）。
+        """
         if self.transcriber is not None:
             return
-        self.processor, self.transcriber, self._torch_dtype = _load_models(
-            self.model, dtype=self.dtype, device=self.device
-        )
+        if self._load_failed is not None:
+            raise RuntimeError(self._load_failed)
+        try:
+            self.processor, self.transcriber, self._torch_dtype = _load_models(
+                self.model, dtype=self.dtype, device=self.device
+            )
+        except Exception as exc:  # 加载失手：记下原话，下一次调用当场拒，不重试
+            self._load_failed = f"{type(exc).__name__}: {exc}"
+            log.error("MOSSTD 加载失败（%s）：%s", self.model, self._load_failed)
+            raise
 
     # -- 契约 ---------------------------------------------------------------
 

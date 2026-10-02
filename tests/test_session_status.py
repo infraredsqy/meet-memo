@@ -5,8 +5,8 @@
   - **跑到一半读得到**：会后的活儿正在飞时打这只端点，读得到「第 N 块 / 共 M 块、
     正在跑哪一路、已经跑了多久」；跑完之后同一只端点照旧给得出读数（改读盘上那份账）；
   - **两块回答两件事**：`offline.state` 照盘上那份如实答（盘上写 `running` 就答
-    `running`，崩在半路那一场因此答 `running`），`offline.in_process` 答「本进程里
-    此刻有没有这一趟活」；
+    `running`，崩在半路那一场因此答 `running`；盘上写 `partial` / `failed` 也照它自己
+    那一档答），`offline.in_process` 答「本进程里此刻有没有这一趟活」；
   - **前七格与列表同源**：同一份盘上 `session.json`，`GET /api/sessions` 那一行与
     这一只端点的前七格给同一个值（域外的值两处都如实落 `null`）；
   - **纯读**：读它不涨 `revision`、不广播，快照九键一个字不动；
@@ -278,6 +278,48 @@ def test_a_stale_running_status_file_is_answered_as_it_is_on_disk(
         per_source = {item["source"]: item for item in offline["sources"]}
         assert (per_source["mic"]["done"], per_source["mic"]["total"]) == (1, 3)
         assert per_source["mic"]["current_chunk"] is None
+        assert body["post"] is None
+    finally:
+        config_module.set_current(previous)
+
+
+def test_a_failed_status_file_is_answered_as_failed(tmp_path, monkeypatch, restore_config) -> None:
+    """盘上落 `failed` 的那一场：`offline.state` 答 `failed`，**不许折成 `done`**。
+
+    折了之后，一趟整个失败的会后与一趟跑成的会后在读数上同形 —— 读方（界面这一格、
+    下拉看这一场的人）就被骗了。这一格照盘上那份答，与 `running` / `ledger` 那两档
+    同一个姿态：盘上写什么就答什么。
+    """
+    runtime, previous = _runtime(tmp_path, monkeypatch, **{"post.chunk_seconds": CHUNK_SECONDS})
+    session = _workspace_with_audio(tmp_path)
+    _ledger_and_status(session, status_state="failed")
+    runtime.workspace_open(str(session))
+    try:
+        body = runtime.session_status_dict(str(session))
+        assert body["offline"]["state"] == "failed", "盘上那份的终态照它答"
+        assert body["offline"]["in_process"] is False
+        assert body["post"] is None
+    finally:
+        config_module.set_current(previous)
+
+
+def test_a_partial_status_file_is_answered_as_partial(
+    tmp_path, monkeypatch, restore_config
+) -> None:
+    """盘上落 `partial`（一路整条没交回、另一路跑成了）的那一场：这一格答 `partial`。
+
+    与 `failed` / `running` 那几档同一个姿态：盘上写什么就答什么。折成 `done` 之后，
+    一路整条没交回的会后与一趟跑成的会后在读数上同形 —— 读方（界面这一格、下拉看这一场
+    的人）就被骗了，而那正是本节点第二条 bug 的痛点。
+    """
+    runtime, previous = _runtime(tmp_path, monkeypatch, **{"post.chunk_seconds": CHUNK_SECONDS})
+    session = _workspace_with_audio(tmp_path)
+    _ledger_and_status(session, status_state="partial")
+    runtime.workspace_open(str(session))
+    try:
+        body = runtime.session_status_dict(str(session))
+        assert body["offline"]["state"] == "partial", "盘上那份的终态照它答"
+        assert body["offline"]["in_process"] is False
         assert body["post"] is None
     finally:
         config_module.set_current(previous)

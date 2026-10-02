@@ -37,10 +37,12 @@ _log = logging.getLogger("meeting.backends.post")
 #: 后台线程的名字（出现在线程转储与 log 里，一眼能认出是哪一条）
 THREAD_NAME = "post-offline"
 
-#: 状态文件里 `state` 的三档
+#: 状态文件里 `state` 的四档（`meeting.offline.artifacts.STATES` 同值）
 STATE_RUNNING = "running"
 STATE_DONE = "done"
 STATE_FAILED = "failed"
+#: 一路整条没交回、另一路跑成那一档：产物可用（它是终态），顶层那一格与 `done` 分开写
+STATE_PARTIAL = "partial"
 
 
 class PostProcessHook:
@@ -93,7 +95,14 @@ class PostProcessHook:
             self._mark_failed(session_dir, exc)
 
     def _mark_failed(self, session_dir: str, exc: BaseException) -> None:
-        """把状态文件补成 `failed`（**尽力而为**：连这一步都失败就只留一条 log）。"""
+        """把状态文件补成 `failed`（**尽力而为**：连这一步都失败就只留一条 log）。
+
+        与 `meeting/cli.py` 的 `_mark_offline_failed()` 同一个口径（盘上那一版已经是终态时
+        照它自己那一版留着）：异常到这里之前，离线段自己**已经现场写过**一版 ——
+        `runner._write_failed_status()` 落 `failed`（`error` 里写着是加载失败还是跑失败），
+        一路跑成那种场面落 `partial`。盘上那一版是这两档时就沿用它的 `error` 与
+        `partial` / `silent` / `silent_spans` / `gate` 四格：那份账比这里手里的通用串准。
+        """
         try:
             from meeting.offline import artifacts
 
@@ -104,15 +113,23 @@ class PostProcessHook:
                     existing = artifacts.read_status(path)
                 except artifacts.ArtifactContractError:
                     existing = None
+            disk = existing or {}
+            settled = str(disk.get("state") or "") in (STATE_FAILED, STATE_PARTIAL)
             artifacts.write_status(
                 path,
-                session_id=str((existing or {}).get("session_id") or Path(session_dir).name),
-                state=STATE_FAILED,
-                started_at=str((existing or {}).get("started_at") or _now_iso()),
-                sources=list((existing or {}).get("sources") or []),
-                artifacts=dict((existing or {}).get("artifacts") or {}),
+                session_id=str(disk.get("session_id") or Path(session_dir).name),
+                state=str(disk.get("state")) if settled else STATE_FAILED,
+                started_at=str(disk.get("started_at") or _now_iso()),
+                sources=list(disk.get("sources") or []),
+                artifacts=dict(disk.get("artifacts") or {}),
                 finished_at=_now_iso(),
-                error=f"{type(exc).__name__}: {exc}",
+                error=str(disk.get("error") or f"{type(exc).__name__}: {exc}")
+                if settled
+                else f"{type(exc).__name__}: {exc}",
+                partial=bool(disk.get("partial")) if settled else False,
+                silent=bool(disk.get("silent")) if settled else False,
+                silent_spans=list(disk.get("silent_spans") or []) if settled else None,
+                gate=dict(disk.get("gate") or {}) if settled else None,
             )
         except Exception:  # pragma: no cover - 兜底那一步失败时不掩盖原异常
             _log.exception("会后离线状态文件补写失败（原异常照上面那条 log）")
@@ -126,6 +143,7 @@ def _now_iso() -> str:
 __all__ = [
     "STATE_DONE",
     "STATE_FAILED",
+    "STATE_PARTIAL",
     "STATE_RUNNING",
     "THREAD_NAME",
     "PostProcessHook",

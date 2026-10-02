@@ -105,6 +105,10 @@ LAYER_ABSENT = "absent"
 LAYER_FAILED = "failed"
 LAYER_UNKNOWN = "unknown"
 
+#: 离线那一层**一路整条没交回、另一路跑成**那一档的结论词：它是这一层的终态（产物可用），
+#: 与 `done` 分开写，好让读方在一格上就看出「有一路整条没有」（`artifacts.STATES` 同值）。
+LAYER_PARTIAL = "partial"
+
 #: 两层共用的「上一趟还在跑 / 崩在半路」那一档（`meeting post` 默认拒跑的那一档）
 LAYER_RUNNING = "running"
 
@@ -1193,6 +1197,13 @@ def _mark_offline_failed(directory: Path, error: str) -> None:
     与 `meeting/backends/post.py` 的 `_mark_failed()` 同一个口径：先读回上一版、保留里面的
     场次编号 / 开始时刻 / 路清单 / 逐路产物，再写终态与原因。写盘方式走 `artifacts.py` 的
     `write_status()`（原子替换），**字段与取值域一个字不改**。
+
+    **盘上那一版已经是终态时照它自己那一版留着**：异常从 `run_session` 逃出来之前，
+    离线段自己**已经现场写过**一版（`runner._write_failed_status()` 落 `failed`，或者一路
+    跑成那种场面落 `partial`），那一版里的话比这里收到的通用串准（`engine_load_error`
+    这类词档只在它那儿）。改写前先读回盘上那一份，它已经是 `failed` / `partial` 就沿用
+    它的 `error` 与 `partial` / `silent` / `silent_spans` / `gate` 四格 —— 否则读方在顶层
+    `error` 这一格上读不到「是加载失败还是跑失败」，而那句话刚刚才写好。
     """
     try:
         from meeting.offline import artifacts
@@ -1204,15 +1215,20 @@ def _mark_offline_failed(directory: Path, error: str) -> None:
                 existing = artifacts.read_status(path)
             except artifacts.ArtifactContractError:
                 existing = {}
+        settled = str(existing.get("state") or "") in (LAYER_FAILED, LAYER_PARTIAL)
         artifacts.write_status(
             path,
             session_id=str(existing.get("session_id") or directory.name),
-            state=LAYER_FAILED,
+            state=str(existing.get("state")) if settled else LAYER_FAILED,
             started_at=str(existing.get("started_at") or _now_iso()),
             sources=list(existing.get("sources") or []),
             artifacts=dict(existing.get("artifacts") or {}),
             finished_at=_now_iso(),
-            error=str(error),
+            error=str(existing.get("error") or error) if settled else str(error),
+            partial=bool(existing.get("partial")) if settled else False,
+            silent=bool(existing.get("silent")) if settled else False,
+            silent_spans=list(existing.get("silent_spans") or []) if settled else None,
+            gate=dict(existing.get("gate") or {}) if settled else None,
         )
     except Exception:  # pragma: no cover - 补写失败时不掩盖原来那条异常
         try:
@@ -1425,8 +1441,10 @@ def _offline_outcome(
 
     分档按「盘上的终态」与「这一趟有没有抛出」两条一起来：状态文件落 `failed`、或者
     离线那一趟整个抛出来（`error` 有内容、状态文件可能压根没落）都记 `failed`；
-    终态 `done` 记 `done`；盘上什么都没有才记 `absent`（产品路径上这一档只在
-    `run_session` 还没跑过时出现）。
+    状态文件落 `done`（每一路都交回了）与 `partial`（一路整条没交回、另一路跑成了）
+    都记 `done` —— 两档的产物都在盘上、这一层都收了工，**这一格的诚实落在 `state` 那一格
+    与逐路产物上**（`partial` 照盘上那份报，不折成 `done`，也不退回 `absent`）；
+    盘上什么都没有才记 `absent`（产品路径上这一档只在 `run_session` 还没跑过时出现）。
 
     `skipped = True` 时这一层**这一趟没跑**（幂等闸判它已是终态）：状态文件里已有的
     终态照样如实报出来，只多一格 `skipped` 说明这一趟没进引擎。
@@ -1436,7 +1454,7 @@ def _offline_outcome(
     failure = status.get("error") or error
     if state == "failed" or (state is None and error is not None):
         hook = LAYER_FAILED
-    elif state == "done":
+    elif state in ("done", LAYER_PARTIAL):
         hook = LAYER_DONE
     else:
         hook = LAYER_ABSENT

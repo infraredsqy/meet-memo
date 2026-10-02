@@ -2497,10 +2497,10 @@ class ServiceRuntime:
             见 `docs/design-intent.md` 第 6、7 条）。
 
         `offline` 里**两块回答的是两件事**，各有各的判据（契约 4.9）：`state` 照盘上那份
-        如实答（状态文件写着 `running` 就答 `running`，哪怕那一趟早已崩在半路），
-        `in_process` 答「**本进程里此刻有没有这一趟活**」。两块合起来才分得清「真的在跑」
-        与「盘上停着一版 `running`、其实谁都没在跑」—— 后者不另立终态（「被打断」是另一个
-        节点的账），只把这两格如实摆出来。
+        如实答（状态文件写着 `running` 就答 `running`，写着 `partial` / `failed` 就照它
+        那一档答，哪怕那一趟早已崩在半路），`in_process` 答「**本进程里此刻有没有这一趟
+        活**」。两块合起来才分得清「真的在跑」与「盘上停着一版 `running`、其实谁都没在跑」
+        —— 后者不另立终态（「被打断」是另一个节点的账），只把这两格如实摆出来。
 
         `offline` 是**给人看的读数**：不提交、不涨 `revision`、不广播。这只端点是纯读，
         快照九键一个字不动。
@@ -2544,10 +2544,11 @@ class ServiceRuntime:
 
         **两块分开说，别混**：
 
-          - `offline.state` 照**盘上那份**如实答（契约 4.9：`running` / `done` / `idle`，
-            外加「盘上有账、而这一趟既不在飞、也没有状态文件回答」那一档 `ledger`）。
-            状态文件写着 `done` / `failed` 就答 `done`、写着别的（`running`）就答 `running`；
-            **进程崩在半路的那一场因此如实答 `running`**，不在这里替盘上的话做二次解读；
+          - `offline.state` 照**盘上那份**如实答（契约 4.9：`running` / `done` / `partial` /
+            `failed` / `idle`，外加「盘上有账、而这一趟既不在飞、也没有状态文件回答」那一档
+            `ledger`）。状态文件写着 `done` / `partial` / `failed` 就照它自己那一档答，
+            写着 `running` 也照它自己那一档答；**进程崩在半路的那一场因此如实答
+            `running`**，不在这里替盘上的话做二次解读；
           - `offline.in_process` 另立一格答「**本进程里此刻有没有这一趟活**」，判据取
             `_offline_job_running()`（这一趟的路是 `offline`、跑的是这一场、那条线程还活着
             —— 与「这一趟在不在飞」同一套现场）。**跑完那一刻它翻回 `false`**：活着的现场
@@ -2574,11 +2575,15 @@ class ServiceRuntime:
         if read is not None:
             snapshot["started_at"] = read.get("started_at")
             snapshot["finished_at"] = read.get("finished_at")
-            # 盘上有结论可读：状态文件落在 `done` / `failed` 就答 `done`，别的档（`running`）
-            # 照它自己那一档如实答 —— 那一版可能是「真的还在跑」，也可能是「崩在半路停在那儿」，
-            # 这一格不替它二选一（「此刻有没有东西在跑」由 `in_process` 那一格回答）。
+            # 盘上有结论可读：状态文件落在 `done` / `partial` / `failed` 就**照它那一档**答，
+            # 别的档（`running`）也照它自己那一档如实答 —— 那一版可能是「真的还在跑」，
+            # 也可能是「崩在半路停在那儿」，这一格不替它二选一（「此刻有没有东西在跑」由
+            # `in_process` 那一格回答）。**这几档都不许折成 `done`**：折了之后读方
+            # （界面这一格、`GET /api/sessions/{id}` 的 `offline.state`）看到的是一趟
+            # 整个失败的会后与一趟跑成的会后同形 —— 那正是「读方被骗」那一档。
+            mapped = str(read.get("state") or "")
             snapshot["state"] = (
-                "done" if read.get("state") in ("done", "failed") else "running"
+                mapped if mapped in ("done", "partial", "failed") else "running"
             )
         snapshot["in_process"] = False
         return snapshot

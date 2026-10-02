@@ -285,6 +285,53 @@ def test_a_failing_background_run_lands_in_the_status_file(tmp_path, monkeypatch
     assert status["finished_at"]
 
 
+def test_a_failing_background_run_keeps_a_ledger_the_runner_already_settled(
+    tmp_path, monkeypatch
+) -> None:
+    """盘上那一版已经是终态时，补账**沿用它的原因与终态那一档**（不整句替换、也不翻档）。
+
+    这一条与 `meeting/cli.py` 的 `_mark_offline_failed()` 是同一条口径的另一个落点
+    （本节点 m2）：`run_session` 逃出去之前，离线段自己已经现场写过一版 —— 落 `failed`
+    时那一句 `error` 比这里手里的通用串准（`engine_load_error` 这类词档只在它那儿），
+    落 `partial`（一路整条没交回、另一路跑成了）时更不能翻成 `failed`。
+    """
+    session = synth_session(tmp_path / "250919")
+    reason = "mic：engine_load_error：OSError: 模型快照读不动（合成）"
+
+    def settling_run_session(session_dir, **_kwargs):
+        artifacts.write_status(
+            Path(session_dir) / artifacts.STATUS_NAME,
+            session_id="250919",
+            state="partial",
+            started_at="2025-09-19T20:00:00",
+            sources=["mic", "loopback"],
+            artifacts={"mic": {"state": "failed"}, "loopback": {"state": "done"}},
+            finished_at="2025-09-19T20:00:07",
+            error=reason,
+        )
+        raise RuntimeError("后台那一条线炸了")
+
+    from meeting.offline import runner
+
+    monkeypatch.setattr(runner, "run_session", settling_run_session)
+
+    post_module.PostProcessHook().launch(str(session))
+    # 等的是**补账那一步真的走过**：它照例写一个新的一版 `finished_at`，
+    # 而替身留在盘上那一版是固定值 —— 两者不同就说明重写发生了（事件驱动，不赌时序）
+    status = wait_until(
+        lambda: (
+            lambda doc: doc
+            if doc.get("finished_at") not in (None, "2025-09-19T20:00:07")
+            else None
+        )(read_status(session)),
+        what="补账把状态文件重写过一遍",
+    )
+
+    assert status["state"] == "partial", status["state"]
+    assert reason in str(status["error"]), status["error"]
+    assert status["artifacts"]["loopback"]["state"] == "done"
+
+
 def test_a_failing_background_run_keeps_the_earlier_status_fields(
     tmp_path, monkeypatch
 ) -> None:

@@ -402,6 +402,37 @@ def test_engine_is_lazy_and_loads_once(monkeypatch: pytest.MonkeyPatch) -> None:
     assert loaded == [("m", "bfloat16", engine.device)]
 
 
+def test_engine_load_failure_is_kept_and_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    """**第一次加载就失败**：原话留在 `load_error` 上，后续每一趟当场拒、不再敲一遍加载。
+
+    「偶发」那一档的两个落点都在这里：失手这件事**读得出来**（`load_error` 非空，
+    调用方据此把这一路记成加载失败），而且**不重试**（同一个场次目录的第二路、
+    同一条链上的下一次调用都不会让那句加载错误再犯一次）。
+    """
+    attempts: list = []
+    processor = _FakeProcessor("[0.1][S01]一[0.2]")
+
+    def flaky_load(model_name, *, dtype, device):
+        attempts.append((model_name, dtype, device))
+        if len(attempts) == 1:
+            raise OSError("第一次读不动模型快照")
+        return processor, _FakeModel(), None
+
+    monkeypatch.setattr(engine_module, "_load_models", flaky_load)
+    monkeypatch.setattr(engine_module, "_decode_audio", lambda path: WAVEFORM)
+    engine = engine_module.MossOfflineEngine(model="m")
+
+    assert engine.load_error is None
+    with pytest.raises(OSError, match="第一次读不动模型快照"):
+        engine.transcribe("a.wav")
+
+    assert engine.load_error == "OSError: 第一次读不动模型快照"
+    # 第二次调用：当场拒（原话照旧），加载接缝一次都不再进
+    with pytest.raises(RuntimeError, match="第一次读不动模型快照"):
+        engine.transcribe("b.wav")
+    assert len(attempts) == 1
+
+
 def test_engine_passes_model_dtype_and_device_to_the_loader(monkeypatch: pytest.MonkeyPatch) -> None:
     """`model` / `dtype` 原样传给加载接缝（`model` 既收仓库 id，也收本地快照绝对路径）。"""
     captured: list = []

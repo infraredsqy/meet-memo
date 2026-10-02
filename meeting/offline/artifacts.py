@@ -7,7 +7,7 @@
 | `meeting_offline_transcript_<source>.md` | 权威转写，每行 `[HH:MM] **S01**: 正文`（**分钟级**） | 人 + 下游对账 |
 | `meeting_offline_speakers_<source>.json` | 类编号 → 每段区间对照表（**秒级浮点**） | 下游程序 |
 | `meeting_offline_report.md` | 运行报告（段耗时分布 / 失败原因分布 / 实时率 + 本场基本事实） | 人 |
-| `meeting_offline_status.json` | 状态文件（`running` / `done` / `failed`） | `phase3` 与将来的界面 |
+| `meeting_offline_status.json` | 状态文件（`running` / `done` / `partial` / `failed`） | `phase3` 与将来的界面 |
 
 **每路各一份，两路不合并**：转写与对照表两张表都按 `source` 分别落盘，文件名里带
 `<source>`。混成一份就再也说不出「这一行出自哪一路」了。
@@ -83,7 +83,7 @@
 |---|---|
 | 正常跑完 | `state = "done"`、`silent_spans` 为空、`missing_spans` 为空 |
 | 没声跳过 | `state = "done"`、`silent_spans` 非空（`partial` 仍是 `false`） |
-| 引擎失败 / 缺段 | `state = "failed"`，或 `state = "done"` 且 `partial = true` |
+| 引擎失败 / 缺段 | `state = "failed"`（每一路都没交回），或 `state = "done"` 且 `partial = true`；一路整条没交回、另一路跑成的时候这一格落 `state = "partial"`（缺的是哪一路看 `artifacts.<source>`） |
 | 跑成而段全零时长 | `state = "done"`、`zero_span_segments > 0`（有字，但形状可疑） |
 
 留痕的四处与「缺了一段」一一对应，但用的是**另一批字段**：
@@ -187,8 +187,9 @@ _LINE_RE = re.compile(r"^\[(?P<stamp>\d{2}:\d{2})\] \*\*(?P<speaker>[^*]+)\*\*: 
 TRANSCRIPT_NOTE_PREFIX = "<!--"
 TRANSCRIPT_NOTE_SUFFIX = "-->"
 
-#: 合法状态
-STATES = ("running", "done", "failed")
+#: 合法状态。`partial` 是**一路整条没交回、另一路跑成了**那一档（见 `write_status()`）：
+#: 从前这一档与「两路都成」在顶层这一格上都写 `done`，读方只看 `state` 分不开。
+STATES = ("running", "done", "partial", "failed")
 
 
 class ArtifactContractError(ValueError):
@@ -1036,7 +1037,22 @@ def write_status(
     silent_spans: Sequence[Sequence[float]] | None = None,
     gate: dict[str, Any] | None = None,
 ) -> Path:
-    """落状态文件（`running` / `done` / `failed` 三档，写盘原子替换）。
+    """落状态文件（`running` / `done` / `partial` / `failed` 四档，写盘原子替换）。
+
+    **四档各说一件事**，读方只看 `state` 这一格就分得开：
+
+      - `done`：这一场声明的每一路都跑成了；
+      - `partial`：**至少有一路跑成、也至少有一路整条没交回**（模型没起来、这一路抛错、
+        一段都没交回、归档缺了这一路）。这一档必须与「两路都成」分得开 —— 读方若只看
+        顶层 `state`，从前两种情形都落 `done`，「这一层没问题」就被读出来了；
+        缺的是哪一路由 `artifacts.<source>.state` / `reason` / `error` 那几格回答；
+      - `failed`：**每一路**都没交回（一份产物都出不来）；
+      - `running`：这一趟还在跑（或者崩在半路停在了那一版）。
+
+    这一档看的是「哪一路整条没有」，与紧跟着讲的那个 `partial` 字段**各说一件事**：那个
+    字段看的是「某一路缺了区间」（分块跑时某块没成，产物照落、这一路仍落 `done`）。一路
+    整条失败、另一路缺了区间的那一场因此是 `state = "partial"` 配 `partial = true`，
+    两件事各占一格。
 
     `partial` 是这一场有没有**缺了区间**（分块跑时某块没成）：`state` 仍落 `done`
     （产物可用、这一格是终态），而 `partial = true` 加上 `error` 里那句「缺了哪一段」
