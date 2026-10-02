@@ -7,12 +7,18 @@ import {
   DevicesProtocolError,
   DevicesUnavailableError,
   REQUIRED_HEADERS,
+  SessionStatusHttpError,
+  SessionsProtocolError,
+  SessionsUnavailableError,
   SummariesProtocolError,
   SummariesUnavailableError,
   clampHeartbeatInterval,
   createEventsClient,
   createHeartbeatClient,
+  createSessionStatusPoller,
   fetchDevices,
+  fetchSessionStatus,
+  fetchSessions,
   fetchSummaries,
   judgeHeartbeat,
   lateHeartbeatText,
@@ -270,6 +276,157 @@ describe('fetchSummaries 的读法', () => {
     await expect(fetchSummaries({ fetchImpl })).rejects.toBeInstanceOf(
       SummariesUnavailableError,
     );
+  });
+});
+
+describe('fetchSessionStatus 的读法（会后进度界面节点 52b24392）', () => {
+  it('取单场那一条：dir URL 编码后进路径、GET、应答体逐键交回来', async () => {
+    const payload = readFixture('sessions', 'status-after-run');
+    const fetchImpl = vi.fn(async () => jsonResponse(200, payload)) as unknown as typeof fetch;
+
+    const parsed = await fetchSessionStatus('C:\\会议\\跟老王聊周会', { fetchImpl });
+
+    expect(parsed.offline.state).toBe('done');
+    expect(parsed.offline.sources).toHaveLength(2);
+    const [url, init] = (fetchImpl as unknown as { mock: { calls: [string, RequestInit][] } }).mock
+      .calls[0] as [string, RequestInit];
+    expect(url).toBe(`/api/sessions/${encodeURIComponent('C:\\会议\\跟老王聊周会')}`);
+    expect(init.method).toBe('GET');
+    expect(init.headers).toBeUndefined();
+  });
+
+  it('形状不对抛 SessionsProtocolError（offline 那格多一个键就红）', async () => {
+    const payload = readFixture('sessions', 'status-after-run') as Record<string, unknown>;
+    const offline = structuredClone(payload['offline'] as Record<string, unknown>);
+    offline['extra'] = 1;
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse(200, { ...payload, offline }),
+    ) as unknown as typeof fetch;
+
+    const error = await fetchSessionStatus('C:\\x', { fetchImpl }).then(
+      () => null,
+      (caught: unknown) => caught,
+    );
+    expect(error).toBeInstanceOf(SessionsProtocolError);
+    expect((error as SessionsProtocolError).message).toContain('单场状态');
+  });
+
+  it('404 失败信封里的 code 原样转手：SessionStatusHttpError 带 status 与 code', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse(404, {
+        ok: false,
+        code: 'session_dir_missing',
+        message: '这一场的目录已不在原地',
+        detail: { dir: '<path>', kind: 'missing' },
+      }),
+    ) as unknown as typeof fetch;
+
+    const error = await fetchSessionStatus('C:\\x', { fetchImpl }).then(
+      () => null,
+      (caught: unknown) => caught,
+    );
+    expect(error).toBeInstanceOf(SessionStatusHttpError);
+    expect((error as SessionStatusHttpError).status).toBe(404);
+    expect((error as SessionStatusHttpError).code).toBe('session_dir_missing');
+  });
+
+  it('连接层失败抛 SessionsUnavailableError', async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new Error('连接断了');
+    }) as unknown as typeof fetch;
+
+    await expect(fetchSessionStatus('C:\\x', { fetchImpl })).rejects.toBeInstanceOf(
+      SessionsUnavailableError,
+    );
+  });
+});
+
+describe('单场轮询器（心跳的样板：setTimeout 自排、周期可换）', () => {
+  interface FakeDeadline {
+    fn: () => void;
+  }
+
+  /** 一只手动走的 setTimeout 替身：不计时，用例自己喊「到点了」。 */
+  function manualTimers(): {
+    setTimeout: typeof setTimeout;
+    clearTimeout: typeof clearTimeout;
+    fire: () => void;
+    pending: () => FakeDeadline | null;
+  } {
+    let current: FakeDeadline | null = null;
+    const setTimeoutImpl = ((fn: () => void, _ms?: number) => {
+      current = { fn };
+      return 0 as unknown as ReturnType<typeof setTimeout>;
+    }) as typeof setTimeout;
+    const clearTimeoutImpl = (() => {
+      current = null;
+    }) as typeof clearTimeout;
+    return {
+      setTimeout: setTimeoutImpl,
+      clearTimeout: clearTimeoutImpl,
+      pending: () => current,
+      fire: () => {
+        const deadline = current;
+        current = null;
+        deadline?.fn();
+      },
+    };
+  }
+
+  it('start 之后自排一跳；tick 把读数交给回调并排下一跳；stop 收干净', async () => {
+    const payload = readFixture('sessions', 'status-after-run');
+    const fetchImpl = vi.fn(async () => jsonResponse(200, payload)) as unknown as typeof fetch;
+    const timers = manualTimers();
+    const seen: unknown[] = [];
+    const originalSetTimeout = globalThis.setTimeout;
+    const originalClearTimeout = globalThis.clearTimeout;
+    globalThis.setTimeout = timers.setTimeout;
+    globalThis.clearTimeout = timers.clearTimeout;
+    try {
+      const poller = createSessionStatusPoller((tick) => seen.push(tick), { fetchImpl });
+      poller.start('C:\\x');
+      expect(timers.pending()).not.toBeNull();
+
+      timers.fire();
+      await vi.waitFor(() => expect(seen).toHaveLength(1));
+      // 第一跳之后排了下一跳（自排的另一半）
+      expect(timers.pending()).not.toBeNull();
+
+      await poller.tick('C:\\x');
+      expect(seen).toHaveLength(2);
+      expect((seen[0] as { kind: string }).kind).toBe('status');
+
+      poller.stop();
+      expect(timers.pending()).toBeNull();
+      expect(poller.running()).toBe(false);
+    } finally {
+      globalThis.setTimeout = originalSetTimeout;
+      globalThis.clearTimeout = originalClearTimeout;
+    }
+  });
+
+  it('周期随快照换（clamp 1–60）；失败那一跳也交回调、不停表', async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new Error('连接断了');
+    }) as unknown as typeof fetch;
+    const seen: unknown[] = [];
+    const poller = createSessionStatusPoller((tick) => seen.push(tick), { fetchImpl });
+
+    expect(poller.intervalSeconds()).toBe(10);
+    poller.setIntervalFromSnapshot(2);
+    expect(poller.intervalSeconds()).toBe(2);
+    // 非正数按心跳同款落回默认 10；越界夹回 1–60
+    poller.setIntervalFromSnapshot(0);
+    expect(poller.intervalSeconds()).toBe(10);
+    poller.setIntervalFromSnapshot(0.5);
+    expect(poller.intervalSeconds()).toBe(1);
+    poller.setIntervalFromSnapshot(600);
+    expect(poller.intervalSeconds()).toBe(60);
+
+    const tick = await poller.tick('C:\\x');
+    expect(tick.kind).toBe('error');
+    expect(seen).toHaveLength(1);
+    expect((seen[0] as { kind: string }).kind).toBe('error');
   });
 });
 

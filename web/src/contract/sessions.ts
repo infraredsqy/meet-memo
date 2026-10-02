@@ -2,15 +2,18 @@ import { z } from 'zod';
 import { isoStringSchema, sessionIdSchema } from './snapshot';
 
 /**
- * 工作区注册表与目录选择器的两只读端点（`docs/contract.md` 4.8）。
+ * 工作区注册表、目录选择器与单场状态的读端点（`docs/contract.md` 4.8 / 4.9）。
  *
  * - `GET /api/sessions`：**软件自己记的那份"我这些会"**——住在服务侧配置目录的
  *   `workspaces.json` 里、按路径去重。每一行的"目录还在不在、里面是什么"由服务现场判
- *   （注册表条目只记两个时刻），界面照读不派生；
- * - `GET /api/dirs`：目录选择器的现场（起点是用户主目录），一层子目录的名目判读。
+ *   （注册表条目只记两个时刻），界面照读不派生；顶层第三格 `post_job` 是服务进程里
+ *   在飞的那一趟会后（全局「显卡忙不忙」的会后一半读数，**不进任何一行**）；
+ * - `GET /api/dirs`：目录选择器的现场（起点是用户主目录），一层子目录的名目判读；
+ * - `GET /api/sessions/{id}`：单场状态（4.9）——这一场此刻跑到哪一档、会后离线
+ *   跑到第几块 / 共几块。**不进快照、不进行**：快照九键与列表行十一键两道 `.strict()`
+ *   硬门原样。
  *
- * 两条都是**纯读**：不涨 `revision`、不广播、不写任何东西（与 `GET /api/summaries`
- * 同一档）。
+ * 三条都是**纯读**：不涨 `revision`、不广播、不写任何东西。
  */
 
 /** 一个目录的名目判读：三档 + `missing`。`suspected` 是"疑似会议目录"的兜底档。 */
@@ -39,11 +42,25 @@ export const sessionRowSchema = z
   })
   .strict();
 
-/** `GET /api/sessions` 的应答体。`recent` = 最近一次被打开/切换那条的目录（或 `null`）。 */
+/**
+ * 服务进程里在飞的那一趟会后（`GET /api/sessions` 顶层第三格，`null` = 没有在跑的）。
+ * 全局「显卡忙不忙」的会后一半读数；**不进任何一行**（行十一键一字不动）。
+ */
+export const postJobCellSchema = z
+  .object({
+    kind: z.enum(['offline', 'minutes']),
+    dir: z.string(),
+    started_at: isoStringSchema,
+  })
+  .strict();
+
+/** `GET /api/sessions` 的应答体。`recent` = 最近一次被打开/切换那条的目录（或 `null`）；
+ *  `post_job` = 此刻在飞的那一趟会后（或 `null`）。 */
 export const sessionsResponseSchema = z
   .object({
     sessions: z.array(sessionRowSchema),
     recent: z.string().nullable(),
+    post_job: postJobCellSchema.nullable(),
   })
   .strict();
 
@@ -91,9 +108,85 @@ export const workspaceOkSchema = z
   })
   .strict();
 
+// ---------------------------------------------------------------------------
+// 单场状态（`docs/contract.md` 4.9，会后进度界面节点 52b24392 接的取数）
+// ---------------------------------------------------------------------------
+
+/** 会后那一趟（`post_offline` / `post_minutes`）此刻在不在飞：服务进程单槽的现场。 */
+export const sessionPostViewSchema = z
+  .object({
+    running: z.boolean(),
+    kind: z.enum(['offline', 'minutes']),
+    started_at: isoStringSchema,
+    finished_at: isoStringSchema.nullable(),
+  })
+  .strict();
+
+/** 一路的逐块读数：分母是**这一路**切了几块，两路各算各的、不合成整场分母。 */
+export const offlineSourceProgressSchema = z
+  .object({
+    source: z.enum(['mic', 'loopback']),
+    /** 跑过几块（四档都算「跑过一块」）。 */
+    done: z.number().int(),
+    /** 这一路共几块；切块计划算不出来时如实 `null`。 */
+    total: z.number().int().nullable(),
+    remaining: z.number().int().nullable(),
+    /** 此刻在跑第几块（这一路跑完、或还没轮到它时是 `null`）。 */
+    current_chunk: z.number().int().nullable(),
+    counts: z
+      .object({
+        transcribed: z.number().int(),
+        silent: z.number().int(),
+        failed: z.number().int(),
+        unjudged: z.number().int(),
+      })
+      .strict(),
+  })
+  .strict();
+
+/** 会后离线的进度读数：`state` 照盘上那份答、`in_process` 另答「本进程在不在跑」。 */
+export const offlineProgressSchema = z
+  .object({
+    /** 这一场那份逐块账的文件名（`meeting_offline_progress.jsonl`）。 */
+    ledger: z.string(),
+    state: z.enum(['running', 'done', 'partial', 'failed', 'idle', 'ledger']),
+    in_process: z.boolean(),
+    started_at: isoStringSchema.nullable(),
+    finished_at: isoStringSchema.nullable(),
+    /** 跨进程算不出单调钟的差值，这一格如实 `null`。 */
+    elapsed_seconds: z.number().nullable(),
+    current_source: z.enum(['mic', 'loopback']).nullable(),
+    sources: z.array(offlineSourceProgressSchema),
+  })
+  .strict();
+
+/**
+ * `GET /api/sessions/{id}` 的应答体（4.9）：前七格与列表同一行同源，后两格回答
+ * 「这一场此刻跑到哪儿了」。**它不进快照、也不进列表行** —— 快照九键与行十一键
+ * 两道 `.strict()` 硬门一个字没动。
+ */
+export const sessionStatusSchema = z
+  .object({
+    dir: z.string(),
+    session_id: sessionIdSchema.nullable(),
+    kind: z.enum(['empty', 'meeting', 'unknown']),
+    state: z.enum(['recording', 'draining', 'done', 'failed']).nullable(),
+    date: z.string().nullable(),
+    mode: z.string().nullable(),
+    has_offline: z.boolean(),
+    post: sessionPostViewSchema.nullable(),
+    offline: offlineProgressSchema,
+  })
+  .strict();
+
 export type DirKind = z.infer<typeof dirKindSchema>;
 export type SessionRow = z.infer<typeof sessionRowSchema>;
 export type SessionsResponse = z.infer<typeof sessionsResponseSchema>;
 export type DirRow = z.infer<typeof dirRowSchema>;
 export type DirsResponse = z.infer<typeof dirsResponseSchema>;
 export type WorkspaceOk = z.infer<typeof workspaceOkSchema>;
+export type PostJobCell = z.infer<typeof postJobCellSchema>;
+export type SessionPostView = z.infer<typeof sessionPostViewSchema>;
+export type OfflineSourceProgress = z.infer<typeof offlineSourceProgressSchema>;
+export type OfflineProgress = z.infer<typeof offlineProgressSchema>;
+export type SessionStatus = z.infer<typeof sessionStatusSchema>;

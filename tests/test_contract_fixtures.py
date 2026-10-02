@@ -660,11 +660,11 @@ def test_capture_workspace_group(tmp_path, make_client, contract_regen):
     """
     client = make_client({"capture.backend": "dev"})
 
-    # 空注册表的那一份
+    # 空注册表的那一份（顶层第三格 `post_job`：此刻没有会后那一趟在飞 → `None`）
     listed = client.get("/api/sessions")
     assert listed.status_code == 200
     empty_listing = listed.json()
-    assert empty_listing == {"sessions": [], "recent": None}
+    assert empty_listing == {"sessions": [], "recent": None, "post_job": None}
 
     # 造三个目的目录并逐个走「新会议」：空的 / 有会议材料的 / 疑似会议目录
     place = tmp_path / "contract-workspaces"

@@ -1796,6 +1796,9 @@ input[type="checkbox"] {
 }
 
 .wslist__state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
   font-size: var(--size-caption);
   color: var(--t-signal);
   white-space: nowrap;
@@ -1885,6 +1888,160 @@ input[type="checkbox"] {
   color: var(--t-ink-mid);
   font-size: var(--size-small);
   line-height: var(--line-normal);
+}
+
+/* 6.5 会后进度区（R27）：可展开收缩、逐块行往下刷、每路一条的进度条。
+   分层照会中电平块：读数（百分比）是纯函数算的，组件只写 `--p` 这一个变量，
+   长短归这里；分母按路各算各的，不合成整场分母（设计意图第 9 条）。 */
+.wsprog {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: var(--size-divider) solid var(--t-rule-hair);
+}
+
+.wsprog__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.wsprog__title {
+  flex: none;
+  font-size: var(--size-micro);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+  color: var(--t-ink-faint);
+}
+
+.wsprog__phase {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--t-ink-mid);
+  font-size: var(--size-small);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wsprog__toggle {
+  margin-left: auto;
+}
+
+.wsprog__body {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.wsprog__roads {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.wsprog__road {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.wsprog__roadname {
+  flex: none;
+  width: 3em;
+  color: var(--t-ink-mid);
+  font-size: var(--size-caption);
+}
+
+.wsprog__bar {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 10px;
+  background: var(--t-sunk);
+  border: var(--size-divider) solid var(--t-rule-hair);
+}
+
+.wsprog__fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--p, 0%);
+  background: var(--t-signal);
+  box-shadow: var(--t-glow-bar);
+  transition: width var(--duration-quick) var(--ease-standard);
+}
+
+.wsprog__frac {
+  flex: none;
+  color: var(--t-ink-quiet);
+  font-size: var(--size-caption);
+}
+
+.wsprog__rows {
+  display: grid;
+  gap: var(--space-1);
+  max-height: 14rem;
+  overflow-y: auto;
+  padding: var(--space-2);
+  background: var(--t-sunk);
+  border: var(--size-divider) solid var(--t-rule-hair);
+}
+
+.wsprog__row {
+  margin: 0;
+  color: var(--t-ink-mid);
+  font-family: var(--t-font-mono);
+  font-size: var(--size-caption);
+  line-height: var(--line-snug);
+  font-variant-numeric: var(--t-num);
+}
+
+.wsprog__row--empty {
+  color: var(--t-ink-faint);
+}
+
+.wsprog__row--bad {
+  color: var(--t-alert-ink);
+}
+
+/* 6.6 全局「显卡忙不忙」（R31）：全站只有这一格忙/闲，没有全局进度条。
+   骨架照 `.m-health`（徽标）：字 + 图形两条通道，颜色只是冗余的那一半。 */
+.gpucell {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+  height: var(--size-badge);
+  padding: 0 var(--space-3);
+  border: var(--size-divider) solid var(--t-rule-hair);
+  background: var(--t-sunk);
+  color: var(--t-ink-quiet);
+  font-family: var(--t-font-mono);
+  font-size: var(--size-micro);
+  letter-spacing: var(--track-data);
+  white-space: nowrap;
+}
+
+.gpucell--busy {
+  border-color: color-mix(in srgb, var(--t-signal) 45%, transparent);
+  color: var(--t-signal-ink);
+}
+
+/* 行四态的冗余色档（字与图形已经承载语义，颜色只作第二通道）：
+   会后跑着余晖青、等着人动手灯丝黄、收尾失败硫红 —— 正在录的实心红灯由 `glyph--rec` 自带 */
+.wslist__state--post-running {
+  color: var(--t-signal-ink);
+}
+
+.wslist__state--waiting {
+  color: var(--t-amber);
+}
+
+.wslist__state--draining {
+  color: var(--t-amber);
 }
 
 /* 7. 弹窗：目录选择器与确认共用一层 */

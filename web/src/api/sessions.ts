@@ -1,14 +1,18 @@
 import {
+  HEARTBEAT_INTERVAL_DEFAULT_SECONDS,
   dirsResponseSchema,
+  sessionStatusSchema,
   sessionsResponseSchema,
   type DirKind,
   type DirsResponse,
   type SessionsResponse,
   type SessionRow,
+  type SessionStatus,
 } from '../contract/index';
+import { clampHeartbeatInterval } from './heartbeat';
 
 /**
- * 工作区注册表与目录选择器的两只读端点（`docs/contract.md` 4.8）。
+ * 工作区注册表、目录选择器与单场状态的读端点（`docs/contract.md` 4.8 / 4.9）。
  *
  * 与 `POST /api/actions` 那条不同，它们**不带那两个必需头**（三道防线是给「改状态」的
  * 请求设的），也不写任何东西：读它们不涨 `revision`、不广播。界面拿到的就是服务给的
@@ -129,4 +133,181 @@ export function probeDecision(kind: DirKind): ProbeDecision {
 export function rowTitle(row: SessionRow): string {
   const stem = row.session_id ?? row.dir;
   return stem;
+}
+
+// ---------------------------------------------------------------------------
+// 单场状态（4.9）：进度区的取数与轮询（会后进度界面节点 52b24392）
+// ---------------------------------------------------------------------------
+
+/** 单场状态那一档服务回的错误（404：目录不在原地 / 不在清单里；失败体是通用信封）。 */
+export class SessionStatusHttpError extends Error {
+  readonly status: number;
+  readonly code: string | null;
+
+  constructor(status: number, code: string | null, raw: string) {
+    super(
+      code !== null
+        ? `取不到单场状态：HTTP ${status} · ${code}`
+        : `取不到单场状态：HTTP ${status}`,
+    );
+    this.name = 'SessionStatusHttpError';
+    this.status = status;
+    this.code = code;
+    this.raw = raw;
+  }
+
+  readonly raw: string;
+}
+
+export interface FetchSessionStatusOptions {
+  fetchImpl?: typeof fetch;
+}
+
+/**
+ * 取一份单场状态（`{id}` 是这一场的目录路径，URL 编码后原样指到这一场）。
+ *
+ * 失败分两档：网络层失败 / 形状不对照 `fetchSessions` 同一套
+ * （`SessionsUnavailableError` / `SessionsProtocolError`）；HTTP 非 200（4.9 的
+ * 两档 404）回 `SessionStatusHttpError`，`code` 从失败信封里读、读不出信封就是 `null`
+ * —— 界面按「有没有 `code`」分两句写，不按 `message` 做字符串匹配（契约 6.7）。
+ */
+export async function fetchSessionStatus(
+  dir: string,
+  options: FetchSessionStatusOptions = {},
+): Promise<SessionStatus> {
+  const doFetch = options.fetchImpl ?? fetch;
+  const url = `${SESSIONS_URL}/${encodeURIComponent(dir)}`;
+  let response: Response;
+  try {
+    response = await doFetch(url, { method: 'GET' });
+  } catch (cause) {
+    throw new SessionsUnavailableError('单场状态', cause);
+  }
+  const text = await response.text();
+  if (!response.ok) {
+    let code: string | null = null;
+    try {
+      const body = JSON.parse(text) as { code?: unknown };
+      if (typeof body?.code === 'string') code = body.code;
+    } catch {
+      // 失败体读不出信封：code 保持 null，只报 HTTP 状态。
+    }
+    throw new SessionStatusHttpError(response.status, code, text);
+  }
+  const raw = parseOk('单场状态')(response, text);
+  const parsed = sessionStatusSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new SessionsProtocolError('单场状态', response.status, text, parsed.error);
+  }
+  return parsed.data;
+}
+
+/** 进度区轮询一次的读数（成功那一跳带 `status`，失败那一跳带 `error`）。 */
+export type SessionStatusTick =
+  | { kind: 'status'; dir: string; status: SessionStatus }
+  | { kind: 'error'; dir: string; error: Error };
+
+export interface SessionStatusPollerOptions {
+  fetchImpl?: typeof fetch;
+}
+
+/**
+ * 按心跳的样板自排轮询单场状态（`api/heartbeat.ts` 的同款骨架：`setTimeout`
+ * 自我重排 —— 周期改了即时生效，不必等当前这一轮走完）。
+ *
+ * **它只管「问一次、交一次」**：什么时候开、什么时候停由组件按读数决定
+ * （有活动才轮询，不空转）。周期随快照的 `settings.heartbeat_interval_seconds` 走
+ * （与心跳同一个可配节奏，clamp 1–60）。
+ */
+export interface SessionStatusPoller {
+  /** 用快照里的 `settings.heartbeat_interval_seconds` 设周期（clamp 1–60 秒）。 */
+  setIntervalFromSnapshot(seconds: number): void;
+  /** 当前周期（秒）。 */
+  intervalSeconds(): number;
+  /** 立刻问一次（不经 `start()` 的排程），读数交给回调。 */
+  tick(dir: string): Promise<SessionStatusTick>;
+  /** 开始轮询这一场；已在轮询时先换目标再继续。 */
+  start(dir: string): void;
+  /** 停止轮询。 */
+  stop(): void;
+  /** 是否在轮询。 */
+  running(): boolean;
+}
+
+export function createSessionStatusPoller(
+  onTick: (tick: SessionStatusTick) => void,
+  options: SessionStatusPollerOptions = {},
+): SessionStatusPoller {
+  const doFetch = options.fetchImpl ?? fetch;
+  let interval = HEARTBEAT_INTERVAL_DEFAULT_SECONDS;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let stopped = true;
+  let target: string | null = null;
+
+  const schedule = (): void => {
+    if (stopped || target === null) return;
+    timer = setTimeout(() => {
+      // 与心跳同款：tick() 是一次性的，排下一次是这里的活儿。
+      void tick(target as string).then((result) => {
+        onTick(result);
+        schedule();
+      });
+    }, interval * 1000);
+  };
+
+  const tick = async (dir: string): Promise<SessionStatusTick> => {
+    try {
+      const status = await fetchSessionStatus(dir, { fetchImpl: doFetch });
+      return { kind: 'status', dir, status };
+    } catch (cause) {
+      return {
+        kind: 'error',
+        dir,
+        error: cause instanceof Error ? cause : new Error(String(cause)),
+      };
+    }
+  };
+
+  return {
+    setIntervalFromSnapshot(seconds: number): void {
+      const next = clampHeartbeatInterval(seconds);
+      if (next === interval) return;
+      interval = next;
+      // 周期变了就重排下一次（心跳同款）。
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+        schedule();
+      }
+    },
+
+    intervalSeconds(): number {
+      return interval;
+    },
+
+    async tick(dir: string): Promise<SessionStatusTick> {
+      const result = await tick(dir);
+      onTick(result);
+      return result;
+    },
+
+    start(dir: string): void {
+      target = dir;
+      if (!stopped) return;
+      stopped = false;
+      schedule();
+    },
+
+    stop(): void {
+      stopped = true;
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    },
+
+    running(): boolean {
+      return !stopped;
+    },
+  };
 }

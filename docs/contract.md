@@ -504,13 +504,15 @@ X-Meeting-Service: 1
                "state": "recording|draining|done|failed|null", "date": "<YYYY-MM-DD>|null",
                "mode": "both|mic|loopback|null", "has_offline": false,
                "added_at": "<iso>", "last_opened_at": "<iso>"}],
- "recent": "<path>|null"}
+ "recent": "<path>|null",
+ "post_job": {"kind": "offline|minutes", "dir": "<path>", "started_at": "<iso>"}|null}
 ```
 
 - 清单是**软件自己记的那一份**（住在服务侧配置目录 `workspaces.json`，按路径去重）；**列表从登记来** —— 本端点不列任何没登记过的目录，`start` 与 `workspace_open` 是仅有的两个登记入口。
 - 每行的"目录还在不在、里面是什么"由服务**现场判**（注册表条目只记两个时刻）：`dir_exists: false` 的那一行如实等着界面写「路径已不在」；`state` 只在盘上 `session.json` 读得出来时带值、四档之外如实 `null`（读盘那份**只判集合成员关系**，不反查映射、不读成 `top_state`）。
 - **`has_offline` = 这一场有没有会后精细稿**（R29）：判据是场次目录里在不在 `meeting_offline_transcript_<source>.md`（只判名目、不读内容、不猜）。「出纪要」那个按钮上那一格按它渲染 —— 界面因此一眼看得出 AI 手上有没有那份更细的稿。**这一格走本端点，不进快照**（推送出去的东西只认那九个顶层键）。
 - `recent` = **最近一次被打开/切换**的那一条的目录（`workspace_open` 与开成一场的 `start` 都刷新这一格）；**只从注册表读，服务与界面都不扫任何场次目录**（`docs/design-intent.md` 第 4 条的退场判据仍在）。
+- **顶层第三格 `post_job`**（会后进度界面节点 `52b24392`）：服务进程里此刻在飞的那一趟会后 —— `{kind, dir, started_at}` 三格（`kind` 答**这一趟跑的是哪条路**：`offline` 精细稿 / `minutes` 纪要），没有在飞的就是 `null`。它是界面那格全局「显卡忙不忙」的**会后一半读数**（另一半「本机正在录」从快照状态读，不走这里）；读数就是 `runtime.post_job_state()` 的原文，**跑完那一刻线程收工、这一格翻回 `null`**。`meeting post` 命令行那趟活在另一进程，这一格看不见 —— 如实显示，不编。**这一格在应答体顶层、不进任何一行**：每行照旧恰好十一键，快照九键一个字没动。
 
 **`GET /api/dirs`**（目录选择器的一个现场；**任何状态下都 200**；纯读）：
 
@@ -567,7 +569,7 @@ X-Meeting-Service: 1
   - `ledger` 是这一场那份逐块账的文件名（`meeting_offline_progress.jsonl`，见 4.9 末段）。
 - **读数来自哪里**：这一趟正在本进程里跑 → 用会后那条线程手里的现场（「已经跑了多久」按单调钟当场算）；本进程没在跑这一趟（服务重启过、命令行跑的那一趟、跑完很久了）→ 读场次目录里那份逐块账。跨进程算不出单调钟的差值，**`elapsed_seconds` 那一格在这种情况下如实给 `null`**。
 - **它是给人看的读数，不带校验性质的含义**：块数、已跑时长这一类错了就错了，任何代码不许拿它们对账、报错、改结论（`docs/design-intent.md` 第 6、7 条；唯一权威是实际录到的音频时长）。这一场跑成什么样**仍由 `meeting_offline_status.json` 与那四份产物回答**，这张应答不替它们下结论。
-- **它不进快照**：推送出去的东西只认第 2 章那九个顶层键，`GET /api/sessions` 每一行照旧十一键（快照九键与列表十一键这两处一个字都没动）。
+- **它不进快照**：推送出去的东西只认第 2 章那九个顶层键，`GET /api/sessions` 每一行照旧十一键（快照九键与列表十一键这两处一个字都没动；这只端点与那张列表各自成体，列表唯一的加法是 4.8 写的顶层第三格 `post_job`，不在任何一行里）。
 
 **逐块账**：会后离线每跑完一块，就往场次目录里那份 `meeting_offline_progress.jsonl` 上补一行 —— **这一块的文字 + 这一块的落点**（JSON Lines：第一行表头 `{kind: "ledger", schema_version, session_id, sources}`，之后一行一块，带 `source` / `chunk` / `chunks_total` / `span` / `state` / `text` / `segments` / `wall_seconds` / `error`）。**引擎加载失手那一档也留一行**（`state = failed`、`error` 里带 `engine_load_error`）：不然这一路在盘上只剩表头，进程不在场的读方从上面 `sources[].total` 上看到的是 `null`，而现在读到的仍是这一路切出来的块数。**正式稿 `meeting_offline_transcript_<source>.md` 的写时机不变**（整路跑完一次写），那份账是另一份文件、另一个名字，`has_offline` 那一格不受它影响。这份账不参与任何判定（`meeting/cli.py` 的幂等闸读的仍是状态文件），字段契约的正文在 `meeting/offline/progress.py` 的模块说明里。
 

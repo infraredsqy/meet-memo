@@ -3,6 +3,7 @@ import {
   ACTION_FIXTURES,
   DEVICES_FIXTURES,
   HEARTBEAT_FIXTURES,
+  SESSIONS_FIXTURES,
   SNAPSHOT_FIXTURES,
   SSE_FIXTURES,
   SUMMARIES_FIXTURES,
@@ -18,6 +19,8 @@ import {
   devicesResponseSchema,
   heartbeatSchema,
   resyncSnapshotSchema,
+  sessionStatusSchema,
+  sessionsResponseSchema,
   snapshotSchema,
   sseFrameSchema,
   summariesResponseSchema,
@@ -576,5 +579,72 @@ describe('设备清单样本', () => {
     expect(devicesResponseSchema.safeParse({ ...listing, extra: [] }).success).toBe(false);
     const { loopback: _dropped, ...rest } = listing;
     expect(devicesResponseSchema.safeParse(rest).success).toBe(false);
+  });
+});
+
+describe('工作区样本（4.8 / 4.9，会后进度界面节点 52b24392 接的对齐用例）', () => {
+  it.each(SESSIONS_FIXTURES)('sessions/%s.json 过对应的 schema', (name) => {
+    if (name === 'status-after-run') {
+      const parsed = sessionStatusSchema.parse(readFixture('sessions', name));
+      expect(parsed.offline.state).toBe('done');
+    } else {
+      const parsed = sessionsResponseSchema.parse(readFixture('sessions', name));
+      // 两份采集里都没有会后的活儿在飞 → 顶层第三格如实 null
+      expect(parsed.post_job).toBeNull();
+    }
+  });
+
+  it('三份样本一个不少：目录里没有多余的工作区样本', () => {
+    expect(listFixtures('sessions')).toEqual([...SESSIONS_FIXTURES].sort());
+  });
+
+  it('应答体顶层恰好三键；每行恰好十一键，post_job 不进任何一行', () => {
+    const listing = sessionsResponseSchema.parse(readFixture('sessions', 'after-open'));
+    expect(Object.keys(listing).sort()).toEqual(['post_job', 'recent', 'sessions']);
+    expect(listing.sessions.length).toBeGreaterThan(0);
+    for (const row of listing.sessions) {
+      expect(Object.keys(row), row.dir).toHaveLength(11);
+    }
+  });
+
+  it('顶层多一格/少一格、行里多一格，全都不符合契约（两道硬门都在）', () => {
+    const empty = readFixture('sessions', 'empty') as Record<string, unknown>;
+    expect(sessionsResponseSchema.safeParse({ ...empty, extra: 1 }).success).toBe(false);
+    const { post_job: _dropped, ...withoutPostJob } = empty;
+    expect(sessionsResponseSchema.safeParse(withoutPostJob).success).toBe(false);
+
+    const afterOpen = structuredClone(
+      readFixture('sessions', 'after-open') as Record<string, unknown>,
+    );
+    (afterOpen['sessions'] as Array<Record<string, unknown>>)[0]!['post_job'] = null;
+    expect(sessionsResponseSchema.safeParse(afterOpen).success).toBe(false);
+  });
+
+  it('单场状态样本：前七格与列表同源，post / offline 两格回答「跑到哪儿了」', () => {
+    const parsed = sessionStatusSchema.parse(readFixture('sessions', 'status-after-run'));
+    expect(Object.keys(parsed).sort()).toEqual([
+      'date', 'dir', 'has_offline', 'kind', 'mode', 'offline', 'post', 'session_id', 'state',
+    ]);
+    expect(parsed.post).toBeNull();
+    // 跨进程读盘那份账：走秒量如实 null，四档计数两路各一份
+    expect(parsed.offline.in_process).toBe(false);
+    expect(parsed.offline.elapsed_seconds).toBeNull();
+    expect(parsed.offline.sources.map((road) => road.source)).toEqual(['mic', 'loopback']);
+    for (const road of parsed.offline.sources) {
+      expect(Object.keys(road).sort()).toEqual([
+        'counts', 'current_chunk', 'done', 'remaining', 'source', 'total',
+      ]);
+      expect(Object.keys(road.counts).sort()).toEqual(['failed', 'silent', 'transcribed', 'unjudged']);
+    }
+    const mic = parsed.offline.sources.find((road) => road.source === 'mic');
+    expect(mic?.done).toBe(2);
+    expect(mic?.counts).toEqual({ transcribed: 1, silent: 1, failed: 0, unjudged: 0 });
+  });
+
+  it('单场状态多一格/少一格都不符合契约', () => {
+    const fixture = readFixture('sessions', 'status-after-run') as Record<string, unknown>;
+    expect(sessionStatusSchema.safeParse({ ...fixture, extra: 1 }).success).toBe(false);
+    const { offline: _dropped, ...withoutOffline } = fixture;
+    expect(sessionStatusSchema.safeParse(withoutOffline).success).toBe(false);
   });
 });

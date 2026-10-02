@@ -11,7 +11,8 @@ import {
   type HeartbeatTick,
 } from './api';
 import { failureFrom, type ActionFailureView } from './failure';
-import type { Heartbeat, LevelsData, Snapshot, SummaryWindowChoice } from './contract';
+import type { Heartbeat, LevelsData, PostJobCell, Snapshot, SummaryWindowChoice } from './contract';
+import { HEARTBEAT_INTERVAL_DEFAULT_SECONDS } from './contract';
 import { decideAlarmSound, initialAlarmSound } from './live/alarm';
 import {
   applyHeartbeatReading,
@@ -55,6 +56,9 @@ import {
 import { liveView } from './live/view';
 import type { ChannelView } from './live/view';
 import { normalizeDefaultWindow } from './live/settings';
+import { clampHeartbeatInterval } from './api/heartbeat';
+import { fetchSessions } from './api/sessions';
+import { gpuBusyView } from './home/progress';
 import { SettingsDrawer } from './settings/SettingsDrawer';
 import { HomeGate } from './home/HomeGate';
 
@@ -360,6 +364,12 @@ export function LiveView(): ReactNode {
   const [settingsOpen, setSettingsOpen] = useState(false);
   /** 本场总结记录那一块开着没有（结果面板与它是两块内容，各自关各自的）。 */
   const [summaryLogOpen, setSummaryLogOpen] = useState(false);
+  /**
+   * 会后那趟在不在飞（`GET /api/sessions` 顶层第三格的原文）：全局「显卡忙不忙」
+   * 的会后一半读数。之前这一屏硬编码 `null`，收尾窗口显假「闲」（review-1 m2）——
+   * 同一服务的同一份读数，按下面的心跳节奏伸手取即可。
+   */
+  const [postJob, setPostJob] = useState<PostJobCell | null>(null);
   /** 总结区那台状态机（这一次请求的状态、当前档位、记录那一份）。 */
   const summaryRef = useRef<SummaryController | null>(null);
   if (summaryRef.current === null) {
@@ -452,6 +462,29 @@ export function LiveView(): ReactNode {
   useEffect(() => {
     if (heartbeatSeconds === null) return;
     heartRef.current?.setIntervalFromSnapshot(heartbeatSeconds);
+  }, [heartbeatSeconds]);
+
+  // 会后在飞读数（review-1 m2）：挂上这一屏就按心跳节奏取一遍 `GET /api/sessions`，
+  // 把顶层的 `post_job` 喂给全局那格「显卡忙不忙」——录着的那一档它本来就答忙，
+  // 真正要这份读数的是收尾窗口那一档（recording 已假、会后模型还开着）。取不到的
+  // 那一跳（瞬态失联）手上这份照旧，下一跳再试；周期与心跳同一个可配节奏。
+  useEffect(() => {
+    let cancelled = false;
+    const seconds = clampHeartbeatInterval(heartbeatSeconds ?? HEARTBEAT_INTERVAL_DEFAULT_SECONDS);
+    const load = (): void => {
+      void fetchSessions().then(
+        (data) => {
+          if (!cancelled) setPostJob(data.post_job);
+        },
+        () => undefined,
+      );
+    };
+    load();
+    const timer = setInterval(load, seconds * 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
   }, [heartbeatSeconds]);
 
   // 快速总结的缺省档同样来自快照的 settings（`311f84f5`）：预选跟着服务走，
@@ -603,6 +636,14 @@ export function LiveView(): ReactNode {
   const stalled = view?.stalled ?? null;
   const logPath = snapshot?.service.log_path ?? null;
   const alarmSoundOn = snapshot?.settings.alarm_sound ?? false;
+  // 全局「显卡忙不忙」（R31）：忙 = 有模型开着 —— 快照说录着（含告警）是会中那一半，
+  // `GET /api/sessions` 顶层的 `post_job` 是会后那一半（上面的 effect 按心跳节奏取）。
+  // 收尾窗口那一档（ended + 收尾未落定）recording 已假，这一格靠 post_job 答忙闲，
+  // 不再显假「闲」（review-1 m2）。
+  const gpu = gpuBusyView(
+    postJob,
+    snapshot !== null && (snapshot.top_state === 'recording' || snapshot.top_state === 'alert'),
+  );
   const chips = useMemo(() => {
     if (snapshot === null) return [];
     return snapshot.sources.map((source) => {
@@ -806,6 +847,16 @@ export function LiveView(): ReactNode {
         </div>
 
         <div className="topbar__right">
+          {/* 全局只留这一格「显卡忙不忙」（R31；工作台的顶栏是另一处同款）。
+              全站没有全局进度条 —— 进度跟着各自的工作区走。 */}
+          <span
+            className={`gpucell ${gpu.busy ? 'gpucell--busy' : ''}`}
+            title={gpu.note}
+            data-busy={gpu.busy ? 'true' : 'false'}
+          >
+            <span className={`glyph ${gpu.mark}`} aria-hidden="true" />
+            {gpu.label}
+          </span>
           <span className="kv">
             <input
               type="checkbox"

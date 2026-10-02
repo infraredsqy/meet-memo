@@ -2389,7 +2389,7 @@ class ServiceRuntime:
         return self.registry.remove(dir)
 
     def sessions_dict(self) -> dict[str, Any]:
-        """`GET /api/sessions` 的应答体：注册表 + 每一行的现场读数。
+        """`GET /api/sessions` 的应答体：注册表 + 每一行的现场读数 + 会后那一趟的全局读数。
 
         条目只记两个时刻（`added_at` / `last_opened_at`），**"目录还在不在、里面是什么"
         由本函数现场判**（注册表不反映目录内容）：`dir_exists` 由 `Path.is_dir()` 给、
@@ -2403,6 +2403,12 @@ class ServiceRuntime:
         只看名目、不读内容）。「出纪要」那个按钮按它渲染 —— 界面因此一眼看得出 AI 手上
         有没有那份更细的稿。**这一格走本端点，不塞进快照**（推送出去的东西只认那九个顶层键，
         前端两道硬门钉着）。
+
+        顶层第三格 `post_job`（会后进度界面节点 `52b24392`）：`post_job_state()` 的原文
+        —— 此刻服务进程里在飞的那一趟会后（`{kind, dir, started_at}`）或 `null`。它是
+        界面那格全局「显卡忙不忙」的会后一半读数（另一半「本机正在录」从快照状态读，
+        不走这里）；**每行仍是十一键**，这一格在应答体顶层、不进任何一行，快照九键
+        一个字不动。
         """
         rows: list[dict[str, Any]] = []
         for entry in self.registry.entries():
@@ -2430,6 +2436,7 @@ class ServiceRuntime:
         return {
             "sessions": rows,
             "recent": None if recent is None else str(recent["dir"]),
+            "post_job": self.post_job_state(),
         }
 
     # -- 会后的两趟活（人按才起：`post_offline` / `post_minutes` 两个动作）-----

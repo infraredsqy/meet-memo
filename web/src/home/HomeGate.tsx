@@ -40,7 +40,8 @@ export function HomeGate(): ReactNode {
     return <p className="hint">正在接服务…</p>;
   }
   if (showsWorkspaceHome(snapshot)) {
-    return <WorkspaceHome />;
+    // 心跳周期顺手交给工作台：会后进度区的轮询跟着同一个可配节奏走（节点 52b24392）。
+    return <WorkspaceHome heartbeatSeconds={snapshot.settings.heartbeat_interval_seconds} />;
   }
   return <LiveView />;
 }

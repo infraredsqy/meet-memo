@@ -310,7 +310,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 **启动时不再去读任何别的场次目录**（`docs/design-intent.md` 第 4 条）：原「扫输出根下最新的一场 → 挂 `notice.restart_unfinished` → 把那份记录改写成 `draining + interrupted` → 拦住新场次」这一整条，随「默认输出根」的退场一并拆掉，**不影子保留**。启动序列现在只做：解析后端、探设备、组装初始快照 —— 绝不自动开始录音、也绝不读别的场次目录。
 
 - 没走完收尾就被打断的那一场，盘上那版 `session.json` 原样留在原地：谁都不去改写它、也不拦新场次的 `start`。
-- 工作区的登记与"最近一场"由收编节点（e2f6166b）落地：注册表住在配置目录 `workspaces.json`，界面经 `GET /api/sessions` 读（形状见 `docs/contract.md` 4.8）——启动序列对场次目录照旧一个字不读。
+- 工作区的登记与"最近一场"由收编节点（e2f6166b）落地：注册表住在配置目录 `workspaces.json`，界面经 `GET /api/sessions` 读（形状见 `docs/contract.md` 4.8）——启动序列对场次目录照旧一个字不读。`GET /api/sessions` 顶层另有一格 `post_job`（`52b24392`）：服务进程里此刻在飞的那趟会后（`{kind, dir, started_at}` 或 `null`），它是**内存里的单槽事实**（`runtime.post_job_state()`），不落盘、不进注册表文件，服务重启后自然从 `null` 起步。
 - **这一场此刻跑到哪一档**由 `GET /api/sessions/{id}` 回答（`a9affaa8` 已落地，形状见 `docs/contract.md` 4.9）：会后离线跑到第几块 / 共几块、正在跑哪一路、已经跑了多久。它也是纯读：**启动序列照旧不碰任何场次目录**，这只端点是有人问才去读那一场。
 
 ## 4. 心跳与 `recording_alive`

@@ -27,7 +27,7 @@
 | `GET /api/events` | SSE。**第一帧一定是 `snapshot`**，之后是 `state` / `levels` / `transcript` 三条通道 |
 | `GET /api/heartbeat` | `{"service": "meeting", "server_time", "revision", "top_state", "recording_alive", "seconds_since_last_tick"}`，`200`，任何状态下都给。`service` 这个字面量是端口探测认亲用的，必须有 |
 | `GET /api/summaries` | 本场按过的、成功产出的那几次会中总结（时刻 + 窗口 + 那几条），`200`，任何状态下都给。记录活在服务侧内存里、**不落文件**，新的一场 `start` 清空 |
-| `GET /api/sessions` | 工作区注册表：软件自己记的那份"我这些会"（住在配置目录 `workspaces.json`、按路径去重），`200`，任何状态下都给；`recent` = 最近一次被打开/切换的那一场。**纯读**，形状与现行口径见 `docs/contract.md` 4.8 |
+| `GET /api/sessions` | 工作区注册表：软件自己记的那份"我这些会"（住在配置目录 `workspaces.json`、按路径去重），`200`，任何状态下都给；`recent` = 最近一次被打开/切换的那一场；顶层还有一格 `post_job`（此刻在飞的那趟会后，`null` = 没有）—— 界面那格全局「显卡忙不忙」的会后一半读数。**纯读**，形状与现行口径见 `docs/contract.md` 4.8 |
 | `GET /api/sessions/{id}` | 单场状态：这一场此刻跑到哪一档、会后离线跑到第几块 / 共几块、正在跑哪一路、已经跑了多久，`200`。`{id}` 是**这一场的目录路径**（URL 编码的绝对路径）。**纯读**，形状与失败口径见 `docs/contract.md` 4.9 |
 | `GET /api/dirs` | 目录选择器的一个现场：一层子目录的名目判读（起点用户主目录，`?dir=` 换层），`200`。**纯读**，只挑已有目录、不建目录 |
 | `GET /api/devices` | 两路各自的候选设备端点表（`{mic: [...], loopback: [...]}`，每项六格），`200`，任何状态下都给。**纯读、只枚举、不开任何设备**（`probe()` 会短暂试开，清单不走它）；设置抽屉的两个设备下拉读它 |

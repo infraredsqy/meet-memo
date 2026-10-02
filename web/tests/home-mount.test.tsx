@@ -1,12 +1,12 @@
-import { describe, expect, it, vi, afterEach } from 'vitest';
+import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest';
 import { createElement } from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
 import { WorkspaceHome } from '../src/home/WorkspaceHome';
-import { fetchSessions, browseDirs } from '../src/api/sessions';
+import { fetchSessions, browseDirs, fetchSessionStatus } from '../src/api/sessions';
 import { postAction } from '../src/api';
 // 这一条**不经 `../src/api`**（那个模块在本文件里被 mock 掉了，类拿到的会是替身）
 import { ActionFailedError } from '../src/api/actions';
-import type { SessionRow, SessionsResponse } from '../src/contract';
+import type { SessionRow, SessionStatus, SessionsResponse } from '../src/contract';
 
 /**
  * review-2 m2：「挂载即取列表」接线用例（免 DOM 跑法）。
@@ -20,12 +20,40 @@ import type { SessionRow, SessionsResponse } from '../src/contract';
  * review-1 m7 往同一个文件里补了会后那一块：**真的点**那两个按钮，断言发出去的动作名
  * 与 `dir`、`has_offline` 两档画出来的那一格、以及 409 落进失败块。手法同源
  * （`react-test-renderer`，不给 node 侧开 DOM）。
+ *
+ * 会后进度界面节点（52b24392）起的轮询也打在同一条边界上：替身里给一只**手动排程**
+ * 的轮询器（tick 立刻转手 `fetchSessionStatus`、start/stop 只记账，不挂任何真定时器），
+ * 用例因此不必等真实周期。
  */
 
-vi.mock('../src/api/sessions', () => ({
-  fetchSessions: vi.fn(),
-  browseDirs: vi.fn(),
-}));
+vi.mock('../src/api/sessions', () => {
+  const fetchSessionStatus = vi.fn();
+  // 组件注册上来的读数回调（轮询循环会把每一跳交给它；替身同样交，路线一致）。
+  let onTick: ((tick: unknown) => void) | null = null;
+  const deliver = (dir: string): Promise<unknown> =>
+    fetchSessionStatus(dir).then((status: SessionStatus) => {
+      const result = { kind: 'status', dir, status };
+      if (onTick !== null) onTick(result);
+      return result;
+    });
+  const poller = {
+    setIntervalFromSnapshot: vi.fn(),
+    intervalSeconds: vi.fn(() => 10),
+    tick: vi.fn((dir: string) => deliver(dir)),
+    start: vi.fn(),
+    stop: vi.fn(),
+    running: vi.fn(() => false),
+  };
+  return {
+    fetchSessions: vi.fn(),
+    browseDirs: vi.fn(),
+    fetchSessionStatus,
+    createSessionStatusPoller: vi.fn((registered: unknown) => {
+      onTick = registered as (tick: unknown) => void;
+      return poller;
+    }),
+  };
+});
 
 vi.mock('../src/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/api')>();
@@ -34,6 +62,7 @@ vi.mock('../src/api', async (importOriginal) => {
 
 const fetchSessionsMock = vi.mocked(fetchSessions);
 const browseDirsMock = vi.mocked(browseDirs);
+const fetchSessionStatusMock = vi.mocked(fetchSessionStatus);
 const postActionMock = vi.mocked(postAction);
 
 /** 造一行注册表（空缺全给 null / 无害值）。 */
@@ -55,7 +84,36 @@ function row(over: Partial<SessionRow> = {}): SessionRow {
 }
 
 function list(over: Partial<SessionsResponse> = {}): SessionsResponse {
-  return { sessions: [], recent: null, ...over };
+  return { sessions: [], recent: null, post_job: null, ...over };
+}
+
+/** 一份「这一场从没跑过会后」的单场读数（进度区读数的缺省替身）。 */
+export function neverRunStatus(dir: string): SessionStatus {
+  return {
+    dir,
+    session_id: null,
+    kind: 'empty',
+    state: null,
+    date: null,
+    mode: null,
+    has_offline: false,
+    post: null,
+    offline: {
+      ledger: 'meeting_offline_progress.jsonl',
+      state: 'idle',
+      in_process: false,
+      started_at: null,
+      finished_at: null,
+      elapsed_seconds: null,
+      current_source: null,
+      sources: [
+        { source: 'mic', done: 0, total: null, remaining: null, current_chunk: null,
+          counts: { transcribed: 0, silent: 0, failed: 0, unjudged: 0 } },
+        { source: 'loopback', done: 0, total: null, remaining: null, current_chunk: null,
+          counts: { transcribed: 0, silent: 0, failed: 0, unjudged: 0 } },
+      ],
+    },
+  };
 }
 
 /** node 环境下挂载组件，等 effect 与它带的 promise（loadList）落定。 */
@@ -78,7 +136,13 @@ function optionsOf(renderer: TestRenderer.ReactTestRenderer): TestRenderer.React
 afterEach(() => {
   fetchSessionsMock.mockReset();
   browseDirsMock.mockReset();
+  fetchSessionStatusMock.mockReset();
   postActionMock.mockReset();
+});
+
+beforeEach(() => {
+  // 进度区那一跳的缺省替身：按请求的 dir 给「没跑过会后」的读数；要特定读数自己覆盖。
+  fetchSessionStatusMock.mockImplementation(async (dir: string) => neverRunStatus(dir));
 });
 
 describe('挂载即取列表（review-2 C1/m2）', () => {

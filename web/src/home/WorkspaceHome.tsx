@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 
 /**
  * 工作台首页（空闲态那一屏）：左边"我这些会"，右边选中的那一场。
@@ -8,12 +8,36 @@ import { useEffect, useState, type ReactNode } from 'react';
  * `GET /api/dirs`（起点用户主目录）；打开/收编/删除走 `POST /api/actions` 的
  * `workspace_open` / `workspace_remove`。会中那一路（`start` 之后）由外面那层闸
  * （`App.tsx`）切到 `LiveView`，本组件不碰会中屏。
+ *
+ * 会后进度区（R27，节点 52b24392）读 `GET /api/sessions/{id}`：**不开 SSE 通道**，
+ * 按心跳的样板自排轮询（`api/sessions.ts` 的轮询器，有活动才开），逐块行往下刷、
+ * 带进度条、可展开收缩；左清单每行四态与全局「显卡忙不忙」一格的读法在 `home/progress.ts`。
  */
 
 import { postAction } from '../api';
 import { confirmWorkspaceOpen } from './confirmWorkspaceOpen';
-import { browseDirs, fetchSessions } from '../api/sessions';
-import { decisionFor, emptyStateLines, initialSelection, startWhy, statusLabel } from './model';
+import {
+  browseDirs,
+  createSessionStatusPoller,
+  fetchSessions,
+  SessionStatusHttpError,
+  type SessionStatusTick,
+} from '../api/sessions';
+import { clampHeartbeatInterval } from '../api/heartbeat';
+import { HEARTBEAT_INTERVAL_DEFAULT_SECONDS } from '../contract';
+import { decisionFor, emptyStateLines, initialSelection, startWhy } from './model';
+import {
+  advanceChunkRows,
+  chunkLedgerReset,
+  chunkRowLabel,
+  gpuBusyView,
+  initialChunkRows,
+  phaseMark,
+  progressView,
+  rowStatusView,
+  shouldWatch,
+  type ChunkRow,
+} from './progress';
 import {
   POST_MINUTES_ACTION,
   POST_OFFLINE_ACTION,
@@ -21,7 +45,7 @@ import {
   postIdleNote,
 } from './post';
 import { failureFrom, type ActionFailureView } from '../failure';
-import type { DirsResponse, SessionRow, SessionsResponse } from '../contract';
+import type { DirsResponse, SessionRow, SessionStatus, SessionsResponse } from '../contract';
 
 // ---------------------------------------------------------------------------
 // 小料
@@ -180,7 +204,9 @@ const POST_LABELS: Readonly<Record<string, string>> = {
 // 首页本体
 // ---------------------------------------------------------------------------
 
-export function WorkspaceHome(): ReactNode {
+export function WorkspaceHome({
+  heartbeatSeconds,
+}: { heartbeatSeconds?: number } = {}): ReactNode {
   const [sessions, setSessions] = useState<SessionsResponse | null>(null);
   const [selection, setSelection] = useState<string | null>(null);
   const [failure, setFailure] = useState<ActionFailureView | null>(null);
@@ -193,6 +219,25 @@ export function WorkspaceHome(): ReactNode {
   const [browseError, setBrowseError] = useState<string | null>(null);
   /** 会后那两个按钮的动作回执（一句话：这一趟已起 / 被拒的原因在失败块里）。 */
   const [postNote, setPostNote] = useState<string | null>(null);
+
+  // -- 会后进度区（R27）：单场读数 + 逐块行 + 展开/收缩 ---------------------
+  /** 最近一份单场读数（选中那一场的；换选中就清零，权威照旧在服务侧）。 */
+  const [status, setStatus] = useState<SessionStatus | null>(null);
+  /** 轮询/取数失败那一行（进度区里如实画，不顶掉首页的失败块）。 */
+  const [statusError, setStatusError] = useState<string | null>(null);
+  /** 逐块行（每跑完一块落一行；第一次读到时把已跑过的补成 `observed` 行）。 */
+  const [chunkRows, setChunkRows] = useState<ChunkRow[]>([]);
+  /** 进度区展开没有（纯界面偏好，只活在这一页的内存里，不落本地存储）。 */
+  const [progOpen, setProgOpen] = useState(true);
+  /** 上一份读数（逐块行按两次读数的差值追加）与「此刻选中的目录」。 */
+  const prevStatusRef = useRef<SessionStatus | null>(null);
+  const selectionRef = useRef<string | null>(null);
+  /** 读数回调走 ref 转手：轮询器只造一次，回调永远是最新的那份逻辑。 */
+  const handleTickRef = useRef<(tick: SessionStatusTick) => void>(() => undefined);
+  const pollerRef = useRef<ReturnType<typeof createSessionStatusPoller> | null>(null);
+  if (pollerRef.current === null) {
+    pollerRef.current = createSessionStatusPoller((tick) => handleTickRef.current(tick));
+  }
 
   // -- 取数 ---------------------------------------------------------------
 
@@ -227,6 +272,137 @@ export function WorkspaceHome(): ReactNode {
     void loadList();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // -- 会后进度区的轮询（有活动才问，不空转）---------------------------------
+
+  const selected: SessionRow | null = (sessions?.sessions ?? []).find(
+    (row) => row.dir === selection,
+  ) ?? null;
+  const postJob = sessions?.post_job ?? null;
+
+  /** 一跳读数进来：逐块行按差值追加（首跳把已跑过的补成行；账已重置——重跑那一跳
+   * ——整段重播，review-2 m2），读数整块替换。 */
+  const handleTick = (tick: SessionStatusTick): void => {
+    if (tick.kind === 'error') {
+      // 404 档（目录没了 / 不在清单里）：重试也是同一句，停表并如实画出；顺带记一档
+      // （m1），postFlying 心跳的重问点照它跳过 —— 停表语义只有 404 一档。
+      // 其余档（网络层瞬态等）轮询器自己接着跳（api.test.ts 钉住的契约「失败跳照交
+      // 不停表」），这里只画错误行 —— 一跳失败就停表会把进度区冻死（review-1 m1）。
+      if (tick.error instanceof SessionStatusHttpError) {
+        pollerRef.current?.stop();
+        statusFatalRef.current = true;
+      }
+      setStatusError(tick.error.message);
+      return;
+    }
+    if (tick.dir !== selectionRef.current) return;
+    setStatusError(null);
+    statusFatalRef.current = false;
+    const before = prevStatusRef.current;
+    if (
+      before === null ||
+      before.dir !== tick.status.dir ||
+      chunkLedgerReset(before, tick.status)
+    ) {
+      setChunkRows(initialChunkRows(tick.status));
+    } else {
+      setChunkRows((rows) => [...rows, ...advanceChunkRows(rows, before, tick.status)]);
+    }
+    prevStatusRef.current = tick.status;
+    setStatus(tick.status);
+  };
+  handleTickRef.current = handleTick;
+
+  // 换选中（含首次定选中）：进度区清零，立刻问一次 —— 不等第一个周期。
+  // （`tick()` 自己会把读数交给 onTick，与轮询循环同一入口。）
+  useEffect(() => {
+    selectionRef.current = selected?.dir ?? null;
+    prevStatusRef.current = null;
+    statusFatalRef.current = false;
+    setStatus(null);
+    setStatusError(null);
+    setChunkRows([]);
+    if (selected !== null) {
+      void pollerRef.current?.tick(selected.dir);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selection]);
+
+  // 有活动才持续轮询：联结命中（会后那趟在跑）或读数说「真在跑 / 停着 running」。
+  // 从「在刷」翻到「不用刷」的那一下顺手刷一遍列表 —— post_job 那格与行四态要跟上。
+  const watch = selected !== null && shouldWatch(selected, postJob, status);
+  const watchRef = useRef(false);
+  /** 心跳补问用的「此刻 post_job 命中的目录」：ref 转手，interval 闭包不握挂表那一刻
+   * 的旧对象（m1，review-3）。 */
+  const postDirRef = useRef<string | null>(null);
+  /** 单场读数已进 404 档的记档：重试也是同一句，心跳不再补问（维持 review-1 m1 的
+   * 停表语义）；成功读数、换选中、新一趟起跑三处清掉。 */
+  const statusFatalRef = useRef(false);
+  useEffect(() => {
+    const poller = pollerRef.current;
+    if (poller === null) return;
+    const was = watchRef.current;
+    watchRef.current = watch;
+    if (watch && selected !== null) {
+      poller.setIntervalFromSnapshot(heartbeatSeconds ?? 0);
+      poller.start(selected.dir);
+    } else {
+      poller.stop();
+      if (was) void loadList();
+    }
+    return () => poller.stop();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watch, selection, heartbeatSeconds]);
+
+  // C1（review-2）补跳：post_job 出现在选中行上、而轮询还没起 —— 手上那份读数多半是
+  // 上一趟留下的旧终态，`shouldWatch()` 的联结分支照它判只能翻 false；watch-effect 的
+  // 依赖（watch 值没变）也不会重跑，post_job 出现这件事原先没有任何机制补一跳 tick。
+  // 这里在「联结命中选中行 ∧ watch 仍假」时主动问一跳：读数到手后 shouldWatch 照
+  // **新读数**判 —— 在飞 → watch 翻真、轮询起（最多一个周期内进度区开始跟随）；若这一趟
+  // 已在按下与补跳之间跑完 → 读到终态、watch 仍假，无害（不空转）。依赖挂 post_job 的
+  // dir（同一趟不变，翻 null 或换场才重跑），防重复补跳；不命中选中行不问（那一半由
+  // postFlying 的列表心跳接住）。
+  // m1（review-3）：这一跳遇瞬态失败后 postDir 不变、watch 仍假 —— 重问点由下面
+  // postFlying 的列表心跳接住（同一趟内按心跳节奏自动补问，最多一个心跳周期内自愈），
+  // 这里仍是起跑的那一跳；新一趟起跑时把 404 记档清掉，别让上一趟的停表挡这一趟。
+  const postDir = postJob?.dir ?? null;
+  postDirRef.current = postDir;
+  useEffect(() => {
+    if (postDir === null || watch) return;
+    if (selectionRef.current !== postDir) return;
+    statusFatalRef.current = false;
+    void pollerRef.current?.tick(postDir);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [postDir]);
+
+  // 会后在飞期间给列表一条心跳节奏的重取（review-1 C1 的第 2 条路）：post 命中的
+  // 不是选中行时，没有单场读数可等 —— 跑完那一刻服务把 post_job 翻 null，只有重取
+  // 列表才知道，gpucell 与行四态才不会楔死在「跑着」。post_job 清 null 即停。
+  // deps 挂布尔不挂对象：每次重取 post_job 都是新对象，挂对象会把周期永远重排。
+  // m1（review-3）：顺这条心跳把补跳的重问点接住 —— 补跳那一跳遇瞬态失败后，postDir
+  // 不变（补跳 effect 不重跑）、watch 仍假（轮询不起），原先进度区整趟停死；这里守卫
+  // 「联结命中的还是选中行 ∧ 轮询没起 ∧ 未进 404 记档」就再问一跳，失败后最多一个
+  // 心跳周期内自愈、无需用户动作；watch 翻真（轮询接管）或 post_job 翻 null（本
+  // effect 拆掉）自然停。判等全走 ref：闭包里的 postJob 是挂 interval 那一刻的对象。
+  const postFlying = postJob !== null;
+  useEffect(() => {
+    if (!postFlying) return;
+    const seconds = clampHeartbeatInterval(heartbeatSeconds ?? HEARTBEAT_INTERVAL_DEFAULT_SECONDS);
+    const timer = setInterval(() => {
+      void loadList();
+      const dir = postDirRef.current;
+      if (
+        dir !== null &&
+        selectionRef.current === dir &&
+        !watchRef.current &&
+        !statusFatalRef.current
+      ) {
+        void pollerRef.current?.tick(dir);
+      }
+    }, seconds * 1000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [postFlying, heartbeatSeconds]);
 
   // -- 动作 ----------------------------------------------------------------
 
@@ -309,12 +485,14 @@ export function WorkspaceHome(): ReactNode {
 
   // -- 画 -------------------------------------------------------------------
 
-  const selected: SessionRow | null = (sessions?.sessions ?? []).find(
-    (row) => row.dir === selection,
-  ) ?? null;
   const whyForSelected = selected === null ? null : startWhy(selected);
   const post = selected === null ? null : postButtonsView(selected);
   const lines = emptyStateLines();
+  /** 全局「显卡忙不忙」：会中模型在这一屏必关着（闸只在 idle / 收尾落定后进本屏）。 */
+  const gpu = gpuBusyView(postJob, false);
+  /** 进度区的读数（有读数才算；读不出来就画失败那一行）。 */
+  const prog = status === null ? null : progressView(status);
+  const progMark = prog === null ? null : phaseMark(prog.phase);
 
   const openFromPicker = (item: { dir: string; kind: PickPath['kind'] }): void => {
     setPicker(false);
@@ -354,6 +532,16 @@ export function WorkspaceHome(): ReactNode {
           </button>
         </div>
         <div className="topbar__right">
+          {/* 全局只留这一格「显卡忙不忙」（R31）：读法与判据在 `home/progress.ts` 的
+              `gpuBusyView()`。全站没有全局进度条 —— 进度跟着各自的工作区走。 */}
+          <span
+            className={`gpucell ${gpu.busy ? 'gpucell--busy' : ''}`}
+            title={gpu.note}
+            data-busy={gpu.busy ? 'true' : 'false'}
+          >
+            <span className={`glyph ${gpu.mark}`} aria-hidden="true" />
+            {gpu.label}
+          </span>
           <span className="hint">清单住在服务端 · 界面只读</span>
         </div>
       </header>
@@ -372,7 +560,9 @@ export function WorkspaceHome(): ReactNode {
           )}
           {sessions !== null && sessions.sessions.length > 0 && (
             <div className="list wslist" role="listbox" aria-label="这些会">
-              {sessions.sessions.map((row) => (
+              {sessions.sessions.map((row) => {
+                const cell = rowStatusView(row, postJob);
+                return (
                 <div
                   key={row.dir}
                   className={`wslist__row ${row.dir === selection ? 'wslist__row--on' : ''}`}
@@ -386,12 +576,19 @@ export function WorkspaceHome(): ReactNode {
                 >
                   <span className="wslist__name">{row.session_id ?? row.dir}</span>
                   <span className="wslist__path num">{row.dir}</span>
+                  {/* 行四态（R27）：字 + 图形两条通道并存，颜色只是冗余的那一半。
+                      判据在 `home/progress.ts` 的 `rowStatusView()`。 */}
                   <span
-                    className={`wslist__state ${
-                      !row.dir_exists || row.state === 'failed' ? 'wslist__state--dim' : ''
+                    className={`wslist__state wslist__state--${cell.tone} ${
+                      cell.dim ? 'wslist__state--dim' : ''
                     }`}
                   >
-                    {statusLabel(row)}
+                    {cell.mark === null ? (
+                      <span className="spinner" aria-hidden="true" />
+                    ) : (
+                      <span className={`glyph ${cell.mark}`} aria-hidden="true" />
+                    )}
+                    {cell.label}
                   </span>
                   <button
                     className="btn btn--small btn--ghost wslist__remove"
@@ -406,7 +603,8 @@ export function WorkspaceHome(): ReactNode {
                     删除
                   </button>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </aside>
@@ -421,10 +619,22 @@ export function WorkspaceHome(): ReactNode {
                 <span className="kv__k">目录</span>
                 <span className="kv__v num">{selected.dir}</span>
               </p>
-              <p className="kv">
-                <span className="kv__k">状态</span>
-                <span className="kv__v">{statusLabel(selected)}</span>
-              </p>
+              {(() => {
+                const cell = rowStatusView(selected, postJob);
+                return (
+                  <p className="kv">
+                    <span className="kv__k">状态</span>
+                    <span className="kv__v">
+                      {cell.mark === null ? (
+                        <span className="spinner" aria-hidden="true" />
+                      ) : (
+                        <span className={`glyph ${cell.mark}`} aria-hidden="true" />
+                      )}
+                      {cell.label}
+                    </span>
+                  </p>
+                );
+              })()}
               {selected.date !== null && (
                 <p className="kv">
                   <span className="kv__k">日期</span>
@@ -460,6 +670,90 @@ export function WorkspaceHome(): ReactNode {
                   {post.why !== null && <p className="wspane__why">{post.why}</p>}
                   {postNote !== null && <p className="wspane__postline">{postNote}</p>}
                   <p className="hint">{postIdleNote()}</p>
+                </div>
+              )}
+
+              {/* 会后进度区（R27）：可展开收缩；展开是逐块行往下刷 + 每路一条的进度条。
+                  读数是 `GET /api/sessions/{id}` 那只纯读端点的原文，轮询只在有活动时开。
+                  「停着一版 running」按 `in_process` 分层如实画，不替盘上的话下结论。 */}
+              {(prog !== null || statusError !== null) && (
+                <div className="wsprog" aria-label="会后进度">
+                  <div className="wsprog__head">
+                    <span className="wsprog__title">会后进度</span>
+                    {prog !== null && (
+                      <span className="wsprog__phase" data-phase={prog.phase}>
+                        {progMark === null ? (
+                          <span className="spinner" aria-hidden="true" />
+                        ) : (
+                          <span className={`glyph ${progMark}`} aria-hidden="true" />
+                        )}
+                        {prog.phaseLabel}
+                      </span>
+                    )}
+                    <button
+                      className="btn btn--small btn--ghost wsprog__toggle"
+                      type="button"
+                      aria-expanded={progOpen}
+                      onClick={() => setProgOpen((open) => !open)}
+                    >
+                      {progOpen ? '收起' : '展开'}
+                    </button>
+                  </div>
+                  {/* 错误行不进收起的那一半：收起态也要看得见「读数出事了」（review-1 m1 顺带） */}
+                  {statusError !== null && <p className="wsprog__row wsprog__row--bad">{statusError}</p>}
+                  {progOpen && (
+                    <div className="wsprog__body">
+                      {prog !== null && (
+                        <>
+                          <div className="wsprog__roads">
+                            {prog.roads.map((road) => (
+                              <div className="wsprog__road" key={road.source} data-road={road.source}>
+                                <span className="wsprog__roadname">{road.label}</span>
+                                <div
+                                  className="wsprog__bar"
+                                  role="progressbar"
+                                  aria-label={`${road.label}这一路跑到第 ${road.done} 块`}
+                                  aria-valuemin={0}
+                                  aria-valuemax={100}
+                                  aria-valuenow={road.percent ?? undefined}
+                                >
+                                  {/* 电平块的同一套手法：读数只写 CSS 变量，长短归样式 */}
+                                  <span
+                                    className="wsprog__fill"
+                                    style={{ '--p': `${road.percent ?? 0}%` } as CSSProperties}
+                                  />
+                                </div>
+                                <span className="wsprog__frac num">
+                                  {road.total === null ? `${road.done}/?` : `${road.done}/${road.total}`}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="wsprog__rows" role="list" aria-label="逐块记录">
+                            {chunkRows.length === 0 && (
+                              <p className="wsprog__row wsprog__row--empty">
+                                还没有块跑完的记录（从这一页打开起开始记）。
+                              </p>
+                            )}
+                            {chunkRows.map((item) => (
+                              <p className="wsprog__row" role="listitem" key={item.key}>
+                                {chunkRowLabel(item)}
+                              </p>
+                            ))}
+                          </div>
+                          <p className="hint">
+                            已跑 {prog.counts.transcribed + prog.counts.silent + prog.counts.failed + prog.counts.unjudged} 块 ·
+                            跑成 {prog.counts.transcribed} · 静音 {prog.counts.silent} · 失败 {prog.counts.failed} ·
+                            未判 {prog.counts.unjudged}
+                            {prog.elapsedSeconds === null
+                              ? ''
+                              : ` · 已跑 ${Math.round(prog.elapsedSeconds)} 秒`}
+                            ；块数是给人看的读数，不作判据（设计意图第 6、7 条）。
+                          </p>
+                        </>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

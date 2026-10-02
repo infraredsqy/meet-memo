@@ -40,5 +40,6 @@
       "last_opened_at": "<iso>"
     }
   ],
-  "recent": "<path>"
+  "recent": "<path>",
+  "post_job": null
 }

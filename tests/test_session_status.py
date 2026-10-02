@@ -419,3 +419,51 @@ def test_the_endpoint_leaves_the_snapshot_and_the_list_alone(
         assert len(rows[0]) == 11, sorted(rows[0])
     finally:
         config_module.set_current(previous)
+
+
+def test_the_list_carries_the_post_job_cell_at_the_top_level(
+    tmp_path, monkeypatch, restore_config
+) -> None:
+    """`GET /api/sessions` 顶层第三格 `post_job`：会后进度界面那格「显卡忙不忙」的读数。
+
+    - 没有会后的活儿在飞时它如实是 `None`；**每行照旧十一键**（这一格在顶层，
+      不进任何一行 —— 行加十二键是越界项，契约 4.8/4.9 两处钉死）；
+    - 离线那一趟在本进程里飞着时它带 `{kind, dir, started_at}` 三格（`post_job_state()`
+      的原文，不另造一份形状）；`kind` 答**这一趟跑的是哪条路**（`offline` / `minutes`）；
+    - 跑完那一刻线程收工，同一格翻回 `None`（`post_job_state()` 的既有判据）。
+    """
+    runtime, previous = _runtime(tmp_path, monkeypatch, **{"post.chunk_seconds": CHUNK_SECONDS})
+    session = _workspace_with_audio(tmp_path)
+    runtime.workspace_open(str(session))
+
+    gate = threading.Event()
+    engine = GatedEngine(gate, block_at=1)  # mic 第 1 块卡住
+    monkeypatch.setattr(offline_runner, "build_engine", lambda config=None: engine)
+    try:
+        idle = runtime.sessions_dict()
+        assert set(idle) == {"sessions", "recent", "post_job"}, sorted(idle)
+        assert idle["post_job"] is None
+
+        runtime.post_offline({"dir": str(session)})
+        assert engine.reached.wait(timeout=JOB_TIMEOUT_SECONDS), "引擎没跑到 mic 的第 1 块"
+
+        revision_before = runtime.revision
+        flying = runtime.sessions_dict()
+        job = flying["post_job"]
+        assert job is not None
+        assert set(job) == {"kind", "dir", "started_at"}, sorted(job)
+        assert job["kind"] == "offline"
+        assert job["dir"] == str(session)
+        assert job["started_at"], "起跑时刻要读得到"
+        for row in flying["sessions"]:
+            assert len(row) == 11, sorted(row)
+
+        assert runtime.revision == revision_before, "读它不涨 revision"
+    finally:
+        gate.set()
+        _wait_job_done(runtime)
+        config_module.set_current(previous)
+
+    done = runtime.sessions_dict()
+    assert done["post_job"] is None, "跑完那一刻这一格翻回 None"
+    assert {row["dir"]: row for row in done["sessions"]}[str(session)]["state"] == "done"

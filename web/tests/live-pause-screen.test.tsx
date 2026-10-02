@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, afterEach } from 'vitest';
+import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest';
 import { createElement } from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
 
@@ -9,6 +9,7 @@ import {
   type EventsClientHandlers,
   type HeartbeatClient,
 } from '../src/api';
+import { fetchSessions } from '../src/api/sessions';
 import { LiveView } from '../src/App';
 import type { Snapshot } from '../src/contract';
 import { makeSnapshot, T } from './live-fixtures';
@@ -38,8 +39,16 @@ vi.mock('../src/api', async (importOriginal) => {
   };
 });
 
+// 会后在飞读数（review-1 m2）：LiveView 挂上就按心跳节奏取 `GET /api/sessions`，
+// 替身打在同一条边界上 —— 这个文件不连网。
+vi.mock('../src/api/sessions', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/api/sessions')>();
+  return { ...actual, fetchSessions: vi.fn() };
+});
+
 const createEventsClientMock = vi.mocked(createEventsClient);
 const createHeartbeatClientMock = vi.mocked(createHeartbeatClient);
+const fetchSessionsMock = vi.mocked(fetchSessions);
 
 /** 捕获 SSE 那一侧的 handlers（`LiveView` 在 effect 里建连，回调就在这一刻交出来）。 */
 const captured: { handlers: EventsClientHandlers | null } = { handlers: null };
@@ -141,6 +150,13 @@ afterEach(async () => {
   captured.handlers = null;
   createEventsClientMock.mockReset();
   createHeartbeatClientMock.mockReset();
+  fetchSessionsMock.mockReset();
+});
+
+beforeEach(() => {
+  // 会后在飞读数的缺省替身：没有会后的活儿（要特定读数自己覆盖）。
+  // LiveView 挂上就取 `GET /api/sessions`（review-1 m2），不能让它在替身空转时炸掉。
+  fetchSessionsMock.mockResolvedValue({ sessions: [], recent: null, post_job: null });
 });
 
 describe('暂停态那一屏（渲染层）', () => {
@@ -172,5 +188,40 @@ describe('暂停态那一屏（渲染层）', () => {
     expect(button, '录音态顶栏那颗照样在，只是字不同').toHaveLength(1);
     expect(textOf(button[0] as TestRenderer.ReactTestInstance)).toBe('暂停');
     expect((button[0] as TestRenderer.ReactTestInstance).props['aria-pressed']).toBe(false);
+  });
+});
+
+describe('全局一格的会后一半（review-1 m2）：post 在飞读的是 GET /api/sessions', () => {
+  /** 收尾窗口那一档的快照：已停录（ended）但收尾没落定 —— 旧实现这里显假「闲」。 */
+  function drainingSnapshot(): Snapshot {
+    return makeSnapshot({ top_state: 'ended', session: null });
+  }
+
+  it('post 在飞时全局格答「显卡忙」，不再显假「闲」', async () => {
+    fetchSessionsMock.mockResolvedValue({
+      sessions: [],
+      recent: null,
+      post_job: { kind: 'offline', dir: 'C:\\会议\\跑着', started_at: T('22:10:00') },
+    });
+    const renderer = await mountLive(drainingSnapshot());
+
+    const cells = renderer.root.findAll((node) =>
+      `${node.props.className ?? ''}`.startsWith('gpucell'),
+    );
+    expect(cells, '会中顶栏该有一只 gpucell').toHaveLength(1);
+    expect((cells[0] as TestRenderer.ReactTestInstance).props['data-busy']).toBe('true');
+    expect(String((cells[0] as TestRenderer.ReactTestInstance).props.title)).toContain(
+      '会后那趟在跑',
+    );
+  });
+
+  it('没有会后的活儿：同一格照旧「显卡闲」', async () => {
+    fetchSessionsMock.mockResolvedValue({ sessions: [], recent: null, post_job: null });
+    const renderer = await mountLive(drainingSnapshot());
+
+    const cells = renderer.root.findAll((node) =>
+      `${node.props.className ?? ''}`.startsWith('gpucell'),
+    );
+    expect((cells[0] as TestRenderer.ReactTestInstance).props['data-busy']).toBe('false');
   });
 });
