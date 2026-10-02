@@ -26,6 +26,7 @@ export function makeSettings(overrides: Partial<Settings> = {}): Settings {
   return {
     alarm_sound: true,
     heartbeat_interval_seconds: 10,
+    summary_default_window: '15m',
     asr: {
       max_segment_seconds: 10,
       timeout_seconds: 20,

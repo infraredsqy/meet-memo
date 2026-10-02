@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ACTION_FIXTURES,
+  DEVICES_FIXTURES,
   HEARTBEAT_FIXTURES,
   SNAPSHOT_FIXTURES,
   SSE_FIXTURES,
@@ -14,6 +15,7 @@ import {
   ERROR_CODES,
   ERROR_CODE_STATUS,
   actionFixtureSchema,
+  devicesResponseSchema,
   heartbeatSchema,
   resyncSnapshotSchema,
   snapshotSchema,
@@ -143,11 +145,13 @@ describe('快照样本', () => {
     expect(snap.session?.elapsed_seconds).toBe(0);
     expect(snap.sources[0]?.level_dbfs).toBe('<dbfs>');
     expect(snap.settings.heartbeat_interval_seconds).toBe(10);
+    expect(snap.settings.summary_default_window).toBe('15m');
     expect(snap.settings.devices).toEqual({ mic: null, loopback: null });
-    // 心跳周期的唯一来源就是这一个键。
+    // 心跳周期的唯一来源就是这一个键；缺省档的来源也是快照这一格（311f84f5）。
     expect(Object.keys(snap.settings)).toEqual([
       'alarm_sound',
       'heartbeat_interval_seconds',
+      'summary_default_window',
       'asr',
       'devices',
     ]);
@@ -534,5 +538,43 @@ describe('心跳样本', () => {
     const beat = readFixture('heartbeat', 'idle') as Record<string, unknown>;
     const { recording_alive: _dropped, ...rest } = beat;
     expect(heartbeatSchema.safeParse(rest).success).toBe(false);
+  });
+});
+
+describe('设备清单样本', () => {
+  it.each(DEVICES_FIXTURES)('devices/%s.json 过 devicesResponseSchema', (name) => {
+    const listing = devicesResponseSchema.parse(readFixture('devices', name));
+    expect(Object.keys(listing).sort()).toEqual(['loopback', 'mic']);
+    for (const rows of [listing.mic, listing.loopback]) {
+      expect(rows.length).toBeGreaterThan(0);
+      for (const item of rows) {
+        expect(Object.keys(item).sort()).toEqual([
+          'channels',
+          'host_api',
+          'index',
+          'is_default',
+          'name',
+          'role',
+        ]);
+      }
+    }
+  });
+
+  it('样本一个不少', () => {
+    expect(listFixtures('devices')).toEqual([...DEVICES_FIXTURES].sort());
+  });
+
+  it('两路的 role 各归各档；系统默认输入带着 is_default 标记', () => {
+    const listing = devicesResponseSchema.parse(readFixture('devices', 'all'));
+    for (const item of listing.mic) expect(item.role).toBe('input');
+    for (const item of listing.loopback) expect(item.role).toBe('render');
+    expect(listing.mic.some((item) => item.is_default)).toBe(true);
+  });
+
+  it('多一格/少一格都不符合契约', () => {
+    const listing = readFixture('devices', 'all') as Record<string, unknown>;
+    expect(devicesResponseSchema.safeParse({ ...listing, extra: [] }).success).toBe(false);
+    const { loopback: _dropped, ...rest } = listing;
+    expect(devicesResponseSchema.safeParse(rest).success).toBe(false);
   });
 });

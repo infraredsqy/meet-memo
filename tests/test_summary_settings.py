@@ -22,6 +22,7 @@ from meeting.summary.settings import (
     API_KEY_KEY,
     BASE_URL_KEY,
     DEFAULT_WINDOW,
+    DEFAULT_WINDOW_KEY,
     MODEL_KEY,
     SETTING_KEYS,
     SummarySettings,
@@ -183,11 +184,18 @@ def test_setting_keys_lists_the_seven_names() -> None:
 
 
 def test_the_seven_keys_are_registered_in_the_config_layer() -> None:
-    """七个键在配置层四处都有登记：默认值、三分表、取值域、环境变量那一格。"""
+    """七个键在配置层四处都有登记：默认值、三分表、取值域、环境变量那一格。
+
+    `summary.default_window` 原与同组键一起归 `pending_restart`；设置抽屉节点（`311f84f5`）
+    把它改收热读档（界面的缺省预选随快照走），同组其余六键不动。
+    """
     for key in SETTING_KEYS:
         assert key in config_module.DEFAULT_VALUES, key
         assert key in config_module.SETTING_KEY_GROUPS, key
-        assert config_module.SETTING_KEY_GROUPS[key] == "pending_restart", key
+        if key == DEFAULT_WINDOW_KEY:
+            assert config_module.SETTING_KEY_GROUPS[key] == "applied", key
+        else:
+            assert config_module.SETTING_KEY_GROUPS[key] == "pending_restart", key
 
     # 取值域：三个字符串键、一个浮点键、一个整数键各有自己的档
     assert config_module.STRING_LIMITS["summary.default_window"] == ("5m", "15m", "30m", "full")

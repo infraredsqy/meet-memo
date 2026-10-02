@@ -72,6 +72,14 @@ export interface SummaryController {
   subscribe(listener: () => void): () => void;
   /** 换一个档位。 */
   select(window: SummaryWindowChoice): void;
+  /**
+   * 把服务给的缺省档铺到预选上（`311f84f5`：默认预选随快照走）。
+   *
+   * **只在没有被人显式挑过档**的这一场里生效 —— 用户自己挑过的档位不被动改；
+   * 已经在跑 / 有结果 / 有失败的那几档同样不碰：那些档位说的是「这一次」用哪个窗口，
+   * 缺省档管的是开场时预选落在哪一格，两件事各走各的。
+   */
+  applyDefaultWindow(window: SummaryWindowChoice): void;
   /** 按一下（正跑着的那一次不受影响：按钮此时已经按不动了）。 */
   run(): Promise<void>;
   /** 关掉结果面板 / 失败面板（记录仍在）。 */
@@ -97,6 +105,8 @@ export function createSummaryController(deps: SummaryControllerDeps): SummaryCon
   let logError: string | null = null;
   let logInFlight = false;
   let logOpen = false;
+  /** 用户在本页显式挑过档吗？挑过之后，快照带来的缺省档不再覆盖他的选择。 */
+  let userPickedWindow = false;
   /** 请求代号：只有当下这一号的结果进状态（旧号的应答一律丢掉）。 */
   let generation = 0;
 
@@ -120,6 +130,14 @@ export function createSummaryController(deps: SummaryControllerDeps): SummaryCon
     },
 
     select(window: SummaryWindowChoice): void {
+      if (state.window === window) return;
+      userPickedWindow = true;
+      setState({ ...state, window });
+    },
+
+    applyDefaultWindow(window: SummaryWindowChoice): void {
+      if (userPickedWindow) return;
+      if (state.phase !== 'idle') return;
       if (state.window === window) return;
       setState({ ...state, window });
     },

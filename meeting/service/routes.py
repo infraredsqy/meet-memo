@@ -1,18 +1,20 @@
-"""八条路由的**唯一注册点**（phase2 §3.7 / §3.8 / §3.9 / §3.11 / §3.12；`1987cb20` phase2 加 `summaries`；
+"""九条路由的**唯一注册点**（phase2 §3.7 / §3.8 / §3.9 / §3.11 / §3.12；`1987cb20` phase2 加 `summaries`；
 工作台收编节点 e2f6166b 加 `sessions` / `dirs` 两只读端点与 `workspace_open` / `workspace_remove` 两动作；
-会后进度读数节点 `a9affaa8` 加 `sessions/{dir}` 那只单场状态端点）。
+会后进度读数节点 `a9affaa8` 加 `sessions/{dir}` 那只单场状态端点；设置抽屉节点 `311f84f5` 加
+`devices` 那只设备清单端点）。
 
 全应用只在这里注册一次：
 
   - `GET /api/state`（完整版，body 就是 `to_dict()` 的产出）；
   - `GET /api/events`（SSE：`snapshot` 先行 + `state` / `levels` / `transcript` 三通道）；
   - `GET /api/heartbeat`（完整版，`service` 字面量必须有）；
-  - `POST /api/actions`（信封 + 九个动作名 + `code` 表）；
+  - `POST /api/actions`（信封 + 十一个动作名 + `code` 表）；
   - `GET /api/summaries`（本场按过的、成功产出的那几次会中总结；读内存，不落文件）；
   - `GET /api/sessions`（工作区注册表：按路径去重的那一份"我这些会"，读盘上注册表文件）；
   - `GET /api/sessions/{id}`（单场状态：这一场此刻跑到哪一档、会后离线跑过几块 / 共几块、
     正在跑哪一路、已经跑了多久；`{id}` 是这一场的目录路径，形状见 `docs/contract.md` 4.9）；
   - `GET /api/dirs`（目录选择器的现场：一层子目录的名目判读，读现场不写任何东西）；
+  - `GET /api/devices`（两路各自的候选设备端点表：只读、纯枚举、不开设备）；
   - `GET /debug`（骨架自检页，从包内读）。
 
 **装配模块 `app.py` 里那两条最小版注册与 `static.py` 的 `/debug` 注册都已在本 Phase 摘除**：
@@ -197,6 +199,23 @@ async def _api_dirs(request: Request) -> Response:
         return _error_response(exc)
 
 
+async def _api_devices(request: Request) -> Response:
+    """两路各自的候选设备端点表：`{mic: [...], loopback: [...]}`（**200**，任何状态下都给）。
+
+    设置抽屉的两个设备下拉读它（`311f84f5`）。与 `GET /api/dirs` 同一档**纯读**：
+    只枚举端点表、**不开任何设备**（`probe()` 会短暂试开，清单不走它）；
+    不提交、不涨 `revision`、不广播。
+    """
+    runtime = _runtime_of(request)
+    if runtime is None:  # pragma: no cover - 应用未装配
+        return JSONResponse({"error": "runtime 未装配"}, status_code=500)
+    runtime.bind_from_scope(request.scope)
+    try:
+        return JSONResponse(runtime.devices_listing())
+    except ActionError as exc:
+        return _error_response(exc)
+
+
 # ---------------------------------------------------------------------------
 # POST /api/actions
 # ---------------------------------------------------------------------------
@@ -338,7 +357,7 @@ async def _debug_page(request: Request) -> Response:
 
 
 def api_routes() -> list[Route]:
-    """八条 `/api/*` 路由（`/debug` 在 `debug_routes()` 里，同一个模块）。"""
+    """九条 `/api/*` 路由（`/debug` 在 `debug_routes()` 里，同一个模块）。"""
     return [
         Route("/api/state", _api_state, methods=["GET"]),
         Route("/api/events", _api_events, methods=["GET"]),
@@ -351,6 +370,7 @@ def api_routes() -> list[Route]:
         # 注册在 `/api/sessions` 之后：星形路由按注册顺序匹配，两条路径不冲突。
         Route("/api/sessions/{dir:path}", _api_session_status, methods=["GET"]),
         Route("/api/dirs", _api_dirs, methods=["GET"]),
+        Route("/api/devices", _api_devices, methods=["GET"]),
     ]
 
 
@@ -360,7 +380,7 @@ def debug_routes() -> list[Route]:
 
 
 def all_routes() -> list[Route]:
-    """九条路由一次给全（装配模块只负责把它们挂上应用）。"""
+    """十条路由一次给全（装配模块只负责把它们挂上应用）。"""
     return api_routes() + debug_routes()
 
 

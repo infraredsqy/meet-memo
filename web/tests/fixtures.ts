@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 export const FIXTURES_DIR = resolve(here, '..', '..', 'contract', 'fixtures');
 
-export type FixtureGroup = 'snapshot' | 'sse' | 'actions' | 'summaries' | 'heartbeat';
+export type FixtureGroup = 'snapshot' | 'sse' | 'actions' | 'summaries' | 'heartbeat' | 'devices';
 
 /** 读一份样本的原文。 */
 export function readFixtureText(group: FixtureGroup, name: string): string {
@@ -100,4 +100,7 @@ export const SUMMARIES_FIXTURES = ['after-one'] as const;
 
 /** 两个心跳样本。 */
 export const HEARTBEAT_FIXTURES = ['idle', 'recording'] as const;
+
+/** 设备清单那一份样本（`GET /api/devices`，设置抽屉节点 `311f84f5`）。 */
+export const DEVICES_FIXTURES = ['all'] as const;
 

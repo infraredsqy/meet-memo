@@ -1899,8 +1899,7 @@ input[type="checkbox"] {
   gap: var(--space-3);
 }
 
-/* 7. 选择器的清单：一行 name + kind，右侧标名目；窄屏照单列叠 */
-.picker__list {
+/* 7. 选择器的清单：一行 name + kind，右侧标名目；窄屏照单列叠 */.picker__list {
   min-height: 8rem;
   overflow: auto;
   display: flex;
@@ -1946,6 +1945,82 @@ input[type="checkbox"] {
   white-space: nowrap;
 }
 
+/* 7. 设置抽屉与遮罩（docs/ui-design.md §7.10：drawer / drawer--open / scrim；
+      field 一族是设置项：标签 / 控件 / 说明 / 校验失败那句） */
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-drawer);
+  background: rgba(4 6 6 / 55%);
+}
+
+.drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: calc(var(--z-drawer) + 1);
+  width: min(22rem, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-6);
+  overflow-y: auto;
+  border-left: var(--size-rule) solid var(--t-rule-strong);
+  background: var(--t-surface);
+}
+
+.drawer--open {
+  transform: translateX(0);
+}
+
+.drawer__top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  padding-bottom: var(--space-3);
+  border-bottom: var(--size-divider) solid var(--t-rule-strong);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.field__label {
+  color: var(--t-ink);
+  font-size: var(--size-small);
+  letter-spacing: var(--track-none);
+}
+
+.field__input {
+  padding: var(--space-2) var(--space-3);
+  border: var(--size-divider) solid var(--t-rule-strong);
+  background: var(--t-sunk);
+  color: var(--t-ink);
+  font-size: var(--size-small);
+  font-variant-numeric: var(--t-num);
+}
+
+.field__input:disabled {
+  color: var(--t-ink-faint);
+  border-color: var(--t-rule-hair);
+}
+
+.field__hint {
+  color: var(--t-ink-quiet);
+  font-size: var(--size-caption);
+  line-height: var(--line-snug);
+}
+
+.field__error {
+  color: var(--t-alert-ink);
+  font-size: var(--size-caption);
+  line-height: var(--line-snug);
+}
+
 /* 8. 窄屏不塌：左右两列收成一列（720 以下），弹窗整屏 */
 @media (max-width: 720px) {
   .home {
@@ -1980,5 +2055,12 @@ input[type="checkbox"] {
   .dlg__layer {
     align-items: stretch;
     padding: var(--space-3);
+  }
+
+  /* 设置抽屉整屏（docs/ui-design.md §7.10：drawer「390 下整屏」） */
+  .drawer {
+    width: 100%;
+    border-left: none;
+    padding: var(--space-4);
   }
 }

@@ -400,3 +400,53 @@ describe('订阅', () => {
     expect(calls).toBe(1);
   });
 });
+
+describe('缺省档随快照走（applyDefaultWindow，311f84f5）', () => {
+  it('闲档时铺快照给的缺省档', () => {
+    const controller = createSummaryController({
+      request: async () => answer(),
+      loadLog: async () => [],
+    });
+    controller.applyDefaultWindow('30m');
+    expect(controller.state().window).toBe('30m');
+  });
+
+  it('用户显式挑过的档不被覆盖；同值再铺不惊动订阅者', () => {
+    const controller = createSummaryController({
+      request: async () => answer(),
+      loadLog: async () => [],
+    });
+    controller.select('5m');
+    controller.applyDefaultWindow('30m');
+    expect(controller.state().window).toBe('5m');
+
+    const fresh = createSummaryController({
+      request: async () => answer(),
+      loadLog: async () => [],
+    });
+    let calls = 0;
+    fresh.subscribe(() => {
+      calls += 1;
+    });
+    fresh.applyDefaultWindow('30m');
+    fresh.applyDefaultWindow('30m');
+    expect(calls).toBe(1);
+  });
+
+  it('跑起来 / 有结果的那几档不碰：那是「这一次」的档位', async () => {
+    const gate = held();
+    const controller = createSummaryController({
+      request: gate.request,
+      loadLog: async () => [],
+    });
+    const running = controller.run();
+    expect(controller.state().phase).toBe('running');
+    controller.applyDefaultWindow('30m');
+    expect(controller.state().window).toBe('15m');
+    gate.release();
+    await running;
+    expect(controller.state().phase).toBe('done');
+    controller.applyDefaultWindow('30m');
+    expect(controller.state().window).toBe('15m');
+  });
+});

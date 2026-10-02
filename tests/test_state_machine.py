@@ -11,7 +11,7 @@
   - `envelope` = 最近 30 秒 / 15 根柱 / 一根 2 秒，**一根柱 = 它那 2 秒窗口内
     所有 `LevelFrame.peak` 的最大值**；
   - `to_dict()` 的字段名与取值域逐条对齐 §3.1.2（`sources` 恰好两项、`health` 七取值、
-    `settings` 四个子键齐全且 `devices` 的两个子键都在（没配时都是 `null`））；
+    `settings` 五个子键齐全且 `devices` 的两个子键都在（没配时都是 `null`））；
   - **收尾闭环两个分支都断言**：
     `test_finish_drain_keeps_top_state_ended` 管成功分支（`finish_drain()` 之后
     `top_state` **停在 `ended`**、`ended.phase == "done"`、`session` 保留、盘上 `state == "done"`）；
@@ -189,7 +189,8 @@ def test_empty_snapshot_shape_is_the_frozen_one():
         assert item["health"] in SOURCE_HEALTH
         assert item["envelope"] == []
     assert set(payload["settings"]) == {
-        "alarm_sound", "heartbeat_interval_seconds", "asr", "devices",
+        "alarm_sound", "heartbeat_interval_seconds", "summary_default_window",
+        "asr", "devices",
     }
     assert payload["settings"]["devices"] == {}
 

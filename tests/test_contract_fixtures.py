@@ -55,6 +55,10 @@ HEARTBEAT_KEYS = {
     "recording_alive", "seconds_since_last_tick",
 }
 TRANSCRIPT_LINE_KEYS = {"ts", "source", "text", "kind"}
+#: 快照 `settings` 的键全集（`311f84f5` 加了 `summary_default_window`，共五键）
+SETTINGS_KEYS = {
+    "alarm_sound", "heartbeat_interval_seconds", "summary_default_window", "asr", "devices",
+}
 
 #: 各态等待的显式超时（秒；单条用例 ≤ 5 秒看门之内的具名预算）
 CAPTURE_POLL_TIMEOUT_SECONDS = 4.0
@@ -136,6 +140,7 @@ def _wait_envelope_full(client):
 def _assert_snapshot_shape(snapshot: dict, *, top_state: str, envelope_filled: bool) -> None:
     assert set(snapshot) == TOP_LEVEL_KEYS
     assert snapshot["top_state"] == top_state
+    assert set(snapshot["settings"]) == SETTINGS_KEYS
     assert [item["id"] for item in snapshot["sources"]] == ["mic", "loopback"]
     for item in snapshot["sources"]:
         assert set(item) == SOURCE_KEYS
@@ -716,6 +721,46 @@ def test_capture_workspace_group(tmp_path, make_client, contract_regen):
         },
         regen=contract_regen,
     )
+
+
+def test_capture_devices_group(tmp_path, make_client, monkeypatch, contract_regen) -> None:
+    """`GET /api/devices` 那一份（设置抽屉的两个设备下拉，节点 `311f84f5`）。
+
+    设备枚举在样本采集里**一律走假件**（`tests/conftest.py` 的看门只挡「真开设备」，
+    清单端点的确定性靠这里把 `sources.py` 的两个枚举函数换成固定端点表）：名字与
+    `is_default` 是确定值，原样进样本；**不开任何设备**这一点由端点实现本身保证
+    （`devices_listing()` 只枚举，`probe()` 的试开不在它的路上）。
+    """
+    from meeting.capture import sources as sources_module
+    from meeting.capture.devices import DeviceEndpoint
+
+    fake_inputs = [
+        DeviceEndpoint("假-Focusrite Analogue 1 + 2", "MME", "input", index=0, channels=4,
+                       is_default=True),
+        DeviceEndpoint("假-CABLE-Output (VB-Audio Virtual Cable)", "MME", "input", index=2,
+                       channels=16),
+    ]
+    fake_renders = [
+        DeviceEndpoint("假-扬声器 (Focusrite USB Audio)", "", "render", index=0),
+        DeviceEndpoint("假-CABLE Input (VB-Audio Virtual Cable)", "", "render", index=1),
+    ]
+    monkeypatch.setattr(sources_module, "list_input_endpoints", lambda: list(fake_inputs))
+    monkeypatch.setattr(sources_module, "list_render_endpoints", lambda: list(fake_renders))
+
+    client = make_client({"capture.backend": "dev"})
+    before = client.get("/api/state").json()
+
+    listed = client.get("/api/devices")
+    assert listed.status_code == 200, listed.text
+    body = listed.json()
+    assert set(body) == {"mic", "loopback"}
+    assert body["mic"][0]["name"] == "假-Focusrite Analogue 1 + 2"
+    assert body["mic"][0]["is_default"] is True
+    assert body["loopback"][1]["name"] == "假-CABLE Input (VB-Audio Virtual Cable)"
+    # 纯读：不涨 revision、不动快照
+    assert int(client.get("/api/state").json()["revision"]) == int(before["revision"])
+
+    emit({"devices/all.json": normalize(body)}, regen=contract_regen)
 
 
 def test_capture_session_status_group(tmp_path, make_client, contract_regen) -> None:

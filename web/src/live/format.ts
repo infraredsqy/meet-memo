@@ -98,7 +98,7 @@ export function formatWallClockSeconds(iso: string | null | undefined): string {
   return '—';
 }
 
-/** ISO 时间戳 → 本地日期时间的输入框取值（设置抽屉里的设备名是只读文本，这一条留给日后）。 */
+/** ISO 时间戳 → 本地日期时间的输入框取值（会后的元信息行用得到；设置抽屉的设备格是下拉）。 */
 export function formatDateInput(iso: string | null | undefined): string {
   if (iso === null || iso === undefined || iso === '') return '';
   const ms = Date.parse(iso);

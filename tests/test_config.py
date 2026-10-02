@@ -290,7 +290,8 @@ def test_isolated_config_dir_and_app_client_share_one_home(
 
 
 def test_hot_keys_are_the_asr_five_plus_the_alarm_switch(tmp_path, monkeypatch):
-    """热读键 = `asr.*` 五个 + `alarm.sound`（出声开关要在勾选那一刻生效）。"""
+    """热读键 = `asr.*` 五个 + `alarm.sound` + 设置抽屉那四项（出声开关勾选那一刻生效；
+    设备写完 `reprobe` 按新值挑，心跳与总结缺省档写盘即可见 —— `311f84f5`）。"""
     home = tmp_path / "home"
     home.mkdir()
     loaded = _load_with_env(monkeypatch, home, {})
@@ -301,6 +302,10 @@ def test_hot_keys_are_the_asr_five_plus_the_alarm_switch(tmp_path, monkeypatch):
         "asr.max_new_tokens",
         "asr.repeat_max_unit",
         "asr.repeat_min_coverage",
+        "devices.mic",
+        "devices.loopback",
+        "heartbeat.interval_seconds",
+        "summary.default_window",
     ]
     # 快照 `settings.asr` 的子键仍只有那五个：`alarm.sound` 是另一格，不掺进 `asr` 里
     assert config_module.ASR_SETTING_KEYS == (

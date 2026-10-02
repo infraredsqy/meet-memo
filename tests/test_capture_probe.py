@@ -434,20 +434,27 @@ def test_reprobe_is_a_registered_action_name():
 
 
 def test_settings_devices_shape_and_update_round_trip(tmp_path: Path):
-    """快照 `settings.devices` 两个子键；`settings_update` 写 `devices.mic` 落盘。"""
+    """快照 `settings.devices` 两个子键；`settings_update` 写 `devices.mic` 落盘并当场生效。"""
     with live(tmp_path, {"capture.backend": "null"}) as (client, _runtime, home, _out):
         settings = snapshot_of(client)["settings"]
-        assert set(settings) == {"alarm_sound", "heartbeat_interval_seconds", "asr", "devices"}
+        assert set(settings) == {
+            "alarm_sound", "heartbeat_interval_seconds", "summary_default_window",
+            "asr", "devices",
+        }
         # 没配时两个子键都是 null（空值形状与配置层的 NULLABLE_KEYS 一致）
         assert settings["devices"] == {"mic": None, "loopback": None}
 
+        before_revision = int(snapshot_of(client)["revision"])
         response = post(client, "settings_update", {"devices.mic": "Analogue 1 + 2 (2- Focusrite US"})
         assert response.status_code == 200, response.text
         body = response.json()
-        # 设备键位归 pending_restart：写盘成功，快照里仍是启动值
-        assert body["applied"] == []
-        assert body["pending_restart"] == ["devices.mic"]
-        assert snapshot_of(client)["settings"]["devices"]["mic"] is None
+        # 设备键位收在热读档（`311f84f5`）：写盘成功，快照当场换新值、revision 涨一格
+        assert body["applied"] == ["devices.mic"]
+        assert body["pending_restart"] == []
+        assert snapshot_of(client)["settings"]["devices"]["mic"] == (
+            "Analogue 1 + 2 (2- Focusrite US"
+        )
+        assert int(snapshot_of(client)["revision"]) == before_revision + 1
 
         written = json.loads(helpers.config_path_of(home).read_text(encoding="utf-8"))
         assert written["devices.mic"] == "Analogue 1 + 2 (2- Focusrite US"
@@ -457,17 +464,18 @@ def test_settings_devices_shape_and_update_round_trip(tmp_path: Path):
         assert bad.status_code == 400
         assert bad.json()["code"] == "invalid_setting"
 
-        # 清空成 null 也合法（`null` = 没配，按默认策略挑）
+        # 清空成 null 也合法（`null` = 没配，按默认策略挑），同样当场可见
         cleared = post(client, "settings_update", {"devices.mic": None})
         assert cleared.status_code == 200, cleared.text
+        assert snapshot_of(client)["settings"]["devices"]["mic"] is None
         written = json.loads(helpers.config_path_of(home).read_text(encoding="utf-8"))
         assert written["devices.mic"] is None
 
 
-def test_devices_keys_land_in_the_restart_group():
-    """两个设备键位在三分表里归 `pending_restart`（不是热读五键那一档）。"""
-    assert config_module.setting_group("devices.mic") == "pending_restart"
-    assert config_module.setting_group("devices.loopback") == "pending_restart"
+def test_devices_keys_land_in_the_applied_group():
+    """两个设备键位在三分表里归 `applied`（设置抽屉节点 `311f84f5` 改的热读档）。"""
+    assert config_module.setting_group("devices.mic") == "applied"
+    assert config_module.setting_group("devices.loopback") == "applied"
     assert config_module.DEVICE_SETTING_KEYS == ("mic", "loopback")
     assert "devices.mic_device" not in config_module.SETTING_KEY_GROUPS
     assert config_module.setting_group("devices.mic_device") is None

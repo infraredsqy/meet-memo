@@ -10,8 +10,8 @@
   - `not_recording`(409) 且**重复调用不产生第二次迁移**；
   - `capture_unavailable`(503，显式配 `null` 替身时 `start` 的真实结果，且盘上不留目录)；
   - `mute_session` 立刻改 `muted`、**不动** `alarm.sound`、**下一场 `start` 复位**；
-  - `settings_update` 的 `applied`（`asr.*` 五个点号键名 + `alarm.sound`）与 `pending_restart`
-    （三分表里其余 21 个键）分类、**写盘拓扑**（只写已有键 + 本次改动的键）、
+  - `settings_update` 的 `applied`（`asr.*` 五个点号键名 + `alarm.sound` + 设置抽屉那四项）
+    与 `pending_restart`（三分表里其余 28 个键）分类、**写盘拓扑**（只写已有键 + 本次改动的键）、
     成功体形状（只多 `applied` / `pending_restart`，成功体里没有 `message`）、
     在 `idle` 与 `ended` 的两种终态照样 200、`invalid_setting`(400)（超时 ≤ 段长、表外键名、
     `devices.*`）、原子写、`persist_failed`(500) 与**校验在写盘之前**；
@@ -46,7 +46,7 @@ ACTION_POLL_TIMEOUT_SECONDS = 15.0
 #: 轮询间隔
 ACTION_POLL_INTERVAL_SECONDS = 0.05
 
-#: 三分表：可热读的六键（`asr.*` 五个 + `alarm.sound`）
+#: 三分表：可热读的十键（`asr.*` 五个 + `alarm.sound` + 设置抽屉那四项，`311f84f5`）
 APPLIED_KEYS = {
     "alarm.sound",
     "asr.max_segment_seconds",
@@ -54,21 +54,24 @@ APPLIED_KEYS = {
     "asr.max_new_tokens",
     "asr.repeat_max_unit",
     "asr.repeat_min_coverage",
+    "devices.mic",
+    "devices.loopback",
+    "heartbeat.interval_seconds",
+    "summary.default_window",
 }
-#: 三分表：其余 32 键（两个设备键位、`web.*` / `log.*` / `alert.*`、五个后端选择键、
-#: 会后离线那四个 `post.*`、会后纪要那五个 `minutes.*`，以及会中总结那七个 `summary.*`）。
+#: 三分表：其余 28 键（`web.*` / `log.*` / `alert.*`、五个后端选择键、会后离线那四个 `post.*`、
+#: 会后纪要那五个 `minutes.*`，以及会中总结端点与预算那六个 `summary.*`）。
 #: 三分表总共 38 个键 = `DEFAULT_VALUES` 的键全集（「输出根」那一格已退场）。
 PENDING_KEYS = {
     "web.port", "web.dist_dir", "log.level", "log.dir",
     "log.max_bytes", "log.backup_count", "alert.silence_dbfs", "alert.silence_seconds",
     "alert.recover_seconds", "alert.alarm_suppress_seconds",
-    "heartbeat.interval_seconds", "capture.backend", "transcriber.backend", "post.hook",
+    "capture.backend", "transcriber.backend", "post.hook",
     "post.engine", "post.model", "post.dtype", "post.chunk_seconds",
     "minutes.hook", "minutes.chunk_lines", "minutes.max_segments", "minutes.timeout_seconds",
     "minutes.dsh_url",
     "summary.base_url", "summary.api_key", "summary.model", "summary.extra_body_json",
-    "summary.deadline_seconds", "summary.max_attempts", "summary.default_window",
-    "devices.mic", "devices.loopback",
+    "summary.deadline_seconds", "summary.max_attempts",
 }
 
 
@@ -445,7 +448,7 @@ def test_session_mute_recalculates_instead_of_stamping_true(tmp_path):
 
 
 def test_settings_update_splits_applied_and_pending_restart(tmp_path):
-    """`applied` = 热读六键（`asr.*` 五个 + `alarm.sound`）；`pending_restart` = 本次改的其余键。"""
+    """`applied` = 热读十键；`pending_restart` = 本次改的其余键。"""
     with live(tmp_path) as (client, _runtime, _home, _out):
         response = post(
             client,
@@ -456,6 +459,9 @@ def test_settings_update_splits_applied_and_pending_restart(tmp_path):
                 "alarm.sound": False,
                 "alert.silence_seconds": 200,
                 "log.level": "DEBUG",
+                "devices.mic": "Analogue 1 + 2 (2- Focusrite US",
+                "heartbeat.interval_seconds": 20,
+                "summary.default_window": "30m",
             },
         )
         assert response.status_code == 200, response.text
@@ -464,6 +470,7 @@ def test_settings_update_splits_applied_and_pending_restart(tmp_path):
         assert "message" not in body, "成功体里没有 message 字段"
         assert sorted(body["applied"]) == [
             "alarm.sound", "asr.max_segment_seconds", "asr.timeout_seconds",
+            "devices.mic", "heartbeat.interval_seconds", "summary.default_window",
         ]
         assert sorted(body["pending_restart"]) == [
             "alert.silence_seconds", "log.level",
@@ -675,12 +682,16 @@ def test_settings_update_with_only_pending_keys_writes_without_committing(tmp_pa
 
 
 def test_settings_snapshot_shape_stays_frozen(tmp_path):
-    """快照 `settings`：四个子键齐、`asr` 五子键齐且取生效值、`devices` 两个子键。"""
+    """快照 `settings`：五个子键齐、`asr` 五子键齐且取生效值、`devices` 两个子键。"""
     with live(tmp_path) as (client, _runtime, _home, _out):
         settings = snapshot_of(client)["settings"]
         assert set(settings) == {
-            "alarm_sound", "heartbeat_interval_seconds", "asr", "devices",
+            "alarm_sound", "heartbeat_interval_seconds", "summary_default_window",
+            "asr", "devices",
         }
+        assert settings["summary_default_window"] == config_module.default_for(
+            "summary.default_window"
+        )
         assert set(settings["asr"]) == {
             "max_segment_seconds", "timeout_seconds", "max_new_tokens",
             "repeat_max_unit", "repeat_min_coverage",

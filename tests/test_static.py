@@ -12,7 +12,7 @@ ASGI 层断言一律用 `with TestClient(app, base_url="http://127.0.0.1")` 的*
   - `Host: evil.example` 得 **403**；裸 `POST /api/actions`（缺头 / 缺 `Content-Type`）得 **403**、
     **头齐的 `POST /api/actions` 由真实应答替换旧的 `404` 断言**（phase2 §2.3 第 8 条）；
   - `GET /api/state` 完整版的结构（顶层键全集、`sources` 两项且 `envelope` 逐字为空数组 `[]`、
-    `service` 六字段且 `version` 非空、四态真值、`settings` 四键与 `asr` 五子键齐、
+    `service` 六字段且 `version` 非空、四态真值、`settings` 五键与 `asr` 五子键齐、
     `devices` 两个子键（`mic` / `loopback`，没配时都是 `null`））；
   - 空闲态的可观察物：没有新建场次目录、没有 `session.json`、主 log 里没有场次开始行；
   - 启动序列第 5 步「打开浏览器」：`MEETING_NO_BROWSER=1` 时不开、不设时真的开（并落一行含
@@ -63,7 +63,9 @@ SOURCE_KEYS = {
     "envelope",
 }
 TRANSCRIPT_KEYS = {"health", "last_line_at", "buffered_lines", "failed_segments"}
-SETTINGS_TOP_KEYS = {"alarm_sound", "heartbeat_interval_seconds", "asr", "devices"}
+SETTINGS_TOP_KEYS = {
+    "alarm_sound", "heartbeat_interval_seconds", "summary_default_window", "asr", "devices",
+}
 #: phase2 §2.3 第 3 条：`asr` 的五个子键（取当前生效值）、`devices` 的两个子键（`mic` / `loopback`，没配时 `null`）
 ASR_KEYS = {
     "max_segment_seconds",
@@ -478,6 +480,8 @@ def test_api_state_shape_is_the_full_one(tmp_path, client_factory):
     assert set(settings) == SETTINGS_TOP_KEYS
     assert isinstance(settings["alarm_sound"], bool)
     assert isinstance(settings["heartbeat_interval_seconds"], int)
+    # 缺省档是四档之一（`311f84f5`）
+    assert settings["summary_default_window"] == "15m"
     # `asr` 五子键齐且取当前生效值；`devices` 两个子键在没配时都是 `null`
     assert set(settings["asr"]) == ASR_KEYS
     assert settings["asr"]["timeout_seconds"] == 20

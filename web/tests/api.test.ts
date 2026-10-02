@@ -4,12 +4,15 @@ import {
   ActionForbiddenError,
   ActionProtocolError,
   ContractParseError,
+  DevicesProtocolError,
+  DevicesUnavailableError,
   REQUIRED_HEADERS,
   SummariesProtocolError,
   SummariesUnavailableError,
   clampHeartbeatInterval,
   createEventsClient,
   createHeartbeatClient,
+  fetchDevices,
   fetchSummaries,
   judgeHeartbeat,
   lateHeartbeatText,
@@ -267,6 +270,55 @@ describe('fetchSummaries 的读法', () => {
     await expect(fetchSummaries({ fetchImpl })).rejects.toBeInstanceOf(
       SummariesUnavailableError,
     );
+  });
+});
+
+describe('fetchDevices 的读法（设置抽屉节点 311f84f5）', () => {
+  it('取清单那一条：GET、不带必需头、两路各一份原文', async () => {
+    const payload = readFixture('devices', 'all');
+    const fetchImpl = vi.fn(async () => jsonResponse(200, payload)) as unknown as typeof fetch;
+
+    const listing = await fetchDevices({ fetchImpl });
+
+    expect(Object.keys(listing).sort()).toEqual(['loopback', 'mic']);
+    expect(listing.mic[0]?.name).toBe('假-Focusrite Analogue 1 + 2');
+    expect(listing.mic[0]?.is_default).toBe(true);
+
+    const [url, init] = (fetchImpl as unknown as { mock: { calls: [string, RequestInit][] } }).mock
+      .calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/devices');
+    expect(init.method).toBe('GET');
+    expect(init.headers).toBeUndefined();
+  });
+
+  it('形状不对抛 DevicesProtocolError（顶层多一个键就红）', async () => {
+    const payload = readFixture('devices', 'all') as Record<string, unknown>;
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse(200, { ...payload, extra: 1 }),
+    ) as unknown as typeof fetch;
+
+    await expect(fetchDevices({ fetchImpl })).rejects.toBeInstanceOf(DevicesProtocolError);
+  });
+
+  it('非 2xx 也抛 DevicesProtocolError：取不到不冒充空清单', async () => {
+    const fetchImpl = vi.fn(async () =>
+      fakeResponse(503, '{"ok": false}'),
+    ) as unknown as typeof fetch;
+
+    const error = await fetchDevices({ fetchImpl }).then(
+      () => null,
+      (caught: unknown) => caught,
+    );
+    expect(error).toBeInstanceOf(DevicesProtocolError);
+    expect((error as DevicesProtocolError).status).toBe(503);
+  });
+
+  it('连接层失败抛 DevicesUnavailableError', async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new Error('连接断了');
+    }) as unknown as typeof fetch;
+
+    await expect(fetchDevices({ fetchImpl })).rejects.toBeInstanceOf(DevicesUnavailableError);
   });
 });
 

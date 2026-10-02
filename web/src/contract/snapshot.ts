@@ -5,6 +5,7 @@ import {
   PATH_PLACEHOLDER,
   PORT_PLACEHOLDER,
   SESSION_ID_PLACEHOLDER,
+  SUMMARY_WINDOW_CHOICES,
   URL_PLACEHOLDER,
 } from './primitives';
 import {
@@ -217,8 +218,11 @@ export const asrSettingsSchema = strict({
 });
 
 /**
- * `settings` 四键。`devices` 的两个子键是 `mic` / `loopback`（`dca4539b` 定名），
+ * `settings` 五键。`devices` 的两个子键是 `mic` / `loopback`（`dca4539b` 定名），
  * 取值是设备名字符串，没配就是 `null`。
+ *
+ * `summary_default_window`（`311f84f5`）是快速总结的缺省档（四档取值域）：
+ * 界面的默认预选随它走 —— 服务是唯一来源，前端不自造第二份。
  *
  * `devices` 用 `z.record(...)` 而不是 `z.object({...})`：子键是加性变更（服务以后多长一个
  * 子键时前端不该开始拒收整份快照），`record` 的写法把「现在两个子键、将来可能多」这件事
@@ -230,6 +234,8 @@ export const settingsSchema = strict({
   alarm_sound: z.boolean(),
   /** 界面发心跳的周期。**这是心跳周期的唯一来源**，前端不自造第二份配置源。 */
   heartbeat_interval_seconds: z.number().int(),
+  /** 快速总结的缺省档（`summary.default_window` 的生效值，四档之一）。 */
+  summary_default_window: z.enum(SUMMARY_WINDOW_CHOICES),
   asr: asrSettingsSchema,
   devices: z.record(z.string(), z.unknown()),
 });

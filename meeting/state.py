@@ -358,10 +358,15 @@ class EndedState:
 
 @dataclass
 class SettingsView:
-    """快照 `settings`（顶层四键；`asr` 五子键；`devices` 两子键 `mic` / `loopback`）。"""
+    """快照 `settings`（顶层五键；`asr` 五子键；`devices` 两子键 `mic` / `loopback`）。
+
+    `summary_default_window`（`311f84f5`）是快速总结的缺省档（四档取值），
+    界面的默认预选随它走 —— 服务是唯一来源，前端不自造第二份。
+    """
 
     alarm_sound: bool = True
     heartbeat_interval_seconds: int = 10
+    summary_default_window: str = "15m"
     asr: dict[str, Any] = field(default_factory=dict)
     devices: dict[str, Any] = field(default_factory=dict)
 
@@ -369,6 +374,7 @@ class SettingsView:
         return {
             "alarm_sound": bool(self.alarm_sound),
             "heartbeat_interval_seconds": int(self.heartbeat_interval_seconds),
+            "summary_default_window": str(self.summary_default_window),
             "asr": dict(self.asr),
             "devices": dict(self.devices),
         }

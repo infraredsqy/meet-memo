@@ -95,6 +95,12 @@ SERVICE_LOG_FILE_NAME = "meeting.log"
 #:
 #: 顺序有意把 `alarm.sound` 排在 `asr.*` 前面：`ASR_SETTING_KEYS` 是从这张表里**按
 #: `asr.` 前缀筛**出来的（见那一格），排在前面不参与快照 `settings.asr` 的子键次序。
+#:
+#: 设置抽屉那四项（`311f84f5`）也收在这一档：`devices.mic` / `devices.loopback` 写盘成功
+#: 后内存生效值当场换掉，紧接着的 `reprobe` 就按新设备值挑；`heartbeat.interval_seconds`
+#: 与 `summary.default_window` 的消费方（前端轮询、每次 `summarize` 的取缺省档）都不持有
+#: 运行期旧值，写盘即生效。表本身只管「写后即时可见」，`reprobe` 仍只在没有场次在跑时可用
+#: （`docs/contract.md` 第 7 章：会中换设备不做）。
 HOT_KEYS: tuple[str, ...] = (
     "alarm.sound",
     "asr.max_segment_seconds",
@@ -102,6 +108,10 @@ HOT_KEYS: tuple[str, ...] = (
     "asr.max_new_tokens",
     "asr.repeat_max_unit",
     "asr.repeat_min_coverage",
+    "devices.mic",
+    "devices.loopback",
+    "heartbeat.interval_seconds",
+    "summary.default_window",
 )
 
 #: `asr.*` 五个默认值沿用 `docs/v1-lineage.md` 的 B1（V1 `mnotes_core/config.py` 实测值），
@@ -343,8 +353,10 @@ APPLIED_SETTING_KEYS: tuple[str, ...] = tuple(HOT_KEYS)
 
 #: 其余键（写盘成功但要重启才生效）→ 落 `pending_restart`
 #:
-#: `devices.mic` / `devices.loopback` 归这一档：写盘成功即落盘，运行期仍取启动时的生效值
-#: （设备在开场前定下来，改配置要重启才在 `probe()` 里生效）。
+#: 归这一档的是「启动时读一次」的那批键（`web.*` / `log.*` / `alert.*`、三个后端选择键、
+#: 会后离线四个 `post.*`、会后纪要五个 `minutes.*`、会中总结端点与预算那六个 `summary.*`）。
+#: 两个设备键位原在这一档，设置抽屉节点（`311f84f5`）改收热读档：写盘成功后内存生效值
+#: 当场换掉，`reprobe` 即按新值挑（会中仍不换设备，见 `docs/contract.md` 第 7 章）。
 PENDING_RESTART_SETTING_KEYS: tuple[str, ...] = tuple(
     key for key in DEFAULT_VALUES if key not in HOT_KEYS
 )
@@ -723,7 +735,9 @@ class Config:
     def hot_keys(self) -> list[str]:
         """返回热读键（供 log 里「哪些键是热读的」那一行）。
 
-        眼下六个：`alarm.sound` 与 `asr.*` 那五个（`HOT_KEYS` 那张表就是清单本身）。
+        眼下十个：`alarm.sound`、`asr.*` 那五个，加上设置抽屉那四项
+        （`devices.mic` / `devices.loopback` / `heartbeat.interval_seconds` /
+        `summary.default_window`；`HOT_KEYS` 那张表就是清单本身）。
         """
         return list(HOT_KEYS)
 
@@ -863,7 +877,7 @@ def as_dict() -> dict[str, Any]:
 
 
 def hot_keys() -> list[str]:
-    """热读键六个：`alarm.sound` 与 `asr.*` 那五个（清单就是 `HOT_KEYS`）。"""
+    """热读键十个：`alarm.sound`、`asr.*` 那五个与设置抽屉那四项（清单就是 `HOT_KEYS`）。"""
     return list(HOT_KEYS)
 
 

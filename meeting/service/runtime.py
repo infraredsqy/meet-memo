@@ -624,11 +624,14 @@ class ServiceRuntime:
         """快照 `settings` 的**生效值**视图。
 
         口径（§3.5.5 + §7.1 高危点 7）：这里读的是**运行期生效值**。归 `pending_restart` 的那些键
-        （两个设备键位、`web.*` / `log.*` / `alert.*` 与三个后端选择键）由 `settings_update`
-        写盘成功之后，快照里的 `settings` **不会**立刻反映写进去的新值，要重启才可见；
-        热读键才在写盘后立刻换成新值（那一处在 `settings_update()` 里按 `applied` 重取一次
-        本函数）—— `asr.*` 五个之外，`alarm.sound` 也走这一条，于是勾出声开关当场就改
-        运行期行为（`settings.alarm_sound` 与界面响不响一起变，见 `docs/contract.md` 第 4.6 章）。
+        （`web.*` / `log.*` / `alert.*` 与三个后端选择键、会中总结端点与预算那几键）由
+        `settings_update` 写盘成功之后，快照里的 `settings` **不会**立刻反映写进去的新值，
+        要重启才可见；热读键才在写盘后立刻换成新值（那一处在 `settings_update()` 里按
+        `applied` 重取一次本函数）—— `asr.*` 五个之外，`alarm.sound` 与设置抽屉那四项
+        （`devices.mic` / `devices.loopback` / `heartbeat.interval_seconds` /
+        `summary.default_window`）也走这一条：出声开关勾选即改运行期行为，设备改完
+        紧接着的 `reprobe` 就按新值挑（会中仍不换设备，`docs/contract.md` 第 7 章），
+        心跳周期与总结缺省档的快照格当场换新值。
 
         `settings.devices` 的两个子键逐一取 `devices.mic` / `devices.loopback` 的生效值
         （`dca4539b` 定名；没配时为 `null`，与配置层 `NULLABLE_KEYS` 的空值形状一致）。
@@ -636,6 +639,8 @@ class ServiceRuntime:
         return SettingsView(
             alarm_sound=bool(self._value("alarm.sound")),
             heartbeat_interval_seconds=int(self._value("heartbeat.interval_seconds")),
+            # 快速总结的缺省档：四档取值（装载与写前校验都只放四档，这里原样带出）
+            summary_default_window=str(self._value("summary.default_window")),
             # `settings.asr` 的五个子键与配置键 `asr.*` **逐字同名**（只去掉前缀），取生效值；
             # 嵌套写法只出现在状态 JSON 里，不进请求 / 应答 / config.json
             asr={name: self._value(f"asr.{name}") for name in config_module.ASR_SETTING_KEYS},
@@ -1911,8 +1916,12 @@ class ServiceRuntime:
 
         「写盘成功」与「快照立刻反映」是两件事：归 `pending_restart` 的那些键本次只落盘，
         运行期仍取启动时的生效值，快照 `settings` 里读到的还是旧值（可观察判据是主 log 那一行
-        「……仍取启动值」，见 §7.1 高危点 7）；本次改动里凡有热读键（`asr.*` 五个与
-        `alarm.sound`），就在下面重取一次 `_settings_view()` 并提交 —— 出声开关因此勾选即生效。
+        「……仍取启动值」，见 §7.1 高危点 7）；本次改动里凡有热读键（`asr.*` 五个、
+        `alarm.sound` 与设置抽屉那四项：`devices.mic` / `devices.loopback` /
+        `heartbeat.interval_seconds` / `summary.default_window`），就在下面重取一次
+        `_settings_view()` 并提交 —— 出声开关勾选即生效；设备改完，紧接着的 `reprobe`
+        按**新值**挑（`_config_view()` 读的就是内存生效值）；心跳周期与总结缺省档的
+        快照格当场换新值。
         """
         try:
             changes = config_module.validate_setting_changes(args, current=self.config)
@@ -2679,6 +2688,47 @@ class ServiceRuntime:
             "cwd": str(cwd),
             "up": None if cwd == home else str(cwd.parent),
             "dirs": rows,
+        }
+
+    def devices_listing(self) -> dict[str, Any]:
+        """`GET /api/devices` 的应答体：两路各自的候选端点表（**只读、纯枚举、不开设备**）。
+
+        设置抽屉的两个设备下拉用它（`311f84f5`）。枚举走 `meeting/capture/sources.py` 的
+        `list_input_endpoints()` / `list_render_endpoints()` —— **只读端点表**，不试开、
+        不采集（`probe()` 会短暂试开，因此**不能**拿它当清单来源）。与 `GET /api/dirs`
+        同一档纯读：不提交、不涨 `revision`、不广播；**任何状态下都 200**（会中打开抽屉
+        时清单照给，换不换得了由界面按第 7 章禁用）。
+
+        每项六格照 `DeviceEndpoint` 原样给：`name` / `host_api` / `role` / `index` /
+        `channels` / `is_default`。render 端点没有 host API 与序号概念
+        （`host_api` 为空串、`index` 是枚举序），形状两端一致，界面不挑着读。
+        """
+        from meeting.capture import sources as capture_sources
+
+        try:
+            inputs = list(capture_sources.list_input_endpoints() or [])
+            renders = list(capture_sources.list_render_endpoints() or [])
+        except Exception as exc:
+            raise ActionError(
+                "capture_unavailable",
+                f"设备端点表读不出来（{type(exc).__name__}: {exc}）；这次一枚举都没有发生",
+                status=503,
+                detail={"error": f"{type(exc).__name__}: {exc}"},
+            ) from exc
+
+        def row(endpoint: Any) -> dict[str, Any]:
+            return {
+                "name": str(endpoint.name),
+                "host_api": str(endpoint.host_api or ""),
+                "role": str(endpoint.role),
+                "index": None if endpoint.index is None else int(endpoint.index),
+                "channels": int(endpoint.channels),
+                "is_default": bool(endpoint.is_default),
+            }
+
+        return {
+            "mic": [row(item) for item in inputs],
+            "loopback": [row(item) for item in renders],
         }
 
     def _note_registry_open(self, session_dir: str, *, why: str) -> None:

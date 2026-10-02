@@ -54,6 +54,8 @@ import {
 } from './live/transcript';
 import { liveView } from './live/view';
 import type { ChannelView } from './live/view';
+import { normalizeDefaultWindow } from './live/settings';
+import { SettingsDrawer } from './settings/SettingsDrawer';
 import { HomeGate } from './home/HomeGate';
 
 /**
@@ -333,6 +335,8 @@ export function LiveView(): ReactNode {
   const [transcriptOpen, setTranscriptOpen] = useState(false);
   const [jumpVisible, setJumpVisible] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  /** 设置抽屉开着没有（R32：一个设置按钮 → 网页内小窗；`311f84f5`）。 */
+  const [settingsOpen, setSettingsOpen] = useState(false);
   /** 本场总结记录那一块开着没有（结果面板与它是两块内容，各自关各自的）。 */
   const [summaryLogOpen, setSummaryLogOpen] = useState(false);
   /** 总结区那台状态机（这一次请求的状态、当前档位、记录那一份）。 */
@@ -428,6 +432,13 @@ export function LiveView(): ReactNode {
     if (heartbeatSeconds === null) return;
     heartRef.current?.setIntervalFromSnapshot(heartbeatSeconds);
   }, [heartbeatSeconds]);
+
+  // 快速总结的缺省档同样来自快照的 settings（`311f84f5`）：预选跟着服务走，
+  // 用户显式挑过的档不被覆盖（判据在 summary-controller 的 applyDefaultWindow 里）。
+  useEffect(() => {
+    if (snapshot === null) return;
+    summary.applyDefaultWindow(normalizeDefaultWindow(snapshot.settings.summary_default_window));
+  }, [snapshot, summary]);
 
   // 换新场次时清掉上一场的增量流与转写窗口：免得旧电平、旧正文顶着新状态。
   // 总结区那两样（这一次的应答 / 本场记录那一份）跟着一起收：新的一场从零开始，
@@ -777,8 +788,31 @@ export function LiveView(): ReactNode {
               告警提示音
             </label>
           </span>
+          {/* 设置按钮（R32：一个设置按钮 → 网页内小窗；类名契约把「齿轮」这一档
+              预留在 topbar__right，docs/ui-design.md §7.10） */}
+          <button
+            className="btn btn--small btn--ghost"
+            type="button"
+            aria-haspopup="dialog"
+            aria-expanded={settingsOpen}
+            onClick={() => setSettingsOpen(true)}
+          >
+            设置
+          </button>
         </div>
       </header>
+
+      {/* 设置抽屉（R32）：四项设置就地写进 config；ASR 那五个参数不进这扇窗（章 14） */}
+      {settingsOpen && (
+        <SettingsDrawer
+          snapshot={snapshot}
+          onClose={() => setSettingsOpen(false)}
+          onSetting={(key, value) =>
+            runActionQuietly('settings_update', { [key]: value })
+          }
+          onReprobe={() => runActionQuietly('reprobe')}
+        />
+      )}
 
       {/* 采集带：两路左右并列，右侧三分之一给总结入口（方向 A） */}
       <section className="band">
