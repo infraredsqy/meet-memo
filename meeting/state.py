@@ -140,7 +140,12 @@ class ServiceInfo:
 
 @dataclass
 class SessionInfo:
-    """快照 `session`（`id` 是场次目录名，`dir` 是场次目录路径）。"""
+    """快照 `session`（`id` 是场次目录名，`dir` 是场次目录路径）。
+
+    `paused` 是这一场此刻是不是暂停中（第 8 条的读法）；`paused_seconds` 与
+    `paused_at_monotonic` 是**算时长用的内部账**（暂停的那几段不进 `elapsed_seconds`，
+    第 7 条：权威长度是实际录到的音频时长，不含暂停），它们不上快照。
+    """
 
     id: str
     dir: str
@@ -149,6 +154,12 @@ class SessionInfo:
     started_monotonic: float = 0.0
     elapsed_seconds: float = 0.0
     frozen: bool = False
+    #: 本场是否正处在暂停中（动作 `pause` / `resume` 翻它；顶层四态一个字不动）
+    paused: bool = False
+    #: 已经关掉的那几段暂停加起来多少秒（`resume` 时结账；只进内存，不落 `session.json`）
+    paused_seconds: float = 0.0
+    #: 当前这一段暂停的起点（`time.monotonic()`）；不在暂停中时是 `None`
+    paused_at_monotonic: float | None = None
 
 
 @dataclass
@@ -443,6 +454,7 @@ class Snapshot:
                 "mode": self.session.mode,
                 "elapsed_seconds": round(float(self.session.elapsed_seconds), 3),
                 "frozen": bool(self.session.frozen),
+                "paused": bool(self.session.paused),
             },
             "sources": self._sources_json(),
             "alerts": self.alerts.encode(),
@@ -574,6 +586,9 @@ def begin_drain(snapshot: Snapshot, *, reason: str, error: str | None = None) ->
         raise InvalidTransitionError("stop 时 session 不该是 None", top_state=snapshot.top_state)
 
     snapshot.session.frozen = True
+    # 进收尾 = 这一场不再往归档写内容，「暂停中」这一刻起不成立（时长也已冻结）
+    snapshot.session.paused = False
+    snapshot.session.paused_at_monotonic = None
     snapshot.ended = EndedState(
         phase="draining",
         steps=[DrainStep(id=step_id) for step_id in DRAIN_STEP_IDS],

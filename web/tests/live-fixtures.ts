@@ -91,6 +91,7 @@ export function makeSnapshot(overrides: Partial<Snapshot> = {}): Snapshot {
       mode: 'both',
       elapsed_seconds: 4354,
       frozen: false,
+      paused: false,
     },
     sources: [makeSource('mic'), makeSource('loopback')],
     alerts: makeAlerts(),

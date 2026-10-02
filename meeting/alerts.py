@@ -11,6 +11,10 @@
     不拿墙钟做差（慢机器上不虚报）；
   - **静默累计与恢复累计是两条独立的连续计数**，不许用同一个变量表达；恢复计数期间出现
     一帧低于门限 → 恢复计数清零，但**不改变 `top_state`**；
+  - **暂停区间不计入这两条计数**（`pause_session()` / `resume_session()`）：暂停期间电平帧
+    照发（那是 `recording_alive` 与界面电平的输入），但判定器一格不动 —— 安静房间里暂停
+    三分钟不该弹一条「这一路静默已达 180 秒」；恢复后的第一帧从零起算（`docs/design-intent.md`
+    第 17 条：告警要能一眼看见，但不许一惊一乍）；
   - 提示级（`transcript.health` 掉档、`backlog_depth() ≥ BACKLOG_HINT_THRESHOLD`）
     进 `alerts.hints`，**同类合并的键是 `(level, source, message)` 三元组**、**上限 3**；
     合并时沿用原有那一条的 `since`、只刷新 `duration_seconds`；超限的键在合并那一刻就从
@@ -171,6 +175,12 @@ class AlertJudge:
 
     thresholds: AlertThresholds = field(default_factory=AlertThresholds)
     mute_session: bool = False
+    #: **本场暂停中**：暂停区间不计入静默 / 恢复这两条累计（`docs/design-intent.md` 第 17 条
+    #: 「告警不许一惊一乍」——安静房间里暂停三分钟不该弹一条「这一路静默已达 180 秒」）。
+    #: 置位期间 `on_level_frame()` 只回答「什么都没变」，两条计数一格不动；`resume_session()`
+    #: 把每条计数的基准（`track.last_ts`）清掉，于是恢复之后的第一帧从零起算，
+    #: 暂停那一整段不会以「一帧跨越了几分钟」的形式补记进去。
+    paused: bool = False
     _tracks: dict[str, _SourceTrack] = field(default_factory=dict)
     _hints: dict[tuple[str, str, str], Alert] = field(default_factory=dict)
     #: 提示级的「现在」从哪来（提示级没有帧时间戳可依；单测可以注入一个可控的钟）
@@ -237,15 +247,47 @@ class AlertJudge:
         **提示级的记账一并清干净**（`_hints` 与 `_hint_started_at` 两份都在
         `clear_hints()` 里清）：只清其中一份的话，`hints()` 与记账本会有一刻对不上，
         下一场开场之后旧记账还会影响新一场的合并判据（复审 m3）。
+
+        暂停那一格同样复位（上一场停在暂停里结束，不该把「暂停中」带进新一场）。
         """
         self.reset_session_mute()
+        self.paused = False
         self._tracks.clear()
         self.clear_hints()
+
+    # -- 暂停（暂停区间不计入两条累计） ------------------------------------
+
+    def pause_session(self) -> None:
+        """本场进入暂停：`on_level_frame()` 从这一刻起只回答「什么都没变」。
+
+        **两条累计与抑制窗口的锚点都不动**（不写零、不清零）：暂停既不该让静默往上涨，
+        也不该被当成「有信号」把静默清掉；它只是「这段时间不算数」。
+        """
+        self.paused = True
+
+    def resume_session(self) -> None:
+        """本场继续：把每条计数的基准清掉，恢复之后的第一帧从零起算。
+
+        **不清 `track.last_ts` 是不够的**：那一格是「上一帧的时刻」，恢复后的第一帧会拿它
+        做差，把整个暂停区间当成一帧的间隔补进 `silent_seconds`（几分钟的静默当场成立）。
+        清掉之后第一帧的 `delta` 是 0（帧时间戳口径的「从现在起算」）。
+        """
+        self.paused = False
+        for track in self._tracks.values():
+            track.last_ts = None
 
     # -- 电平帧 -----------------------------------------------------------
 
     def on_level_frame(self, source: str, ts: float, dbfs: float) -> SourceJudgement:
-        """收一帧电平事实，回答「这一路现在该起致命级 / 该恢复 / 都没变」。"""
+        """收一帧电平事实，回答「这一路现在该起致命级 / 该恢复 / 都没变」。
+
+        **暂停区间什么都不判**（`docs/design-intent.md` 第 17 条）：暂停期间电平帧照发
+        （`recording_alive` 与界面上的电平都靠它，停了会把「暂停」误报成「采集已停」），
+        但这一路的两条累计一格不动 —— 于是安静房间里暂停多久都不会冒出一条致命级。
+        """
+        if self.paused:
+            self._tracks.setdefault(source, _SourceTrack())
+            return SourceJudgement(source=source)
         track = self._tracks.setdefault(source, _SourceTrack())
         ts = float(ts)
         previous = track.last_ts

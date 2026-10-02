@@ -16,6 +16,9 @@
   - `stop()`：停转写（关读线程 + 在收尾预算内把队列里剩下的段尽量做完）；
   - `release_gpu()`：把会中模型占的显存让出去（收尾第 4 步 `launch()` 之前调；**不在协议里**，
     只是这个具体后端多出来的一个方法，调用点用 `getattr` 防御式取它）；
+  - `acquire_gpu()`：把会中模型**重新拉起来**（暂停之后继续时调；同样**不在协议里**，
+    同样走防御式取法）。它与 `release_gpu()` 是同一件事的两半 —— 「要用的时候才拉起来，
+    用完立刻关掉」（`docs/design-intent.md` 第 21 条：暂停、打断、终止、跑完都当场结束）；
   - `health()`：`normal` / `behind` / `stopped` 三态（判定依据逐条写在下面对应的分支上）；
   - `backlog_depth()`：队列里还没处理的段数；
   - `segment_timeout()`：配置里的 `asr.timeout_seconds`（默认 20.0）。
@@ -300,9 +303,12 @@ class TranscriberBackend:
     def release_gpu(self) -> bool:
         """**让出会中模型占的显存**：等干净在飞的推理，丢掉模型引用，然后清一次缓存。
 
-        调用点只有一处：收尾第 4 步 `meeting/service/runtime.py` 的 `_drain_post()` —— 在
+        生产调用点有两处：**收尾第 4 步**（`meeting/service/runtime.py` 的 `_drain_post()`）—— 在
         `post.launch()` **之前**（`launch()` 一返回，那条 daemon 线程就已经在跑 `run_session()`，
-        会后离线链 MOSSTD 的加载紧接着就开始，放在 `launch()` 之后等于没做）。
+        会后离线链 MOSSTD 的加载紧接着就开始，放在 `launch()` 之后等于没做）；以及**暂停那个动作**
+        （同一文件的 `pause_session()`，`10770b41` 起：暂停让模型当场退出显存，`resume` 由配对的
+        `acquire_gpu()` 把它拉回来）。暂停那一处经 `_submit_model_lifecycle()` 提交到后台的单线程
+        执行器，不等它做完才回应答。
 
         逐条语义：
 
@@ -356,6 +362,51 @@ class TranscriberBackend:
             "会中模型让出显存完成：模型引用与 processor 已丢，torch.cuda.empty_cache()=%s",
             "已调用" if cache_cleared else "跳过",
         )
+        return True
+
+    def acquire_gpu(self) -> bool:
+        """**把会中模型重新拉起来**：与 `release_gpu()` 成对的另一半（第 21 条）。
+
+        调用点只有一处：`meeting/service/runtime.py` 的 `resume_session()` —— 暂停期间模型已经
+        退出显存（`pause_session()` 那一半调的 `release_gpu()`），继续就是「又要用它了」，
+        当场把它拉起来。与释放同一条落地口径：**不在协议里**，只是这个具体后端多出来的一个
+        方法，调用点用 `getattr` 防御式取它（替身后端没有这一格照样跑得通）。
+
+        逐条语义：
+
+          - **已经在手就 no-op**：后端那一格还握着识别器时当场返回 `False`，不重复造一份、
+            不写日志 —— 反复按继续不会造出第二份识别器（每份权重约 4.3 GiB）；
+          - **经既有的那条拉起路径造**：`_transcriber_or_create()` —— 与「释放之后下一段
+            音频要转写时」走的是同一个 factory、同一把 `_model_lock`（释放半路进来的这一段
+            与它互斥），于是「继续那一刻造出来的」与「下一段真要转写时造出来的」同源同形；
+          - **造不出来不抛**：factory 抛错（依赖没装 / 权重不在本地缓存 / 显存不够）时如实记
+            一条 warning 并返回 `False` —— **继续这个动作不许因为模型拉不起来而失败**
+            （R1 的立场：转写坏了可以重跑，录音照跑）。下一次真出段时照旧经同一条路再试，
+            那一档的失败由 `_transcribe_segment()` 记进 `_model_error`（`health()` 落 `stopped`）；
+          - **不碰 `_stopped`，也不动 `health()` 的读数**：与释放同一条边界 —— 那两个是
+            「转写这一档现在产不产出」的域，与「模型在不在手上」无关。
+
+        **权重的真实加载仍在第一次转写时**（`GlmAsrTranscriber` 是惰性加载：它的私有入口
+        `meeting/asr/glm.py` 的 `_load_transcriber()` 只在 `transcribe_segment()` 里被调）：
+        本方法把识别器交回手上，权重的加载沿既有那条惰性路径发生。本节点做到的是
+        「暂停期间不占显存」与「继续之后模型回到手上、下一次转写照旧经它」，没有在这里
+        越过模块边界去调那个私有加载入口。
+
+        返回 `True` = 这一次真的重造了一份识别器；`False` = 本来就在手（no-op 那一格）。
+        """
+        with self._model_lock:
+            if self._transcriber is not None:
+                # 已经在手：安静地什么都不做（与释放那一格的 no-op 同姿态）
+                return False
+        try:
+            self._transcriber_or_create()
+        except Exception:  # noqa: BLE001 - 拉不起来不许把「继续」这动作拖失败
+            _log.warning(
+                "会中模型没能重新拉起（如实记账，不静默；下一次出段时照旧经同一条路再试一遍）",
+                exc_info=True,
+            )
+            return False
+        _log.info("会中模型已重新拉起：识别器经同一个 factory 重造了一份（继续之后接着用）")
         return True
 
     def _has_model_reference_locked(self) -> bool:

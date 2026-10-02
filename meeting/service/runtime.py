@@ -204,6 +204,20 @@ DRAIN_EXECUTOR_MAX_WORKERS = 4
 #: 同时仍是一个小规模、daemon、不登记 `_threads_queues` 的池。
 SUMMARY_EXECUTOR_MAX_WORKERS = 2
 
+#: 会中模型「收 / 放」那两次调用专用的工作线程条数（`docs/design-intent.md` 第 21 条）。
+#:
+#: **为什么这条也要离开事件循环**：暂停与继续都是要**当场应答**的按钮动作，而它们各自要调
+#: 一次会中模型的生命周期方法 —— `release_gpu()` 要等在飞的推理收干净（上界 5 秒）、
+#: `acquire_gpu()` 之后紧接着就是权重的加载（秒级）。直接跑在事件循环上，暂停/继续这几秒里
+#: `/api/heartbeat`、`/api/state`、SSE 与其它动作一起停摆；界面的心跳探测会因此判成「失联」
+#: （第 17 条那一条致命级）。因此两次调用都提交到后台，动作本身当场返回
+#: （与「生成会后精细稿」/「直接出纪要」起一条 daemon 线程即算启动成功同一姿态）。
+#:
+#: **为什么是 1 而不是几条**：这两次调用是**同一格模型引用**上的一进一出，必须按用户按下的
+#: 顺序排队执行 —— 先「暂停 → 释放」，后「继续 → 拉起」。单线程池给出这条 FIFO 顺序
+#: （收尾那台池取 4 条，要的是「被放弃的那一步 + 后续步」并行可用，与这里要的东西正相反）。
+MODEL_EXECUTOR_MAX_WORKERS = 1
+
 
 class DrainLimitExceeded(TimeoutError):
     """某一步超出这一趟收尾的共享预算。
@@ -216,9 +230,11 @@ class DrainLimitExceeded(TimeoutError):
 class _DaemonThreadPoolExecutor(_ThreadPoolExecutor):
     """工作线程是 **daemon** 的线程池（同步实现丢进工作线程的那些调用专用）。
 
-    两处调用点：**收尾四步**（`_drain_wait()`）与**会中总结那一次模型调用**
-    （`_summary_wait()`，`1987cb20` phase2 的复审裁定）。两处各起一台池（收尾那台 4 条线程、
-    会中总结那台按 `SUMMARY_EXECUTOR_MAX_WORKERS`），工作线程都是本类的 daemon 线程。
+    三处调用点：**收尾四步**（`_drain_wait()`）、**会中总结那一次模型调用**
+    （`_summary_wait()`，`1987cb20` phase2 的复审裁定）、**会中模型的收 / 放**
+    （`_submit_model_lifecycle()`，`10770b41`）。三处各起一台池（收尾那台 4 条线程、
+    会中总结那台按 `SUMMARY_EXECUTOR_MAX_WORKERS`、会中模型的收 / 放那台按
+    `MODEL_EXECUTOR_MAX_WORKERS` 取 1 条），工作线程都是本类的 daemon 线程。
 
     **为什么必须是 daemon**（phase3 §3.5 行为表第二行「**立即中止**」）：第二次 `Ctrl+C`
     的语义是「先落盘（`draining` + `interrupted: true`）、再 `cancel()` 收尾 task、随即请求
@@ -249,9 +265,10 @@ class _DaemonThreadPoolExecutor(_ThreadPoolExecutor):
     **只给收尾四步用**：事件循环的默认执行器一律不动（`asyncio.to_thread()` 那一路照旧），
     于是「收尾之外还有谁在用线程池」这件事不受本类影响。
 
-    **两处调用点各起一台池（`__init__` 的两个入参因此可传）**：收尾四步那台取
+    **三处调用点各起一台池（`__init__` 的两个入参因此可传）**：收尾四步那台取
     `DRAIN_EXECUTOR_MAX_WORKERS` = 4、线程名前缀 `drain-step`；会中总结那台取
-    `SUMMARY_EXECUTOR_MAX_WORKERS` = 2、前缀 `summary-call`。两台**互不占线程**：
+    `SUMMARY_EXECUTOR_MAX_WORKERS` = 2、前缀 `summary-call`；会中模型「收 / 放」那台取
+    `MODEL_EXECUTOR_MAX_WORKERS` = 1、前缀 `model-lifecycle`。三台**互不占线程**：
     会中总结按下的那几秒里，收尾四步的调用照旧有四条线程可用，反过来也一样。
 
     **工作线程取 `DRAIN_EXECUTOR_MAX_WORKERS` 条（审查问题 m7 的直接修复）**：四步的调用
@@ -355,8 +372,8 @@ ACTION_CODES: tuple[str, ...] = (
 )
 
 #: 动作名清单（phase2 §3.13 + `dca4539b` 的 `reprobe` + `1987cb20` phase2 的 `summarize`
-#: + 工作台收编节点的 `workspace_open` / `workspace_remove` + 本节点的两个会后按钮
-#: `post_offline` / `post_minutes`）
+#: + 工作台收编节点的 `workspace_open` / `workspace_remove` + 会后两个按钮
+#: `post_offline` / `post_minutes` + 暂停节点的 `pause` / `resume` / `set_source`）
 ACTION_NAMES: tuple[str, ...] = (
     "start",
     "stop",
@@ -369,6 +386,9 @@ ACTION_NAMES: tuple[str, ...] = (
     "workspace_remove",
     "post_offline",
     "post_minutes",
+    "pause",
+    "resume",
+    "set_source",
 )
 
 #: `start` 的 `mode` 取值域与缺省
@@ -578,6 +598,12 @@ class ServiceRuntime:
         #: 与收尾四步那台分属两台池，见 `_DaemonThreadPoolExecutor` 的说明）
         self._summary_executor: _DaemonThreadPoolExecutor | None = None
 
+        #: 会中模型「收 / 放」两次调用（`release_gpu()` / `acquire_gpu()`）的**同步调用专用**
+        #: 执行器。**单线程**：这两次调用是同一格模型引用上的一进一出，必须按用户按下的顺序
+        #: 排队（暂停 → 释放，继续 → 拉起），单线程池给的正是这条 FIFO 顺序；**惰性创建**：
+        #: 没人按过暂停/继续的进程一个线程都不起。
+        self._model_executor: _DaemonThreadPoolExecutor | None = None
+
         # -- 会后的两趟活（人按才起，`d63b0f4a` 的两个按钮）--------------------
         #
         # `self.post_job` 记**这一趟会后活跑到哪一档**（`None` = 没有在跑的）：
@@ -778,6 +804,9 @@ class ServiceRuntime:
         # 会中总结那台执行器照同一口径收场：到点被放弃的那次调用仍在飞，关停不等它
         # （它同样是一条只读的模型调用，写不出半截现场）。
         self._shutdown_summary_executor()
+        # 会中模型「收 / 放」那台同样不等：在飞的那次释放 / 拉起是模型层自己的事
+        # （丢引用、清缓存、造识别器），进程退出时跟着一起消失。
+        self._shutdown_model_executor()
         # 会中总结那两样一并清掉（缓冲与记录表走同一个入口）：关停之后这两笔内存不该留着
         self._clear_session_summary(reason="服务关停")
         from meeting.service import app as service_app
@@ -805,6 +834,17 @@ class ServiceRuntime:
             executor.shutdown(wait=False, cancel_futures=True)
         except Exception:  # pragma: no cover - 收场路径不掩盖别的结论
             _log.exception("会中总结执行器收场失败（工作线程是 daemon，不影响进程退出）")
+
+    def _shutdown_model_executor(self) -> None:
+        """会中模型「收 / 放」执行器收场（幂等）：与上面两台同一口径，**不等待**在飞的工作线程。"""
+        executor = self._model_executor
+        if executor is None:
+            return
+        self._model_executor = None
+        try:
+            executor.shutdown(wait=False, cancel_futures=True)
+        except Exception:  # pragma: no cover - 收场路径不掩盖别的结论
+            _log.exception("会中模型生命周期执行器收场失败（工作线程是 daemon，不影响进程退出）")
 
     # -- 后端与探测 -------------------------------------------------------
 
@@ -1015,12 +1055,27 @@ class ServiceRuntime:
 
     # -- 状态 JSON 产出（唯一产出者） -------------------------------------
 
+    def _session_elapsed_seconds(
+        self, session: SessionInfo, *, moment: float | None = None
+    ) -> float:
+        """这一场**录到的**秒数：墙钟跨度扣掉暂停的那几段（`docs/design-intent.md` 第 7 条）。
+
+        权威长度是实际录到的音频时长（写侧的内容字节账，落 `session.json`）；快照这一格是
+        它在界面上的读数，暂停期间因此不往前走 —— 否则「已录 12:30」会把休息的十分钟也算进
+        这一场，按第 7 条那是附注、按第 8 条那段时间根本没录。
+        """
+        now = time.monotonic() if moment is None else float(moment)
+        paused = float(session.paused_seconds)
+        if session.paused_at_monotonic is not None:
+            paused += max(0.0, now - float(session.paused_at_monotonic))
+        return max(0.0, (now - session.started_monotonic) - paused)
+
     def _live_elapsed(self) -> None:
         """把本场已录秒数刷成当下值：录音 / 告警态走秒，进 `ended` 之后冻结（不再动）。"""
         session = self.snapshot.session
         if session is None or session.frozen:
             return
-        session.elapsed_seconds = max(0.0, time.monotonic() - session.started_monotonic)
+        session.elapsed_seconds = self._session_elapsed_seconds(session)
 
     def _snapshot_json(self) -> dict[str, Any]:
         self._live_elapsed()
@@ -1829,7 +1884,12 @@ class ServiceRuntime:
 
         session = self.snapshot.session
         if session is not None:
-            session.elapsed_seconds = max(0.0, time.monotonic() - session.started_monotonic)
+            # 暂停中结束：先把这一段暂停结掉（秒数入时长账），再冻结本场秒数 ——
+            # 与引擎那一侧 `finalize()` 关掉暂停区间是同一件事的两半。
+            if session.paused:
+                self._pause_span(session, moment=time.monotonic())
+                self.judge.resume_session()
+            session.elapsed_seconds = self._session_elapsed_seconds(session)
         begin_drain(self.snapshot, reason=reason)
         # 进 `ended` 这一刻提示级一并归零（提示条只在 recording / alert 上成立）：清在下面那次
         # 提交之前，于是广播出去的「结束档」那一份里 `alerts.hints` 就是空数组 —— 不必等
@@ -1862,6 +1922,210 @@ class ServiceRuntime:
         _log.info("本场已静音（会话级；下一场 start 自动复位，持久化开关 alarm.sound 未改）")
         self.commit()
 
+    # -- 暂停 / 继续 / 会中开关某一路（R24 / R25） --------------------------
+
+    def _recording_session(self, what: str) -> SessionInfo:
+        """本场还没收尾的那一份 `session`（没有就回 `not_recording` 409）。
+
+        与 `mute_session()` 同一档判据：只有 `recording` / `alert` 两态有事可做。
+        """
+        session = self.snapshot.session
+        if self.snapshot.top_state not in ("recording", "alert") or session is None:
+            raise ActionError("not_recording", f"现在没有在录的场次，{what}无效", status=409)
+        return session
+
+    def _pause_span(self, session: SessionInfo, *, moment: float) -> None:
+        """把当前这一段暂停结掉（`resume` 与 `stop` 两处共用）：秒数入账、标记复位。"""
+        if session.paused_at_monotonic is not None:
+            session.paused_seconds += max(0.0, float(moment) - float(session.paused_at_monotonic))
+        session.paused_at_monotonic = None
+        session.paused = False
+
+    def _model_executor_or_create(self) -> _DaemonThreadPoolExecutor:
+        """会中模型「收 / 放」那台执行器（**惰性创建**：没人按过暂停/继续的进程一个线程都不起）。"""
+        if self._model_executor is None:
+            self._model_executor = _DaemonThreadPoolExecutor(
+                max_workers=MODEL_EXECUTOR_MAX_WORKERS,
+                thread_name_prefix="model-lifecycle",
+            )
+        return self._model_executor
+
+    def _submit_model_lifecycle(self, method_name: str, *, what: str) -> None:
+        """把一次「会中模型的收 / 放」提交到后台（暂停 → `release_gpu()`；继续 → `acquire_gpu()`）。
+
+        **为什么不在这里直接调**：第 21 条要的是「当场结束」—— 按钮按下去，模型当刻松手，
+        界面照旧转。释放要等在飞的推理收干净（上界 5 秒），拉起之后紧接着就是权重的加载
+        （秒级）；这两段工夫若花在事件循环上，暂停/继续那几秒里 `/api/heartbeat`、
+        `/api/state`、SSE 与其它动作会一起停摆，界面的心跳探测因此判成「失联」
+        （第 17 条那一条致命级）。于是把它们交给后台那条线程慢慢做，取舍与收尾四步、
+        会中总结那两处同源。
+
+        **提交进单线程池**（`MODEL_EXECUTOR_MAX_WORKERS` = 1）：一进一出按用户按下的顺序
+        排队执行 —— 先「暂停 → 释放」、后「继续 → 拉起」，不会反序落到同一格模型引用上。
+
+        **防御式取法**：协议里没有这两个方法（`docs/backend-protocols.md` 第 3 章把它们记成
+        可选成员），替身后端（`null` / `dev`）省掉这一格照样跑得通 —— 取不到、不可调用就跳过。
+
+        线程体里的异常**只落 log**：暂停与继续这两个动作不许因为模型那一侧出事而失败
+        （R1 的立场：转写坏了可以重跑，录音照跑）。
+        """
+        call = getattr(self.transcriber_backend, method_name, None)
+        if not callable(call):
+            return
+
+        def run() -> None:
+            try:
+                call()
+            except Exception:  # noqa: BLE001 - 后台线程的异常没有别的落点
+                _log.exception("会中模型%s失败（如实记账，不静默）", what)
+
+        try:
+            self._model_executor_or_create().submit(run)
+        except Exception:  # noqa: BLE001 - 排不进后台也不许把按钮动作拖失败
+            _log.exception("会中模型%s没能排进后台（如实记账，不静默）", what)
+
+    def pause_session(self) -> None:
+        """`pause`：这一场暂停 —— 归档改写静音、不录内容（第 8 条）。
+
+        幂等（已经在暂停中时什么都不做）。快照里落在 `session.paused` 这一格上，
+        顶层四态一个字不动（第 3 条没有第五个状态）；暂停的那一段时间同时从时长读数里
+        扣掉（`_session_elapsed_seconds()`），并交给 `AlertJudge` 把静默判定冻住 ——
+        安静房间里暂停三分钟不该弹一条「这一路静默已达 180 秒」（第 17 条）。
+
+        **会中那个模型在这一刻结束**（第 21 条：暂停当场结束模型，继续时再拉起来）：
+        经 `_submit_model_lifecycle()` 把 `release_gpu()` 提交到后台，于是暂停这一段它
+        退出显存，而按下的这一下当场应答。
+        """
+        session = self._recording_session("暂停动作")
+        if session.paused:
+            return
+        moment = time.monotonic()
+        session.elapsed_seconds = self._session_elapsed_seconds(session, moment=moment)
+        session.paused = True
+        session.paused_at_monotonic = moment
+        self.judge.pause_session()
+        pauser = getattr(self.capture_backend, "pause", None)
+        if callable(pauser):
+            pauser()
+        # 会中那个模型**当场结束**（第 21 条）：暂停这一段它退出显存，继续时再拉起来。
+        # 调用提交到后台（见 `_submit_model_lifecycle()`）：释放要等在飞的推理收干净，
+        # 而暂停这个按钮按下去要当场应答。
+        self._submit_model_lifecycle("release_gpu", what="让出显存（暂停期间不占显卡）")
+        _log.info(
+            "本场已暂停：%s 往归档写数字静音、不录内容（暂停的那几段不计入静默判定，也不进时长）",
+            session.id,
+        )
+        self.commit()
+
+    def resume_session(self) -> None:
+        """`resume`：继续 —— 归档回到录内容，时长接着走（幂等）。
+
+        会中那个模型也在这一刻**重新拉起来**（第 21 条：又要用它了）：经
+        `_submit_model_lifecycle()` 把 `acquire_gpu()` 提交到后台，与暂停那一半配对。
+        """
+        session = self._recording_session("继续动作")
+        if not session.paused:
+            return
+        moment = time.monotonic()
+        self._pause_span(session, moment=moment)
+        session.elapsed_seconds = self._session_elapsed_seconds(session, moment=moment)
+        self.judge.resume_session()
+        resumer = getattr(self.capture_backend, "resume", None)
+        if callable(resumer):
+            resumer()
+        # 继续 = 又要用它了：把会中模型重新拉起来（与暂停那一半配对，第 21 条）。
+        # 同样提交到后台：拉起来之后紧接着就是权重的加载，这个动作当场应答。
+        self._submit_model_lifecycle("acquire_gpu", what="重新拉起（继续之后接着用）")
+        _log.info("本场已继续：%s 的归档回到录内容（暂停 %ss 已记进时长账）", session.id, round(session.paused_seconds, 3))
+        self.commit()
+
+    def set_source(self, args: dict[str, Any]) -> None:
+        """`set_source`：会中关掉某一路 / 重新打开某一路（第 9 条：那一路写静音，段不切）。
+
+        `active=false` 关掉：那一路停流、改写静音，**不报 `SourceLost`、不进告警**
+        （用户按的按钮与「这一路真死了」是两件事）。
+
+        `active=true` 重新打开：重新挑设备、重开流；**开不起来如实回 `capture_unavailable`(503)**
+        （设备被别的程序占着那一档，按按钮的人必须看得见），那一路照旧停在「已关掉」。
+
+        快照里这一路的落点是**复用现有的 `health = stopped` 档**（「这一路没在采」的读数本来
+        就有这一格，本节点不为它发明新的取值）；打开之后回到 `capturing`。
+        """
+        session = self._recording_session("会中开关某一路的动作")
+        source = args.get("source")
+        if source not in SOURCE_IDS:
+            raise ActionError(
+                "invalid_setting",
+                f"source 取值非法：{source!r}（只能是 {' / '.join(SOURCE_IDS)}）",
+                status=400,
+                detail={"key": "source", "value": source, "legal": list(SOURCE_IDS)},
+            )
+        active = args.get("active")
+        if not isinstance(active, bool):
+            raise ActionError(
+                "invalid_setting",
+                f"active 取值非法：{active!r}（只能是 true / false）",
+                status=400,
+                detail={"key": "active", "value": active, "legal": [True, False]},
+            )
+        # 本场没采这一路（`mode` 开场就定死了那几路）：关它 / 开它都没有对象
+        engine = getattr(self.capture_backend, "session", None)
+        requested = tuple(getattr(engine, "requested", ()) or ())
+        if requested and source not in requested:
+            raise ActionError(
+                "invalid_setting",
+                f"这一场采的是 {'、'.join(requested)}，{source} 这一路本场没有采",
+                status=400,
+                detail={"key": "source", "value": source, "legal": list(requested)},
+            )
+
+        item = self.snapshot.source(source)
+        if not active:
+            if item.health == "stopped":
+                return
+            deactivate = getattr(self.capture_backend, "deactivate_source", None)
+            if callable(deactivate):
+                deactivate(source)
+            item.health = "stopped"
+            item.restored = False
+            item.lost_since = None
+            _log.info("会中关掉 %s 这一路：改写静音（不报故障、不进告警）", source)
+            self._log_health_migrations(
+                source=source,
+                reason="用户会中主动关掉这一路（写静音）",
+                threshold="无阈值（用户按的按钮不走告警判定）",
+            )
+            self.commit()
+            return
+
+        if item.health != "stopped":
+            return
+        activate = getattr(self.capture_backend, "activate_source", None)
+        try:
+            if callable(activate):
+                activate(source)
+        except Exception as exc:  # noqa: BLE001 - 打不开这一路如实回执（设备被占着就是这一档）
+            reason = f"{type(exc).__name__}: {exc}"
+            _log.error("重新打开 %s 这一路失败：%s（那一路照旧停在已关掉）", source, reason)
+            raise ActionError(
+                "capture_unavailable",
+                f"{source} 这一路打不开：{reason}",
+                status=503,
+                detail={"source": source, "error": reason},
+            ) from exc
+        # 这一路还挂着那一条致命级（关掉之前它就丢了流）：回 `lost` 而不是 `capturing`，
+        # 让它在有信号时走那条现成的恢复路（`alert → recording`）；直接写成 `capturing`
+        # 会让那一条告警永远出不去（恢复判定只从 `lost` 那一档出发）。
+        critical = self.snapshot.alerts.critical
+        item.health = "lost" if critical is not None and critical.source == source else "capturing"
+        _log.info("会中重新打开 %s 这一路：读线程回到读源（health=%s）", source, item.health)
+        self._log_health_migrations(
+            source=source,
+            reason="用户会中重新打开这一路",
+            threshold="无阈值（打开设备不看阈值）",
+        )
+        self.commit()
+
     # -- 动作错误（拒绝路径的 detail 三件套） ------------------------------
 
     def _is_draining(self) -> bool:
@@ -1883,7 +2147,7 @@ class ServiceRuntime:
             elapsed = (
                 session.elapsed_seconds
                 if session.frozen
-                else max(0.0, time.monotonic() - session.started_monotonic)
+                else self._session_elapsed_seconds(session)
             )
         return ActionError(
             "already_recording",
@@ -3803,6 +4067,7 @@ __all__ = [
     "DRAIN_LOG_MIN_BUDGET_SECONDS",
     "DRAIN_SETTLE_POLL_SECONDS",
     "LEVELS_INTERVAL_SECONDS",
+    "MODEL_EXECUTOR_MAX_WORKERS",
     "SESSION_MODES",
     "SUMMARY_EXECUTOR_MAX_WORKERS",
     "TRANSCRIBER_HEALTH_INTERVAL_SECONDS",

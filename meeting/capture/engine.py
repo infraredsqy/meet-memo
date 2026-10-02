@@ -202,6 +202,24 @@ class _SourceWorker:
         """这一路是否被用户主动关掉（与「真死」区分开的读数）。"""
         return self._user_closed.is_set()
 
+    def reactivate(self, source_impl: CaptureSource) -> None:
+        """用户重新打开这一路：清掉「用户已关」的信号，把**新开的**源交给读线程。
+
+        与 `deactivate()` 严格对称，且**只在源真的开起来之后才调**（调用方先造源、
+        先 `start()`，失败就原样上抛）：读线程那一侧不能出现「标志清了、源却是死的」
+        这一刻 —— 那会立刻报成 `SourceLost`（用户主动关掉的那一路明令不报故障）。
+
+        读线程此刻正跑在静音节拍器上（用户关掉之后它不碰源），这里只换源 + 清标志，
+        它下一拍就自己回到读源那条路（见 `_read_loop()` 每轮现读 `self.source_impl`）。
+        """
+        with self._lock:
+            self.source_impl = source_impl
+            self._user_closed.clear()
+            # 静音节拍器的绝对时刻从这里重新起算（关掉期间它一直在推进）
+            self._silence_deadline = None
+            self.alive = True
+        _log.info("用户重新打开 %s 这一路：读线程回到读源", self.source)
+
     # -- 读侧 -------------------------------------------------------------
 
     def _feed(self, data: bytes) -> None:
@@ -217,9 +235,13 @@ class _SourceWorker:
         一路的源读不出来 / 抛错时：**这一路收队并报一条 `SourceLost`**，另一路的读线程与写线程
         一个都不动（「一路出事另一路照跑」就是这么落地的）。用户主动关掉的那一路**不走**
         这条报障路：读线程转去跑静音节拍器。
+
+        **源每一轮现取**（`self.source_impl`，不在循环外缓存）：用户关掉再重新打开
+        （`deactivate()` / `reactivate()`）时读线程一直在原地转，缓存下来的旧源会让它
+        一直读那条已经关掉的流 —— 于是「重新打开」这条路上什么都不恢复。
         """
-        source = self.source_impl
         while not self._stop.is_set():
+            source = self.source_impl
             if not self.active or self._user_closed.is_set() or source is None:
                 if self._pace_silence():
                     return
@@ -323,6 +345,7 @@ class CaptureSession:
       - `pause()` / `resume()`：暂停与继续。暂停期间所有路写数字静音、不录内容
         （第 8 条），段**不**切段，暂停区间进段账；
       - `deactivate_source()`：用户主动关掉某一路——那一路改写静音，不报 `SourceLost`；
+      - `activate_source()`：用户重新打开某一路——把新开起来的源接回读线程；
       - `finalize()`：停流 + join + 关文件 + `fsync`（收尾第 1 步），落下本段终点戳
         并结出**在录时长**（实际录到的音频时长，不含暂停；权威数只从写侧的字节账来）；
       - `transcode()`：把各段 PCM 转成 MP3（收尾第 2 步）；转不动**原样上抛**，PCM 留着；
@@ -411,7 +434,7 @@ class CaptureSession:
             self.stop()
             raise
 
-    # -- 暂停 / 关一路（驱动能力做在引擎与服务层；动作面入口归下游节点） -------
+    # -- 暂停 / 关一路（引擎的服务层出口；动作面入口在 `services/routes.py`） ----
 
     def pause(self) -> None:
         """暂停本场采集：所有路从这一刻起写数字静音，**不录内容**（第 8 条的隐私线）。
@@ -449,6 +472,18 @@ class CaptureSession:
         if worker is None:  # pragma: no cover - 两路的 worker 构造即建
             return
         worker.deactivate()
+
+    def activate_source(self, source: str, source_impl: CaptureSource) -> None:
+        """用户重新打开某一路：把**新开起来的源**接回那一台的读线程（幂等）。
+
+        与 `deactivate_source()` 对称。`source_impl` 必须已经 `start()` 过 ——
+        造源 / 开流那一步归后端（`CaptureBackend.activate_source()`），引擎这一层只管
+        接线；开不起来的那一档由后端原样上抛，快照里那一路照旧如实停在「已关掉」。
+        """
+        worker = self.workers.get(source)
+        if worker is None:  # pragma: no cover - 两路的 worker 构造即建
+            return
+        worker.reactivate(source_impl)
 
     # -- 段账 ---------------------------------------------------------------
 

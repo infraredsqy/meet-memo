@@ -35,6 +35,7 @@
   `MEETING_TEST_CAPTURE_CHUNKS`             最多喂多少块（不设 = 喂到收尾为止）
   `MEETING_TEST_CAPTURE_DELIVER_CHUNKS_MIC`        mic 喂满 N 块后活着但不再出块（音频终点钉在确定块边界）
   `MEETING_TEST_CAPTURE_DELIVER_CHUNKS_LOOPBACK`   loopback 同上
+  `MEETING_TEST_CAPTURE_REOPEN_ERROR`              点名的那几路在**重新打开**时开不起来（`mic` / `mic,loopback`）
   ================================  ==========================================
 
 「第 N 块后抛错」的语义与 `tests/test_capture_engine.py` 的 `FakeCaptureSource.error_at`
@@ -120,6 +121,10 @@ CHUNKS_ENV = "MEETING_TEST_CAPTURE_CHUNKS"
 #: 落在一个采集块以内，不会随「stop 赶没赶上下一块」翻转。
 DELIVER_MIC_ENV = "MEETING_TEST_CAPTURE_DELIVER_CHUNKS_MIC"
 DELIVER_LOOPBACK_ENV = "MEETING_TEST_CAPTURE_DELIVER_CHUNKS_LOOPBACK"
+#: 「重新打开这一路时打不开」：值是 `mic` / `loopback`（或逗号分隔的两个），
+#: 这一段里**第二次及以后**为那一路造的源一 `start()` 就抛错（第一次造源照常成功，
+#: 否则这一场根本开不起来）。用来验 `set_source(active=true)` 的失败口径。
+REOPEN_ERROR_ENV = "MEETING_TEST_CAPTURE_REOPEN_ERROR"
 
 #: 不设 `PACE_SECONDS_ENV` 时的块节奏（与真采集一个块 0.1 秒同速；端到端用例靠它让
 #: 「喂进去的块数 × 每块样本数」与墙钟秒数可换算）
@@ -131,6 +136,12 @@ def _env_int(name: str) -> int | None:
     if not raw.strip():
         return None
     return int(raw)
+
+
+def _reopen_error_sources() -> set[str]:
+    """`REOPEN_ERROR_ENV` 里点名的那些路（空串 = 一路都不点）。"""
+    raw = os.environ.get(REOPEN_ERROR_ENV, "")
+    return {item.strip() for item in raw.split(",") if item.strip()}
 
 
 def _env_float(name: str, default: float) -> float:
@@ -162,12 +173,15 @@ class ScriptedSource:
         pace_seconds: float = DEFAULT_PACE_SECONDS,
         chunks: int | None = None,
         deliver_chunks: int | None = None,
+        fail_start: bool = False,
     ) -> None:
         self.name = name
         self.error_at = error_at
         self.pace_seconds = pace_seconds
         self.chunks = chunks
         self.deliver_chunks = deliver_chunks
+        #: 造出来就开不起来这一档（「重新打开某一路时设备被别的程序占着」用它）
+        self.fail_start = bool(fail_start)
         self.fed = 0
         self.reads = 0
         self.started = False
@@ -180,6 +194,10 @@ class ScriptedSource:
     # -- CaptureSource 协议 ------------------------------------------------
 
     def start(self) -> None:
+        if self.fail_start:
+            raise RuntimeError(
+                f"假源 {self.name} 按要求开不起来（设备被别的程序占着这一档）"
+            )
         self.started = True
 
     def read(self, timeout: float) -> bytes | None:
@@ -255,12 +273,15 @@ class FaultyCaptureBackend(CaptureBackend):
     def _create_source(self, source: str, endpoint: DeviceEndpoint) -> ScriptedSource:
         error_at = _env_int(ERROR_AT_MIC_ENV if source == "mic" else ERROR_AT_LOOPBACK_ENV)
         deliver = _env_int(DELIVER_MIC_ENV if source == "mic" else DELIVER_LOOPBACK_ENV)
+        # 第二次及以后为这一路造源 = 用户在会中重新打开它（第一次是开场那一次）
+        reopened = source in self.created
         source_impl = ScriptedSource(
             source,
             error_at=error_at,
             pace_seconds=_env_float(PACE_SECONDS_ENV, DEFAULT_PACE_SECONDS),
             chunks=_env_int(CHUNKS_ENV),
             deliver_chunks=deliver,
+            fail_start=reopened and source in _reopen_error_sources(),
         )
         self.created[source] = source_impl
         self.endpoints[source] = endpoint
@@ -286,6 +307,7 @@ __all__ = [
     "FAKE_RENDER",
     "FRAME_CHUNKS",
     "PACE_SECONDS_ENV",
+    "REOPEN_ERROR_ENV",
     "FaultyCaptureBackend",
     "ScriptedSource",
     "chunk_bytes",

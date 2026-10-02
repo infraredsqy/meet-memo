@@ -13,8 +13,9 @@
     `meeting/capture/engine.py`），归档写进 `start()` 收到的 `session_dir`；
   - `finalize()` 停流 + join + 关文件 + `fsync`，`transcode()` 把各段 PCM 转成 MP3
     （收尾第 1、2 步），`stop()` 幂等收场（进程关停时调）；
-  - `pause()` / `resume()` / `deactivate_source()` 是暂停与「用户关一路」的服务层出口
-    （写静音、不录内容；告警语义不动，动作面入口归下游节点）。
+  - `pause()` / `resume()` / `deactivate_source()` / `activate_source()` 是暂停与
+    「用户关一路 / 重新打开一路」的服务层出口（写静音、不录内容；告警语义不动），
+    动作面入口是 `pause` / `resume` / `set_source` 三个动作（`meeting/service/routes.py`）。
 
 **`start()` 的抛错口径**（§5 的裁定）：单路起不来**不抛错** —— 只给那一路发一条
 `SourceLost`（`reason` 写人话），另一路照跑；**本场该采的路全部起不来**才抛
@@ -274,6 +275,27 @@ class CaptureBackend:
             return
         session.deactivate_source(source)
 
+    def activate_source(self, source: str) -> None:
+        """用户重新打开某一路：重新挑设备、重开流，交回引擎的读线程。
+
+        **失败原样上抛**（调用方转成 `capture_unavailable`）：设备又被别的程序占着这一档
+        必须让按按钮的人看得见 —— 悄悄不打开等于「看起来在录、其实没录」
+        （`docs/design-intent.md` 第 1 条）。上抛之前把刚造出来的那一份源收干净；
+        引擎那一侧此刻还没清「用户已关」的标志，那一路照旧如实停在写静音。
+        """
+        session = self.session
+        if session is None:
+            return
+        endpoint = self._select_endpoint(source)
+        candidate = self._source_factory(source, endpoint)
+        try:
+            candidate.start()
+        except BaseException:
+            self._safe_stop(candidate)
+            raise
+        session.activate_source(source, candidate)
+        _log.info("用户重新打开 %s 这一路：设备 %s", source, endpoint.label())
+
     # -- 内部 -------------------------------------------------------------
 
     def _stop_session(self) -> None:
@@ -284,6 +306,16 @@ class CaptureBackend:
             session.stop()
         except Exception:  # noqa: BLE001 - 收场失败不掩盖别的结论
             _log.warning("停采集时抛错（如实记账，不静默）", exc_info=True)
+
+    def _safe_stop(self, source_impl: Any) -> None:
+        """收掉一份刚造出来的源（重开失败那条路用；停不掉也不掩盖真正的原因）。"""
+        stop = getattr(source_impl, "stop", None)
+        if not callable(stop):
+            return
+        try:
+            stop()
+        except Exception:  # noqa: BLE001 - 见上
+            _log.warning("收掉重开失败的那一份源时抛错（如实记账）", exc_info=True)
 
     def _select_endpoint(self, source: str) -> devices_module.DeviceEndpoint:
         """按当下的配置与端点表挑这一路的设备（挑不出来抛错，由调用方如实记账）。"""

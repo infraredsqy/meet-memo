@@ -1,7 +1,11 @@
 {
+  // `lib` 里那句 `DOM` 是给挂载用例用的：`tests/live-pause-screen.test.tsx` 挂的是
+  // `src/App.tsx`（会中那一屏），这个 project 会顺着 import 走进 src，而那一份用了
+  // `window` / `document` / `HTMLDivElement`。**运行时仍是 node**
+  // （`vitest.config.ts` 的 `environment`），DOM 只是这一档的类型面。
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2023"],
+    "lib": ["ES2023", "DOM"],
     "module": "ESNext",
     "moduleResolution": "bundler",
     "jsx": "react-jsx",

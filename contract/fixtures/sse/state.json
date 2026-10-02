@@ -17,7 +17,8 @@
       "started_at": "<iso>",
       "mode": "both",
       "elapsed_seconds": 0,
-      "frozen": false
+      "frozen": false,
+      "paused": false
     },
     "sources": [
       {

@@ -263,11 +263,13 @@ def wait_for_done(client):
 def test_summarize_and_its_two_codes_are_registered():
     """`summarize` 进动作名清单；`transcript_unavailable` / `summary_failed` 进 `code` 全集。
     `workspace_open` / `workspace_remove` 两只是工作台收编节点 `e2f6166b` 加的；
-    末尾 `post_offline` / `post_minutes` 两只是本节点（05a48b6a）加的会后按钮。"""
+    末尾 `post_offline` / `post_minutes` 两只是本节点（05a48b6a）加的会后按钮；
+    再往后的 `pause` / `resume` / `set_source` 是暂停那一个节点（`10770b41`）加的。"""
     assert ACTION_NAMES == (
         "start", "stop", "mute_session", "settings_update", "reprobe", "dev_inject",
         "summarize", "workspace_open", "workspace_remove",
         "post_offline", "post_minutes",
+        "pause", "resume", "set_source",
     )
     assert set(ACTION_CODES) == {
         "already_recording", "draining", "capture_unavailable", "not_recording",

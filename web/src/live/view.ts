@@ -20,6 +20,13 @@ import {
 import { clockView, formatDbfs, formatWallClock, type ClockView } from './format';
 import { captureStalled, type CaptureStalledView, type HeartbeatState } from './heartbeat';
 import { meterView, type MeterView, type StoredLevels } from './levels';
+import {
+  pauseBanner,
+  pauseButtonLabel,
+  sourceToggle,
+  type PauseBannerView,
+  type SourceToggleView,
+} from './pause';
 import { healthView, statusView, type HealthView, type StatusView } from './status';
 import { emptyLossRecord, type LossRecord } from './loss';
 
@@ -36,6 +43,10 @@ export interface ChannelView {
   readout: string;
   /** 包络床右侧的时间戳（分钟级）；这一档没有历史时是 `—`。 */
   stamp: string;
+  /** 这一路被用户关掉了没有（服务侧落在现成的 `stopped` 档上）。 */
+  closed: boolean;
+  /** 这一档摆不摆那颗「关掉 / 打开」的按钮；要摆时是它的样子。 */
+  toggle: SourceToggleView | null;
 }
 
 export interface LiveView {
@@ -54,6 +65,12 @@ export interface LiveView {
   stalled: CaptureStalledView | null;
   /** 心跳失联：整块告警区收掉（两句话不得同屏）。 */
   alertsHidden: boolean;
+  /** 这一场此刻是不是暂停中（读快照的 `session.paused`，界面不自己记）。 */
+  paused: boolean;
+  /** 暂停 / 继续那颗按钮上的字。 */
+  pauseLabel: string;
+  /** 「本场已暂停」那条横幅；不在这一档时是 `null`。 */
+  pause: PauseBannerView | null;
 }
 
 /**
@@ -159,6 +176,10 @@ export function liveView(
       // 数据停了：读数退成 `—`，那个数字不再顶着（设计章 4.5）。
       readout: dataStopped || health.frozen ? '—' : formatDbfs(meter.readout),
       stamp: frozenStamp ?? envelopeStamp(snapshot, source, observedAtIso),
+      // 「用户关掉这一路」与「这一路出事」是两件事：关掉的那一路服务侧落 `stopped`
+      // 这一档（不报故障、不进告警），按钮也是照这一格翻的。
+      closed: source.health === 'stopped',
+      toggle: sourceToggle(source, snapshot.top_state),
     };
   });
 
@@ -172,9 +193,28 @@ export function liveView(
    */
   const fatalVisible = snapshot.top_state === 'recording' || snapshot.top_state === 'alert';
 
+  /**
+   * 「暂停中」只从快照读（`session.paused`）：界面不自己记、不自己推断，
+   * 刷新页面之后看到的是同一份（契约章 6 第 1、2 条）。
+   */
+  const paused = snapshot.session?.paused ?? false;
+
+  /**
+   * 暂停态里那一格「已录」**不走秒**：把界面自走的那一项收掉。
+   *
+   * 这一格读的是服务给的 `session.elapsed_seconds`（契约第 2 章：录到的秒数，扣掉暂停
+   * 那几段），而 `clockView` 是 `base + live`、`live` 由界面在这份快照之上再加自己走过
+   * 的时间。暂停期间服务给的数已经冻住了，界面这一项若不收，两个数一加就把服务刚扣掉的
+   * 暂停时间又走回来 —— 屏幕上那格照涨，正是 spec 坑与注意第一条要挡的
+   * 「看起来像还在正常录」。所以暂停态下 `live` 压成 0，读数停在快照给的那个数上
+   * （**不是把显示值归零**：`base` 照旧是服务给的那一份）。
+   * `clockView` 的式子一个字不动（它的单测钉着 `base + live`）。
+   */
+  const liveClockSeconds = paused ? 0 : liveElapsedSeconds;
+
   return {
     status,
-    clock: clockView(snapshot.top_state, snapshot.session?.elapsed_seconds ?? null, liveElapsedSeconds),
+    clock: clockView(snapshot.top_state, snapshot.session?.elapsed_seconds ?? null, liveClockSeconds),
     channels,
     fatal: fatalVisible ? fatalBanner(snapshot.alerts.critical) : null,
     critical: snapshot.alerts.critical,
@@ -182,5 +222,8 @@ export function liveView(
     muteLabel: muteButtonLabel(snapshot.alerts.critical),
     stalled,
     alertsHidden: lost,
+    paused,
+    pauseLabel: pauseButtonLabel(paused),
+    pause: pauseBanner(paused, snapshot.top_state),
   };
 }

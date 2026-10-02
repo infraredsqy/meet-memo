@@ -134,7 +134,7 @@ export const serviceSchema = strict({
   log_path: pathStringSchema,
 });
 
-/** `session` 六子键。`null` 表示现在没有场次。 */
+/** `session` 七子键。`null` 表示现在没有场次。 */
 export const sessionSchema = strict({
   /** 场次目录名（`YYMMDD` / `YYMMDD-N` 形状）。掩码 `<session-id>`。 */
   id: sessionIdSchema,
@@ -144,6 +144,13 @@ export const sessionSchema = strict({
   mode: sourceModeSchema,
   elapsed_seconds: z.number(),
   frozen: z.boolean(),
+  /**
+   * 这一场此刻是不是**暂停中**（`pause` / `resume` 两个动作翻它）。
+   *
+   * 「暂停中」的唯一落点：顶层四态不新增第五个（`docs/contract.md` 第 2 章）。
+   * 暂停期间那一截写数字静音、不录内容，段不切，时长读数也不走。
+   */
+  paused: z.boolean(),
 });
 
 /** `sources[*]`：九键齐。两路的次序恒为 `mic`、`loopback`。 */

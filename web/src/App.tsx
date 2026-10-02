@@ -110,7 +110,16 @@ class ShellErrorBoundary extends Component<{ children: ReactNode }, { error: Err
 }
 
 /** 一路电平表：刻度、填充、峰值保持指针、15 根历史包络、当前读数。 */
-function Channel({ channel }: { channel: ChannelView }): ReactNode {
+function Channel({
+  channel,
+  busy,
+  onToggle,
+}: {
+  channel: ChannelView;
+  busy: boolean;
+  /** 按下那颗开关：`closed` 是这一路**现在**的状态（关着的就打开、开着的就关掉）。 */
+  onToggle: (source: 'mic' | 'loopback', closed: boolean) => void;
+}): ReactNode {
   const id = useId();
   const { meter, health } = channel;
   const dead = health.dead;
@@ -137,6 +146,18 @@ function Channel({ channel }: { channel: ChannelView }): ReactNode {
           <span className={`glyph ${health.glyph}`} aria-hidden="true" />
           {health.text}
         </span>
+        {/* 会中开关某一路（R25）：关掉的那一路改写静音、不报故障；字与状态都从快照读 */}
+        {channel.toggle !== null && (
+          <button
+            className="btn btn--small btn--ghost"
+            type="button"
+            aria-pressed={channel.closed}
+            disabled={busy}
+            onClick={() => onToggle(channel.sourceId, channel.closed)}
+          >
+            {channel.toggle.label}
+          </button>
+        )}
       </div>
       <div className="m-grid">
         {/* 左格：竖电平 + 读数。两样裹在同一格里，读数才落在井的正下方
@@ -763,6 +784,17 @@ export function LiveView(): ReactNode {
           )}
           {showEnd && (
             <button
+              className="btn btn--pause"
+              type="button"
+              aria-pressed={view.paused}
+              disabled={busy}
+              onClick={() => runActionQuietly(view.paused ? 'resume' : 'pause')}
+            >
+              {view.pauseLabel}
+            </button>
+          )}
+          {showEnd && (
+            <button
               className="btn btn--primary btn--end"
               type="button"
               disabled={busy}
@@ -834,7 +866,14 @@ export function LiveView(): ReactNode {
           <div className="m-band m-band--split m-band--tools">
             <div className="m-chans">
               {view.channels.map((channel) => (
-                <Channel key={channel.sourceId} channel={channel} />
+                <Channel
+                  key={channel.sourceId}
+                  channel={channel}
+                  busy={busy}
+                  onToggle={(source, closed) =>
+                    runActionQuietly('set_source', { source, active: !closed })
+                  }
+                />
               ))}
             </div>
             <div className="live-tools">
@@ -976,6 +1015,37 @@ export function LiveView(): ReactNode {
       {/* 告警区：失联时整块收掉（两句话不得同屏）；采集已停那一条也不与致命横幅同屏 */}
       {!view.alertsHidden && (
         <section className="band band--alert" aria-label="告警">
+          {/* 「暂停中」与「哪一路死了」同一个级别：整行横带、左沿一道实心条（设计章 7.10
+              的 `alert--paused`）。它排在最前面 —— 这一屏最要紧的一句话就是「现在没在录」 */}
+          {view.pause !== null && (
+            <div className="alert alert--paused" role="status">
+              <div className="alert__head">
+                <span className="alert__glyph" aria-hidden="true">
+                  {'\u2016'}
+                </span>
+                <span className="alert__title">{view.pause.title}</span>
+              </div>
+              <div className="alert__body">{view.pause.body}</div>
+              <div className="alert__acts">
+                <button
+                  className="btn btn--small"
+                  type="button"
+                  disabled={busy}
+                  onClick={() => runActionQuietly('resume')}
+                >
+                  继续
+                </button>
+                <button
+                  className="btn btn--small btn--danger"
+                  type="button"
+                  disabled={busy}
+                  onClick={() => runActionQuietly('stop')}
+                >
+                  停止录音
+                </button>
+              </div>
+            </div>
+          )}
           {view.fatal !== null && view.critical !== null && (
             <div className="alert alert--fatal">
               <div className="alert__head">

@@ -565,6 +565,32 @@ body {
   padding: 0 var(--space-8);
 }
 
+/* 暂停 / 继续（R24）：压在「停止录音」左边。它不动音频的去留，只把这一段切进写静音，
+   于是用描边而不是实心底 —— 顶栏那一排里最重的那一颗仍然是「停止录音」。
+   暂停中它是实心的硫红：那一眼要看得见「现在没在录内容」。 */
+.btn--pause {
+  border-color: color-mix(in srgb, var(--t-alert) 55%, transparent);
+  background: var(--t-raised);
+  color: var(--t-alert-ink);
+  font-weight: var(--weight-semibold);
+}
+
+.btn--pause:hover:not(:disabled) {
+  background: var(--t-alert-wash);
+  border-color: var(--t-alert);
+}
+
+.btn--pause[aria-pressed="true"] {
+  border-color: var(--t-alert);
+  background: var(--t-alert);
+  color: var(--t-ink-inverse);
+}
+
+.btn--pause[aria-pressed="true"]:hover:not(:disabled) {
+  background: var(--t-alert-ink);
+  border-color: var(--t-alert-ink);
+}
+
 /* 四档窗口：一段连在一起的刻度牌。列宽用 minmax(0, 1fr) —— 写 1fr 的话
    中文标签的固有宽度会把四档一起顶出容器（窄屏尤其明显） */
 .seg {
@@ -1097,7 +1123,10 @@ input[type="checkbox"] {
   background: var(--t-surface);
 }
 
-.alert--fatal {
+.alert--fatal,
+/* 「本场已暂停」那条横幅：跟致命横幅同一个级别（设计意图第 8 条：暂停状态在界面上
+   极其显眼），于是复用同一副骨架 —— 整行浅底 + 左沿一道实心条，一眼认得 */
+.alert--paused {
   position: relative;
   padding-left: var(--space-6);
   border-color: color-mix(in srgb, var(--t-alert) 35%, transparent);
@@ -1105,7 +1134,8 @@ input[type="checkbox"] {
 }
 
 /* 左沿那道实心红：出事了的地方都长这样，一眼认得 */
-.alert--fatal::before {
+.alert--fatal::before,
+.alert--paused::before {
   content: "";
   position: absolute;
   top: 0;

@@ -131,6 +131,64 @@ def test_recovery_needs_the_full_recover_seconds():
 
 
 # ---------------------------------------------------------------------------
+# 暂停：暂停区间不计入两条累计（`docs/design-intent.md` 第 17 条）
+# ---------------------------------------------------------------------------
+
+
+def test_pause_freezes_the_silence_count_however_long_it_lasts():
+    """安静房间里暂停三分钟：一帧都不判，那条致命级不冒出来。"""
+    j = judge()
+    j.on_level_frame("mic", 0.0, -80.0)
+    assert j.on_level_frame("mic", 1.0, -80.0).alert is None
+    j.pause_session()
+    # 暂停这一段：时钟走过好几分钟（真机上足够越过 silence_seconds）
+    for ts in (60.0, 120.0, 180.0, 240.0):
+        frame = j.on_level_frame("mic", ts, -80.0)
+        assert frame.alert is None, "暂停区间不该累计静默秒数"
+        assert frame.below_threshold is False
+    # 这一段结束时静默账本一个数都没涨
+    assert j._tracks["mic"].silent_seconds == pytest.approx(1.0)
+
+
+def test_resume_starts_the_silence_count_from_scratch():
+    """继续之后的第一帧从零起算：暂停那一整段不会以「一帧跨了几分钟」的形式补记进去。"""
+    j = judge()
+    j.on_level_frame("mic", 0.0, -80.0)
+    j.pause_session()
+    j.on_level_frame("mic", 600.0, -80.0)
+    j.resume_session()
+    # 恢复之后的第一帧：delta 从这一帧起算（阈值 3 秒要真的再走满 3 秒）
+    assert j.on_level_frame("mic", 601.0, -80.0).alert is None
+    assert j.on_level_frame("mic", 602.0, -80.0).alert is None
+    assert j.on_level_frame("mic", 603.5, -80.0).alert is None
+    assert j.on_level_frame("mic", 604.5, -80.0).alert is not None
+
+
+def test_pause_keeps_the_recovery_count_frozen_too():
+    """暂停同样不算进恢复累计：这一路在告警里时，暂停期间攒不出「恢复」。"""
+    j = judge()
+    for index in range(4):
+        j.on_level_frame("mic", float(index), -80.0)
+    j.pause_session()
+    for ts in (10.0, 20.0, 30.0):
+        assert j.on_level_frame("mic", ts, -30.0).recovered is False
+    j.resume_session()
+    assert j.on_level_frame("mic", 31.0, -30.0).recovered is False
+    assert j.on_level_frame("mic", 32.5, -30.0).recovered is False
+    assert j.on_level_frame("mic", 33.2, -30.0).recovered is True
+
+
+def test_reset_for_new_session_clears_the_pause():
+    """上一场停在暂停里结束，不该把「暂停中」带进新一场。"""
+    j = judge()
+    j.pause_session()
+    j.reset_for_new_session()
+    for index in range(4):
+        frame = j.on_level_frame("mic", float(index), -80.0)
+    assert frame.alert is not None
+
+
+# ---------------------------------------------------------------------------
 # 抑制窗口与 muted
 # ---------------------------------------------------------------------------
 

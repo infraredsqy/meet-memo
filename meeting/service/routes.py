@@ -8,7 +8,7 @@
   - `GET /api/state`（完整版，body 就是 `to_dict()` 的产出）；
   - `GET /api/events`（SSE：`snapshot` 先行 + `state` / `levels` / `transcript` 三通道）；
   - `GET /api/heartbeat`（完整版，`service` 字面量必须有）；
-  - `POST /api/actions`（信封 + 十一个动作名 + `code` 表）；
+  - `POST /api/actions`（信封 + 十四个动作名 + `code` 表）；
   - `GET /api/summaries`（本场按过的、成功产出的那几次会中总结；读内存，不落文件）；
   - `GET /api/sessions`（工作区注册表：按路径去重的那一份"我这些会"，读盘上注册表文件）；
   - `GET /api/sessions/{id}`（单场状态：这一场此刻跑到哪一档、会后离线跑过几块 / 共几块、
@@ -262,6 +262,12 @@ async def _api_actions(request: Request) -> Response:
             runtime.stop_session("user")
         elif action == "mute_session":
             runtime.mute_session()
+        elif action == "pause":
+            runtime.pause_session()
+        elif action == "resume":
+            runtime.resume_session()
+        elif action == "set_source":
+            runtime.set_source(args)
         elif action == "reprobe":
             runtime.reprobe()
         elif action == "settings_update":
