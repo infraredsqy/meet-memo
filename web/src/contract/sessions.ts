@@ -175,9 +175,27 @@ export const offlineProgressSchema = z
   .strict();
 
 /**
- * `GET /api/sessions/{id}` 的应答体（4.9）：前八格与列表同一行同源，后两格回答
- * 「这一场此刻跑到哪儿了」。**它不进快照、也不进列表行** —— 快照九键与行十二键
- * 两道 `.strict()` 硬门一个字没动。
+ * 这一场盘上的一个说话人身份（4.9 / 4.11，人名节点 `91b6752e` 接的取数）。
+ *
+ * `key` 带着路（`mic:S01` 这种限定名，或没跑过聚类时的路本身），两路的「1 号」
+ * 写不出同一个键；`name` 来自这一场目录里的人名表——没起过名或人名表读不出时
+ * 如实 `null`（界面照它画「待确认」）；`segments` 是离线对照表里可得的次数读数，
+ * 路级身份如实 `null`。
+ */
+export const speakerIdentitySchema = z
+  .object({
+    key: z.string(),
+    source: z.enum(['mic', 'loopback']),
+    label: z.string(),
+    name: z.string().nullable(),
+    segments: z.number().int().nullable(),
+  })
+  .strict();
+
+/**
+ * `GET /api/sessions/{id}` 的应答体（4.9）：前八格与列表同一行同源，后三格回答
+ * 「这一场此刻跑到哪儿了、这一场的说话人有谁」。**它不进快照、也不进列表行** ——
+ * 快照九键与行十二键两道 `.strict()` 硬门一个字没动。
  */
 export const sessionStatusSchema = z
   .object({
@@ -191,6 +209,7 @@ export const sessionStatusSchema = z
     has_offline: z.boolean(),
     post: sessionPostViewSchema.nullable(),
     offline: offlineProgressSchema,
+    speakers: z.array(speakerIdentitySchema),
   })
   .strict();
 
@@ -205,4 +224,5 @@ export type PostJobCell = z.infer<typeof postJobCellSchema>;
 export type SessionPostView = z.infer<typeof sessionPostViewSchema>;
 export type OfflineSourceProgress = z.infer<typeof offlineSourceProgressSchema>;
 export type OfflineProgress = z.infer<typeof offlineProgressSchema>;
+export type SpeakerIdentity = z.infer<typeof speakerIdentitySchema>;
 export type SessionStatus = z.infer<typeof sessionStatusSchema>;

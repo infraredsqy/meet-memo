@@ -100,6 +100,7 @@ export function neverRunStatus(dir: string): SessionStatus {
     segments: [],
     has_offline: false,
     post: null,
+    speakers: [],
     offline: {
       ledger: 'meeting_offline_progress.jsonl',
       state: 'idle',
@@ -361,5 +362,167 @@ describe('会后那两个按钮（review-1 m7）', () => {
     expect(lines).toContain('这一场还在录 / 还在收尾');
     expect(lines).toContain('盘上会后稿：没有');
     expect(lines).not.toContain('这一场还没有会后精细稿');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 说话人名字那只弹窗（人名节点 91b6752e）：入口在会后区，点开、确认、当场生效
+// ---------------------------------------------------------------------------
+
+/** 一份带说话人身份的单场读数（`speakers` 一格照服务的形状给）。 */
+function statusWithSpeakers(
+  dir: string,
+  speakers: SessionStatus['speakers'],
+): SessionStatus {
+  return { ...neverRunStatus(dir), speakers };
+}
+
+/** 弹窗里某一行的那只输入框（按 aria-label 找）。 */
+function inputOf(
+  renderer: TestRenderer.ReactTestRenderer,
+  label: string,
+): TestRenderer.ReactTestInstance {
+  const found = renderer.root.findAll(
+    (node) => node.type === 'input' && node.props['aria-label'] === label,
+  );
+  expect(found, `弹窗里该有「${label}」这只输入框`).toHaveLength(1);
+  return found[0] as TestRenderer.ReactTestInstance;
+}
+
+describe('说话人名字（R10 第四条 / R30）', () => {
+  it('点开弹窗一行一个身份；写上名字点确认，发出 speaker_rename、带上选中那一行的 dir，并重问一次单场状态', async () => {
+    const dir = 'C:\\会议\\这一场';
+    fetchSessionsMock.mockResolvedValue(list({ sessions: [row({ dir })], recent: dir }));
+    fetchSessionStatusMock.mockImplementation(async (asked: string) =>
+      statusWithSpeakers(asked, [
+        { key: 'mic:S01', source: 'mic', label: '本地', name: null, segments: 3 },
+      ]),
+    );
+    postActionMock.mockResolvedValue({ kind: 'speaker', ok: true, revision: 7, speaker: { dir, key: 'mic:S01', name: '老王' } });
+    const renderer = await mountHome();
+    const ticksBefore = fetchSessionStatusMock.mock.calls.length;
+
+    await click(renderer, buttonByText(renderer, '说话人名字…'));
+
+    const dialog = renderer.root.findAll(
+      (node) => node.props.role === 'dialog' && node.props['aria-label'] === '说话人名字',
+    );
+    expect(dialog).toHaveLength(1);
+    expect(textOf(dialog[0] as TestRenderer.ReactTestInstance)).toContain('本地 · S01');
+    expect(textOf(dialog[0] as TestRenderer.ReactTestInstance)).toContain('待确认');
+
+    const input = inputOf(renderer, '本地 · S01 的名字');
+    await act(async () => {
+      input.props.onChange({ target: { value: '老王' } });
+    });
+    await click(renderer, buttonByText(renderer, '确认'));
+
+    expect(postActionMock).toHaveBeenLastCalledWith('speaker_rename', {
+      dir,
+      key: 'mic:S01',
+      name: '老王',
+    });
+    // 当场生效走的读数那一跳：改名之后重问了一次单场状态
+    expect(fetchSessionStatusMock.mock.calls.length).toBeGreaterThan(ticksBefore);
+  });
+
+  it('撞名只提示一句、提交照走（编号是分开的，可以重名）', async () => {
+    const dir = 'C:\\会议\\重名';
+    fetchSessionsMock.mockResolvedValue(list({ sessions: [row({ dir })], recent: dir }));
+    fetchSessionStatusMock.mockImplementation(async (asked: string) =>
+      statusWithSpeakers(asked, [
+        { key: 'mic:S01', source: 'mic', label: '本地', name: '老王', segments: 3 },
+        { key: 'loopback', source: 'loopback', label: '远端', name: null, segments: null },
+      ]),
+    );
+    postActionMock.mockResolvedValue({ kind: 'speaker', ok: true, revision: 8, speaker: { dir, key: 'loopback', name: '老王' } });
+    const renderer = await mountHome();
+
+    await click(renderer, buttonByText(renderer, '说话人名字…'));
+    const input = inputOf(renderer, '远端 的名字');
+    await act(async () => {
+      input.props.onChange({ target: { value: '老王' } });
+    });
+    // 两行各有一只「确认」：点「远端」那一行自己的那一只
+    const rowButton = (input.parent as TestRenderer.ReactTestInstance).find(
+      (node) => node.type === 'button' && node.props.children === '确认',
+    );
+    await click(renderer, rowButton);
+
+    const dialogs = renderer.root.findAll(
+      (node) => node.props.role === 'dialog' && node.props['aria-label'] === '说话人名字',
+    );
+    expect(textOf(dialogs[0] as TestRenderer.ReactTestInstance)).toContain(
+      '编号是分开的，可以重名',
+    );
+    expect(postActionMock).toHaveBeenLastCalledWith('speaker_rename', {
+      dir,
+      key: 'loopback',
+      name: '老王',
+    });
+  });
+
+  it('动作失败那一档：撞名提示清掉、失败块如实出列，弹窗里不留「已提交」', async () => {
+    const dir = 'C:\\会议\\重名失败';
+    fetchSessionsMock.mockResolvedValue(list({ sessions: [row({ dir })], recent: dir }));
+    fetchSessionStatusMock.mockImplementation(async (asked: string) =>
+      statusWithSpeakers(asked, [
+        { key: 'mic:S01', source: 'mic', label: '本地', name: '老王', segments: 3 },
+        { key: 'loopback', source: 'loopback', label: '远端', name: null, segments: null },
+      ]),
+    );
+    postActionMock.mockRejectedValue(
+      new ActionFailedError(400, 'invalid_setting', '人名表在盘上但读不出来，改名拒写', {
+        key: 'key',
+      }),
+    );
+    const renderer = await mountHome();
+
+    await click(renderer, buttonByText(renderer, '说话人名字…'));
+    const input = inputOf(renderer, '远端 的名字');
+    await act(async () => {
+      input.props.onChange({ target: { value: '老王' } });
+    });
+    // 两行各有一只「确认」：点「远端」那一行自己的那一只
+    const rowButton = (input.parent as TestRenderer.ReactTestInstance).find(
+      (node) => node.type === 'button' && node.props.children === '确认',
+    );
+    await click(renderer, rowButton);
+
+    expect(postActionMock).toHaveBeenLastCalledWith('speaker_rename', {
+      dir,
+      key: 'loopback',
+      name: '老王',
+    });
+    // 弹窗里不留成功话术：撞名提示（含「已照你写的名字提交」）在失败时清掉（review-1 m3）
+    const dialogs = renderer.root.findAll(
+      (node) => node.props.role === 'dialog' && node.props['aria-label'] === '说话人名字',
+    );
+    const dialogText = textOf(dialogs[0] as TestRenderer.ReactTestInstance);
+    expect(dialogText).not.toContain('已照你写的名字提交');
+    expect(dialogText).not.toContain('编号是分开的');
+    // 失败块如实出列：code 与服务那句拒写的话都在（不冒成功）
+    const failures = renderer.root.findAll((node) => node.props.className === 'fail');
+    expect(failures).toHaveLength(1);
+    const failureText = textOf(failures[0] as TestRenderer.ReactTestInstance);
+    expect(failureText).toContain('invalid_setting');
+    expect(failureText).toContain('拒写');
+  });
+
+  it('这一场还在录的时候入口按不动（会中不提供改名），弹窗不出现', async () => {
+    fetchSessionsMock.mockResolvedValue(
+      list({
+        sessions: [row({ dir: 'C:\\会议\\在录', state: 'recording' })],
+        recent: 'C:\\会议\\在录',
+      }),
+    );
+    const renderer = await mountHome();
+
+    expect(buttonByText(renderer, '说话人名字…').props.disabled).toBe(true);
+    expect(
+      renderer.root.findAll(
+        (node) => node.props.role === 'dialog' && node.props['aria-label'] === '说话人名字',
+      ),
+    ).toHaveLength(0);
   });
 });

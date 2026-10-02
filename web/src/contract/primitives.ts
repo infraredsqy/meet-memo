@@ -38,13 +38,12 @@ export const DBFS_PLACEHOLDER = '<dbfs>';
 export const TOP_STATES = ['idle', 'recording', 'alert', 'ended'] as const;
 
 /**
- * 十四个动作名，一个不多一个不少（`docs/contract.md` 4.3）。
+ * 十五个动作名，一个不多一个不少（`docs/contract.md` 4.3）。
  *
  * **次序就是服务回的次序**：`known` 数组（未知动作名那一档的 `detail`）逐个报的就是这一串，
- * 末尾那两个 `workspace_open` / `workspace_remove` 是工作台收编节点（e2f6166b）落进来的
- * （正文见 4.8）；`post_offline` / `post_minutes` 是会后两个按钮（「生成会后精细稿」/
- * 「直接出纪要」，R26）；`pause` / `resume` / `set_source` 是暂停与会中开关某一路那两个
- * 入口（`10770b41`）。
+ * 末尾那几个依次是：`workspace_open` / `workspace_remove`（工作台收编节点 e2f6166b，正文 4.8）、
+ * `post_offline` / `post_minutes`（会后两个按钮，R26）、`pause` / `resume` / `set_source`
+ * （暂停与会中开关某一路，`10770b41`）、`speaker_rename`（说话人改名，人名节点 `91b6752e`，正文 4.11）。
  */
 export const ACTION_NAMES = [
   'start',
@@ -61,6 +60,7 @@ export const ACTION_NAMES = [
   'pause',
   'resume',
   'set_source',
+  'speaker_rename',
 ] as const;
 
 /** 失败信封的九个 `code`，一个不多一个不少（`docs/contract.md` 4.4）。 */

@@ -51,5 +51,14 @@
       }
     ],
     "in_process": false
-  }
+  },
+  "speakers": [
+    {
+      "key": "mic",
+      "source": "mic",
+      "label": "本地",
+      "name": null,
+      "segments": null
+    }
+  ]
 }

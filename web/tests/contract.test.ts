@@ -620,11 +620,11 @@ describe('工作区样本（4.8 / 4.9，会后进度界面节点 52b24392 接的
     expect(sessionsResponseSchema.safeParse(afterOpen).success).toBe(false);
   });
 
-  it('单场状态样本：前八格与列表同源，post / offline 两格回答「跑到哪儿了」', () => {
+  it('单场状态样本：前八格与列表同源，post / offline / speakers 三格回答「跑到哪儿了、有谁」', () => {
     const parsed = sessionStatusSchema.parse(readFixture('sessions', 'status-after-run'));
     expect(Object.keys(parsed).sort()).toEqual([
-      'date', 'dir', 'has_offline', 'kind', 'mode', 'offline', 'post', 'segments', 'session_id',
-      'state',
+      'date', 'dir', 'has_offline', 'kind', 'mode', 'offline', 'post', 'segments',
+      'session_id', 'speakers', 'state',
     ]);
     expect(parsed.post).toBeNull();
     // 段读数与列表同行同源：盘上段账的原文（这一场恰好一段；秒数走掩码落 0）
@@ -644,6 +644,11 @@ describe('工作区样本（4.8 / 4.9，会后进度界面节点 52b24392 接的
     const mic = parsed.offline.sources.find((road) => road.source === 'mic');
     expect(mic?.done).toBe(2);
     expect(mic?.counts).toEqual({ transcribed: 1, silent: 1, failed: 0, unjudged: 0 });
+    // 说话人一格（4.11）：样本那一场只有 mic 的会后稿、没有人名表 —— 路级身份一行，
+    // 名字与次数读数都如实 null
+    expect(parsed.speakers).toEqual([
+      { key: 'mic', source: 'mic', label: '本地', name: null, segments: null },
+    ]);
   });
 
   it('单场状态多一格/少一格都不符合契约', () => {
@@ -651,5 +656,18 @@ describe('工作区样本（4.8 / 4.9，会后进度界面节点 52b24392 接的
     expect(sessionStatusSchema.safeParse({ ...fixture, extra: 1 }).success).toBe(false);
     const { offline: _dropped, ...withoutOffline } = fixture;
     expect(sessionStatusSchema.safeParse(withoutOffline).success).toBe(false);
+    const { speakers: _droppedSpeakers, ...withoutSpeakers } = fixture;
+    expect(sessionStatusSchema.safeParse(withoutSpeakers).success).toBe(false);
+    // 身份行自己也是封闭形状：多一格要红（4.9 / 4.11 的 `speakers` 一格）
+    const withExtraIdentity = {
+      ...fixture,
+      speakers: [
+        {
+          ...(fixture['speakers'] as Array<Record<string, unknown>>)[0],
+          extra: 1,
+        },
+      ],
+    };
+    expect(sessionStatusSchema.safeParse(withExtraIdentity).success).toBe(false);
   });
 });

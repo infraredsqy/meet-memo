@@ -1,6 +1,6 @@
 """`meeting/minutes/prompt.py` 的契约用例：填模板、拼清单、降级档说明、路径一律正斜杠。
 
-phase1 的那一批用例（本文件上半部分）自己造一份**形状相同**的模板（同样的六处占位符、
+phase1 的那一批用例（本文件上半部分）自己造一份**形状相同**的模板（同样的七处占位符、
 同样两块正文标记），把渲染器单独验穿：
 
   - 五阶段正文从标记之间抽出来填进 `{{PHASE_BODY}}`；
@@ -11,7 +11,7 @@ phase1 的那一批用例（本文件上半部分）自己造一份**形状相�
 phase2（`41465462`）往这个文件里追加了两批：
 
   - **模板真身的集成用例**（第七节）：`prompts/meeting_final.md` 那份真模板能被渲染器吃下，
-    五处必填占位符逐处在、`{{PHASE_BODY}}` 可以省略（正文由两块标记就地替换）、
+    六处必填占位符逐处在、`{{PHASE_BODY}}` 可以省略（正文由两块标记就地替换）、
     两条固定标题逐字在、写作纪律逐条在，渲染完一个 `{{…}}` 都不剩；
   - **第 0 节那三条 minor 的回归**（第八节）：混合形状下说明段逐 source 说话、
     稿型按语义字段判（不拿文件名的子串猜）、选中的转写不在盘上时抛 `PromptTemplateError`。
@@ -47,6 +47,7 @@ from meeting.minutes.prompt import (
     PHASE_BODY_BEGIN,
     PHASE_BODY_END,
     PLACEHOLDER_NAMES,
+    SPEAKER_NAMES_EMPTY,
     InputsListing,
     PromptInput,
     PromptTemplateError,
@@ -58,9 +59,16 @@ from meeting.minutes.prompt import (
     mode_note_text,
     render_prompt,
     render_session_prompt,
+    speaker_names_section,
 )
+from meeting.offline.artifacts import (
+    SPEAKERS_NAME_TEMPLATE,
+    build_speakers_document,
+    write_speakers,
+)
+from meeting.speaker_names import NAMES_FILE_NAME, set_speaker_name
 
-#: 一份与 phase2 同形的模板（六处占位符 + 两块正文标记）
+#: 一份与 phase2 同形的模板（七处占位符 + 两块正文标记）
 TEMPLATE = "\n".join(
     [
         "# 会后纪要编排",
@@ -70,6 +78,7 @@ TEMPLATE = "\n".join(
         "阶段 2 分割方案：每路 ≤ {{MAX_SEGMENTS}} 段，写 working/segmentation.json。",
         "阶段 3 逐段总结：每段一个 sub agent。",
         "阶段 4 合并：写会议纪要正文 + 说话人附录。",
+        "机主确认过的人名：{{SPEAKER_NAMES}}",
         "阶段 5 只读检查：幻觉与一致性两个透镜。",
         f"{PHASE_BODY_END}",
         "",
@@ -133,6 +142,28 @@ def _write_session(tmp_path: Path, *, live: bool = True, offline: bool = True) -
     return session
 
 
+def _write_speakers_artifact(session: Path, source: str, locals: list[str]) -> Path:
+    """给这一路落一份对照表（真实写方 + 真实字段契约）：人名节点读编号就从它来。"""
+    document = build_speakers_document(
+        session_id=session.name,
+        source=source,
+        engine={"name": "fake-engine"},
+        audio={"seconds": 60.0},
+        segments=[],
+        speakers=[
+            {
+                "id": f"{source}:{local}",
+                "local": local,
+                "label_raw": f"speaker#{local}",
+                "segments": 3,
+                "seconds": 12.0,
+            }
+            for local in locals
+        ],
+    )
+    return write_speakers(session / SPEAKERS_NAME_TEMPLATE.format(source=source), document)
+
+
 def _write_mixed_session(tmp_path: Path) -> Path:
     """造一个**混合形状**的场次目录：`mic` 两条稿都在、`loopback` 只有会中稿。
 
@@ -164,7 +195,7 @@ def _write_mixed_session(tmp_path: Path) -> Path:
 
 
 def test_render_fills_every_placeholder_and_no_braces_remain() -> None:
-    """六处占位符全被填掉，渲染完的文本里没有剩下的 `{{…}}`。"""
+    """七处占位符全被填掉，渲染完的文本里没有剩下的 `{{…}}`。"""
     text = render_prompt(_listing(_input()), TEMPLATE)
 
     assert "{{" not in text and "}}" not in text
@@ -248,14 +279,15 @@ def test_render_rejects_an_empty_template_text() -> None:
         render_prompt(_listing(_input()), "   ")
 
 
-def test_placeholder_names_are_the_five_plus_mode() -> None:
-    """认识的名字就是这六个（phase2 的模板按它填）。"""
+def test_placeholder_names_are_the_six_plus_phase_body() -> None:
+    """认识的名字就是这七个（真模板按它填；`{{SPEAKER_NAMES}}` 是人名节点 91b6752e 加的）。"""
     assert PLACEHOLDER_NAMES == (
         "SESSION_DIR",
         "MODE",
         "MODE_NOTE",
         "INPUTS",
         "MAX_SEGMENTS",
+        "SPEAKER_NAMES",
         "PHASE_BODY",
     )
 
@@ -617,9 +649,9 @@ def test_main_reports_a_missing_template(tmp_path: Path, capsys: pytest.CaptureF
 
 
 def test_the_real_template_names_every_placeholder_the_renderer_knows() -> None:
-    """真模板里那五处必须逐处出现的占位符都在，正文标记也齐。
+    """真模板里那六处必须逐处出现的占位符都在，正文标记也齐。
 
-    第六处 `{{PHASE_BODY}}` 可以写在两块标记之间（渲染时就地换成正文），也可以整处不写
+    第七处 `{{PHASE_BODY}}` 可以写在两块标记之间（渲染时就地换成正文），也可以整处不写
     —— 标记块里的正文本身就是完整的一份正文。真模板走的是后一条：标记齐、正文在标记之间。
     """
     text = DEFAULT_TEMPLATE.read_text(encoding="utf-8")
@@ -922,8 +954,8 @@ def test_a_template_without_the_phase_body_token_renders_the_whole_body() -> Non
     assert PHASE_BODY_BEGIN not in text and PHASE_BODY_END not in text
 
 
-def test_the_five_required_placeholders_are_still_enforced_without_the_sixth() -> None:
-    """**M2**：可以省略的只有 `{{PHASE_BODY}}`；其余五处缺一处照样抛错。"""
+def test_the_six_required_placeholders_are_still_enforced_without_the_seventh() -> None:
+    """**M2**：可以省略的只有 `{{PHASE_BODY}}`；其余六处缺一处照样抛错。"""
     without_token = TEMPLATE.replace("{{PHASE_BODY}}", "")
     assert render_prompt(_listing(_input()), without_token)
 
@@ -936,8 +968,8 @@ def test_the_five_required_placeholders_are_still_enforced_without_the_sixth() -
             render_prompt(_listing(_input()), missing)
 
 
-def test_the_real_template_says_the_sixth_placeholder_may_be_left_out() -> None:
-    """**M2**：真模板里把这条口径写给人看（后来人才不会照着「六处都要在」去补一个 token）。
+def test_the_real_template_says_the_optional_placeholder_may_be_left_out() -> None:
+    """**M2**：真模板里把这条口径写给人看（后来人才不会照着「七处都要在」去补一个 token）。
 
     那句话写在**正文标记之前**：标记块里是正文本身，说明句得落在它外面。
     它点名的占位符写成 HTML 实体（`&#123;&#123;PHASE_BODY&#125;&#125;`）——模板源码里
@@ -1244,3 +1276,133 @@ def test_the_real_template_names_chunk_paths_in_the_new_layout() -> None:
     assert "这一路在场的每一份稿各自照它 `chunks` 那一格给" in text
     assert "working/<source>/chunks/" not in text, "旧布局的块目录位置不残留"
     assert "working/<source>/00_index.md" not in text, "旧布局的区间表位置不残留"
+
+
+# ---------------------------------------------------------------------------
+# 十二、机主确认过的人名（`{{SPEAKER_NAMES}}`，节点 `91b6752e`）
+#
+# 「改完写回纪要里那张表」的落法是**喂提示词**（R10 第四条：同一场以后再出纪要自动带上）：
+# 人名表渲染进附录说明，模型照它把那一格抄成机主确认过的名字。这一节钉三条：
+#
+#   - 没有确认过的名字时**如实**渲染空态一句（不是空串、也不是编一份空表），
+#     与 `{{MODE_NOTE}}`「这一路分不出个人」的既有口径摆在一起不吵架；
+#   - 确认过的名字照抄进表（确认不是推断，档位说明管不到它）；
+#   - 人名表坏了不挡渲染：读不出就落空态，提示词照常交出去。
+# ---------------------------------------------------------------------------
+
+
+def test_the_rendered_prompt_says_no_confirmed_names_by_default(tmp_path: Path) -> None:
+    """没有人名表的场次：`{{SPEAKER_NAMES}}` 渲染成如实的空态一句，一个 `{{…}}` 都不剩。"""
+    session = _write_session(tmp_path)
+    text = render_session_prompt(session)
+
+    assert "机主还没有确认过任何编号的人名" in text
+    assert "全部从上下文推断" in text
+    assert "{{SPEAKER_NAMES}}" not in text
+    assert "{{" not in text and "}}" not in text
+
+
+def test_the_rendered_prompt_carries_the_confirmed_names(tmp_path: Path) -> None:
+    """改过名之后再渲染：确认过的名字进了提示词那张表，表形与附录那张对齐。"""
+    session = _write_session(tmp_path)
+    _write_speakers_artifact(session, "loopback", ["S01", "S02"])
+    set_speaker_name(session, "loopback:S01", "老王")
+
+    text = render_session_prompt(session)
+
+    assert "| loopback（远端） | S01 | 老王 |" in text
+    assert "老王" in text
+    # 没确认过的编号不进这张表（表里只存起过名字的编号）
+    assert "| loopback（远端） | S02" not in text
+    assert "照抄" in text, "口径要写清：表里的名字逐字照抄，推断只管表里没有的编号"
+    assert "机主还没有确认过" not in text
+    assert "{{" not in text and "}}" not in text
+
+
+def test_a_road_itself_can_be_named_when_there_is_no_clustering(tmp_path: Path) -> None:
+    """完成判定的第 3 条读数：只有会中稿的场次，身份就是路本身，照样能起名。"""
+    session = _write_session(tmp_path, offline=False)
+    set_speaker_name(session, "loopback", "小李")
+
+    text = render_session_prompt(session)
+
+    assert "| loopback（远端） | — | 小李 |" in text
+    assert "{{" not in text and "}}" not in text
+
+
+def test_rendering_again_after_a_rename_reflects_the_new_name(tmp_path: Path) -> None:
+    """完成判定的第 1 条读数：改一个编号的名字，重渲出来的提示词跟着变。"""
+    session = _write_session(tmp_path)
+    _write_speakers_artifact(session, "loopback", ["S01"])
+    set_speaker_name(session, "loopback:S01", "老王")
+    before = render_session_prompt(session)
+    assert "| loopback（远端） | S01 | 老王 |" in before
+
+    set_speaker_name(session, "loopback:S01", "老王头")
+    after = render_session_prompt(session)
+
+    assert "| loopback（远端） | S01 | 老王头 |" in after
+    assert "| loopback（远端） | S01 | 老王 |" not in after.replace("老王头", ""), (
+        "旧名字不该再出现在表里（同一键覆盖）"
+    )
+
+
+def test_a_broken_roster_renders_the_honest_empty_section(tmp_path: Path) -> None:
+    """人名表坏了（不是合法 JSON）：渲染不抛错、如实落空态——读侧只做结构解析、不挡出纪要。"""
+    session = _write_session(tmp_path)
+    (session / NAMES_FILE_NAME).write_text("{ 不是 json", encoding="utf-8")
+
+    text = render_session_prompt(session)
+
+    assert "机主还没有确认过任何编号的人名" in text
+    assert "{{" not in text and "}}" not in text
+
+
+def test_render_prompt_without_the_speaker_names_argument_fills_the_empty_text() -> None:
+    """`render_prompt()` 不碰盘：不传 `speaker_names` 时按空态正文填，不留没填的占位符。"""
+    text = render_prompt(_listing(_input()), TEMPLATE)
+
+    assert "机主还没有确认过任何编号的人名" in text
+    assert "{{SPEAKER_NAMES}}" not in text
+    assert "{{" not in text and "}}" not in text
+
+
+def test_render_prompt_carries_a_passed_speaker_names_section() -> None:
+    """调用方从盘上取好了递进来的正文原样落进占位处（纯渲染的另一半）。"""
+    section = ">> 这一行是调用方递进来的人名表"
+
+    text = render_prompt(_listing(_input()), TEMPLATE, speaker_names=section)
+
+    assert section in text
+
+
+def test_speaker_names_section_prints_only_the_confirmed_rows() -> None:
+    """表格只印确认过的行：路 + 编号 + 人名三格与附录那张表对齐，没起名的编号不出现。"""
+    rows = [
+        {"key": "mic:S01", "source": "mic", "label": "本地", "name": "老王", "segments": 3},
+        {"key": "mic:S02", "source": "mic", "label": "本地", "name": None, "segments": 1},
+        {
+            "key": "loopback",
+            "source": "loopback",
+            "label": "远端",
+            "name": "小李",
+            "segments": None,
+        },
+    ]
+
+    text = speaker_names_section(rows)
+
+    assert "| mic（本地） | S01 | 老王 |" in text
+    assert "| loopback（远端） | — | 小李 |" in text
+    assert "S02" not in text, "没起过名的编号不进这张表"
+    assert "照抄" in text and "猜不出的" in text
+
+
+def test_speaker_names_section_is_the_honest_empty_text_without_names() -> None:
+    """一行确认过的名字都没有 → 恰好是空态正文（不是空串、不是一张空表）。"""
+    rows = [
+        {"key": "mic:S01", "source": "mic", "label": "本地", "name": None, "segments": 3},
+    ]
+
+    assert speaker_names_section(rows) == SPEAKER_NAMES_EMPTY
+    assert speaker_names_section([]) == SPEAKER_NAMES_EMPTY

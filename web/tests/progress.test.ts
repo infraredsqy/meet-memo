@@ -81,6 +81,7 @@ function status(
     segments: [],
     has_offline: false,
     post: null,
+    speakers: [],
     offline: {
       ledger: 'meeting_offline_progress.jsonl',
       state: 'idle',

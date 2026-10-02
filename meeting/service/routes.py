@@ -1,14 +1,14 @@
 """九条路由的**唯一注册点**（phase2 §3.7 / §3.8 / §3.9 / §3.11 / §3.12；`1987cb20` phase2 加 `summaries`；
 工作台收编节点 e2f6166b 加 `sessions` / `dirs` 两只读端点与 `workspace_open` / `workspace_remove` 两动作；
 会后进度读数节点 `a9affaa8` 加 `sessions/{dir}` 那只单场状态端点；设置抽屉节点 `311f84f5` 加
-`devices` 那只设备清单端点）。
+`devices` 那只设备清单端点；人名节点 `91b6752e` 加 `speaker_rename` 那只改名动作）。
 
 全应用只在这里注册一次：
 
   - `GET /api/state`（完整版，body 就是 `to_dict()` 的产出）；
   - `GET /api/events`（SSE：`snapshot` 先行 + `state` / `levels` / `transcript` 三通道）；
   - `GET /api/heartbeat`（完整版，`service` 字面量必须有）；
-  - `POST /api/actions`（信封 + 十四个动作名 + `code` 表）；
+  - `POST /api/actions`（信封 + 十五个动作名 + `code` 表）；
   - `GET /api/summaries`（本场按过的、成功产出的那几次会中总结；读内存，不落文件）；
   - `GET /api/sessions`（工作区注册表：按路径去重的那一份"我这些会"，读盘上注册表文件）；
   - `GET /api/sessions/{id}`（单场状态：这一场此刻跑到哪一档、会后离线跑过几块 / 共几块、
@@ -222,7 +222,7 @@ async def _api_devices(request: Request) -> Response:
 
 
 async def _api_actions(request: Request) -> Response:
-    """动作端点：信封 + 七个动作名 + `code` 表（中间件已校验两个必需请求头）。"""
+    """动作端点：信封 + 十五个动作名 + `code` 表（中间件已校验两个必需请求头）。"""
     runtime = _runtime_of(request)
     if runtime is None:  # pragma: no cover - 应用未装配
         return JSONResponse({"error": "runtime 未装配"}, status_code=500)
@@ -327,6 +327,17 @@ async def _api_actions(request: Request) -> Response:
             )
             return JSONResponse(
                 {"ok": True, "revision": runtime.revision, "post": started}
+            )
+        elif action == "speaker_rename":
+            # 说话人改名（R10 第四条 / R30）：只写这一场目录里的人名表（不拉任何离线/纪要、
+            # 不动快照），成功体在通用信封上多一个 `speaker` 键——写了哪一场、哪一个键、
+            # 现在叫什么；界面改完当场生效走的是重问单场状态那一跳。
+            return JSONResponse(
+                {
+                    "ok": True,
+                    "revision": runtime.revision,
+                    "speaker": runtime.speaker_rename(args),
+                }
             )
     except ActionError as exc:
         return _error_response(exc)

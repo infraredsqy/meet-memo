@@ -3,6 +3,7 @@ import {
   actionOkSchema,
   postOkSchema,
   settingsUpdateOkSchema,
+  speakerOkSchema,
   summarizeOkSchema,
   workspaceOkSchema,
   type ActionArgs,
@@ -11,6 +12,7 @@ import {
   type ErrorCode,
   type PostOk,
   type SettingsUpdateOk,
+  type SpeakerOk,
   type SummarizeOk,
   type WorkspaceOk,
 } from '../contract';
@@ -80,14 +82,16 @@ export class ActionProtocolError extends Error {
 
 /**
  * 动作结果：成功给 `revision`（`settings_update` 另给两个数组、`summarize` 另给一个
- * `summary` 子对象、会后那两个按钮另给一个 `post` 子对象），失败按 `code` 分派。
+ * `summary` 子对象、会后那两个按钮另给一个 `post` 子对象、改名另给一个 `speaker` 子对象），
+ * 失败按 `code` 分派。
  */
 export type ActionResult =
   | ({ kind: 'ok' } & ActionOk)
   | ({ kind: 'settings_update' } & SettingsUpdateOk)
   | ({ kind: 'summarize' } & SummarizeOk)
   | ({ kind: 'post' } & PostOk)
-  | ({ kind: 'workspace' } & WorkspaceOk);
+  | ({ kind: 'workspace' } & WorkspaceOk)
+  | ({ kind: 'speaker' } & SpeakerOk);
 
 export interface PostActionOptions {
   /** 覆盖 fetch（测试注入用）。 */
@@ -111,10 +115,10 @@ function parseEnvelope(status: number, text: string): ActionResult {
 
   const body = parsed.data;
   if (body.ok) {
-    // 三份「多几个键」的成功体先认：`summarize` 多一个 `summary`、`settings_update`
-    // 多两个数组、`workspace_open` / `workspace_remove` 多一个 `workspace`。四条分支
-    // 各自的 schema 都是 `.strict()`，因此认错顺序也不会误收
-    // （带 `summary` 的体过不了另几条，反之亦然）。
+    // 四份「多几个键」的成功体先认：`summarize` 多一个 `summary`、`settings_update`
+    // 多两个数组、`workspace_open` / `workspace_remove` 多一个 `workspace`、
+    // `speaker_rename` 多一个 `speaker`。各条分支的 schema 都是 `.strict()`，
+    // 因此认错顺序也不会误收（带 `summary` 的体过不了另几条，反之亦然）。
     const summary = summarizeOkSchema.safeParse(body);
     if (summary.success) {
       return { kind: 'summarize', ...summary.data };
@@ -126,6 +130,10 @@ function parseEnvelope(status: number, text: string): ActionResult {
     const post = postOkSchema.safeParse(body);
     if (post.success) {
       return { kind: 'post', ...post.data };
+    }
+    const speaker = speakerOkSchema.safeParse(body);
+    if (speaker.success) {
+      return { kind: 'speaker', ...speaker.data };
     }
     const settings = settingsUpdateOkSchema.safeParse(body);
     if (settings.success) {

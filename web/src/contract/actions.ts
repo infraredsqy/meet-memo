@@ -187,6 +187,27 @@ export const postOkSchema = z
   .strict();
 
 /**
+ * 说话人改名（`speaker_rename`，4.11）的成功体：通用信封 + 一个 `speaker` 键。
+ *
+ * 回执写的是「写了哪一场、哪一个键、现在叫什么」。`revision` 保持现值——这只动作
+ * 改的只有这一场目录里的人名表，快照一个字不动；界面上当场生效走重问单场状态那一跳
+ * （`sessions.ts` 的 `sessionStatusSchema.speakers`）。
+ */
+export const speakerOkSchema = z
+  .object({
+    ok: z.literal(true),
+    revision: z.number().int(),
+    speaker: z
+      .object({
+        dir: z.string(),
+        key: z.string(),
+        name: z.string(),
+      })
+      .strict(),
+  })
+  .strict();
+
+/**
  * 逐档 `detail` 形状（4.4）。`detail` **恒是对象** —— 没有补充信息时给**空对象 `{}`**，
  * 所以基档就是 `{}`，各档在它上面补键。补出来的键一律 `optional()`：
  * `capture_unavailable` 有三档、`invalid_setting` 有四档，界面按**有哪个键就显示哪个键**来画。
@@ -290,11 +311,12 @@ export const actionErrorSchema = z
   })
   .strict();
 
-/** 应答体：成功或失败，二选一。`workspace_open` / `workspace_remove` 的成功体带 `workspace` 键（4.8）。 */
+/** 应答体：成功或失败，二选一。`workspace_open` / `workspace_remove` 的成功体带 `workspace` 键、`speaker_rename` 带 `speaker` 键（4.8 / 4.11）。 */
 export const actionBodySchema = z.union([
   summarizeOkSchema,
   workspaceOkSchema,
   postOkSchema,
+  speakerOkSchema,
   settingsUpdateOkSchema,
   actionOkSchema,
   actionErrorSchema,
@@ -316,6 +338,7 @@ export const actionFixtureSchema = z
 export type ActionRequest = z.infer<typeof actionRequestSchema>;
 export type ActionOk = z.infer<typeof actionOkSchema>;
 export type PostOk = z.infer<typeof postOkSchema>;
+export type SpeakerOk = z.infer<typeof speakerOkSchema>;
 export type SettingsUpdateOk = z.infer<typeof settingsUpdateOkSchema>;
 export type SummarySections = z.infer<typeof summarySectionsSchema>;
 export type SummarizeResult = z.infer<typeof summarizeResultSchema>;

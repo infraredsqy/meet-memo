@@ -138,13 +138,14 @@ def test_action_names_and_codes_are_the_frozen_ones():
     """动作名清单与 `code` 表逐字冻结（`reprobe` 是 `dca4539b` 加的那一名、`summarize` 与它那两个
     `code` 是 `1987cb20` phase2 加的那一档，其余不动）。`workspace_open` / `workspace_remove`
     两只是工作台收编节点 `e2f6166b` 加的；`post_offline` / `post_minutes` 是会后两个按钮
-    （`05a48b6a`）；末尾 `pause` / `resume` / `set_source` 是暂停与会中开关某一路那三个动作
-    （`10770b41`）。"""
+    （`05a48b6a`）；`pause` / `resume` / `set_source` 是暂停与会中开关某一路那三个动作
+    （`10770b41`）；末尾 `speaker_rename` 是人名节点（`91b6752e`）加的那一只。"""
     assert ACTION_NAMES == (
         "start", "stop", "mute_session", "settings_update", "reprobe", "dev_inject",
         "summarize", "workspace_open", "workspace_remove",
         "post_offline", "post_minutes",
         "pause", "resume", "set_source",
+        "speaker_rename",
     )
     assert set(ACTION_CODES) == {
         "already_recording", "draining", "capture_unavailable", "not_recording",

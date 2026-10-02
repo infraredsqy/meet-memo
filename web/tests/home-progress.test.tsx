@@ -115,6 +115,7 @@ function status(offline: Partial<SessionStatus['offline']>, post: SessionStatus[
     segments: [],
     has_offline: false,
     post,
+    speakers: [],
     offline: {
       ledger: 'meeting_offline_progress.jsonl',
       state: 'idle',

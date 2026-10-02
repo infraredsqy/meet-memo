@@ -13,11 +13,12 @@
   - **降级档要写在提示词里**（`{{MODE_NOTE}}`）：只喂一条时明写「本次只有 X 稿」，
     读到这份提示词的模型因此知道这一档本来就分不出个人，附录里该如实写这句话。
 
-模板占位符一共六个，其中**五处必须逐处写在模板里**：
-`{{SESSION_DIR}}` / `{{MODE}}` / `{{MODE_NOTE}}` / `{{INPUTS}}` / `{{MAX_SEGMENTS}}`。
-第六处 `{{PHASE_BODY}}` **可以省略**：五阶段正文写在两块标记（`PHASE_BODY_BEGIN` /
-`PHASE_BODY_END`）之间，**标记块本身就是正文的落点**——渲染时把整块就地换成正文，
-正文因此只有一份可维护，不必在别处再放一个 `{{PHASE_BODY}}`；写在别处时才填同一份正文。
+模板占位符一共七个，其中**六处必须逐处写在模板里**：
+`{{SESSION_DIR}}` / `{{MODE}}` / `{{MODE_NOTE}}` / `{{INPUTS}}` / `{{MAX_SEGMENTS}}` /
+`{{SPEAKER_NAMES}}`（机主确认过的「编号 → 人名」表，节点 `91b6752e`；读不出就如实渲染
+「没有确认过的名字」，不挡渲染）。第七处 `{{PHASE_BODY}}` **可以省略**：五阶段正文写在两块标记
+（`PHASE_BODY_BEGIN` / `PHASE_BODY_END`）之间，**标记块本身就是正文的落点**——渲染时把整块
+就地换成正文，正文因此只有一份可维护，不必在别处再放一个 `{{PHASE_BODY}}`；写在别处时才填同一份正文。
 
 `{{SESSION_DIR}}` 填的是**模型的工作目录那一点**（`.`）：提示词里给模型看的路径一律相对场次目录，
 `working/inputs.json` 里那一格 `session_dir` 才是给程序读的绝对路径，两者不要混。
@@ -43,7 +44,7 @@ import argparse
 import json
 import re
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -57,17 +58,19 @@ from meeting.minutes.chunk import (
     mode_for,
 )
 from meeting.minutes.lines import count_lines
+from meeting.speaker_names import identity_rows
 
 #: 模板的默认落点（仓库根下的 `prompts/meeting_final.md`，phase2 写）
 DEFAULT_TEMPLATE = Path(__file__).resolve().parents[2] / "prompts" / "meeting_final.md"
 
-#: 引擎认识的全部占位符（模板里出现这五个之外的花括号内容一律判错）
+#: 引擎认识的全部占位符（模板里出现这些之外的花括号内容一律判错）
 PLACEHOLDER_NAMES: tuple[str, ...] = (
     "SESSION_DIR",
     "MODE",
     "MODE_NOTE",
     "INPUTS",
     "MAX_SEGMENTS",
+    "SPEAKER_NAMES",
     "PHASE_BODY",
 )
 
@@ -295,6 +298,66 @@ def _kinds_of(kind: str) -> tuple[str, ...]:
     raise PromptTemplateError(f"稿型只认 {INPUT_KINDS}，收到 {kind!r}")
 
 
+#: `{{SPEAKER_NAMES}}` 的空态正文：盘上没有可用的确认记录时**如实**渲染这一段，
+#: 与 `{{MODE_NOTE}}` 的「这一路分不出个人」同一口径——没有确认过的名字时，
+#: 附录里的人名照旧全部由模型推断。
+SPEAKER_NAMES_EMPTY = (
+    "> 机主还没有确认过任何编号的人名（这一场目录里没有这份记录，或一个名字都还没起）："
+    "附录里的人名照旧**全部从上下文推断**、逐行标把握，猜不出的照旧列进「猜不出的」；"
+    "某一路分不出个人时照档位说明如实写「这一路分不出个人」。"
+)
+
+
+def speaker_names_section(rows: Sequence[Mapping[str, object]]) -> str:
+    """身份集 → `{{SPEAKER_NAMES}}` 的正文（**纯函数**，不碰盘）。
+
+    `rows` 是 `meeting.speaker_names.identity_rows()` 那个形状（每行 `key` / `source` /
+    `label` / `name` / `segments` 五格）。**只印确认过的名字**（`name` 非空的行）：
+    表是机主逐条确认的记录，附录那一格照抄它，不作任何推断；表里没有的编号照旧
+    推断。行形与附录那张表对齐（路 + 编号 + 人名），模型照抄时不许再猜一次格。
+
+    没有任何确认过的名字时渲染 `SPEAKER_NAMES_EMPTY`（如实一句，不是空字符串——
+    占位符渲染完不许留下空白段落让模型猜这里本来该有什么）。
+    """
+    named = [row for row in rows if str(row.get("name") or "").strip()]
+    if not named:
+        return SPEAKER_NAMES_EMPTY
+    lines = [
+        "> 机主在界面上确认过的人名（下面这张表由程序照目录里的记录渲染，**照抄、不推断**；"
+        "没列出的编号不在这张表里）：",
+        ">",
+        "> | 路 | 编号 | 人名 |",
+        "> | --- | --- | --- |",
+    ]
+    for row in named:
+        key = str(row.get("key") or "")
+        source = str(row.get("source") or "")
+        label = str(row.get("label") or source)
+        local = key.partition(":")[2] if ":" in key else "—"
+        name = str(row.get("name") or "").strip()
+        lines.append(f"> | {source}（{label}） | {local} | {name} |")
+    lines.extend(
+        [
+            ">",
+            "> 写附录时：表里有的编号，人名**照抄「人名」那一列**、把握写「高」、"
+            "依据写「机主在界面上确认」——这是确认不是推断，档位说明里「这一路分不出个人、"
+            "不要为任何人名给出推断」说的是推断，管不到机主自己确认过的名字；"
+            "表里没有的编号照旧从上下文推断、标把握，猜不出的照旧列进「猜不出的」。"
+            "两路各自的编号不合并成一行。",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def speaker_names_text_for_session(session_dir: str | Path) -> str:
+    """从盘上取这一场的身份集与确认过的名字，拼 `{{SPEAKER_NAMES}}` 的正文。
+
+    读侧只做结构解析：人名表读不出（缺席或坏了）就如实渲染 `SPEAKER_NAMES_EMPTY`，
+    **不抛错、不挡渲染**（`meeting.speaker_names` 的读方口径）。
+    """
+    return speaker_names_section(identity_rows(session_dir))
+
+
 def build_inputs_text(listing: InputsListing) -> str:
     """把「有哪几条输入、每条几行、分几块、块文件在哪」拼成一段清单。
 
@@ -403,12 +466,18 @@ def render_prompt(
     *,
     max_segments: int = DEFAULT_MAX_SEGMENTS,
     template: object = "<内存里的模板>",
+    speaker_names: str | None = None,
 ) -> str:
     """把清单与档位填进模板，返回提示词全文。
 
-    缺任何一样都抛 `PromptTemplateError`，绝不交出半份提示词：**五处**占位符必须逐处出现
+    缺任何一样都抛 `PromptTemplateError`，绝不交出半份提示词：**六处**占位符必须逐处出现
     （`{{PHASE_BODY}}` 可以省略，正文由两块标记就地替换，见模块头），
     某条输入的转写路径为空、`max_segments` 不是正整数同样当场拦下。
+
+    `speaker_names` 是 `{{SPEAKER_NAMES}}` 的正文：**本函数不碰盘**（纯渲染），调用方
+    从盘上取好了递进来（`render_session_prompt()` 走 `speaker_names_text_for_session()`）；
+    不传时按「没有确认过的名字」的空态正文填（`SPEAKER_NAMES_EMPTY`），照样是完整的
+    一段话，绝不留下一个没填的占位符。
     """
     if listing.mode not in MODES:
         raise PromptTemplateError(f"档位只认 {MODES}，收到 {listing.mode!r}")
@@ -440,7 +509,7 @@ def render_prompt(
             f"模板里有对不上号的占位符 {sorted(set(unknown))}（认识的是 {tokens}）：{template}"
         )
     # `{{PHASE_BODY}}` 允许省略：两块标记之间的正文本身就是完整的一份正文，标记块就是它的落点。
-    # 其余五处必须逐处写出来，缺一处就说明模板还没写完（省略 `{{PHASE_BODY}}` 不等于少写正文——
+    # 其余六处必须逐处写出来，缺一处就说明模板还没写完（省略 `{{PHASE_BODY}}` 不等于少写正文——
     # 真模板走的就是这一条，见模块头与 `prompts/meeting_final.md` 顶部那段说明）。
     for name in PLACEHOLDER_NAMES:
         if name == "PHASE_BODY":
@@ -459,6 +528,7 @@ def render_prompt(
         "MODE_NOTE": mode_note_text(listing.mode, listing.kinds_per_source()),
         "INPUTS": build_inputs_text(listing),
         "MAX_SEGMENTS": str(max_segments),
+        "SPEAKER_NAMES": SPEAKER_NAMES_EMPTY if speaker_names is None else speaker_names,
     }
     for name in PLACEHOLDER_NAMES:
         if name != "PHASE_BODY":
@@ -503,6 +573,7 @@ def render_session_prompt(
         template_text,
         max_segments=max_segments,
         template=template,
+        speaker_names=speaker_names_text_for_session(session_dir),
     )
 
 
@@ -652,6 +723,7 @@ __all__ = [
     "PHASE_BODY_END",
     "PLACEHOLDER_NAMES",
     "PLACEHOLDER_RE",
+    "SPEAKER_NAMES_EMPTY",
     "SPEAKER_SHAPE_NOTES",
     "InputsListing",
     "PromptInput",
@@ -665,4 +737,6 @@ __all__ = [
     "render_prompt",
     "render_session_prompt",
     "shape_of",
+    "speaker_names_section",
+    "speaker_names_text_for_session",
 ]

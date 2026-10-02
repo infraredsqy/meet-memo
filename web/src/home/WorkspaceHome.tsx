@@ -44,6 +44,7 @@ import {
   postButtonsView,
   postIdleNote,
 } from './post';
+import { SPEAKER_RENAME_ACTION, duplicateNameHolders, namesRows, type NamesRowView } from './names';
 import { failureFrom, type ActionFailureView } from '../failure';
 import type { DirsResponse, SessionRow, SessionStatus, SessionsResponse } from '../contract';
 
@@ -188,6 +189,109 @@ function DirPicker({
 }
 
 /**
+ * 一只改名字的弹窗（人名节点 `91b6752e`，R10 第四条 / R30）：一行一个身份
+ * （路标签 + 编号 + 现名/待确认），输入框 + 确认，动作回包即重问单场状态（当场生效）。
+ *
+ * 身份读数来自服务（单场状态的 `speakers` 一格），名字跟着这一场的目录走——界面
+ * 只递话，落盘在服务侧那一半。两个编号叫同一个名合法：撞名时提示一句
+ * 「编号是分开的，可以重名」，提交照走（ui-design §5.2 的既有口径）；这句话只在
+ * 动作**成功之后**才说——失败那一档弹窗不留成功话术（review-1 m3）。
+ */
+function SpeakerNamesDialog({
+  rows,
+  busy,
+  onRename,
+  onClose,
+}: {
+  rows: NamesRowView[];
+  busy: boolean;
+  /** 确认一颗：打改名动作 + 重问单场状态；失败画在首页的失败块，弹窗只清提示、收忙。 */
+  onRename: (key: string, name: string) => Promise<void>;
+  onClose: () => void;
+}): ReactNode {
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [pending, setPending] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+
+  const confirmRow = (row: NamesRowView): void => {
+    const name = (drafts[row.key] ?? '').trim();
+    if (!name) {
+      setNote('先给这一行写一个名字；不想起就关掉这一窗（跳过 = 不起名）。');
+      return;
+    }
+    setPending(row.key);
+    void onRename(row.key, name).then(
+      () => {
+        // 撞名提示挪进成功分支（review-1 m3）：动作结果落地之前不冒「已提交」。
+        setNote(
+          duplicateNameHolders(rows, row.key, name).length > 0
+            ? '编号是分开的，可以重名；已照你写的名字提交。'
+            : null,
+        );
+        setPending(null);
+        setDrafts((current) => ({ ...current, [row.key]: '' }));
+      },
+      () => {
+        // 失败清掉撞名提示、不留成功话术：失败归首页的失败块如实说（review-1 m3）。
+        setNote(null);
+        setPending(null);
+      },
+    );
+  };
+
+  return (
+    <div className="dlg__layer" role="presentation">
+      <div className="dlg" role="dialog" aria-modal="true" aria-label="说话人名字">
+        <div className="dlg__title">说话人名字</div>
+        <p className="hint">
+          名字跟着这一场的目录走，下一次出纪要时附录里那一格照这里确认过的名字写；编号带路，两路的「1 号」各是各的。
+        </p>
+        {rows.length === 0 && (
+          <p className="empty">这一场盘上还没有可起名的身份（录过的场次才有本地 / 远端或编号）。</p>
+        )}
+        {rows.map((row) => (
+          <div className="picker__row" key={row.key}>
+            <button className="picker__pick" type="button" onClick={() => confirmRow(row)}>
+              <span className="picker__name num">{row.title}</span>
+              <span className="picker__kind">{row.name ?? '待确认'}</span>
+            </button>
+            <input
+              className="field__input"
+              type="text"
+              value={drafts[row.key] ?? ''}
+              placeholder={row.name ?? '待确认'}
+              aria-label={`${row.title} 的名字`}
+              disabled={pending !== null || busy}
+              onChange={(event) => {
+                const value = event.target.value;
+                setDrafts((current) => ({ ...current, [row.key]: value }));
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') confirmRow(row);
+              }}
+            />
+            <button
+              className="btn btn--small btn--primary"
+              type="button"
+              disabled={pending !== null || busy}
+              onClick={() => confirmRow(row)}
+            >
+              确认
+            </button>
+          </div>
+        ))}
+        {note !== null && <p className="hint">{note}</p>}
+        <div className="dlg__acts">
+          <button className="btn" type="button" disabled={pending !== null} onClick={onClose}>
+            关闭
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
  * 名目 → 挑了之后走哪一档（spec 三情形的唯一出处是 `api/sessions.ts` 的 `probeDecision()`，
  * 这里只转手）。`missing` 名目到不了选择器——`GET /api/dirs` 只摆存在的目录；真到了不走
  * 确认弹窗，显式失败（不可当作可收编入口，见 `openFromPicker`）。
@@ -219,6 +323,8 @@ export function WorkspaceHome({
   const [browseError, setBrowseError] = useState<string | null>(null);
   /** 会后那两个按钮的动作回执（一句话：这一趟已起 / 被拒的原因在失败块里）。 */
   const [postNote, setPostNote] = useState<string | null>(null);
+  /** 说话人名字那只弹窗开没有（R10 第四条：唯一要动手的地方，入口在会后区那一行）。 */
+  const [namesOpen, setNamesOpen] = useState(false);
 
   // -- 会后进度区（R27）：单场读数 + 逐块行 + 展开/收缩 ---------------------
   /** 最近一份单场读数（选中那一场的；换选中就清零，权威照旧在服务侧）。 */
@@ -469,6 +575,27 @@ export function WorkspaceHome({
       });
   };
 
+  /**
+   * 说话人改名（`speaker_rename`，4.11）：打一只动作写这一场目录里的人名表，
+   * 回包后**重问一次单场状态**——`speakers` 一格带上新名字，弹窗当场生效。
+   * 失败画在首页的失败块，并把失败**以拒绝如实交回弹窗**（review-1 m3）——
+   * 弹窗那侧清掉自己的提示、收回忙，不再把成功话术留在失败那一档。
+   */
+  const renameSpeaker = (key: string, name: string): Promise<void> => {
+    if (selection === null) return Promise.resolve();
+    setFailure(null);
+    return postAction(SPEAKER_RENAME_ACTION, { dir: selection, key, name }).then(
+      () => undefined,
+      (error) => {
+        setFailure(failureFrom(error));
+        throw error;
+      },
+    ).then(() => {
+      const dir = selectionRef.current;
+      if (dir !== null) void pollerRef.current?.tick(dir);
+    });
+  };
+
   // -- 选择器换层 -----------------------------------------------------------
 
   const browseInto = (dir: string | null): void => {
@@ -691,6 +818,22 @@ export function WorkspaceHome({
                   <p className="wspane__postline">{post.offlineNotice}</p>
                   {post.why !== null && <p className="wspane__why">{post.why}</p>}
                   {postNote !== null && <p className="wspane__postline">{postNote}</p>}
+                  {/* 说话人名字（R10 第四条）：会后区的一行入口，点开小弹窗当场改名。
+                      这一场还在录 / 收尾没落定 / 目录不在原地时与两个按钮同判按不动。 */}
+                  <p className="wspane__postline">
+                    <button
+                      className="btn btn--small btn--ghost"
+                      type="button"
+                      disabled={busy || post.why !== null}
+                      title={
+                        post.why ??
+                        '给这一场的说话人起名；名字跟着这一场的目录走，下一次出纪要自动带上'
+                      }
+                      onClick={() => setNamesOpen(true)}
+                    >
+                      说话人名字…
+                    </button>
+                  </p>
                   <p className="hint">{postIdleNote()}</p>
                 </div>
               )}
@@ -854,6 +997,15 @@ export function WorkspaceHome({
               });
           }}
           onCancel={() => setConfirm(null)}
+        />
+      )}
+
+      {namesOpen && (
+        <SpeakerNamesDialog
+          rows={namesRows(status)}
+          busy={busy}
+          onRename={renameSpeaker}
+          onClose={() => setNamesOpen(false)}
         />
       )}
     </main>
