@@ -505,8 +505,10 @@ def run_post(
          （`meeting/capture/archive.py` 的 `convert_to_mp3` + `mp3_path_for`），本模块不另写。
       2. **跑离线那一趟**：`offline_runner.run_session(session_dir, engine=engine,
          minutes_launcher=…, force=…, progress=…)` —— **模块属性调用**，好让用例把 `run_session`
-         整个换掉；三个注入参数**一路向下传**（`minutes_launcher` / `force` 落在
-         `_announce_minutes()` 的形参上、`progress` 落在逐块落盘那一条链上，都不落在模块全局上）。
+         整个换掉；注入参数**一路向下传**（`minutes_launcher` / `force` / `announce_minutes`
+         落在 `_announce_minutes()` 的形参上、`progress` 落在逐块落盘那一条链上，都不落在
+         模块全局上）。**`announce_minutes=True` 是人工放行那一格**（隔离闸）：离线链拉起
+         纪要的开关缺省假，只有 `meeting post` 这条人工入口显式传真。
          **逐块进度账在这一条入口上也立起来**：`progress` 缺省时本函数按 `runtime._run_post_offline()`
          同一副样子立一份（场次目录 + `runner.session_id_of()` + `runner.declared_sources()`），
          `run_session()` 每跑完一块就往场次目录里那份 `meeting_offline_progress.jsonl` 上补一行
@@ -675,11 +677,14 @@ def run_post(
                 sources=list(offline_runner.declared_sources(directory)),
             )
         try:
+            # **人工入口显式放行**（隔离闸）：`meeting post` 首跑这一路把 `announce_minutes=True`
+            # 递进离线链的尾巴 —— 纪要那一层只有人工发起才被拉起。
             runner_result = offline_runner.run_session(
                 directory,
                 engine=engine,
                 minutes_launcher=minutes_launcher_lane,
                 force=bool(force),
+                announce_minutes=True,
                 progress=progress,
             )
         except BaseException as exc:  # 离线这一层整个抛出来：如实记，**再原样上抛**
@@ -763,8 +768,9 @@ def _minutes_step_outcome(
         )
     if launcher is not None:
         try:
+            # **人工入口显式放行**（隔离闸）：只补纪要这一路（注入假启动器的形状）同样传真。
             outcome = offline_runner._announce_minutes(
-                directory, launcher=launcher, force=force
+                directory, launcher=launcher, force=force, announce_minutes=True
             )
         except BaseException as exc:  # 纪要这一层炸了不许带走离线那三份产物
             try:
@@ -851,7 +857,12 @@ def _launch_minutes_on_the_product_path(
     if baseline is None:
         baseline = _minutes_baseline(directory)
     try:
-        announce = offline_runner._announce_minutes(directory, force=force)
+        # **人工入口显式放行**（隔离闸）：`meeting post` 对旧场次「缺什么补什么」的这半条
+        # 也走人工那一档，`announce_minutes=True` 经 `_announce_minutes()` 一路递到
+        # `launch(deliver=True)`。
+        announce = offline_runner._announce_minutes(
+            directory, force=force, announce_minutes=True
+        )
     except BaseException as exc:  # 纪要这一层炸了不许带走离线那三份产物
         try:
             _log().exception("会后纪要那一层没能拉起来：%s", directory)

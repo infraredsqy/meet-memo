@@ -47,7 +47,14 @@ from pathlib import Path
 from typing import Any
 
 from meeting.minutes.inputs import write_text_atomic
-from meeting.minutes.status import ARTIFACT_LOG, BRANCH_AUTO, BRANCH_HEADLESS, BRANCH_WEB
+from meeting.minutes.status import (
+    ARTIFACT_LOG,
+    BRANCH_AUTO,
+    BRANCH_HEADLESS,
+    BRANCH_WEB,
+    DeliveryForbidden,
+    ISOLATION_MESSAGE,
+)
 
 #: 纪要的落点（场次目录根）与生成它的那份提示词（工作目录下）
 FINAL_NAME = "meeting_final.md"
@@ -302,11 +309,17 @@ def launch_headless(
     which: Any = None,
     runner: Any = None,
     env: Mapping[str, str] | None = None,
+    allow_dsh: bool = False,
 ) -> LaunchResult:
     """把提示词写到盘上，拉起一个 headless DSH 子进程，再校验产物。
 
     `prompt_text` 是**已经渲染好的**提示词全文（`runner` 从 `prompt.render_session_prompt()`
     拿到它）；本函数把它写进 `working/run_prompt.md`，argv 里只放指过去的那一句话。
+
+    `allow_dsh` 是**默认拒绝**的人工放行参数：不放行（缺省）就在**任何动作之前**当场抛
+    `DeliveryForbidden` —— 目录不建、提示词不写盘、可执行文件不解析、子进程不起。放行标记
+    由 `MinutesHook.launch(deliver=True)` 经 `runner.run()` 下传（两条人工入口才给真）；
+    未来任何代码绕过纪要层直接 import 本函数，也起不来一个 DSH 子进程。
 
     `executable` 缺席时按 `shutil.which("dsh")` 解析（`which` 是解析器的注入点）；
     解析不到**当场**记 `FAILURE_EXECUTABLE_MISSING` 并说明 npm shim 那件事，不尝试拉起。
@@ -315,6 +328,11 @@ def launch_headless(
     产品路径上用真的。四档失败（解析不到 / 退出码非 0 / 产物缺失 / 超时）都在返回值里
     如实回答，**不抛异常** —— 调用方要的是「把这一趟记成 failed + 原因」。
     """
+    if not allow_dsh:
+        raise DeliveryForbidden(
+            f"launch_headless() 被拒：{ISOLATION_MESSAGE}"
+            "（放行参数是 allow_dsh=True，由人工入口经 MinutesHook.launch(deliver=True) 下传）"
+        )
     directory = Path(session_dir)
     if not str(directory):
         raise LaunchError("launch_headless 需要场次目录（收到空值）")
@@ -517,6 +535,7 @@ __all__ = [
     "CHECK_FINAL_EMPTY",
     "CHECK_FINAL_MISSING",
     "CHECK_UNKNOWN_HEADING",
+    "DeliveryForbidden",
     "ENV_CHILD_FLAG",
     "ENV_PERMISSION_MODE",
     "ENV_PYTHON_IO",

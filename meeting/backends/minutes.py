@@ -9,6 +9,9 @@
 
   - `launch(session_dir)` **返回即算启动成功**：活儿交给一条 **daemon 线程**，
     调用方不等它跑完；
+  - **隔离闸在一切之前**：`launch()` 的 `deliver` 参数缺省假 —— 非人工发起（测试、脚本、
+    库调用）在 `mark_running()` 之前就安静跳过（返回一份 `skipped` 账、只留主 log 一行），
+    整个项目与 DSH 隔离，只有 `meeting post` 与「直接出纪要」按钮两条人工入口显式传真；
   - **返回之前先把「这一层在飞」落到盘上**：那一版 `meeting_minutes_status.json`
     （`state = "running"`）由 `meeting/minutes/status.py::mark_running()` 同步写，
     于是「同一场会不会被拉起两个子会话」这件事在**跨进程**下也读得出来 —— 后到的那一趟
@@ -34,12 +37,14 @@ from __future__ import annotations
 import logging
 import threading
 from datetime import datetime
+from typing import Any
 
 #: 「这一层已经在飞」那一档（`meeting/minutes/status.py` 定义，本模块原样转出）：
 #: `launch()` 读到盘上停着一版 `running` 时抛它，调用方据此按拒跑档收场。
 #: 转出它是为了让调用方**不必**自己去 import `meeting.minutes.status`（那一包是重的那一头，
 #: `meeting/offline/runner.py` 的惰性纪律一个字不动）。
 from meeting.minutes.status import AlreadyRunningError  # noqa: F401  (转出给调用方)
+from meeting.minutes.status import ISOLATION_MESSAGE
 
 _log = logging.getLogger("meeting.backends.minutes")
 
@@ -83,8 +88,23 @@ class MinutesHook:
             raise ValueError("claim() 需要场次目录（收到空值）")
         self._mark_running(target, force=False)
 
-    def launch(self, session_dir: str, *, force: bool = False, claimed: bool = False) -> None:
+    def launch(
+        self,
+        session_dir: str,
+        *,
+        force: bool = False,
+        claimed: bool = False,
+        deliver: bool = False,
+    ) -> dict[str, Any] | None:
         """`meeting post` 的离线尾巴与「直接出纪要」按钮调它，**返回即算启动成功**（不等它跑完）。
+
+        `deliver` 是**人工放行标记**（缺省 `False`）：不放行就在 `mark_running()` **之前**
+        当场返回一份 `skipped` 账 —— 不写任何状态文件（绝不留卡在 `running` 的账）、不起线程、
+        不碰 DSH 一步，只在主 log 留一行「纪要层隔离：本次非人工发起，跳过」。整个项目与 DSH
+        隔离：只有 `meeting post`（离线尾巴 / 只补纪要）与工作台「直接出纪要」按钮这两条
+        **人工**入口显式传 `deliver=True`；测试、脚本与库调用缺省全部跳过。放行之后本函数
+        把 `deliver=True` 一路下传给 `minutes.runner.run()`，DSH 触达点（探针 / 交付 /
+        headless 拉起）各自的默认拒绝闸因此逐层放行。
 
         `session_dir` 是这一场的场次目录。**起线程之前先把「这一层在飞」同步写到盘上**
         （`meeting/minutes/status.py::mark_running()`：那一版 `state = "running"` 在本方法
@@ -113,15 +133,25 @@ class MinutesHook:
         if not target:
             # 没有场次目录就没有落点：如实报错（调用方那一层用 try/except 兜住，只记日志）
             raise ValueError("launch() 需要场次目录（收到空值）")
+        if not deliver:
+            # **隔离闸**：非人工发起，`mark_running()` 之前就安静跳过 —— 盘上零状态文件、
+            # 零线程、DSH 零动作（对照 `minutes.hook = null` 时「补纪要安静跳过」那一档）。
+            _log.info("%s（场次目录 %s）", ISOLATION_MESSAGE, target)
+            return {
+                "state": "skipped",
+                "announced": False,
+                "reason": ISOLATION_MESSAGE,
+            }
         if not claimed:
             self._mark_running(target, force=force)
         thread = threading.Thread(
             target=self._run,
-            args=(target,),
+            args=(target, deliver),
             name=THREAD_NAME,
             daemon=True,
         )
         thread.start()
+        return None
 
     def _mark_running(self, session_dir: str, *, force: bool = False) -> None:
         """把「这一层在飞」写到盘上（**函数体内 import**：本模块顶层只有标准库）。
@@ -144,8 +174,12 @@ class MinutesHook:
 
     # -- 线程体 -------------------------------------------------------------
 
-    def _run(self, session_dir: str) -> None:
+    def _run(self, session_dir: str, deliver: bool = True) -> None:
         """线程体：跑完一次纪要生成；**任何异常都落进状态文件，绝不外传**。
+
+        `deliver` 是 `launch()` 递下来的人工放行标记（能进线程体的那一趟闸已放行，
+        缺省按 `True` 算只是兜底），原样下传给 `minutes.runner.run()` —— 探针 / 交付 /
+        headless 拉起三处 DSH 触达点的默认拒绝闸靠它逐层放行。
 
         `runner.run()` 自己会把状态文件落成终态。它整个抛出来时（进程被杀、磁盘写不进去
         这类），这里把状态文件补成 `failed` 并写上原因，那一格于是不会永远停在 `running`。
@@ -153,7 +187,7 @@ class MinutesHook:
         try:
             from meeting.minutes.runner import run
 
-            run(session_dir)
+            run(session_dir, deliver=deliver)
         except BaseException as exc:  # 后台线程的异常没有别的落点，兜到底
             _log.exception("会后纪要生成失败：%s", session_dir)
             self._mark_failed(session_dir, exc)

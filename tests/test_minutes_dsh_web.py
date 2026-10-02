@@ -34,6 +34,12 @@ from tests._dsh_web_fake import (
     request_of,
 )
 
+#: 本文件专门测交付协议与探针 / 交付这两层（假端点起在回环临时端口上，不碰真实 3080）：
+#: 显式请第八道守卫（`tests/conftest.py::_no_real_dsh_delivery`）的豁免夹具 —— 探针 / 交付
+#: 这两个原语在本文件里不打桩、收场也不判红。产品侧那道 `DeliveryForbidden` 默认拒绝闸
+#: 照旧管用：下面的调用一律显式传 `allow_dsh=True`。真端口那一侧由第七道守卫兜着。
+pytestmark = [pytest.mark.usefixtures("allow_dsh_protocol_stubs")]
+
 #: 测试自造的签名密钥（32 字节）与它在凭据文件里的写法
 SECRET = bytes(range(32))
 SECRET_B64 = base64.urlsafe_b64encode(SECRET).decode("ascii").rstrip("=")
@@ -146,7 +152,7 @@ def test_a_short_secret_is_reported(tmp_path: Path) -> None:
 def test_probe_passes_on_a_live_endpoint(credentials: Path) -> None:
     """假端点在跑时探针通过，而且它探的是**只读**的 `session/modelCatalog`。"""
     with FakeDshWeb() as fake:
-        alive, detail = dsh_web.probe(fake.url)
+        alive, detail = dsh_web.probe(fake.url, allow_dsh=True)
 
     assert alive is True
     assert detail == ""
@@ -158,7 +164,7 @@ def test_probe_passes_on_a_live_endpoint(credentials: Path) -> None:
 def test_probe_calls_a_rejected_auth_by_its_name(credentials: Path) -> None:
     """401 时说明里点名 401（不许写成「DSH 没在跑」）。"""
     with FakeDshWeb({"session/modelCatalog": (401, "unauthorized")}) as fake:
-        alive, detail = dsh_web.probe(fake.url)
+        alive, detail = dsh_web.probe(fake.url, allow_dsh=True)
 
     assert alive is False
     assert "401" in detail, detail
@@ -174,7 +180,7 @@ def test_probe_reports_a_dead_port_with_the_address(credentials: Path) -> None:
     dead_port = probe.getsockname()[1]
     probe.close()
 
-    alive, detail = dsh_web.probe(f"http://127.0.0.1:{dead_port}")
+    alive, detail = dsh_web.probe(f"http://127.0.0.1:{dead_port}", allow_dsh=True)
 
     assert alive is False
     assert str(dead_port) in detail, detail
@@ -187,7 +193,7 @@ def test_probe_gives_up_after_one_attempt(credentials: Path) -> None:
     这一条把那个 `attempts=1` 钉住：假端点收第二次请求就说明探针变慢了。
     """
     with FakeDshWeb({"session/modelCatalog": (500, "boom")}) as fake:
-        alive, detail = dsh_web.probe(fake.url)
+        alive, detail = dsh_web.probe(fake.url, allow_dsh=True)
 
     assert alive is False
     assert "只读探针" in detail, detail
@@ -199,7 +205,7 @@ def test_probe_reports_unreadable_credentials(tmp_path: Path, monkeypatch: pytes
     monkeypatch.setattr(dsh_web, "CREDENTIALS_PATH", tmp_path / "nowhere" / ".credentials.yaml")
 
     with FakeDshWeb() as fake:
-        alive, detail = dsh_web.probe(fake.url)
+        alive, detail = dsh_web.probe(fake.url, allow_dsh=True)
 
     assert alive is False
     assert "cookie" in detail, detail
@@ -217,7 +223,7 @@ def test_handoff_walks_the_three_steps_in_order(tmp_path: Path, credentials: Pat
     session.mkdir()
 
     with FakeDshWeb() as fake:
-        result = dsh_web.handoff(session, prompt_text="正文在这里。", url=fake.url)
+        result = dsh_web.handoff(session, prompt_text="正文在这里。", url=fake.url, allow_dsh=True)
 
     assert result.ok is True, result.error
     assert result.failure is None
@@ -246,7 +252,7 @@ def test_handoff_leaves_the_two_on_disk_records(tmp_path: Path, credentials: Pat
     session.mkdir()
 
     with FakeDshWeb() as fake:
-        dsh_web.handoff(session, prompt_text="正文在这里。", url=fake.url)
+        dsh_web.handoff(session, prompt_text="正文在这里。", url=fake.url, allow_dsh=True)
 
     prompt = (session / "working" / "run_prompt.md").read_text(encoding="utf-8")
     log = (session / "working" / "minutes-run.log").read_text(encoding="utf-8")
@@ -264,7 +270,7 @@ def test_handoff_reports_each_step_that_can_break(tmp_path: Path, credentials: P
 
     routes: dict[str, Any] = {"workspace/create": ("error", "workspace/invalid-path", "坏了")}
     with FakeDshWeb(routes) as fake:
-        result = dsh_web.handoff(session, prompt_text="正文。", url=fake.url)
+        result = dsh_web.handoff(session, prompt_text="正文。", url=fake.url, allow_dsh=True)
     assert result.ok is False
     assert result.failure == dsh_web.FAILURE_WORKSPACE
     assert "workspace/invalid-path" in str(result.error)
@@ -275,7 +281,7 @@ def test_handoff_reports_each_step_that_can_break(tmp_path: Path, credentials: P
         "session/create": ("error", "workspace/not-found", "没了"),
     }
     with FakeDshWeb(routes) as fake:
-        result = dsh_web.handoff(session, prompt_text="正文。", url=fake.url)
+        result = dsh_web.handoff(session, prompt_text="正文。", url=fake.url, allow_dsh=True)
     assert result.failure == dsh_web.FAILURE_SESSION
     assert result.workspace_id == "ws-1", "走到哪儿断的照样带上"
     assert fake.methods() == ["workspace/create", "session/create"]
@@ -286,7 +292,7 @@ def test_handoff_reports_each_step_that_can_break(tmp_path: Path, credentials: P
         "session/prompt": ("error", "session/not-found", "没了"),
     }
     with FakeDshWeb(routes) as fake:
-        result = dsh_web.handoff(session, prompt_text="正文。", url=fake.url)
+        result = dsh_web.handoff(session, prompt_text="正文。", url=fake.url, allow_dsh=True)
     assert result.failure == dsh_web.FAILURE_PROMPT
     assert result.session_id == "session-abc"
     assert (session / "working" / "minutes-run.log").read_text(encoding="utf-8").count(
@@ -302,7 +308,7 @@ def test_handoff_reports_a_missing_workspace_id(
     session.mkdir()
 
     with FakeDshWeb({"workspace/create": {"workspace": {}}}) as fake:
-        result = dsh_web.handoff(session, prompt_text="正文。", url=fake.url)
+        result = dsh_web.handoff(session, prompt_text="正文。", url=fake.url, allow_dsh=True)
 
     assert result.failure == dsh_web.FAILURE_WORKSPACE
     assert "workspaceId" in str(result.error)
@@ -318,7 +324,7 @@ def test_a_spent_budget_is_reported_as_timeout(
     monkeypatch.setattr(dsh_web, "_handoff_budget", lambda timeout: 0.0)
 
     with FakeDshWeb() as fake:
-        result = dsh_web.handoff(session, prompt_text="正文。", url=fake.url)
+        result = dsh_web.handoff(session, prompt_text="正文。", url=fake.url, allow_dsh=True)
 
     assert result.failure == dsh_web.FAILURE_TIMEOUT
     assert fake.methods() == []
@@ -344,7 +350,12 @@ def test_the_four_hour_budget_never_becomes_an_http_timeout(
 
     with FakeDshWeb() as fake:
         result = dsh_web.handoff(
-            session, prompt_text="正文。", url=fake.url, timeout=14400, post=watched
+            session,
+            prompt_text="正文。",
+            url=fake.url,
+            timeout=14400,
+            post=watched,
+            allow_dsh=True,
         )
 
     assert result.ok is True, result.error

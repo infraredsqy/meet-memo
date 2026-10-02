@@ -666,15 +666,16 @@ def test_a_second_launch_on_the_same_session_is_refused(
     session = synth_session(tmp_path / "250919")
     arms: list[str] = []
     monkeypatch.setattr(
-        "meeting.minutes.runner.run", lambda session_dir: arms.append(str(session_dir))
+        "meeting.minutes.runner.run",
+        lambda session_dir, **kwargs: arms.append(str(session_dir)),
     )
     hook = minutes_backend.MinutesHook()
 
-    hook.launch(str(session))
+    hook.launch(str(session), deliver=True)
     before = (session / MINUTES_STATUS_NAME).read_text(encoding="utf-8")
 
     with pytest.raises(minutes_backend.AlreadyRunningError):
-        hook.launch(str(session))
+        hook.launch(str(session), deliver=True)
 
     helpers.wait_until(lambda: arms, what="第一趟的后台线程真的跑起来过")
     assert arms == [str(session)], arms
@@ -1151,7 +1152,7 @@ def test_the_minutes_gate_rejects_a_status_file_without_the_required_fields(
     write_final(session)
     launcher = RecordingLauncher()
 
-    outcome = offline_runner._announce_minutes(session, launcher=launcher)
+    outcome = offline_runner._announce_minutes(session, launcher=launcher, announce_minutes=True)
 
     assert launcher.calls == [str(session)], "字段不齐的残文件该按「没跑完」放行"
     assert outcome["hook"] == "launched"
@@ -1173,7 +1174,7 @@ def test_the_minutes_gate_uses_the_launch_module_for_the_final_artifact(
     monkeypatch.setattr(minutes_launch, "check_final_artifact", stand_in)
     launcher = RecordingLauncher()
 
-    outcome = offline_runner._announce_minutes(session, launcher=launcher)
+    outcome = offline_runner._announce_minutes(session, launcher=launcher, announce_minutes=True)
 
     assert seen == [session], "闸该把产物判据交给现成的那一个函数"
     assert outcome["hook"] == "already_done"

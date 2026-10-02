@@ -2902,6 +2902,11 @@ class ServiceRuntime:
         没东西可拉，如实抛出去、由线程体记一条 log —— 动作本身在起线程之前就已经
         把「有没有实现」答完了（见 `post_minutes()`）。
 
+        **`deliver=True` 是人工放行那一格**（隔离闸）：这一趟由用户亲手按「直接出纪要」
+        发起，是真人工入口，放行标记在这里显式给真（`meeting post` 那条链则在
+        `run_session(announce_minutes=True)` 里给真）。其余一切调用缺省假，纪要那一层
+        不会自己跑起来。
+
         `claimed=True`：那一版 claim 已经由 `post_minutes()` 同步认过（m2），这里不再
         重复认一次 —— 否则会读到自己刚落下的 `running`、把这一趟自己拒掉。
         """
@@ -2914,9 +2919,9 @@ class ServiceRuntime:
             )
         _log.info("按「直接出纪要」拉起纪要那一层：%s（%s）", target, resolution.selector)
         if claimed:
-            resolution.implementation.launch(target, claimed=True)
+            resolution.implementation.launch(target, claimed=True, deliver=True)
         else:
-            resolution.implementation.launch(target)
+            resolution.implementation.launch(target, deliver=True)
 
     def post_offline(self, args: dict[str, Any] | None = None) -> dict[str, Any]:
         """`post_offline` 动作：「生成会后精细稿（走离线模型）」。

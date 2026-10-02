@@ -232,6 +232,44 @@ def test_post_minutes_hands_the_session_over_without_running_the_offline_lane(
     assert offline_calls == [], "「直接出纪要」不补跑离线那一层（R9：那一条是可选的）"
 
 
+def test_post_minutes_launches_with_the_human_gate_open(tmp_path, monkeypatch) -> None:
+    """**接线钉死（按钮路径）**：`post_minutes` 动作走到 `launch(..., deliver=True)`。
+
+    隔离闸的放行标记只认两条人工入口，按钮是其中一条：替身实现把 `launch()` 收到的
+    关键字原样记下来，动作本体那一趟必须带着 `deliver=True`（`claimed` 那一格的形状
+    照旧）—— 少了它，纪要那一层就会当场安静跳过，按钮按下去什么都不会发生。
+    """
+    runtime, session_dir, previous = _ended_session(tmp_path, monkeypatch)
+    launches: list[dict] = []
+
+    from meeting.backends import registry as registry_module
+
+    class RecordingMinutesImplementation:
+        def claim(self, target: str) -> None:  # m2：动作本体先同步认一次在飞的账
+            launches.append({"claim": str(target)})
+
+        def launch(self, target: str, **kwargs) -> None:
+            launches.append({"target": str(target), **kwargs})
+
+    class FakeResolution:
+        selector = "fake"
+        has_implementation = True
+        implementation = RecordingMinutesImplementation()
+
+    monkeypatch.setattr(registry_module, "resolve_minutes_hook", lambda *a, **k: FakeResolution())
+    try:
+        started = runtime.post_minutes({})
+        _wait_job_done(runtime)
+    finally:
+        config_module.set_current(previous)
+
+    assert started == {"kind": "minutes", "dir": str(session_dir)}
+    launch_calls = [item for item in launches if "target" in item]
+    assert launch_calls == [
+        {"target": str(session_dir), "claimed": True, "deliver": True}
+    ], launches
+
+
 def test_post_minutes_is_refused_while_the_session_is_still_recording(tmp_path, monkeypatch) -> None:
     """还在录（收尾都没开始）时按「出纪要」→ 409 `draining`。"""
     from meeting.service.runtime import ActionError
@@ -472,7 +510,9 @@ def test_post_minutes_is_refused_when_the_minutes_layer_is_still_in_flight(
 
     from meeting.minutes import runner as minutes_runner
 
-    monkeypatch.setattr(minutes_runner, "run", lambda target: armed.append(str(target)))
+    monkeypatch.setattr(
+        minutes_runner, "run", lambda target, **kwargs: armed.append(str(target))
+    )
     try:
         # 第一趟的现场：盘上那一版停在 running（改之前，动作本体对这一版一个字都不读）
         minutes_status.mark_running(str(session_dir))
@@ -532,7 +572,9 @@ def test_post_minutes_returns_the_claim_when_the_thread_cannot_start(
 
     monkeypatch.setattr(runtime, "_start_post_job", flaky_start)
     monkeypatch.setattr(
-        minutes_runner, "run", lambda target: (armed.append(str(target)), handed.set())
+        minutes_runner,
+        "run",
+        lambda target, **kwargs: (armed.append(str(target)), handed.set()),
     )
     try:
         with pytest.raises(RuntimeError) as info:

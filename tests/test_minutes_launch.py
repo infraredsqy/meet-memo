@@ -50,6 +50,12 @@ from meeting.minutes.launch import (
 )
 from meeting.minutes.prompt import DEFAULT_TEMPLATE
 
+#: 本文件专门测 headless 拉起机制（假可执行文件 + 假子进程，不碰系统上的 `dsh`）：
+#: 显式请第八道守卫（`tests/conftest.py::_no_real_dsh_delivery`）的豁免夹具 —— headless
+#: 拉起这个原语在本文件里不打桩、收场也不判红。产品侧那道 `DeliveryForbidden` 默认拒绝闸
+#: 照旧管用：下面的 `launch_headless(...)` 一律显式传 `allow_dsh=True`。
+pytestmark = [pytest.mark.usefixtures("allow_dsh_protocol_stubs")]
+
 #: 一条指着提示词的 argv（渲染器把它当指针用）
 PROMPT_ARG_RE = re.compile(r"`([^`]+)`")
 
@@ -570,7 +576,9 @@ def test_a_fake_dsh_that_writes_a_final_is_a_success(tmp_path: Path) -> None:
     shim, _script = write_fake_dsh(tmp_path / "bin")
     session = _session(tmp_path)
 
-    result = launch_headless(session, prompt_text="正文在这里。", executable=str(shim))
+    result = launch_headless(
+        session, prompt_text="正文在这里。", executable=str(shim), allow_dsh=True
+    )
 
     assert result.ok is True, result.error
     assert result.failure is None
@@ -588,7 +596,11 @@ def test_a_fake_dsh_that_exits_zero_without_the_final_is_a_failure(tmp_path: Pat
     fake = FakeSubprocess(SCENARIO_NO_FINAL)
 
     result = launch_headless(
-        session, prompt_text="正文在这里。", executable=str(script), runner=fake
+        session,
+        prompt_text="正文在这里。",
+        executable=str(script),
+        runner=fake,
+        allow_dsh=True,
     )
 
     assert result.ok is False
@@ -608,6 +620,7 @@ def test_a_fake_dsh_that_exits_nonzero_is_a_failure(tmp_path: Path) -> None:
         prompt_text="正文在这里。",
         executable=str(script),
         runner=FakeSubprocess(SCENARIO_EXIT_1),
+        allow_dsh=True,
     )
 
     assert result.ok is False
@@ -626,6 +639,7 @@ def test_a_timeout_is_a_failure_with_the_seconds_and_the_prompt(tmp_path: Path) 
         executable=sys.executable,
         timeout=0.2,
         runner=ScriptRunner(script, SCENARIO_SLEEP),
+        allow_dsh=True,
     )
 
     assert result.ok is False
@@ -638,7 +652,9 @@ def test_an_unresolvable_executable_says_npm_only_makes_shims(tmp_path: Path) ->
     """解析不到可执行文件 → 当场失败，错误里写着 Windows 上 npm 只生成 shim 这件事。"""
     session = _session(tmp_path)
 
-    result = launch_headless(session, prompt_text="正文在这里。", which=lambda name: None)
+    result = launch_headless(
+        session, prompt_text="正文在这里。", which=lambda name: None, allow_dsh=True
+    )
 
     assert result.ok is False
     assert result.failure == FAILURE_EXECUTABLE_MISSING
@@ -654,7 +670,11 @@ def test_the_prompt_is_written_to_disk_and_the_argument_points_at_it(tmp_path: P
     fake = FakeSubprocess(SCENARIO_OK)
 
     result = launch_headless(
-        session, prompt_text="这是提示词正文。", executable=str(script), runner=fake
+        session,
+        prompt_text="这是提示词正文。",
+        executable=str(script),
+        runner=fake,
+        allow_dsh=True,
     )
 
     prompt_file = session / "working" / "run_prompt.md"
@@ -678,6 +698,7 @@ def test_every_launch_leaves_a_log_with_the_header(tmp_path: Path) -> None:
         prompt_text="正文在这里。",
         executable=str(script),
         runner=FakeSubprocess(SCENARIO_OK),
+        allow_dsh=True,
     )
 
     log = (session / launch_module.ARTIFACT_LOG).read_text(encoding="utf-8")
@@ -702,6 +723,7 @@ def test_a_real_subprocess_writes_the_final(tmp_path: Path) -> None:
         prompt_text="正文在这里。",
         executable=sys.executable,
         runner=ScriptRunner(script, SCENARIO_OK),
+        allow_dsh=True,
     )
 
     assert result.ok is True, result.error
@@ -719,6 +741,7 @@ def test_a_real_subprocess_reports_a_nonzero_exit(tmp_path: Path) -> None:
         prompt_text="正文在这里。",
         executable=sys.executable,
         runner=ScriptRunner(script, SCENARIO_EXIT_1),
+        allow_dsh=True,
     )
 
     assert result.ok is False

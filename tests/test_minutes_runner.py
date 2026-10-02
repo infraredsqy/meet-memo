@@ -97,6 +97,11 @@ def _digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _dead_probe(url: str, **kwargs) -> tuple[bool, str]:
+    """假探针：DSH web「没在跑」（`run()` 落回 headless 分支，且一次真 TCP 都不发）。"""
+    return False, "用例假探针（DSH web 没在跑）"
+
+
 class RecordingLauncher:
     """假启动器：记下被调用过没有、参数是什么，按场景写不写那份纪要。
 
@@ -170,7 +175,9 @@ def test_a_successful_run_writes_the_inputs_the_chunks_and_the_status(tmp_path: 
     session = _session(tmp_path)
     launcher = RecordingLauncher()
 
-    document = runner_module.run(session, launcher=launcher)
+    document = runner_module.run(
+        session, launcher=launcher, deliver=True, probe=_dead_probe
+    )
 
     assert document["state"] == STATE_DONE
     assert document["mode"] == "both"
@@ -200,7 +207,9 @@ def test_the_inputs_document_matches_the_spec_shape(tmp_path: Path) -> None:
     """`inputs.json` 的形状与 spec 那张表逐格对上（行数用 `lines.count_lines()` 的口径）。"""
     session = _session(tmp_path)
 
-    document = runner_module.run(session, launcher=RecordingLauncher())
+    document = runner_module.run(
+        session, launcher=RecordingLauncher(), deliver=True, probe=_dead_probe
+    )
 
     written = json.loads((session / "working" / "inputs.json").read_text(encoding="utf-8"))
     assert written["schema_version"] == 1
@@ -238,7 +247,9 @@ def test_the_read_side_rejects_an_unknown_inputs_version(tmp_path: Path) -> None
 def test_the_status_file_round_trips_and_rejects_a_foreign_version(tmp_path: Path) -> None:
     """状态文件写得出、读得回；不认识的版本与缺字段都拒收。"""
     session = _session(tmp_path)
-    runner_module.run(session, launcher=RecordingLauncher())
+    runner_module.run(
+        session, launcher=RecordingLauncher(), deliver=True, probe=_dead_probe
+    )
     path = session / STATUS_NAME
 
     written = status_module.read_status(path)
@@ -262,7 +273,9 @@ def test_a_session_without_inputs_never_starts_dsh(tmp_path: Path) -> None:
     session.mkdir()
     launcher = RecordingLauncher()
 
-    document = runner_module.run(session, launcher=launcher)
+    document = runner_module.run(
+        session, launcher=launcher, deliver=True, probe=_dead_probe
+    )
 
     assert document["state"] == STATE_FAILED
     assert document["mode"] == "none"
@@ -277,7 +290,9 @@ def test_a_launcher_failure_lands_in_the_status(tmp_path: Path) -> None:
     session = _session(tmp_path)
     launcher = RecordingLauncher(write_final=False, fail="artifact_missing")
 
-    document = runner_module.run(session, launcher=launcher)
+    document = runner_module.run(
+        session, launcher=launcher, deliver=True, probe=_dead_probe
+    )
 
     assert document["state"] == STATE_FAILED
     assert "artifact_missing" in str(document["error"])
@@ -299,7 +314,9 @@ def test_a_template_error_lands_in_the_status(tmp_path: Path, monkeypatch) -> No
         raise prompt_module.PromptTemplateError("模板里缺占位符 {{INPUTS}}：nowhere.md")
 
     monkeypatch.setattr(runner_module, "render_session_prompt", boom)
-    document = runner_module.run(session, launcher=launcher)
+    document = runner_module.run(
+        session, launcher=launcher, deliver=True, probe=_dead_probe
+    )
 
     assert document["state"] == STATE_FAILED
     assert "提示词渲染失败" in str(document["error"])
@@ -333,7 +350,7 @@ def test_the_reentry_gate_also_quiets_the_offline_tail(tmp_path: Path, monkeypat
     from meeting.offline import runner as offline_runner
 
     monkeypatch.setenv("MEETING_MINUTES_CHILD", "1")
-    outcome = offline_runner._announce_minutes(tmp_path)
+    outcome = offline_runner._announce_minutes(tmp_path, announce_minutes=True)
 
     assert outcome["hook"] == "skipped"
     assert outcome["announced"] is False
@@ -345,7 +362,7 @@ def test_the_launcher_is_handed_the_rendered_prompt(tmp_path: Path) -> None:
     session = _session(tmp_path)
     launcher = RecordingLauncher()
 
-    runner_module.run(session, launcher=launcher)
+    runner_module.run(session, launcher=launcher, deliver=True, probe=_dead_probe)
 
     text = launcher.calls[0]["prompt_text"]
     assert "{{" not in text
@@ -398,7 +415,9 @@ def test_chunk_lines_from_the_config_reaches_the_chunker(tmp_path: Path) -> None
     loaded = _load_config(home, {"minutes.chunk_lines": 10})
     launcher = RecordingLauncher()
 
-    document = runner_module.run(session, launcher=launcher, config=loaded)
+    document = runner_module.run(
+        session, launcher=launcher, config=loaded, deliver=True, probe=_dead_probe
+    )
 
     assert document["chunks"]["mic"]["offline"]["chunk_count"] == 3, "22 行按 10 行一块切"
     assert document["chunks"]["mic"]["live"]["chunk_count"] == 3, "25 行按 10 行一块切"
@@ -443,7 +462,7 @@ def test_the_hook_launch_returns_immediately_and_never_raises(
     session = _session(tmp_path)
     seen: list[str] = []
 
-    def boom(session_dir):
+    def boom(session_dir, **kwargs):
         seen.append(str(session_dir))
         raise RuntimeError("这一趟炸了")
 
@@ -451,7 +470,7 @@ def test_the_hook_launch_returns_immediately_and_never_raises(
     monkeypatch.setattr(config_module, "get", _config_getter({"minutes.hook": "auto"}))
     monkeypatch.setattr(runner_module, "run", boom)
 
-    outcome = offline_runner._announce_minutes(session)
+    outcome = offline_runner._announce_minutes(session, announce_minutes=True)
 
     assert outcome["hook"] == "launched"
     assert outcome["announced"] is True
@@ -476,14 +495,14 @@ def test_the_hook_returns_before_the_background_work_finishes(tmp_path: Path, mo
     gate = threading.Event()
     entered = threading.Event()
 
-    def blocked(session_dir):
+    def blocked(session_dir, **kwargs):
         entered.set()
         gate.wait(CONVERGE_TIMEOUT_SECONDS)
 
     monkeypatch.setattr(runner_module, "run", blocked)
 
     begun = time.monotonic()
-    minutes_backend.MinutesHook().launch(str(session))
+    minutes_backend.MinutesHook().launch(str(session), deliver=True)
     elapsed = time.monotonic() - begun
 
     assert elapsed < 1.0, f"launch() 该当场返回，实测 {elapsed:.3f}s"
@@ -510,13 +529,13 @@ def test_the_hook_claims_the_run_in_flight_before_it_returns(
     entered = threading.Event()
     gate = threading.Event()
 
-    def blocked(session_dir):
+    def blocked(session_dir, **kwargs):
         entered.set()
         gate.wait(CONVERGE_TIMEOUT_SECONDS)
 
     monkeypatch.setattr(runner_module, "run", blocked)
 
-    minutes_backend.MinutesHook().launch(str(session))
+    minutes_backend.MinutesHook().launch(str(session), deliver=True)
 
     written = status_module.read_status(session / STATUS_NAME)
     assert written["state"] == STATE_RUNNING, written
@@ -536,14 +555,16 @@ def test_a_second_launch_on_the_same_session_is_refused(
     """
     session = _session(tmp_path)
     arms: list[str] = []
-    monkeypatch.setattr(runner_module, "run", lambda session_dir: arms.append(str(session_dir)))
+    monkeypatch.setattr(
+        runner_module, "run", lambda session_dir, **kwargs: arms.append(str(session_dir))
+    )
     hook = minutes_backend.MinutesHook()
 
-    hook.launch(str(session))
+    hook.launch(str(session), deliver=True)
     before = (session / STATUS_NAME).read_text(encoding="utf-8")
 
     with pytest.raises(minutes_backend.AlreadyRunningError):
-        hook.launch(str(session))
+        hook.launch(str(session), deliver=True)
 
     helpers.wait_until(lambda: arms, what="第一趟的后台线程真的跑起来过")
     assert arms == [str(session)], arms
@@ -561,8 +582,8 @@ def test_force_launches_again_on_the_same_session(tmp_path: Path, monkeypatch) -
     )
     hook = minutes_backend.MinutesHook()
 
-    hook.launch(str(session))
-    hook.launch(str(session), force=True)
+    hook.launch(str(session), deliver=True)
+    hook.launch(str(session), force=True, deliver=True)
 
     helpers.wait_until(lambda: len(seen) == 2, what="两趟都被拉起来了")
     assert [item[0] for item in seen] == [str(session), str(session)]
@@ -571,9 +592,9 @@ def test_force_launches_again_on_the_same_session(tmp_path: Path, monkeypatch) -
 def test_the_claim_lock_does_not_stay_on_disk(tmp_path: Path, monkeypatch) -> None:
     """那只 claim 锁是**瞬态**的：拉起之后场次目录里没有多出来的锁文件。"""
     session = _session(tmp_path)
-    monkeypatch.setattr(runner_module, "run", lambda session_dir: None)
+    monkeypatch.setattr(runner_module, "run", lambda session_dir, **kwargs: None)
 
-    minutes_backend.MinutesHook().launch(str(session))
+    minutes_backend.MinutesHook().launch(str(session), deliver=True)
 
     lock = status_module.lock_path(session)
     assert not lock.exists(), f"claim 锁该写完那一版 running 就删掉：{lock}"
@@ -615,7 +636,9 @@ def test_a_minutes_run_leaves_the_offline_artifacts_untouched(
     assert set(before) == set(OFFLINE_ARTIFACTS), "夹具该把三份产物 + 状态文件都落下来"
 
     monkeypatch.delenv("MEETING_MINUTES_CHILD")
-    runner_module.run(session, launcher=RecordingLauncher())
+    runner_module.run(
+        session, launcher=RecordingLauncher(), deliver=True, probe=_dead_probe
+    )
 
     after = {name: _digest(session / name) for name in OFFLINE_ARTIFACTS}
     assert after == before
@@ -631,7 +654,10 @@ def test_the_offline_tail_announces_the_hook_once(tmp_path: Path, monkeypatch) -
     from meeting.offline import runner as offline_runner
 
     summary = offline_runner.run_session(
-        session, engine=FakeEngine(), config=FakeConfig(**{"post.chunk_seconds": 450})
+        session,
+        engine=FakeEngine(),
+        config=FakeConfig(**{"post.chunk_seconds": 450}),
+        announce_minutes=True,
     )
 
     assert summary["minutes"]["hook"] == "skipped"
@@ -660,7 +686,7 @@ def test_the_offline_tail_keeps_a_broken_minutes_layer_out_of_its_own_status(
         "meeting.backends.registry.resolve_minutes_hook",
         _raising_resolver,
     )
-    outcome = offline_runner._announce_minutes(session)
+    outcome = offline_runner._announce_minutes(session, announce_minutes=True)
 
     assert outcome["hook"] == "failed"
     assert outcome["announced"] is False
@@ -683,7 +709,10 @@ def test_a_null_hook_keeps_the_minutes_status_away(tmp_path: Path, monkeypatch) 
     from meeting.offline import runner as offline_runner
 
     summary = offline_runner.run_session(
-        session, engine=FakeEngine(), config=FakeConfig(**{"post.chunk_seconds": 450})
+        session,
+        engine=FakeEngine(),
+        config=FakeConfig(**{"post.chunk_seconds": 450}),
+        announce_minutes=True,
     )
 
     assert summary["minutes"]["hook"] == "absent"
@@ -785,7 +814,7 @@ def test_the_running_state_is_on_disk_before_the_launcher_is_called(tmp_path: Pa
             prompt="working/run_prompt.md",
         )
 
-    document = runner_module.run(session, launcher=peek)
+    document = runner_module.run(session, launcher=peek, deliver=True, probe=_dead_probe)
 
     assert seen, "启动器该被调用过"
     running = seen[0]
@@ -810,7 +839,9 @@ def test_a_failed_run_still_overwrites_the_running_state(tmp_path: Path) -> None
     session = _session(tmp_path)
     launcher = RecordingLauncher(write_final=False, fail="artifact_missing")
 
-    document = runner_module.run(session, launcher=launcher)
+    document = runner_module.run(
+        session, launcher=launcher, deliver=True, probe=_dead_probe
+    )
 
     assert document["state"] == STATE_FAILED
     written = _status_on_disk(session)
@@ -824,7 +855,9 @@ def test_a_session_without_inputs_leaves_a_failed_state_not_a_running_one(tmp_pa
     session = tmp_path / "250919"
     session.mkdir()
 
-    runner_module.run(session, launcher=RecordingLauncher())
+    runner_module.run(
+        session, launcher=RecordingLauncher(), deliver=True, probe=_dead_probe
+    )
 
     assert _status_on_disk(session)["state"] == STATE_FAILED
 

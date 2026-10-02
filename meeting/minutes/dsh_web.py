@@ -63,6 +63,7 @@ from pathlib import Path
 from typing import Any
 
 from meeting.minutes.inputs import write_text_atomic
+from meeting.minutes.status import DeliveryForbidden, ISOLATION_MESSAGE
 
 _log = logging.getLogger("meeting.minutes.dsh_web")
 
@@ -121,6 +122,9 @@ SECRET_RECORD = "client-connection/browser-session"
 SECRET_PATTERN = re.compile(
     rf"{re.escape(SECRET_RECORD)}:[\s\S]*?secret:\s*([A-Za-z0-9_\-]+)"
 )
+
+#: 放行参数缺席时的拒绝理由（`probe()` / `handoff()` 共用；话术与 headless 启动器同源）
+ISOLATION_REASON = f"{ISOLATION_MESSAGE}（放行参数是 allow_dsh=True，由人工入口下传）"
 
 #: 自签 cookie 的有效期（与 dsh 默认的 cookieMaxAgeDays 一致）
 COOKIE_MAX_AGE_MS = 30 * 24 * 3600 * 1000
@@ -351,6 +355,7 @@ _sleep: Callable[[float], None] = time.sleep
 def probe(
     url: str = DEFAULT_DSH_URL,
     *,
+    allow_dsh: bool = False,
     timeout: float = PROBE_RPC_TIMEOUT_SECONDS,
     post: PostJson | None = None,
     connect: Callable[[tuple[str, int], float], Any] | None = None,
@@ -358,10 +363,17 @@ def probe(
 ) -> tuple[bool, str]:
     """DSH web 服务端在不在跑：先 TCP 探端口，再发一次只读 RPC 确认协议与鉴权。
 
+    `allow_dsh` 是**默认拒绝**的人工放行参数：不放行（缺省）就在**任何动作之前**当场抛
+    `DeliveryForbidden` —— TCP 不发、凭据不读、RPC 不发。放行标记由
+    `MinutesHook.launch(deliver=True)` 经 `runner.run()` 下传，只有两条人工入口会给真；
+    未来任何代码绕过纪要层直接 import 本函数，也到不了 DSH。
+
     交回 `(在跑吗, 说明)`，**说明是给用户看的实话**：探不通时说清是「端口没人听」还是
     「签不出 cookie」还是「只读探针没通过」—— 不许把「鉴权失败」写成「DSH 没在跑」。
     任何一档不成立都算「没在跑」，`runner` 据此走现成的 headless 分支。
     """
+    if not allow_dsh:
+        raise DeliveryForbidden(f"probe() 被拒：{ISOLATION_REASON}")
     parsed = urllib.parse.urlsplit(url)
     host = parsed.hostname or "127.0.0.1"
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
@@ -399,6 +411,7 @@ def handoff(
     prompt_text: str,
     url: str = DEFAULT_DSH_URL,
     timeout: float | None = None,
+    allow_dsh: bool = False,
     post: PostJson | None = None,
     credentials: str | Path | None = None,
     write_log: bool = True,
@@ -409,6 +422,10 @@ def handoff(
     提示词全文（`runner` 从 `render_session_prompt()` 拿到它）—— 它走 `session/prompt` 的正文，
     不经过任何命令行，因此没有 argv 的截断问题。
 
+    `allow_dsh` 是**默认拒绝**的人工放行参数：不放行（缺省）就在**任何动作之前**当场抛
+    `DeliveryForbidden` —— 目录不建、凭据不读、三次 RPC 一次都不发。放行标记由
+    `MinutesHook.launch(deliver=True)` 经 `runner.run()` 下传（两条人工入口才给真）。
+
     三步**次序固定**：`session/create` 只带 `workspaceId`（不带 `cwd`），会话的 cwd 就是该工作区
     绑定的那个目录，于是它**落在场次目录对应的工作区分组里**而不是「未分组」。中间任何一步
     失败都如实交回 `failure`（不偷偷改走 headless —— 交付失败要看得见）。
@@ -417,6 +434,8 @@ def handoff(
     `working/minutes-run.log`（这一趟三步的账）—— 它们是状态文件 `artifacts` 里声明的那两格，
     不落的话声明就成了空话。
     """
+    if not allow_dsh:
+        raise DeliveryForbidden(f"handoff() 被拒：{ISOLATION_REASON}")
     directory = Path(session_dir)
     directory.mkdir(parents=True, exist_ok=True)
     budget = _handoff_budget(timeout)
@@ -627,6 +646,7 @@ __all__ = [
     "CREDENTIALS_PATH",
     "DEFAULT_DSH_URL",
     "DEFAULT_HANDOFF_SECONDS",
+    "DeliveryForbidden",
     "FAILURES",
     "FAILURE_PROMPT",
     "FAILURE_SESSION",
@@ -634,6 +654,7 @@ __all__ = [
     "FAILURE_CREDENTIALS",
     "FAILURE_WORKSPACE",
     "HandoffResult",
+    "ISOLATION_REASON",
     "LIVENESS_METHOD",
     "MAX_HANDOFF_SECONDS",
     "MIN_HANDOFF_SECONDS",

@@ -43,6 +43,15 @@
 它再做一遍分块、再拉起一个 DSH，就是无限套娃。闸落在**配置解析层**（本函数的第一件事），
 不靠提示词里的嘱咐 —— 提示词那道闸防的是模型顺着 `prompts/` 自己摸到入口，两道闸各管一头。
 
+## 隔离闸：没有人工放行标记，DSH 一步都不碰
+
+整个项目与 DSH 隔离：`run()` 的 `deliver` 参数**缺省假**，不放行就在再入闸之后当场抛
+`DeliveryForbidden`（盘上一个字节都不写、探针一次都不发）。放行由
+`MinutesHook.launch(deliver=True)` 下传 —— 只有 `meeting post` 与「直接出纪要」按钮两条
+**人工**入口会给真；`run()` 再把它作为 `allow_dsh=True` 递给探针、交付与 headless 启动器
+三处 DSH 触达点（那里各自还有一道默认拒绝的闸）。未来任何代码绕过纪要层直接调本函数，
+也在这一步被挡住。
+
 这一档**不写状态文件**、返回一份 `state = "skipped"` 的状态（`skipped` 不在四档里：
 它既没有跑起来，也不算失败），原因写在那份返回值里。选这一条而不是「写一份 skipped 状态」
 的理由：子会话的场次目录里那份状态文件归**父进程那一趟**所有，子会话去覆盖它会让
@@ -137,6 +146,7 @@ def run(
     session_dir: str | Path,
     *,
     config: Any = None,
+    deliver: bool = False,
     launcher: Callable[..., Any] | None = None,
     executable: str | None = None,
     which: Any = None,
@@ -145,6 +155,12 @@ def run(
     handoff: Callable[..., Any] | None = None,
 ) -> dict[str, Any]:
     """对一场会跑一次纪要生成，返回状态 dict（与 `meeting_minutes_status.json` 同形）。
+
+    `deliver` 是**人工放行标记**（缺省 `False`）：不放行就在再入闸之后当场抛
+    `DeliveryForbidden` —— 盘上一个字节都不写、探针一次都不发。放行由
+    `MinutesHook.launch(deliver=True)` 下传（`meeting post` 与「直接出纪要」按钮两条
+    人工入口才给真），本函数再把它作为 `allow_dsh=True` 传给探针、交付与 headless
+    启动器三处 DSH 触达点。
 
     `launcher` 是 headless 启动器的注入点（默认 `launch.launch_headless`）；`executable` 直接
     给定「要拉起哪个可执行文件」（用例塞假的那个），不给就按 `shutil.which("dsh")` 解析。
@@ -185,13 +201,22 @@ def run(
             "status": status_module.STATUS_NAME,
         }
 
+    # 隔离闸（纵深防御）：没有人工放行标记就**当场拒绝**——盘上一个字节都不写、
+    # 探针一次都不发。放行标记由 `MinutesHook.launch(deliver=True)` 下传，两条人工入口才给真；
+    # 未来任何代码绕过纪要层直接调 `run()`，也在这一步被挡住。
+    if not deliver:
+        raise status_module.DeliveryForbidden(
+            f"minutes.runner.run 被拒：{status_module.ISOLATION_MESSAGE}"
+            "（放行参数是 deliver=True，由 MinutesHook.launch(deliver=True) 下传）"
+        )
+
     # **探一次 DSH web 服务端**：在跑就把这一场交付给它，不在跑才是本进程自己起 headless
     # 子进程。`branch` 因此在这一步之后才是实际走的那一条（拉起方建线程之前落的那一版
     # `running` 记的是配置里写的词，下面那一版覆盖它）。
     dsh_url = str(_config_value("minutes.dsh_url", config, dsh_web_module.DEFAULT_DSH_URL))
     probe_dsh = dsh_web_module.probe if probe is None else probe
-    deliver = dsh_web_module.handoff if handoff is None else handoff
-    web_alive, web_detail = _probe_web(probe_dsh, dsh_url)
+    deliver_dsh = dsh_web_module.handoff if handoff is None else handoff
+    web_alive, web_detail = _probe_web(probe_dsh, dsh_url, allow_dsh=True)
     branch = status_module.BRANCH_WEB if web_alive else status_module.BRANCH_HEADLESS
     if web_alive:
         _log.info("会后纪要走 web 分支：交付给 DSH web 服务端 %s", dsh_url)
@@ -270,7 +295,9 @@ def run(
     if web_alive:
         # **投递 accepted 即算交付完成**：这一层不等 DSH 那边把纪要写完，也不校验产物
         #（产物校验是 headless 那条路的事 —— 那是本进程自己起的子进程，等得起）。
-        delivered = deliver(directory, prompt_text=prompt_text, url=dsh_url, timeout=timeout)
+        delivered = deliver_dsh(
+            directory, prompt_text=prompt_text, url=dsh_url, timeout=timeout, allow_dsh=True
+        )
         if not getattr(delivered, "ok", False):
             message = str(getattr(delivered, "error", "") or "交付这一步报告失败")
             _log.error("会后纪要交付失败：%s", message)
@@ -297,6 +324,7 @@ def run(
         timeout=timeout,
         config_selector=_config_value("minutes.hook", config, DEFAULT_HOOK),
         which=which,
+        allow_dsh=True,
     )
     if not getattr(result, "ok", False):
         message = str(getattr(result, "error", "") or "启动器报告失败")
@@ -315,15 +343,18 @@ def run(
     ) | {"chunks": stem}
 
 
-def _probe_web(probe_fn: Callable[..., Any], url: str) -> tuple[bool, str]:
+def _probe_web(
+    probe_fn: Callable[..., Any], url: str, *, allow_dsh: bool = False
+) -> tuple[bool, str]:
     """探一次 DSH web 服务端，交回 `(在跑吗, 说明)`。
 
+    `allow_dsh` 原样递给探针（缺省拒绝：探针自己在动作之前抛 `DeliveryForbidden`）。
     探针自己炸了（读不到凭据、端点上跑着别的程序）**也按「没在跑」算**：这一层要的是
     「能不能走交付那条路」，探不动就是不能走 —— 落回现成的 headless 分支，并把原因
     记进 log（说明里那几句是给用户排查用的，不许把「鉴权失败」写成「DSH 没在跑」）。
     """
     try:
-        outcome = probe_fn(url)
+        outcome = probe_fn(url, allow_dsh=allow_dsh)
     except Exception as exc:  # 探针的异常不该带走这一趟
         return False, f"探针抛出异常：{type(exc).__name__}: {exc}"
     try:

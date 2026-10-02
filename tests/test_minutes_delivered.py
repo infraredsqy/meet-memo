@@ -111,7 +111,7 @@ class RecordingProbe:
         self.raises = raises
         self.calls: list[str] = []
 
-    def __call__(self, url: str) -> tuple[bool, str]:
+    def __call__(self, url: str, **kwargs: Any) -> tuple[bool, str]:
         self.calls.append(str(url))
         if self.raises is not None:
             raise self.raises
@@ -141,7 +141,7 @@ class RecordingHandoff:
         self.seen_status: dict[str, Any] | None = None
 
     def __call__(
-        self, session_dir: Any, *, prompt_text: str, url: str, timeout: float
+        self, session_dir: Any, *, prompt_text: str, url: str, timeout: float, **kwargs: Any
     ) -> dsh_web.HandoffResult:
         session = Path(session_dir)
         self.calls.append(
@@ -150,6 +150,7 @@ class RecordingHandoff:
                 "prompt_text": prompt_text,
                 "url": url,
                 "timeout": timeout,
+                "allow_dsh": bool(kwargs.get("allow_dsh")),
             }
         )
         status_path = session / STATUS_NAME
@@ -210,7 +211,12 @@ def test_a_live_dsh_web_server_takes_the_delivery_branch(tmp_path: Path) -> None
     headless = CountingLauncher()
 
     document = runner_module.run(
-        session, config=config, launcher=headless, probe=probe, handoff=handoff
+        session,
+        config=config,
+        deliver=True,
+        launcher=headless,
+        probe=probe,
+        handoff=handoff,
     )
 
     assert document["state"] == STATE_DELIVERED
@@ -234,6 +240,7 @@ def test_the_running_version_is_on_disk_before_the_delivery(tmp_path: Path) -> N
     runner_module.run(
         session,
         config=config,
+        deliver=True,
         launcher=CountingLauncher(),
         probe=RecordingProbe(True),
         handoff=handoff,
@@ -254,7 +261,12 @@ def test_a_dead_dsh_web_server_falls_back_to_headless(tmp_path: Path) -> None:
     headless = CountingLauncher()
 
     document = runner_module.run(
-        session, config=config, launcher=headless, probe=probe, handoff=handoff
+        session,
+        config=config,
+        deliver=True,
+        launcher=headless,
+        probe=probe,
+        handoff=handoff,
     )
 
     assert document["state"] == STATE_DONE
@@ -274,6 +286,7 @@ def test_a_broken_probe_falls_back_to_headless(tmp_path: Path) -> None:
     document = runner_module.run(
         session,
         config=config,
+        deliver=True,
         launcher=headless,
         probe=probe,
         handoff=RecordingHandoff(),
@@ -295,6 +308,7 @@ def test_a_failed_delivery_is_recorded_as_failed(tmp_path: Path) -> None:
     document = runner_module.run(
         session,
         config=config,
+        deliver=True,
         launcher=headless,
         probe=RecordingProbe(True),
         handoff=handoff,
@@ -425,7 +439,9 @@ def test_the_announce_path_does_not_launch_a_second_session(tmp_path: Path) -> N
     _delivered_status(session)
     calls: list[str] = []
 
-    outcome = offline_runner._announce_minutes(session, launcher=lambda target: calls.append(target))
+    outcome = offline_runner._announce_minutes(
+        session, launcher=lambda target: calls.append(target), announce_minutes=True
+    )
 
     assert outcome["hook"] == "delivered"
     assert outcome["announced"] is False

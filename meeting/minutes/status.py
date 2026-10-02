@@ -91,6 +91,11 @@ STATES: tuple[str, ...] = (STATE_RUNNING, STATE_DONE, STATE_FAILED, STATE_DELIVE
 #: `write_status()` / `read_status()` 仍然只认上面那四档。
 STATE_SKIPPED = "skipped"
 
+#: 隔离闸的统一话术（三处同源：`MinutesHook.launch()` 的闸、`run_session()` 尾巴上的闸、
+#: `_announce_minutes()` 的闸）。整个项目与 DSH 隔离：只有两条**人工**入口
+#: （`meeting post` 与工作台「直接出纪要」按钮）显式放行，其余调用一律跳过。
+ISOLATION_MESSAGE = "纪要层隔离：本次非人工发起，跳过"
+
 #: 启动分支：配置里的三个词（`auto` / `headless` / `web`）与实际走的两条
 BRANCH_AUTO = "auto"
 BRANCH_HEADLESS = "headless"
@@ -117,6 +122,18 @@ class AlreadyRunningError(RuntimeError):
     没有拉起任何子会话，调用方据此把这一趟按 `running` 拒跑档收场（`--force` 是出路）。
     继承 `RuntimeError`：这一档说的是运行期状态冲突（同一个目录上已经有一趟在跑），
     与 `StatusError` 那类「文件内容不合契约」的值错误各说各的一层。
+    """
+
+
+class DeliveryForbidden(RuntimeError):
+    """**DSH 触达被拒**：这一趟没有带上人工放行标记，DSH 一步都不许碰。
+
+    项目与 DSH 隔离：`dsh_web.probe()` / `dsh_web.handoff()` 与 headless 拉起
+    （`launch.launch_headless()`）各带一道**默认拒绝**的放行参数（`allow_dsh=False`），
+    不放行就当场抛本错误 —— **一次 TCP、一次 RPC、一个子进程都不发生**。放行参数由
+    `MinutesHook.launch(deliver=True)` 起、经 `minutes.runner.run()` 逐层下传，只有
+    `meeting post` 与「直接出纪要」按钮这两条**人工**入口会给真。未来任何代码绕过纪要层
+    直接 import 这些函数，也在这一步被挡住（纵深防御的最后一道）。
     """
 
 
@@ -363,6 +380,8 @@ __all__ = [
     "BRANCH_AUTO",
     "BRANCH_HEADLESS",
     "BRANCH_WEB",
+    "DeliveryForbidden",
+    "ISOLATION_MESSAGE",
     "KNOWN_SCHEMA_MAJOR",
     "LOCK_ATTEMPTS",
     "LOCK_NAME",

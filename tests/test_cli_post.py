@@ -1178,7 +1178,7 @@ def test_the_gate_keeps_the_launcher_away_when_minutes_are_done(tmp_path: Path) 
     write_final(session)
     launcher = RecordingLauncher()
 
-    outcome = offline_runner._announce_minutes(session, launcher=launcher)
+    outcome = offline_runner._announce_minutes(session, launcher=launcher, announce_minutes=True)
 
     assert launcher.calls == [], "已是终态且产物齐，这一趟不许再花一次钱"
     assert outcome["announced"] is False
@@ -1192,10 +1192,10 @@ def test_removing_the_final_artifact_lets_the_launcher_through_again(tmp_path: P
     write_minutes_status(session, state="done")
     write_final(session)
     launcher = RecordingLauncher()
-    assert offline_runner._announce_minutes(session, launcher=launcher)["hook"] == "already_done"
+    assert offline_runner._announce_minutes(session, launcher=launcher, announce_minutes=True)["hook"] == "already_done"
 
     (session / MINUTES_FINAL_NAME).unlink()
-    outcome = offline_runner._announce_minutes(session, launcher=launcher)
+    outcome = offline_runner._announce_minutes(session, launcher=launcher, announce_minutes=True)
 
     assert launcher.calls == [str(session)], "产物缺失时该按「缺什么补什么」再拉一次"
     assert outcome["announced"] is True
@@ -1212,7 +1212,7 @@ def test_a_hollow_final_artifact_is_not_enough(tmp_path: Path) -> None:
     )
     launcher = RecordingLauncher()
 
-    outcome = offline_runner._announce_minutes(session, launcher=launcher)
+    outcome = offline_runner._announce_minutes(session, launcher=launcher, announce_minutes=True)
 
     assert launcher.calls == [str(session)]
     assert outcome["hook"] == "launched"
@@ -1225,7 +1225,7 @@ def test_a_running_minutes_layer_is_not_a_finished_one(tmp_path: Path) -> None:
     write_final(session)
     launcher = RecordingLauncher()
 
-    outcome = offline_runner._announce_minutes(session, launcher=launcher)
+    outcome = offline_runner._announce_minutes(session, launcher=launcher, announce_minutes=True)
 
     assert launcher.calls == [str(session)]
     assert outcome["hook"] == "launched"
@@ -1238,7 +1238,7 @@ def test_a_failed_minutes_layer_is_retried(tmp_path: Path) -> None:
     write_final(session)
     launcher = RecordingLauncher()
 
-    outcome = offline_runner._announce_minutes(session, launcher=launcher)
+    outcome = offline_runner._announce_minutes(session, launcher=launcher, announce_minutes=True)
 
     assert launcher.calls == [str(session)]
     assert outcome["hook"] == "launched"
@@ -1250,7 +1250,7 @@ def test_no_status_file_means_no_gate(tmp_path: Path) -> None:
     write_final(session)
     launcher = RecordingLauncher()
 
-    outcome = offline_runner._announce_minutes(session, launcher=launcher)
+    outcome = offline_runner._announce_minutes(session, launcher=launcher, announce_minutes=True)
 
     assert launcher.calls == [str(session)]
     assert outcome["hook"] == "launched"
@@ -1263,7 +1263,7 @@ def test_an_unreadable_status_file_lets_the_launcher_through(tmp_path: Path) -> 
     write_final(session)
     launcher = RecordingLauncher()
 
-    outcome = offline_runner._announce_minutes(session, launcher=launcher)
+    outcome = offline_runner._announce_minutes(session, launcher=launcher, announce_minutes=True)
 
     assert launcher.calls == [str(session)]
     assert outcome["hook"] == "launched"
@@ -1321,7 +1321,7 @@ def test_the_offline_status_file_is_untouched_by_the_gate(tmp_path: Path) -> Non
 
     write_minutes_status(session, state="done")
     write_final(session)
-    offline_runner._announce_minutes(session, launcher=RecordingLauncher())
+    offline_runner._announce_minutes(session, launcher=RecordingLauncher(), announce_minutes=True)
 
     after = {path.name: digest(path) for path in tracked}
     assert after == before

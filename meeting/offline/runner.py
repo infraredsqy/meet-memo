@@ -175,9 +175,12 @@ float32 的整段波形会被 `int()` 截成一串 0 —— 一串真有声的�
 （`_announce_minutes()`，`41465462` phase2 加的挂点）：
 
   - 顺序不能反（纪要的输入就是这条离线转写，先出纪要就永远只有降级档）；
+  - **通知开关缺省假**：`run_session(announce_minutes=False)`（缺省）在尾巴上安静跳过，
+    钩子零启动、盘上零纪要状态文件 —— 整个项目与 DSH 隔离，只有 `meeting post` 这条
+    人工入口显式传 `True`，其余调用（测试、脚本、库调用）一律不碰纪要那一层；
   - 这一层炸了**不影响离线那三份产物、也不改 `meeting_offline_status.json`**（全程
     `try/except BaseException` 兜住，只记 log）；
-  - `minutes.hook = null` 与环境里的 `MEETING_MINUTES_CHILD=1` 两档都安静跳过；
+  - 非人工发起、`minutes.hook = null`、环境里的 `MEETING_MINUTES_CHILD=1` 三档都安静跳过；
   - 它自己的账记在**另一份**状态文件 `meeting_minutes_status.json` 里（那一份归纪要那一层写）。
 
 音频时长的换算只有一处口径：PCM = 字节数 / 2 / 16000（16k 单声道 int16），
@@ -352,6 +355,11 @@ MINUTES_STATUS_NAME = "meeting_minutes_status.json"
 #: 会后纪要那一层的产物名（`meeting/minutes/launch.py` 的 `FINAL_NAME` 同值；同上，
 #: 只留字符串常量）。起跑之前那道闸（`_minutes_gate()`）按它校验「产物落没落、合不合判据」。
 MINUTES_FINAL_NAME = "meeting_final.md"
+
+#: 隔离闸的话术（`meeting/minutes/status.py` 的 `ISOLATION_MESSAGE` 同值；同上，
+#: 只留字符串常量）。离线链拉起纪要的开关**缺省假**：只有 `meeting post` 这条人工入口
+#: 显式传 `announce_minutes=True`，其余调用（测试、脚本、库调用）一律安静跳过。
+MINUTES_GATE_MESSAGE = "纪要层隔离：本次非人工发起，跳过"
 
 
 def chunk_label(index: int, label: str) -> str:
@@ -1246,6 +1254,7 @@ def run_session(
     minutes_launcher: Any = None,
     force: bool = False,
     minutes: bool = True,
+    announce_minutes: bool = False,
     progress: OfflineProgressLedger | None = None,
 ) -> dict:
     """对一场会跑完会后离线转写，落三份产物 + 状态文件，返回摘要 dict。
@@ -1258,6 +1267,12 @@ def run_session(
     的三个入参，**一路向下传**（不落在模块全局上）：`minutes_launcher` 非空时用它替掉
     「按 `minutes.hook` 解析出来的启动器」，`force = True` 时跳过那道「已是终态」的闸，
     `minutes = False` 时**这一趟根本不通知纪要那一层**。
+
+    `announce_minutes` 是离线链拉起纪要的**人工放行开关**（缺省 `False`）：不放行就在尾巴上
+    安静跳过（只留主 log 一行，`_announce_minutes()` 一次都不被调到、钩子零启动、盘上零
+    纪要状态文件）。整个项目与 DSH 隔离：只有 `meeting/cli.py` 的 `meeting post` 这条
+    **人工**入口传 `True`（首跑与「离线段已终态、只补纪要」两条路都要传）；其余一切调用方
+    （测试、脚本、库调用）缺省全部跳过 —— 复现脚本调 `run_session()` 再也不会把 DSH 拉起来。
 
     `minutes = False` 是「生成会后精细稿」那个按钮（`POST /api/actions` 的 `post_offline`）
     走的那一档：它只管把会后那份精细稿跑出来，纪要等用户另外按「直接出纪要」——
@@ -1454,6 +1469,22 @@ def run_session(
         gate=gate,
     )
 
+    if not minutes:
+        minutes_summary: dict[str, Any] = {
+            "hook": "skipped",
+            "announced": False,
+            "reason": "这一趟只要会后精细稿",
+        }
+    elif not announce_minutes:
+        # **隔离闸**：非人工发起，尾巴上安静跳过 —— `_announce_minutes()` 一次都不被调到，
+        # 钩子零启动、盘上零纪要状态文件，只留主 log 一行（对照 `minutes.hook = null`
+        # 时「补纪要安静跳过」那一档）。
+        _log.info("%s（场次目录 %s）", MINUTES_GATE_MESSAGE, directory)
+        minutes_summary = {"hook": "skipped", "announced": False, "reason": MINUTES_GATE_MESSAGE}
+    else:
+        minutes_summary = _announce_minutes(
+            directory, launcher=minutes_launcher, force=force, announce_minutes=True
+        )
     summary = {
         "session_id": session_id,
         "session_dir": str(directory),
@@ -1470,11 +1501,7 @@ def run_session(
         "status": status_path.name,
         "transcripts": per_source,
         "artifacts": artifacts_rows,
-        "minutes": (
-            _announce_minutes(directory, launcher=minutes_launcher, force=force)
-            if minutes
-            else {"hook": "skipped", "announced": False, "reason": "这一趟只要会后精细稿"}
-        ),
+        "minutes": minutes_summary,
     }
     _log.info(
         "会后离线转写结束：%s（%s，%d 路，%.2fs）",
@@ -1488,6 +1515,7 @@ def _announce_minutes(
     *,
     launcher: Any = None,
     force: bool = False,
+    announce_minutes: bool = False,
     deadline: float | None = None,
     status_reader: Any = None,
     artifact_checker: Any = None,
@@ -1499,10 +1527,17 @@ def _announce_minutes(
     （spec「自动跑挂在哪一步」）。调用点因此落在 `run_session()` 的**最后**：状态文件的
     终态已经写完了，纪要这一层读到的东西才是齐的。
 
-    三条边界，一条都不许放宽：
+    `announce_minutes` 是**人工放行开关**（缺省 `False`）：不放行就在一切之前安静跳过 ——
+    不解析钩子、不调启动器、盘上零写动作，只留主 log 一行。整个项目与 DSH 隔离，只有
+    `meeting post` 两条路（首跑的尾巴与「离线段已终态、只补纪要」的直调）显式传 `True`；
+    放行之后再把这一格作为 `deliver=True` 下传给真实现（`MinutesHook.launch(deliver=True)`），
+    钩子里那道隔离闸因此逐层放行。
+
+    四条边界，一条都不许放宽：
 
       - 这一层炸了**不许影响离线那三份产物**，也不许改 `meeting_offline_status.json`
         —— 整段用 `try/except BaseException` 兜住，只在 logger 上记一条；
+      - 非人工发起（`announce_minutes = False`）→ **安静跳过**（隔离闸）；
       - `minutes.hook = null`（配置里写 JSON `null`）→ 解析成缺席档 → **安静跳过**；
       - 环境里有 `MEETING_MINUTES_CHILD=1`（这一趟是 DSH 子会话自己）→ 同样安静跳过
         （再入闸还有一道在 `meeting.minutes.runner.run()` 的最前面，这里早一步省掉一次解析）。
@@ -1533,6 +1568,11 @@ def _announce_minutes(
     """
     import os as _os
 
+    if not announce_minutes:
+        # **隔离闸**：非人工发起，一切之前安静跳过 —— 不解析钩子、不调启动器、盘上零写动作。
+        _log.info("%s（场次目录 %s）", MINUTES_GATE_MESSAGE, session_dir)
+        return {"hook": "skipped", "announced": False, "reason": MINUTES_GATE_MESSAGE}
+
     in_child_session = str(_os.environ.get("MEETING_MINUTES_CHILD", "")).strip() == "1"
     if in_child_session and launcher is None:
         return {"hook": "skipped", "announced": False, "reason": "子会话（MEETING_MINUTES_CHILD=1）"}
@@ -1552,12 +1592,14 @@ def _announce_minutes(
     minutes_status_path = Path(session_dir) / MINUTES_STATUS_NAME
     if launcher is not None:
         # 调用方递了替身：这一档不解析 `minutes.hook` 的实现（替的就是它），直接记账。
-        # 替身认 `force` 那一格时原样递下去（真实现认它：`MinutesHook.launch(…, force=…)`），
+        # 替身认 `force` / `deliver` 那两格时原样递下去（真实现都认：`MinutesHook.launch`），
         # 只收场次目录的老形状照旧按位置参调它。
+        kwargs: dict[str, Any] = {}
         if _accepts_keyword(launcher, "force"):
-            returned: Any = launcher(str(session_dir), force=bool(force))
-        else:
-            returned: Any = launcher(str(session_dir))
+            kwargs["force"] = bool(force)
+        if _accepts_keyword(launcher, "deliver"):
+            kwargs["deliver"] = True
+        returned: Any = launcher(str(session_dir), **kwargs)
         if captured is not None:
             captured["returned"] = returned
         return {
@@ -1582,7 +1624,7 @@ def _announce_minutes(
                 "reason": "minutes.hook 缺席（自动跑已关掉）",
             }
         _launch_minutes_implementation(
-            resolution.implementation, session_dir, force=force
+            resolution.implementation, session_dir, force=force, deliver=bool(announce_minutes)
         )
         if captured is not None:
             captured["returned"] = None
@@ -1619,21 +1661,31 @@ def _announce_minutes(
 
 
 def _launch_minutes_implementation(
-    implementation: Any, session_dir: Path | str, *, force: bool = False
+    implementation: Any,
+    session_dir: Path | str,
+    *,
+    force: bool = False,
+    deliver: bool = False,
 ) -> None:
-    """把纪要那一层的实现叫起来（**带上这一趟的 `--force` 那一格**）。
+    """把纪要那一层的实现叫起来（**带上这一趟的 `--force` 与人工放行两格**）。
 
-    真实现（`meeting.backends.minutes:MinutesHook`）的 `launch()` 收 `force`：它在建线程
-    之前先读盘上那一版状态，读到 `running` 就拒跑（这一趟于是没有第二个子会话），而带
-    `--force` 时放行 —— 「无视现状重跑」那条既有语义因此能一路走到拉起这一步。
+    真实现（`meeting.backends.minutes:MinutesHook`）的 `launch()` 收 `force` 与 `deliver`：
+    它在**建线程之前**先过那道隔离闸（`deliver=True` 才放行 —— 两条人工入口给的），再读盘上
+    那一版状态，读到 `running` 就拒跑（这一趟于是没有第二个子会话），而带 `--force` 时放行
+    —— 「无视现状重跑」那条既有语义因此能一路走到拉起这一步。
 
-    收不收这一格由**实现自己**回答（`_accepts_keyword()` 看它的签名认不认这个关键字）：替身
+    收不收某一格由**实现自己**回答（`_accepts_keyword()` 看它的签名认不认这个关键字）：替身
     （以及将来别的实现）按老形状只收场次目录时，这一趟照旧按位置参调它 —— `--force` 在
     那一档由调用方（`meeting/cli.py` 的现状判定与 `_minutes_step_outcome()`）体现出来。
     """
     call = implementation.launch
+    kwargs: dict[str, Any] = {}
     if _accepts_keyword(call, "force"):
-        call(str(session_dir), force=bool(force))
+        kwargs["force"] = bool(force)
+    if _accepts_keyword(call, "deliver"):
+        kwargs["deliver"] = bool(deliver)
+    if kwargs:
+        call(str(session_dir), **kwargs)
         return
     call(str(session_dir))
 

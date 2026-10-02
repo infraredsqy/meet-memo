@@ -8,6 +8,8 @@
 
 `meeting post` 那条链上，离线那一趟跑完之后，`meeting/offline/runner.py` 的 `run_session()` 在**最后**通知一次这一层（`_announce_minutes()`）。顺序不能反：离线那条转写就是这一层的输入之一，先出纪要就永远只有降级档。工作台上「生成会后精细稿」按钮那一趟走的是 `run_session(..., minutes=False)`——**不**通知这一层，纪要归「直接出纪要」那个按钮。
 
+**整条链默认与 DSH 隔离，两个人工入口才放行（隔离闸）**：`run_session()` 的 `announce_minutes` 与 `MinutesHook.launch()` 的 `deliver` 两个开关**缺省假**——测试、脚本、库调用不传就是「本次非人工发起」，安静跳过：不解析钩子、不落任何状态文件（绝不留卡在 `running` 的账）、不渲染提示词、不切块、探针一次都不发，主 log 只留一行「纪要层隔离：本次非人工发起，跳过」。传真的只有两处：`meeting post`（首跑的离线尾巴与「离线段已终态、只补纪要」两路都传 `announce_minutes=True`），以及工作台「直接出纪要」按钮（`post_minutes` 动作把 `deliver=True` 递进 `launch()`）。放行之后 `launch()` 经 `minutes.runner.run()` 把标记逐层下传；探针 / 交付 / headless 拉起三处各自还有一道**默认拒绝**的闸（`allow_dsh=False`，不放行当场抛 `DeliveryForbidden`，一次网络 / 子进程动作都不发生）——未来任何代码绕过纪要层直接 import 这些函数，也到不了 DSH。跳过那一档只出现在返回值与主 log 里，`skipped` 不落盘。
+
 钩子住在 `meeting/backends/minutes.py` 的 `MinutesHook`：`launch(session_dir)` 起一条 daemon 线程跑 `meeting/minutes/runner.py` 的 `run()`，**返回即算启动成功**。离线那一趟不等它跑完，它跑多久都不占收尾预算；它炸了也不带走离线那四份产物、不改 `meeting_offline_status.json`（全程 `try/except BaseException` 兜住，只在主 log 记一条）。
 
 一次 `run()` 按这个顺序做五件事：
@@ -22,11 +24,11 @@
 
 **先落 `running` 再拉起 DSH**：一次生成最长 `minutes.timeout_seconds` 秒（默认 14400），这期间读方（`meeting post`、界面）要分得出「这一场还没跑」与「这一场正在跑」。进程被杀时钩子把那一份补成 `failed`，状态不会永远停在 `running`。
 
-**再入闸放在 `run()` 的最前面**：环境里有 `MEETING_MINUTES_CHILD=1`（启动器给子进程加的那一格）说明这一趟是 DSH 子会话自己，它当场返回 `skipped`、**不写状态文件** —— 子会话的场次目录里那份状态文件归父进程那一趟所有。提示词里另有一道嘱咐（「不要再拉起任何会后流程」），两道闸各管一头。
+**再入闸放在 `run()` 的最前面**：环境里有 `MEETING_MINUTES_CHILD=1`（启动器给子进程加的那一格）说明这一趟是 DSH 子会话自己，它当场返回 `skipped`、**不写状态文件** —— 子会话的场次目录里那份状态文件归父进程那一趟所有。提示词里另有一道嘱咐（「不要再拉起任何会后流程」），两道闸各管一头。再入闸之后还有一道**隔离闸**：`run()` 的 `deliver` 缺省假，不放行当场抛 `DeliveryForbidden`（盘上一个字节都不写、探针一次都不发）；放行标记由人工入口经 `launch(deliver=True)` 下传（见第 1 章开头）。
 
 ### 1.1 在飞标记：同一场挂不上两个子会话
 
-拉起这一层的地方有三处 —— 离线那一趟的尾巴（`_announce_minutes()`，`meeting post` 首跑走它）、`meeting post` 在「离线段已是终态、只补纪要」时自己经同一个拉起点补上的那一趟，以及工作台的「直接出纪要」按钮（`post_minutes`，按 `minutes.hook` 解析出的实现直接 `launch()`）。三处走的是同一条拉起契约，也都可能被用户敲的 `meeting post` 与按下的按钮**同时**走到，因此「这一场已经在飞」这件事必须有盘上的落点：
+拉起这一层的地方有三处 —— 离线那一趟的尾巴（`_announce_minutes()`，`meeting post` 首跑走它）、`meeting post` 在「离线段已是终态、只补纪要」时自己经同一个拉起点补上的那一趟，以及工作台的「直接出纪要」按钮（`post_minutes`，按 `minutes.hook` 解析出的实现直接 `launch()`）。三处走的是同一条拉起契约，**也都过同一道隔离闸**（非人工发起一律安静跳过，见第 1 章），也都可能被用户敲的 `meeting post` 与按下的按钮**同时**走到，因此「这一场已经在飞」这件事必须有盘上的落点：
 
 - `MinutesHook.launch()` 在**建线程之前**同步调一次 `meeting/minutes/status.py` 的 `mark_running()`：方法返回时盘上的 `meeting_minutes_status.json` 已经读得出 `state = "running"`，那一趟起线程的动作在它**之后**；
 - `mark_running()` 把「读一遍现状 + 写一版 `running`」这段用一把 `O_CREAT | O_EXCL` 的 **claim 锁**（场次目录根的瞬态文件 `meeting_minutes_status.lock`）裹住，跨进程只有一个进得来：拿不到锁就等 `0.05` 秒再读一遍（最多三次），读到 `running` 就抛 `AlreadyRunningError`、**不覆盖另一趟的账**；

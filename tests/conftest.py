@@ -4,16 +4,18 @@
 本文件里那道 5 秒看门是分档能落在**文件粒度**上的前提：没有任何一条用例能超过 5 秒，所以
 「慢」来自文件层面的真子进程与真墙钟等待，标记因此加在文件头（`pytestmark = pytest.mark.slow`）。
 
-本文件装两样东西：下面的**九个夹具**与**七道 autouse 安全兜底**（`_no_real_browser` /
+本文件装两样东西：下面的**九个夹具**与**八道 autouse 安全兜底**（`_no_real_browser` /
 `_no_real_audio_capture` / `_no_real_minutes_session` / `_no_real_model_call`，第五道
 **PATH 守卫** —— 会话级的 `_no_real_dsh_on_path` 与用例级的 `_no_real_dsh_launch` 两条夹具
 合起来构成它，见下文那一节；第六道 **真家目录守卫** —— 会话级的
 `_no_writes_to_the_real_home` 与用例级的 `_no_writes_to_the_real_home_case` 合起来构成它，
-见下文那一节；第七道 **真实 DSH web 服务端守卫** —— `_no_real_dsh_web_call`，
-见下文那一节），以及 pytest hook（`pytest_addoption` 注册 `--regen-contract`；耗时看门那两个
-hook 在文末；`pytest_sessionfinish` 是 PATH 守卫与真家目录守卫的收场复查）。**hook 不属于
-夹具语义**，它们在这里的唯一理由是 pytest 只认 conftest / 插件里的 `pytest_addoption`
-（写进测试模块会被静默忽略），详见下文各自那一段。**本文件里没有一条用例**。
+见下文那一节；第七道 **真实 DSH web 服务端守卫** —— `_no_real_dsh_web_call`；第八道
+**DSH 触达原语守卫** —— `_no_real_dsh_delivery`，把探针 / 交付 / headless 拉起三个入口
+桩成「记录调用即判红」，见下文那一节），以及 pytest hook（`pytest_addoption` 注册
+`--regen-contract`；耗时看门那两个 hook 在文末；`pytest_sessionfinish` 是 PATH 守卫与
+真家目录守卫的收场复查）。**hook 不属于夹具语义**，它们在这里的唯一理由是 pytest 只认
+conftest / 插件里的 `pytest_addoption`（写进测试模块会被静默忽略），详见下文各自那一段。
+**本文件里没有一条用例**。
 
 七个夹具由 phase2 定义并冻结、phase3 只复用，不得重定义同名 fixture：
 
@@ -993,6 +995,94 @@ def _no_real_dsh_web_call(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]
 
     monkeypatch.setattr(dsh_web, "_post_json", guarded)
     yield blocked
+
+
+# ---------------------------------------------------------------------------
+# 安全兜底：DSH 触达原语一碰就红（**第八道**：探针 / 交付 / headless 拉起，测试里零触达）
+#
+# 事故背景（2026-09 夜）：一个复现脚本调了真的 `run_session()` 顶层入口，收尾按设计通知了
+# 纪要层，纪要层探到机主正在跑的 DSH web 服务端、走了 web 分支真交付 —— DSH 侧多出工作区、
+# 按五阶段流程拉起了 7 个 subagent。产品侧的隔离闸（`announce_minutes` / `deliver` /
+# `allow_dsh` 三层默认拒绝）已把这条路封死，这一道是**测试基建**那一层：测试进程里谁碰到
+# 探针 / 交付 / headless 拉起这三个原语，就当场把那条用例判红 —— 「用例里不该有 DSH 触达」
+# 因此不靠单条用例自觉，而靠夹具这一张网。
+# ---------------------------------------------------------------------------
+
+
+#: 被拦下时那句话（点名「这是测试兜底拦的」，与前面几道同一口径）
+REAL_DSH_DELIVERY_FORBIDDEN_MESSAGE = (
+    "测试碰到了 DSH 触达原语（探针 / 交付 / headless 拉起）：测试进程里这三件事零触达。"
+    "专门测交付协议或拉起机制的用例请显式请 `allow_dsh_protocol_stubs` 夹具"
+    "（它们用假服务器 / 假桩，不碰真端口）。"
+)
+
+
+class RealDshDeliveryForbidden(RuntimeError):
+    """**看门抛的异常**：DSH 触达原语在测试进程里被调到时当场抛出（记录之外，截断流程）。"""
+
+
+@pytest.fixture(autouse=True)
+def _no_real_dsh_delivery(
+    monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> Iterator[list[str]]:
+    """**autouse 兜底**：探针 / 交付 / headless 拉起三个原语桩成「记录调用即判红」。
+
+    打桩落在三个**模块属性**上（`meeting.minutes.dsh_web.probe` / `.handoff` 与
+    `meeting.minutes.launch.launch_headless`）：`runner.run()` 在调用那一刻才按模块属性取
+    它们，桩因此与导入次序无关。桩做两件事 —— 把这一次调用（原语名 + 参数）记进账本并抛
+    `RealDshDeliveryForbidden` 截断流程；用例收场时账本上有新笔迹、而这条用例没有显式请
+    `allow_dsh_protocol_stubs` 夹具，就 `pytest.fail` 判红（异常被 `except Exception` 兜掉
+    的那几条漏网路径由这一步兜住）。收场之前先把产品那条「纪要生成」daemon 线程 join 掉
+    （与第五道守卫同一个理由：真拉起点起完线程就返回）。
+
+    **豁免是显式的**：专门测交付协议（`tests/test_minutes_dsh_web.py`）与拉起机制
+    （`tests/test_minutes_launch.py`）的用例在自己模块的 `pytestmark` 上请
+    `allow_dsh_protocol_stubs` —— 它们用假服务器 / 假桩，不碰真实端口；产品侧还有
+    `DeliveryForbidden` 那道默认拒绝闸兜底。
+    """
+    from meeting.minutes import dsh_web
+    from meeting.minutes import launch as launch_module
+
+    calls: list[str] = []
+
+    def _blocked(primitive: str) -> Any:
+        def stub(*args: Any, **kwargs: Any) -> Any:
+            calls.append(f"{primitive}(args={args!r}, kwargs={kwargs!r})")
+            raise RealDshDeliveryForbidden(
+                f"{REAL_DSH_DELIVERY_FORBIDDEN_MESSAGE}（被拦下的调用：{primitive}）"
+            )
+
+        return stub
+
+    exempt = "allow_dsh_protocol_stubs" in request.fixturenames
+    if not exempt:
+        monkeypatch.setattr(dsh_web, "probe", _blocked("dsh_web.probe"), raising=False)
+        monkeypatch.setattr(dsh_web, "handoff", _blocked("dsh_web.handoff"), raising=False)
+        monkeypatch.setattr(
+            launch_module, "launch_headless", _blocked("launch.launch_headless"), raising=False
+        )
+    yield calls
+    if exempt:
+        return
+    _wait_for_the_minutes_thread()
+    if calls:
+        pytest.fail(
+            f"{REAL_DSH_DELIVERY_FORBIDDEN_MESSAGE}\n"
+            "被拦下的调用（归属用例 "
+            f"{request.node.nodeid}）：\n  " + "\n  ".join(calls)
+        )
+
+
+@pytest.fixture()
+def allow_dsh_protocol_stubs() -> Iterator[None]:
+    """**显式 opt-out**：这一条用例专门测交付协议 / 拉起机制（假服务器 / 假桩，不碰真端口）。
+
+    请了它，第八道守卫就不打桩、收场也不判红 —— 放开的只是「这一条用例的触达记账」；
+    产品侧那道 `DeliveryForbidden` 默认拒绝闸一个字不动（这些用例按新契约显式传
+    `allow_dsh=True`），真端口那一侧由第七道守卫兜着。谁请了它，谁的名字就出现在那条
+    用例的源码里，审计一眼可见。
+    """
+    yield None
 
 
 # ---------------------------------------------------------------------------

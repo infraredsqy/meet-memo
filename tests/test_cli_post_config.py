@@ -235,7 +235,14 @@ class MinutesLedger:
     def launch_count(self) -> int:
         return len(self.launch_calls)
 
-    def launch(self, implementation: Any, session_dir: Any, *, force: bool = False) -> None:
+    def launch(
+        self,
+        implementation: Any,
+        session_dir: Any,
+        *,
+        force: bool = False,
+        deliver: bool = False,
+    ) -> None:
         """真拉起点（`runner._launch_minutes_implementation`）的替身：记账 + 交终态。"""
         self.launch_calls.append(
             {
@@ -245,6 +252,7 @@ class MinutesLedger:
                     f"{type(implementation).__qualname__}"
                 ),
                 "force": bool(force),
+                "deliver": bool(deliver),
             }
         )
         self._settle.launch(str(session_dir))
@@ -281,8 +289,10 @@ def a_minutes_ledger(monkeypatch: pytest.MonkeyPatch) -> MinutesLedger:
         )
         return resolution
 
-    def spy_launch(implementation: Any, session_dir: Any, *, force: bool = False) -> None:
-        ledger.launch(implementation, session_dir, force=force)
+    def spy_launch(
+        implementation: Any, session_dir: Any, *, force: bool = False, deliver: bool = False
+    ) -> None:
+        ledger.launch(implementation, session_dir, force=force, deliver=deliver)
 
     ledger.launch_point = spy_launch
     monkeypatch.setattr(registry_module, "resolve_minutes_hook", spy_resolve)
@@ -731,6 +741,10 @@ def test_an_auto_minutes_hook_is_launched_exactly_once_on_the_ledger(
     assert Path(row["session_dir"]) == session.resolve(), row
     assert row["implementation"] == "meeting.backends.minutes.MinutesHook", row
     assert row["force"] is False, row
+    assert row["deliver"] is True, (
+        row,
+        "`meeting post` 是人工入口：隔离闸的放行标记该一路递到真拉起点",
+    )
 
     status = json.loads(
         (session / offline_runner.MINUTES_STATUS_NAME).read_text(encoding="utf-8")
