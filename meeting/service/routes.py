@@ -1,5 +1,6 @@
 """八条路由的**唯一注册点**（phase2 §3.7 / §3.8 / §3.9 / §3.11 / §3.12；`1987cb20` phase2 加 `summaries`；
-工作台收编节点 e2f6166b 加 `sessions` / `dirs` 两只读端点与 `workspace_open` / `workspace_remove` 两动作）。
+工作台收编节点 e2f6166b 加 `sessions` / `dirs` 两只读端点与 `workspace_open` / `workspace_remove` 两动作；
+会后进度读数节点 `a9affaa8` 加 `sessions/{dir}` 那只单场状态端点）。
 
 全应用只在这里注册一次：
 
@@ -9,6 +10,8 @@
   - `POST /api/actions`（信封 + 九个动作名 + `code` 表）；
   - `GET /api/summaries`（本场按过的、成功产出的那几次会中总结；读内存，不落文件）；
   - `GET /api/sessions`（工作区注册表：按路径去重的那一份"我这些会"，读盘上注册表文件）；
+  - `GET /api/sessions/{id}`（单场状态：这一场此刻跑到哪一档、会后离线跑过几块 / 共几块、
+    正在跑哪一路、已经跑了多久；`{id}` 是这一场的目录路径，形状见 `docs/contract.md` 4.9）；
   - `GET /api/dirs`（目录选择器的现场：一层子目录的名目判读，读现场不写任何东西）；
   - `GET /debug`（骨架自检页，从包内读）。
 
@@ -156,6 +159,26 @@ async def _api_sessions(request: Request) -> Response:
         return JSONResponse({"error": "runtime 未装配"}, status_code=500)
     runtime.bind_from_scope(request.scope)
     return JSONResponse(runtime.sessions_dict())
+
+
+async def _api_session_status(request: Request) -> Response:
+    """单场状态：`GET /api/sessions/{id}`，`{id}` 是**这一场的目录路径**（URL 编码的绝对路径）。
+
+    会后视图那一片进度区就读它：这一场此刻跑到哪一档、会后离线跑过几块、共几块、
+    正在跑哪一路、已经跑了多久（应答体逐格见 `docs/contract.md` 第 4.9 节）。
+
+    与 `GET /api/sessions` / `GET /api/summaries` 同一档**纯读**：不提交、不涨 `revision`、
+    不广播。路径打不到已登记的工作区时按第 4.9 节的失败口径回 404（回的是通用失败信封：
+    `{ok, code, message, detail}`）。
+    """
+    runtime = _runtime_of(request)
+    if runtime is None:  # pragma: no cover - 应用未装配
+        return JSONResponse({"error": "runtime 未装配"}, status_code=500)
+    runtime.bind_from_scope(request.scope)
+    try:
+        return JSONResponse(runtime.session_status_dict(request.path_params.get("dir")))
+    except ActionError as exc:
+        return _error_response(exc)
 
 
 async def _api_dirs(request: Request) -> Response:
@@ -315,7 +338,7 @@ async def _debug_page(request: Request) -> Response:
 
 
 def api_routes() -> list[Route]:
-    """七条 `/api/*` 路由（`/debug` 在 `debug_routes()` 里，同一个模块）。"""
+    """八条 `/api/*` 路由（`/debug` 在 `debug_routes()` 里，同一个模块）。"""
     return [
         Route("/api/state", _api_state, methods=["GET"]),
         Route("/api/events", _api_events, methods=["GET"]),
@@ -323,6 +346,10 @@ def api_routes() -> list[Route]:
         Route("/api/actions", _api_actions, methods=["POST"]),
         Route("/api/summaries", _api_summaries, methods=["GET"]),
         Route("/api/sessions", _api_sessions, methods=["GET"]),
+        # 单场状态（会后视图的进度区）：`{dir:path}` 是为了收下 URL 编码的绝对路径
+        # ——Windows 上的 `C:\会议\250906` 里那两段反斜杠过不了默认的路径段匹配。
+        # 注册在 `/api/sessions` 之后：星形路由按注册顺序匹配，两条路径不冲突。
+        Route("/api/sessions/{dir:path}", _api_session_status, methods=["GET"]),
         Route("/api/dirs", _api_dirs, methods=["GET"]),
     ]
 
@@ -333,7 +360,7 @@ def debug_routes() -> list[Route]:
 
 
 def all_routes() -> list[Route]:
-    """六条路由一次给全（装配模块只负责把它们挂上应用）。"""
+    """九条路由一次给全（装配模块只负责把它们挂上应用）。"""
     return api_routes() + debug_routes()
 
 

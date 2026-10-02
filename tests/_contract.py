@@ -68,7 +68,9 @@ _INLINE_PATH_RE = re.compile(
 )
 
 #: 这些键的秒数一律落 0（走秒的量，fixtures 里不留具体值）
-ZERO_KEYS = frozenset({"elapsed_seconds", "duration_seconds", "seconds_since_last_tick"})
+ZERO_KEYS = frozenset(
+    {"elapsed_seconds", "duration_seconds", "seconds_since_last_tick", "wall_seconds"}
+)
 #: 这些键是电平（dBFS），值换占位
 LEVEL_KEYS = frozenset({"level_dbfs", "peak_dbfs", "dbfs", "peak", "bar"})
 #: 这些键是路径 / 场次目录路径（`session_id` **不在其中**：它是目录名，见 `SESSION_ID_KEYS`）

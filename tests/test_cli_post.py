@@ -49,6 +49,7 @@ from meeting import config as config_module
 from meeting.backends import post as post_module
 from meeting.minutes import status as minutes_status
 from meeting.offline import artifacts as offline_artifacts
+from meeting.offline import progress as offline_progress
 from meeting.offline import runner as offline_runner
 
 from tests.test_offline_runner import FakeConfig, FakeEngine, synth_session
@@ -883,6 +884,51 @@ def test_run_post_needs_a_session_directory() -> None:
     """场次目录是空值时当场抛（没有落点就装作跑过，摘要会指向一个不存在的目录）。"""
     with pytest.raises(ValueError):
         run_post("")
+
+
+def test_the_cli_entry_leaves_the_account_on_disk(tmp_path: Path) -> None:
+    """命令行这一条入口跑完一趟，逐块账上两路各一行（页面读那一场不该说"什么都没跑"）。
+
+    「每跑完一块就落一次盘」跟着**离线这条链**走，不挑是哪个按钮拉起的：跑完
+    离线段收工入口（`meeting/cli.py` 的 `run_post()`，`meeting post` 与会后钩子共用）
+    之后，场次目录里那份 `meeting_offline_progress.jsonl` 上该有每一路的行 ——
+    与「生成会后精细稿」那个按钮拉起的同一趟给的是同一份读数。
+    """
+    session = synth_session(tmp_path / "250919")
+    engine = FakeEngine()
+
+    summary = run_post(session, engine=engine, archive_converter=RecordingConverter())
+
+    header, rows = offline_progress.read_progress(offline_progress.ledger_path(session))
+    assert summary["offline"]["state"] == "done"
+    assert header is not None, "账的表头该在盘上（这一趟是命令行拉起的）"
+    assert header["session_id"] == "250919"
+    assert header["sources"] == ["mic", "loopback"]
+    assert [row["source"] for row in rows] == ["mic", "loopback"], rows
+    assert [row["chunk"] for row in rows] == [1, 1]
+    assert {row["state"] for row in rows} == {"transcribed"}
+    assert all(row["text"] for row in rows), "每一块的字都该在账上"
+    assert engine.calls, "这一趟该真的调过引擎（账上的行出自这一趟实跑）"
+
+
+def test_run_post_takes_an_injected_ledger(tmp_path: Path) -> None:
+    """注入的那一份账优先：调用方自己立一份时，落盘落在它身上（下游复用这一格）。"""
+    session = synth_session(tmp_path / "250919")
+    injected = offline_progress.OfflineProgressLedger(
+        session, session_id="250919", sources=["mic", "loopback"]
+    )
+
+    run_post(
+        session,
+        engine=FakeEngine(),
+        archive_converter=RecordingConverter(),
+        progress=injected,
+    )
+
+    _header, rows = offline_progress.read_progress(offline_progress.ledger_path(session))
+    assert [row["source"] for row in rows] == ["mic", "loopback"]
+    # 现场那一份（注入件自己手里的）就是这一趟的账：跑完收在终态上
+    assert injected.snapshot()["state"] == "done"
 
 
 # ---------------------------------------------------------------------------

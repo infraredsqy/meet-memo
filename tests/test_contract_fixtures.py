@@ -26,6 +26,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import pytest
 
@@ -713,6 +714,83 @@ def test_capture_workspace_group(tmp_path, make_client, contract_regen):
                 removed, "workspace_remove", {"dir": "<path>"}
             ),
         },
+        regen=contract_regen,
+    )
+
+
+def test_capture_session_status_group(tmp_path, make_client, contract_regen) -> None:
+    """`GET /api/sessions/{id}` 那一份（会后视图的进度区，节点 `a9affaa8`）。
+
+    这一份的**来源是真实服务路径上的只读端点**：场次目录里先按真实形状落下那份逐块
+    进度账（`meeting_offline_progress.jsonl`，两路各两块，含一块静音、一块失败）与
+    状态文件，再把这一场登记进工作台、打一次那只端点。
+
+    样本记的是**形状**：路径与场次目录名掩成 `<path>` / `<session-id>`，两个墙钟戳
+    掩成 `<iso>`，走秒的量（`elapsed_seconds` / `wall_seconds`）掩成 `0`。块号、
+    块数、四档计数、四段文字这些是**确定值**（造出来的账是固定的），原样留着 ——
+    它们正是这一份样本要给人看的形状。
+    """
+    from meeting.offline import artifacts as offline_artifacts
+    from meeting.offline import progress as offline_progress
+
+    client = make_client({"capture.backend": "dev"})
+
+    place = tmp_path / "contract-session-status"
+    place.mkdir()
+    session_dir = place / "250906"
+    session_dir.mkdir()
+    (session_dir / "session.json").write_text(
+        '{"session_id": "250906", "state": "done", "date": "2025-09-06", "mode": "both"}',
+        encoding="utf-8",
+    )
+    # 这一场有一份会后精细稿（`has_offline` 那一格因此为真）
+    (session_dir / "meeting_offline_transcript_mic.md").write_text(
+        "[00:00] **S01**: 会后稿的一行\n", encoding="utf-8"
+    )
+    # 那一份逐块账：两路各两块，mic 的第 2 块没声跳过、loopback 的第 2 块没跑成
+    offline_progress.write_progress(
+        offline_progress.ledger_path(session_dir),
+        session_id="250906",
+        sources=["mic", "loopback"],
+        rows=[
+            offline_progress.ChunkProgress(
+                "mic", 1, 0.0, 450.0, "transcribed",
+                "[00:00] **c01:S01**: 第一块的一句话", 3, 45.247,
+            ).to_row(chunks_total=2),
+            offline_progress.ChunkProgress(
+                "mic", 2, 450.0, 450.0, "silent",
+            ).to_row(chunks_total=2),
+            offline_progress.ChunkProgress(
+                "loopback", 1, 0.0, 450.0, "transcribed",
+                "[00:00] **c01:S01**: 这一路第一块的一句话", 2, 30.5,
+            ).to_row(chunks_total=2),
+            offline_progress.ChunkProgress(
+                "loopback", 2, 450.0, 450.0, "failed",
+                error="engine_error：RuntimeError: 这一块没过",
+            ).to_row(chunks_total=2),
+        ],
+    )
+    offline_artifacts.write_status(
+        session_dir / offline_artifacts.STATUS_NAME,
+        session_id="250906",
+        state="done",
+        started_at="2025-09-06T20:00:00",
+        sources=["mic", "loopback"],
+        artifacts={},
+        finished_at="2025-09-06T20:02:30",
+        partial=True,
+    )
+
+    opened = _act(client, "workspace_open", {"dir": str(session_dir)})
+    assert opened.status_code == 200, opened.text
+
+    queried = client.get(f"/api/sessions/{quote(str(session_dir), safe='')}")
+    assert queried.status_code == 200, queried.text
+    body = queried.json()
+    assert body["offline"]["sources"][0]["total"] == 2
+
+    emit(
+        {"sessions/status-after-run.json": normalize(body)},
         regen=contract_regen,
     )
 

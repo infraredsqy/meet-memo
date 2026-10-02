@@ -196,6 +196,7 @@ from typing import Any, Sequence, TYPE_CHECKING
 from meeting import config as config_module
 from meeting.offline import artifacts
 from meeting.offline.engine import OfflineEngine, OfflineSegment
+from meeting.offline.progress import ChunkProgress, OfflineProgressLedger
 from meeting.offline.speakers import number_speakers
 
 if TYPE_CHECKING:  # pragma: no cover - 只为类型标注，运行时不 import（惰性纪律）
@@ -1111,6 +1112,7 @@ def run_session(
     minutes_launcher: Any = None,
     force: bool = False,
     minutes: bool = True,
+    progress: OfflineProgressLedger | None = None,
 ) -> dict:
     """对一场会跑完会后离线转写，落三份产物 + 状态文件，返回摘要 dict。
 
@@ -1138,6 +1140,11 @@ def run_session(
     三份产物与状态文件的终态都落完之后调一次，晚了不行（纪要的输入就是这条离线转写）、
     早了也不行（状态文件的终态还没写）。这一层炸了只记 log：离线那三份产物与
     `meeting_offline_status.json` 一个字节都不动（见 `_announce_minutes()`）。
+
+    `progress` 是**逐块进度账**的注入点（`meeting/offline/progress.py`）：给一份就每跑完
+    一块往场次目录里那份 `meeting_offline_progress.jsonl` 上补一行（这一块的文字 + 这一块
+    的落点），不给就一个字节都不落。**正式稿的写时机与它无关**（整路跑完一次写，
+    `_write_source_artifacts()`），`meeting_offline_status.json` 那十二格也一个字不动。
     """
     directory = Path(session_dir) if session_dir else None
     if directory is None or not str(directory):
@@ -1148,6 +1155,8 @@ def run_session(
     started_at = _now_iso()
     sources = declared_sources(directory)
     status_path = directory / artifacts.STATUS_NAME
+    if progress is not None:
+        progress.start(started_at=started_at)
 
     engine_error: str | None = None
     if engine is None:
@@ -1174,19 +1183,27 @@ def run_session(
     begun = time.monotonic()
     metrics: list[artifacts.SourceMetrics] = []
     per_source: dict[str, dict[str, Any]] = {}
-    for source in sources:
-        metrics.append(
-            _run_one_source(
-                directory,
-                source,
-                engine=engine,
-                engine_error=engine_error,
-                session_id=session_id,
-                descriptor=descriptor,
-                config=config,
-                per_source=per_source,
+    try:
+        for source in sources:
+            metrics.append(
+                _run_one_source(
+                    directory,
+                    source,
+                    engine=engine,
+                    engine_error=engine_error,
+                    session_id=session_id,
+                    descriptor=descriptor,
+                    config=config,
+                    per_source=per_source,
+                    progress=progress,
+                )
             )
-        )
+    finally:
+        # 这一趟跑完（成了、失败、被打断都算）就把进度账收在终态上：`state` 从 `running`
+        # 翻到 `done`，那一份账因此自带"这一趟到此为止"的位置感。收尾这一步不会抛
+        # （`finish()` 内部兜住落盘失败），原来那个异常照旧上抛。
+        if progress is not None:
+            progress.finish(finished_at=_now_iso())
     total_wall = time.monotonic() - begun
 
     report_path = artifacts.write_report(
@@ -1575,6 +1592,7 @@ def _run_one_source(
     descriptor: dict[str, Any],
     config: Any,
     per_source: dict[str, dict[str, Any]],
+    progress: OfflineProgressLedger | None = None,
 ) -> artifacts.SourceMetrics:
     """跑一路：取音频 → 算切法 → 逐块调引擎 → 编号 → 落两份按路的产物 → 交回度量。
 
@@ -1620,6 +1638,10 @@ def _run_one_source(
                 directory, source, path, config=config
             )
             metric.audio_seconds = plan.total_seconds
+            if progress is not None:
+                # 分母在**进逐块循环之前**定下来（这一路切了几块）：它来自切块计划，
+                # 不因某一块失败或跳过而增减。
+                progress.start_source(source, len(plan.chunks))
             segments, runs = _execute_chunks(
                 directory,
                 source,
@@ -1628,12 +1650,26 @@ def _run_one_source(
                 plan=plan,
                 waveform=waveform,
                 decode_attempted=decode_attempted,
+                progress=progress,
             )
         except Exception as exc:  # 切法/解码抛错：这一路失败，另一路照跑
             metric.state = "failed"
             metric.audio_file = Path(path).name
             metric.error = f"{REASON_ENGINE_ERROR}：{type(exc).__name__}: {exc}"
             metric.reasons[REASON_ENGINE_ERROR] = 1
+            if progress is not None and not progress.has_source(source):
+                # 切法还算不出来（一块都没进循环）时，这一路在账上也得留下一行：
+                # 否则读方看到的是"这一路一块都没跑"，与"这一路没跑成"分不开。
+                progress.record_chunk(
+                    ChunkProgress(
+                        source=source,
+                        index=1,
+                        offset_seconds=0.0,
+                        seconds=round(float(metric.audio_seconds), 3),
+                        state="failed",
+                        error=metric.error,
+                    )
+                )
             _log.exception("会后离线：%s 这一路引擎抛错（如实记账，继续跑另一路）", source)
         else:
             _record_chunk_runs(metric, runs)
@@ -1741,6 +1777,7 @@ def _execute_chunks(
     plan: ChunkPlan,
     waveform: Any = None,
     decode_attempted: bool = False,
+    progress: OfflineProgressLedger | None = None,
 ) -> tuple[list[OfflineSegment], list[ChunkRun]]:
     """按切法逐块调引擎，交回 `(拼回整场时间轴的分段, 逐块记账)`。
 
@@ -1821,14 +1858,14 @@ def _execute_chunks(
                 )
             except Exception as exc:
                 # 切块/写临时文件这一步抛错：记成这一块的失败（音频没变坏，是这一步没成）
-                runs.append(
-                    ChunkRun(
-                        index=step.index,
-                        offset=step.offset,
-                        seconds=step.seconds,
-                        error=f"{REASON_ENGINE_ERROR}：切块失败 {type(exc).__name__}: {exc}",
-                    )
+                run = ChunkRun(
+                    index=step.index,
+                    offset=step.offset,
+                    seconds=step.seconds,
+                    error=f"{REASON_ENGINE_ERROR}：切块失败 {type(exc).__name__}: {exc}",
                 )
+                runs.append(run)
+                _note_progress(progress, source, run, spans=[])
                 _log.exception("会后离线：%s 第 %d 块切不出来", source, step.index)
                 continue
 
@@ -1836,16 +1873,16 @@ def _execute_chunks(
                 # 这一段没声：**引擎调用一次都不发生**。跳过的区间照样进产物，
                 # 但它是「跳过」那一档（`silent = True`、`error = None`），
                 # 与「这一块没跑成」在每一格上都分得开。
-                runs.append(
-                    ChunkRun(
-                        index=step.index,
-                        offset=step.offset,
-                        seconds=step.seconds,
-                        silent=True,
-                        gate=gate_verdict,
-                        gate_method=measured.method,
-                    )
+                run = ChunkRun(
+                    index=step.index,
+                    offset=step.offset,
+                    seconds=step.seconds,
+                    silent=True,
+                    gate=gate_verdict,
+                    gate_method=measured.method,
                 )
+                runs.append(run)
+                _note_progress(progress, source, run, spans=[])
                 _log.info(
                     "会后离线：%s 第 %d 块（%.0fs 起）是数字静音，跳过引擎调用",
                     source, step.index, step.offset,
@@ -1856,18 +1893,18 @@ def _execute_chunks(
             try:
                 produced = list(engine.transcribe(target))
             except Exception as exc:  # 这一块失败：记账，下一块照跑
-                runs.append(
-                    ChunkRun(
-                        index=step.index,
-                        offset=step.offset,
-                        seconds=step.seconds,
-                        wall_seconds=time.monotonic() - begun,
-                        error=f"{REASON_ENGINE_ERROR}：{type(exc).__name__}: {exc}",
-                        gate=gate_verdict,
-                        gate_method=measured.method,
-                        gate_detail=measured.detail if measured.silent is None else None,
-                    )
+                run = ChunkRun(
+                    index=step.index,
+                    offset=step.offset,
+                    seconds=step.seconds,
+                    wall_seconds=time.monotonic() - begun,
+                    error=f"{REASON_ENGINE_ERROR}：{type(exc).__name__}: {exc}",
+                    gate=gate_verdict,
+                    gate_method=measured.method,
+                    gate_detail=measured.detail if measured.silent is None else None,
                 )
+                runs.append(run)
+                _note_progress(progress, source, run, spans=[])
                 _log.warning(
                     "会后离线：%s 第 %d 块（%.0fs 起）引擎抛错，如实记账后继续",
                     source, step.index, step.offset,
@@ -1876,18 +1913,18 @@ def _execute_chunks(
 
             wall = time.monotonic() - begun
             if not produced:
-                runs.append(
-                    ChunkRun(
-                        index=step.index,
-                        offset=step.offset,
-                        seconds=step.seconds,
-                        wall_seconds=wall,
-                        error=f"{REASON_NO_SEGMENTS}：引擎交回 0 段",
-                        gate=gate_verdict,
-                        gate_method=measured.method,
-                        gate_detail=measured.detail if measured.silent is None else None,
-                    )
+                run = ChunkRun(
+                    index=step.index,
+                    offset=step.offset,
+                    seconds=step.seconds,
+                    wall_seconds=wall,
+                    error=f"{REASON_NO_SEGMENTS}：引擎交回 0 段",
+                    gate=gate_verdict,
+                    gate_method=measured.method,
+                    gate_detail=measured.detail if measured.silent is None else None,
                 )
+                runs.append(run)
+                _note_progress(progress, source, run, spans=[])
                 _log.warning(
                     "会后离线：%s 第 %d 块（%.0fs 起）一段都没交回，如实记账后继续",
                     source, step.index, step.offset,
@@ -1900,23 +1937,26 @@ def _execute_chunks(
                 1 for segment in produced
                 if float(segment.end) <= float(segment.start)
             )
-            runs.append(
-                ChunkRun(
-                    index=step.index,
-                    offset=step.offset,
-                    seconds=step.seconds,
-                    segments=len(produced),
-                    wall_seconds=wall,
-                    gate=gate_verdict,
-                    gate_method=measured.method,
-                    gate_detail=measured.detail if measured.silent is None else None,
-                    zero_span_segments=zero_span,
-                )
+            run = ChunkRun(
+                index=step.index,
+                offset=step.offset,
+                seconds=step.seconds,
+                segments=len(produced),
+                wall_seconds=wall,
+                gate=gate_verdict,
+                gate_method=measured.method,
+                gate_detail=measured.detail if measured.silent is None else None,
+                zero_span_segments=zero_span,
             )
-            merged.extend(
+            runs.append(run)
+            shifted = [
                 _shift_segment(segment, step, namespaced=plan.namespace)
                 for segment in produced
-            )
+            ]
+            # 这一块的文字与这一块的落点**当场落进进度账**：块一跑完那一块的字就在盘上
+            # 读得到，不必等整路跑完（正式稿照旧整路跑完一次写）。
+            _note_progress(progress, source, run, spans=shifted)
+            merged.extend(shifted)
     finally:
         if materialize:
             clear_chunk_dir(directory)
@@ -1967,6 +2007,66 @@ def _shift_segment(segment: OfflineSegment, step: ChunkStep, *, namespaced: bool
         ),
         text=segment.text,
     )
+
+
+def _entry_state(run: ChunkRun) -> str:
+    """这一块在**进度账**上落哪一档（四档，见 `progress.CHUNK_STATES`）。
+
+    逐块的记账（`ChunkRun.reason`）分得更细：它要回答「这一段为什么没有字」，
+    `transcribed` 那一档还按零时长段拆成两个词。进度账这一格只有一个用途 ——
+    让读的人一眼看出这一块是跑成了、跳过了、还是没成，因此四档就够。
+    """
+    if run.silent:
+        return "silent"
+    if run.error is not None:
+        return "failed"
+    if run.gate == GATE_UNJUDGED:
+        return "unjudged"
+    return "transcribed"
+
+
+def _note_progress(
+    progress: OfflineProgressLedger | None,
+    source: str,
+    run: ChunkRun,
+    *,
+    spans: Sequence[OfflineSegment],
+) -> None:
+    """把这一块落进进度账：**这一块的文字 + 这一块的落点**（`progress=None` 时什么都不做）。
+
+    `spans` 是这一块拼回整场时间轴之后的分段（静音、失败那几档交回空序列）。
+    正文按正式稿同一套行格式（`artifacts.format_transcript_line()`）写成一行一条、
+    `\\n` 相连；说话人编号是块内命名空间那个形式（`cNN:Sxx`）—— 它与正式稿的编号
+    （整路内按首次出现顺序）不是同一个东西，读账的人据此就知道这一块的字还没编号。
+
+    **落盘失败不带走这一趟**：`record_chunk()` 内部兜住写盘异常，这里再兜一层调用方的
+    意外（拿不准的那一档：这一格是附注，让它把正片带走才是真的坏）。
+    """
+    if progress is None:
+        return
+    text = "\n".join(
+        artifacts.format_transcript_line(span.start, span.speaker, span.text)
+        for span in spans
+    )
+    try:
+        progress.record_chunk(
+            ChunkProgress(
+                source=source,
+                index=run.index,
+                offset_seconds=run.offset,
+                seconds=run.seconds,
+                state=_entry_state(run),
+                text=text,
+                segments=int(run.segments),
+                wall_seconds=run.wall_seconds,
+                error=run.error,
+            )
+        )
+    except Exception:  # pragma: no cover - 进度账是附注，出意外也不许带走这一趟
+        _log.warning(
+            "会后离线：%s 第 %d 块的进度没记上（不影响这一趟）",
+            source, run.index, exc_info=True,
+        )
 
 
 def _record_chunk_runs(metric: artifacts.SourceMetrics, runs: Sequence[ChunkRun]) -> None:

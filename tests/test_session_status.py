@@ -1,0 +1,379 @@
+"""`GET /api/sessions/{id}` 那只单场状态端点的用例（会后视图的进度区）。
+
+本文件盯住五件事：
+
+  - **跑到一半读得到**：会后的活儿正在飞时打这只端点，读得到「第 N 块 / 共 M 块、
+    正在跑哪一路、已经跑了多久」；跑完之后同一只端点照旧给得出读数（改读盘上那份账）；
+  - **两块回答两件事**：`offline.state` 照盘上那份如实答（盘上写 `running` 就答
+    `running`，崩在半路那一场因此答 `running`），`offline.in_process` 答「本进程里
+    此刻有没有这一趟活」；
+  - **前七格与列表同源**：同一份盘上 `session.json`，`GET /api/sessions` 那一行与
+    这一只端点的前七格给同一个值（域外的值两处都如实落 `null`）；
+  - **纯读**：读它不涨 `revision`、不广播，快照九键一个字不动；
+  - **失败档**：目录不在原地、这一场没在工作台清单里 → 404，回通用失败信封。
+
+**全部用假件**：离线段那一趟在现场把 `runner.build_engine` 换成假引擎（与
+`tests/test_post_idempotency.py` 同一处接缝），一次真推理都不发生，也不占显卡。
+"""
+
+from __future__ import annotations
+
+import json
+import threading
+from pathlib import Path
+
+import pytest
+
+from meeting import config as config_module
+from meeting.offline import artifacts as offline_artifacts
+from meeting.offline import progress as offline_progress
+from meeting.offline import runner as offline_runner
+from meeting.service.app import build_runtime
+from meeting.service.routes import api_routes
+from tests.test_offline_progress import GatedEngine
+from tests.test_offline_runner import sparse_pcm, synth_session
+
+#: 等后台那一趟收工的 join 上限（等到了就立刻回，不赌固定时长）
+JOB_TIMEOUT_SECONDS = 5.0
+CHUNK_SECONDS = 10.0
+
+
+def _runtime(tmp_path: Path, monkeypatch, **values):
+    """起一台真运行时（dev 采集替身），配置里覆盖 `**values`。"""
+    home = tmp_path / "home-session-status"
+    home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.delenv("MEETING_CAPTURE", raising=False)
+    previous = config_module.current()
+    applied = {
+        **config_module.DEFAULT_VALUES,
+        "log.dir": str(home / "logs"),
+        "capture.backend": "dev",
+        **values,
+    }
+    runtime = build_runtime(
+        config_module.Config(applied=applied, sources={key: "默认" for key in applied}, path="")
+    )
+    runtime._resolve_backends()
+    # 绑定一个回环端口：读快照那一条（`to_dict()`）只认监听 socket 给回来的端口
+    runtime.set_binding("127.0.0.1", 8765)
+    return runtime, previous
+
+
+def _workspace_with_audio(tmp_path: Path, *, seconds: float = 25.0) -> Path:
+    """一场已有音频的三块会（块长 10 秒 → 每路 3 块），并且已经跑过一趟。"""
+    session = synth_session(tmp_path / "ws-session-status" / "250906")
+    for source in ("mic", "loopback"):
+        sparse_pcm(session, source, seconds)
+    return session
+
+
+def _wait_job_done(runtime) -> None:
+    """等后台那一趟收工：**直接 join 那条线程**（它是这一格的观测量，不必轮询）。
+
+    线程对象由运行时自己拿着（`post_job['thread']`）；这里先取它、再等它 —— 与
+    `post_job_state()` 那条"看线程活没活着"的判据同源。
+    """
+    job = runtime.post_job
+    thread = None if not isinstance(job, dict) else job.get("thread")
+    if thread is not None:
+        thread.join(timeout=JOB_TIMEOUT_SECONDS)
+    assert runtime.post_job_state() is None, "等不到会后的活儿收工"
+
+
+def _write_session_json(session: Path, document: dict) -> None:
+    """把这一场的 `session.json` 换成给定的那一份（按字节写盘，不经过写侧代码）。"""
+    (session / "session.json").write_text(
+        json.dumps(document, ensure_ascii=False), encoding="utf-8"
+    )
+
+
+def _ledger_and_status(
+    session: Path, *, status_state: str | None, rows: list | None = None
+) -> None:
+    """按真实形状落一份逐块账（缺省 mic 一块跑完）与一版状态文件（`None` = 不落状态文件）。
+
+    进度账的两段文字与块号都是确定值；状态文件那一版由 `status_state` 给
+    （`running` 就是「上一次落的那一版 `running` 还在盘上」那一档）。
+    """
+    offline_progress.write_progress(
+        offline_progress.ledger_path(session),
+        session_id=session.name,
+        sources=["mic", "loopback"],
+        rows=rows
+        if rows is not None
+        else [
+            offline_progress.ChunkProgress(
+                "mic", 1, 0.0, 10.0, "transcribed",
+                "[00:00] **c01:S01**: 第一块的一句话", 1, 3.0,
+            ).to_row(chunks_total=3)
+        ],
+    )
+    if status_state is None:
+        return
+    offline_artifacts.write_status(
+        session / offline_artifacts.STATUS_NAME,
+        session_id=session.name,
+        state=status_state,
+        started_at="2025-09-06T20:00:00",
+        sources=["mic", "loopback"],
+        artifacts={},
+    )
+
+
+@pytest.fixture()
+def restore_config():
+    previous = config_module.current()
+    yield
+    config_module.set_current(previous)
+
+
+def test_the_endpoint_is_registered() -> None:
+    """路由注册点里那条路径在（`{dir:path}` 是为了收下 URL 编码的绝对路径）。"""
+    paths = [route.path for route in api_routes()]
+    assert "/api/sessions/{dir:path}" in paths
+
+
+def test_the_progress_is_readable_while_the_offline_run_is_in_flight(
+    tmp_path, monkeypatch, restore_config
+) -> None:
+    """跑到一半打这只端点：第 N 块 / 共 M 块、当前哪一路、已跑多久都读得到。"""
+    runtime, previous = _runtime(tmp_path, monkeypatch, **{"post.chunk_seconds": CHUNK_SECONDS})
+    session = _workspace_with_audio(tmp_path)
+    opened = runtime.workspace_open(str(session))
+    assert opened["dir"] == str(session)
+
+    gate = threading.Event()
+    engine = GatedEngine(gate, block_at=2)  # mic 第 2 块卡住
+    monkeypatch.setattr(offline_runner, "build_engine", lambda config=None: engine)
+    try:
+        runtime.post_offline({"dir": str(session)})
+        assert engine.reached.wait(timeout=JOB_TIMEOUT_SECONDS), "引擎没跑到 mic 的第 2 块"
+
+        revision_before = runtime.revision
+        body = runtime.session_status_dict(str(session))
+
+        assert body["dir"] == str(session)
+        assert body["session_id"] == "250919", "盘上 session.json 那一格原样给回"
+        assert body["kind"] == "meeting"
+        assert body["state"] == "done"  # 盘上 session.json 那一档
+        assert body["has_offline"] is False, "跑到一半时正式稿还没落，那一格照旧是假"
+        assert body["post"]["kind"] == "offline"
+        assert body["post"]["running"] is True, "这一趟正在飞"
+        assert body["post"]["finished_at"] is None, "还没收工，这一格如实为空"
+        offline = body["offline"]
+        assert offline["state"] == "running"
+        assert offline["in_process"] is True, "这一趟正在本进程里跑（与 post.running 同源）"
+        assert offline["current_source"] == "mic", offline
+        assert offline["elapsed_seconds"] >= 0.0
+        assert offline["started_at"], "起跑时刻要读得到"
+        assert offline["ledger"] == "meeting_offline_progress.jsonl"
+        mic = next(item for item in offline["sources"] if item["source"] == "mic")
+        assert (mic["done"], mic["total"], mic["current_chunk"]) == (1, 3, 2)
+        assert mic["counts"] == {"transcribed": 1, "silent": 0, "failed": 0, "unjudged": 0}
+        assert runtime.revision == revision_before, "读它是纯读：不涨 revision"
+    finally:
+        gate.set()
+        _wait_job_done(runtime)
+        config_module.set_current(previous)
+
+    # 跑完之后同一只端点照旧给得出读数（改读盘上那份账）：两路各 3 块都跑完
+    after = runtime.session_status_dict(str(session))
+    assert after["has_offline"] is True
+    assert after["offline"]["state"] == "done"
+    assert after["offline"]["in_process"] is False, "跑完之后这一格翻回假（盘上那份账照读）"
+    per_source = {item["source"]: item for item in after["offline"]["sources"]}
+    assert (per_source["mic"]["done"], per_source["mic"]["total"]) == (3, 3)
+    assert (per_source["loopback"]["done"], per_source["loopback"]["total"]) == (3, 3)
+    assert per_source["mic"]["remaining"] == 0
+    assert after["offline"]["finished_at"], "跑完那一刻的墙钟戳要读得到"
+
+
+def test_the_endpoint_falls_back_to_the_ledger_after_a_process_restart(
+    tmp_path, monkeypatch, restore_config
+) -> None:
+    """服务重启之后（进程里没有现场）读盘上那份账：块数照旧读得到，已跑时长如实交回 `None`。"""
+    runtime, previous = _runtime(tmp_path, monkeypatch, **{"post.chunk_seconds": CHUNK_SECONDS})
+    session = _workspace_with_audio(tmp_path)
+    runtime.workspace_open(str(session))
+    monkeypatch.setattr(offline_runner, "build_engine", lambda config=None: GatedEngine(
+        threading.Event(), block_at=0
+    ))
+    try:
+        # 直接用产品那一段实现跑一趟（不经过线程，模拟"上一次服务进程跑完的那一趟"）
+        runtime._run_post_offline(str(session))
+        runtime.post_job = None  # 假装本进程没有这一趟的现场
+        body = runtime.session_status_dict(str(session))
+        offline = body["offline"]
+        assert offline["state"] == "done"
+        assert offline["current_source"] is None
+        assert offline["elapsed_seconds"] is None, "跨进程算不出单调钟的差值，这一格不猜"
+        assert offline["started_at"] and offline["finished_at"]
+        assert {item["done"] for item in offline["sources"]} == {3}
+    finally:
+        config_module.set_current(previous)
+
+
+def test_the_seven_cells_match_the_list_row_when_the_disk_is_out_of_range(
+    tmp_path, monkeypatch, restore_config
+) -> None:
+    """前七格与 `GET /api/sessions` 同一行**同源**：盘上落在域外时两处给同一个值。
+
+    契约 4.9 写着前七格与 4.8 同一行同源、逐格语义见 4.8；这一条把「同一个事实在两处
+    给同一个值」钉住：`session.json` 的 `state` 写成四档之外的 `waiting`、`date` 写成
+    数字 `20250906`、`mode` 写成 `null` 时，列表那一行与单场那一只都如实答 `null`
+    —— 单场那一只不另开一套读法、不把域外的值漏给界面。
+    """
+    runtime, previous = _runtime(tmp_path, monkeypatch, **{"post.chunk_seconds": CHUNK_SECONDS})
+    session = _workspace_with_audio(tmp_path)
+    _write_session_json(
+        session,
+        {
+            "session_id": "250919",
+            "state": "waiting",        # 四档（recording/draining/done/failed）之外
+            "date": 20250906,          # 契约写的是 <YYYY-MM-DD>，这里是数字
+            "mode": None,              # 契约写的是 both|mic|loopback
+        },
+    )
+    opened = runtime.workspace_open(str(session))
+    assert opened["dir"] == str(session)
+    try:
+        row = next(
+            item for item in runtime.sessions_dict()["sessions"] if item["dir"] == opened["dir"]
+        )
+        body = runtime.session_status_dict(str(session))
+        for cell in ("state", "date", "mode"):
+            assert body[cell] == row[cell], (
+                f"{cell} 这一格两处该同值：列表给 {row[cell]!r}、单场给 {body[cell]!r}"
+            )
+        assert row["state"] is None, "四档之外如实 null（列表那一套收口）"
+        assert row["date"] is None, "不是字符串的日期如实 null"
+        assert row["mode"] is None
+    finally:
+        config_module.set_current(previous)
+
+
+def test_a_stale_running_status_file_is_answered_as_it_is_on_disk(
+    tmp_path, monkeypatch, restore_config
+) -> None:
+    """崩在半路那一场：`offline.state` 照盘上那份答 `running`，另立一格答「本进程里没在跑」。
+
+    盘上停着上一次落的那版 `running`、账上只有 mic 的第一块，而这一趟谁都没在跑
+    （进程重启过、命令行跑完退出了）。读数如实分两层：`state` 就是盘上那个 `running`
+    （不在这里替它二选一），`in_process` 答 `false` 把「此刻没有东西在跑」说破 ——
+    两块合起来读得出「盘上写着在跑、其实没在跑」。**不引入「被打断」终态**。
+    """
+    runtime, previous = _runtime(tmp_path, monkeypatch, **{"post.chunk_seconds": CHUNK_SECONDS})
+    session = _workspace_with_audio(tmp_path)
+    _ledger_and_status(session, status_state="running")
+    runtime.workspace_open(str(session))
+    try:
+        body = runtime.session_status_dict(str(session))
+        offline = body["offline"]
+        assert offline["state"] == "running", "照盘上那份如实答，不做二次解读"
+        assert offline["in_process"] is False, "本进程里没有这一趟活"
+        assert offline["elapsed_seconds"] is None
+        assert offline["current_source"] is None
+        per_source = {item["source"]: item for item in offline["sources"]}
+        assert (per_source["mic"]["done"], per_source["mic"]["total"]) == (1, 3)
+        assert per_source["mic"]["current_chunk"] is None
+        assert body["post"] is None
+    finally:
+        config_module.set_current(previous)
+
+
+def test_the_ledger_without_a_status_file_is_answered_as_a_ledger(
+    tmp_path, monkeypatch, restore_config
+) -> None:
+    """盘上有账、没有状态文件：`state` 如实答 `ledger`（成没成没人回答），不冒充 `running`。"""
+    runtime, previous = _runtime(tmp_path, monkeypatch, **{"post.chunk_seconds": CHUNK_SECONDS})
+    session = _workspace_with_audio(tmp_path)
+    _ledger_and_status(session, status_state=None)
+    runtime.workspace_open(str(session))
+    try:
+        offline = runtime.session_status_dict(str(session))["offline"]
+        assert offline["state"] == "ledger"
+        assert offline["in_process"] is False
+        assert offline["started_at"] is None
+        assert offline["finished_at"] is None
+        assert {item["done"] for item in offline["sources"]} == {1, 0}
+    finally:
+        config_module.set_current(previous)
+
+
+def test_a_directory_that_is_gone_is_a_404(tmp_path, monkeypatch, restore_config) -> None:
+    """目录不在原地 → 404（通用失败信封 + 一个机器可读的 `code`）。"""
+    from meeting.service.runtime import ActionError
+
+    runtime, previous = _runtime(tmp_path, monkeypatch, **{"post.chunk_seconds": CHUNK_SECONDS})
+    try:
+        with pytest.raises(ActionError) as info:
+            runtime.session_status_dict(str(tmp_path / "never-existed"))
+        assert info.value.status == 404
+        assert info.value.code == "session_dir_missing"
+        assert info.value.detail["kind"] == "missing"
+    finally:
+        config_module.set_current(previous)
+
+
+def test_a_directory_outside_the_workbench_list_is_a_404(
+    tmp_path, monkeypatch, restore_config
+) -> None:
+    """这一场没登记过 → 404 `invalid_setting`（读这一格与列表端点同一套判据）。"""
+    from meeting.service.runtime import ActionError
+
+    runtime, previous = _runtime(tmp_path, monkeypatch, **{"post.chunk_seconds": CHUNK_SECONDS})
+    session = _workspace_with_audio(tmp_path)
+    try:
+        with pytest.raises(ActionError) as info:
+            runtime.session_status_dict(str(session))
+        assert info.value.status == 404
+        assert info.value.code == "invalid_setting"
+        assert info.value.detail["dir"] == str(session)
+    finally:
+        config_module.set_current(previous)
+
+
+def test_a_session_that_never_ran_post_reports_an_empty_reading(
+    tmp_path, monkeypatch, restore_config
+) -> None:
+    """一次会后都没跑过的一场：读数如实是"还没跑"，`post` 与块数都不编。"""
+    runtime, previous = _runtime(tmp_path, monkeypatch, **{"post.chunk_seconds": CHUNK_SECONDS})
+    session = _workspace_with_audio(tmp_path)
+    runtime.workspace_open(str(session))
+    try:
+        body = runtime.session_status_dict(str(session))
+        assert body["post"] is None
+        assert body["offline"]["state"] == "idle"
+        assert body["offline"]["current_source"] is None
+        assert body["offline"]["elapsed_seconds"] is None
+        assert [item["done"] for item in body["offline"]["sources"]] == [0, 0]
+    finally:
+        config_module.set_current(previous)
+
+
+def test_the_endpoint_leaves_the_snapshot_and_the_list_alone(
+    tmp_path, monkeypatch, restore_config
+) -> None:
+    """快照顶层九键与列表每行十一键一个字不动（本节点不碰那两处硬门）。"""
+    runtime, previous = _runtime(tmp_path, monkeypatch, **{"post.chunk_seconds": CHUNK_SECONDS})
+    session = _workspace_with_audio(tmp_path)
+    runtime.workspace_open(str(session))
+    # 引擎一律用假件：产品路径缺省会去造真离线引擎（真加载权重、真占卡），
+    # 用例这一层不许走到那一步（见 `tests/test_cli_post_config.py` 的自述事故）。
+    monkeypatch.setattr(offline_runner, "build_engine", lambda config=None: GatedEngine(
+        threading.Event(), block_at=0
+    ))
+    try:
+        runtime._run_post_offline(str(session))
+        runtime.session_status_dict(str(session))
+        assert set(runtime.to_dict()) == {
+            "revision", "service", "top_state", "session", "sources", "alerts",
+            "transcript", "ended", "settings",
+        }
+        rows = runtime.sessions_dict()["sessions"]
+        assert len(rows) == 1
+        assert len(rows[0]) == 11, sorted(rows[0])
+    finally:
+        config_module.set_current(previous)

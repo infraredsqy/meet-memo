@@ -394,6 +394,84 @@ class ActionError(Exception):
         super().__init__(message)
 
 
+def _mark_post_job_finished(job: dict[str, Any] | None, finished_at: str) -> None:
+    """把会后那一趟的现场读数标成"已收工"（**不把那一格抹掉**）。
+
+    判"有没有在飞"的那一问由 `ServiceRuntime.post_job_state()` 按 `thread.is_alive()`
+    回答；这一格留着是为了让「上一趟是哪一趟、什么时候起的、什么时候收的」在跑完之后
+    还读得到（`GET /api/sessions/{id}` 的 `post` 那一格）。
+    """
+    if not isinstance(job, dict):
+        return
+    if job.get("finished_at") is None:
+        job["finished_at"] = str(finished_at)
+
+
+def _post_job_progress(job: Any, directory: str) -> Any:
+    """会后那条线程手里的逐块进度账（**是这一场、是离线那一趟**时才有）。
+
+    三样都对上才交回它：这一趟的路是 `offline`、跑的是这一场、账已经立起来。否则
+    `None` —— 调用方据此退回读盘那条路。
+    """
+    if not isinstance(job, dict):
+        return None
+    if str(job.get("dir")) != str(directory):
+        return None
+    if str(job.get("kind")) != "offline":
+        return None
+    return job.get("progress")
+
+
+def _post_job_view(job: Any, directory: str) -> dict[str, Any] | None:
+    """`GET /api/sessions/{id}` 的 `post` 那一格：上一趟/这一趟是哪一趟、在不在飞。
+
+    `running` 由调用方按 `post_job_state()` 那一套判据盖上来（这里只看线程活没活着，
+    不另发明一套判据）。
+    """
+    if not isinstance(job, dict) or str(job.get("dir")) != str(directory):
+        return None
+    return {
+        "running": False,
+        "kind": job.get("kind"),
+        "started_at": job.get("started_at"),
+        "finished_at": job.get("finished_at"),
+    }
+
+
+def _offline_progress_module() -> Any:
+    """`meeting.offline.progress`（**函数体内 import**：本模块顶层不拉会后那一包）。"""
+    from meeting.offline import progress as progress_module
+
+    return progress_module
+
+
+def _declared_sources_of(directory: str | Path) -> list[str]:
+    """这一场跑哪几路（`session.json` 声明的那些，读不到就是两路全集）。"""
+    from meeting.offline import runner as offline_runner
+
+    return list(offline_runner.declared_sources(directory))
+
+
+def _offline_status_document(directory: str | Path) -> dict[str, Any] | None:
+    """场次目录里那份 `meeting_offline_status.json`（读不出来就交回 `None`）。
+
+    只取两样东西：起止时刻与终态那一档。成败的结论归状态文件与三份产物，这里借它
+    给读数补上"这一趟什么时候起的、跑完没有"的位置感。
+    """
+    from meeting.offline import artifacts as offline_artifacts
+
+    path = Path(directory) / offline_artifacts.STATUS_NAME
+    try:
+        return offline_artifacts.read_status(path)
+    except Exception:
+        return None
+
+
+def _session_status_error(code: str, message: str, *, detail: dict[str, Any]) -> ActionError:
+    """`GET /api/sessions/{id}` 的失败体（与动作失败同一副信封，HTTP 404）。"""
+    return ActionError(code, message, status=404, detail=detail)
+
+
 class ServiceRuntime:
     """唯一状态权威：持有 `Snapshot` 与唯一一份状态字段，只在事件循环里改，不加锁。"""
 
@@ -1937,6 +2015,25 @@ class ServiceRuntime:
         {"recording", "draining", "done", "failed"}
     )
 
+    def _disk_record_cells(
+        self, record: dict[str, Any] | None
+    ) -> tuple[str | None, str | None, str | None]:
+        """盘上 `session.json` 那三格的读数：`(state, date, mode)`。
+
+        **`GET /api/sessions` 与 `GET /api/sessions/{id}` 前七格共用这一处**（契约 4.9
+        写着前七格与 4.8 同一行同源、逐格语义见 4.8）：同一个事实在两处必须给同一个值。
+        收口两条 —— `state` **只判集合成员关系**（`_DISK_STATE_VALUES` 之外如实 `null`），
+        `date` / `mode` 要是字符串（盘上落成数字或对象时同样如实 `null`）。
+        状态文件不在场（`record is None`）时三格一律 `null`。
+        """
+        if record is None:
+            return None, None, None
+        raw_state = record.get("state")
+        state = str(raw_state) if str(raw_state) in self._DISK_STATE_VALUES else None
+        date = str(record["date"]) if isinstance(record.get("date"), str) else None
+        mode = str(record["mode"]) if isinstance(record.get("mode"), str) else None
+        return state, date, mode
+
     def workspace_open(self, dir: Any, confirm: bool = False) -> dict[str, Any]:
         """`workspace_open`：打开/收编一个**已存在**的目录，登记进注册表。
 
@@ -2018,14 +2115,7 @@ class ServiceRuntime:
             path = str(entry["dir"])
             probe = classify_workspace_dir(path)
             record = self.store.read_session_json(path)
-            state = None
-            date = None
-            mode = None
-            if record is not None:
-                raw_state = record.get("state")
-                state = str(raw_state) if str(raw_state) in self._DISK_STATE_VALUES else None
-                date = str(record["date"]) if isinstance(record.get("date"), str) else None
-                mode = str(record["mode"]) if isinstance(record.get("mode"), str) else None
+            state, date, mode = self._disk_record_cells(record)
             rows.append(
                 {
                     "dir": path,
@@ -2054,19 +2144,150 @@ class ServiceRuntime:
         """会后那两趟活的现场读数（`None` = 没有在跑的）。
 
         `running` 由线程自己落（跑完那一刻清掉），因此这一格不会永远停在"在跑"。
-        它只进动作回执与 log，不进快照、不落盘（快照九键一个字不动）。
+        它只进动作回执与 log，不进快照。**跑完那一刻不把它抹掉**：抹掉之后按「生成会后
+        精细稿」跑完一场、再去读那一场的进度，读到的就是一片空白（`GET /api/sessions/{id}`
+        的 `post` 那一格要回答「上一趟是哪一趟、什么时候起的」）。判"有没有在飞"看
+        `thread.is_alive()`，`post_job['finished_at']` 是它收工的时刻。
         """
         job = self.post_job
         if job is None:
             return None
-        if not job["thread"].is_alive():
-            self.post_job = None
+        thread = job.get("thread")
+        if thread is not None and not thread.is_alive():
+            if job.get("finished_at") is None:
+                job["finished_at"] = now_iso()
             return None
         return {
             "kind": job["kind"],
             "dir": job["dir"],
             "started_at": job["started_at"],
         }
+
+    # -- 单场状态（`GET /api/sessions/{id}`：会后视图的进度区）-----------------
+
+    def _offline_job_running(self, directory: str) -> bool:
+        """这一场**此刻有没有离线那一趟在本进程里跑**（`GET /api/sessions/{id}` 的
+        `offline.in_process` 那一格，判据与 `post_job_state()` 同源）。
+
+        三样都对上才算「在跑」：这一趟的路是 `offline`、跑的是这一场、线程还活着。
+        **跑完那一刻这条线程就死了** —— 与 `post_job_state()` 同一套判据（那一格跑完之后
+        也不把 job 抹掉，靠 `thread.is_alive()` 分「在飞」与「跑完了」）。不另发明一套。
+        """
+        job = self.post_job
+        if not isinstance(job, dict):
+            return False
+        if str(job.get("dir")) != str(directory) or str(job.get("kind")) != "offline":
+            return False
+        thread = job.get("thread")
+        return thread is not None and thread.is_alive()
+
+    def session_status_dict(self, target: Any) -> dict[str, Any]:
+        """`GET /api/sessions/{id}` 的应答体：**这一场此刻跑到哪儿了**。
+
+        `{id}` 是**这一场的目录路径**（URL 编码的绝对路径）：目录名就是这一场会的名字
+        （`docs/design-intent.md` 第 3 条），`GET /api/sessions` 每一行也以 `dir` 为主键。
+        路径要过与那只清单端点同一套判据（规范化后的绝对路径比对）：目录已不在原地、
+        或不在工作台清单里，都按 404 如实回一句（见 `_session_status_error()`）。
+
+        `offline` 那一格是**会后离线的进度读数**，两路各一份：跑过几块 / 共几块、
+        此刻在跑哪一路、从起跑到现在过了多久。三样东西合起来就是会后视图那一片进度区
+        要的「第几块 / 共几块、正在跑哪一路、已经跑了多久」。
+
+        读数有两个来源，取到哪个用哪个：
+
+          - **这一趟正在本进程里跑** → 用会后那条线程手里的现场（`post_job['progress']`），
+            「已经跑了多久」由它按单调钟当场算；
+          - **本进程没在跑这一趟**（服务重启过、命令行跑的那一趟、跑完很久了）→ 读场次
+            目录里那份 `meeting_offline_progress.jsonl` 账，起点与终点问状态文件。
+            跨进程算不出单调钟的差值，那一格如实交回 `null`（它本来就只作附注，
+            见 `docs/design-intent.md` 第 6、7 条）。
+
+        `offline` 里**两块回答的是两件事**，各有各的判据（契约 4.9）：`state` 照盘上那份
+        如实答（状态文件写着 `running` 就答 `running`，哪怕那一趟早已崩在半路），
+        `in_process` 答「**本进程里此刻有没有这一趟活**」。两块合起来才分得清「真的在跑」
+        与「盘上停着一版 `running`、其实谁都没在跑」—— 后者不另立终态（「被打断」是另一个
+        节点的账），只把这两格如实摆出来。
+
+        `offline` 是**给人看的读数**：不提交、不涨 `revision`、不广播。这只端点是纯读，
+        快照九键一个字不动。
+        """
+        directory = canonical_dir(target)
+        probe = classify_workspace_dir(directory)
+        if probe["kind"] == "missing":
+            raise _session_status_error(
+                "session_dir_missing",
+                f"这一场的目录已不在原地：{directory}",
+                detail={"dir": str(directory), "kind": "missing"},
+            )
+        if self._registry_entry_for(directory) is None:
+            raise _session_status_error(
+                "invalid_setting",
+                "这一场不在工作台清单里（`GET /api/sessions` 读的就是那份注册表）："
+                "先在界面上把它打开，再把会话 id 指过来",
+                detail={"dir": str(directory), "kind": probe["kind"]},
+            )
+        record = self.store.read_session_json(directory)
+        state, date, mode = self._disk_record_cells(record)
+        post = _post_job_view(self.post_job, directory)
+        if post is not None:
+            post["running"] = self.post_job_state() is not None
+        return {
+            "dir": str(directory),
+            "session_id": None if record is None else (
+                record.get("session_id") or Path(str(directory)).name
+            ),
+            "kind": probe["kind"],
+            "state": state,
+            "date": date,
+            "mode": mode,
+            "has_offline": has_offline_transcript(directory),
+            "post": post,
+            "offline": self._offline_progress_for(directory),
+        }
+
+    def _offline_progress_for(self, directory: str) -> dict[str, Any]:
+        """这一场的会后离线进度读数（现场优先，落盘那份账兜底）。见 `session_status_dict()`。
+
+        **两块分开说，别混**：
+
+          - `offline.state` 照**盘上那份**如实答（契约 4.9：`running` / `done` / `idle`，
+            外加「盘上有账、而这一趟既不在飞、也没有状态文件回答」那一档 `ledger`）。
+            状态文件写着 `done` / `failed` 就答 `done`、写着别的（`running`）就答 `running`；
+            **进程崩在半路的那一场因此如实答 `running`**，不在这里替盘上的话做二次解读；
+          - `offline.in_process` 另立一格答「**本进程里此刻有没有这一趟活**」，判据取
+            `_offline_job_running()`（这一趟的路是 `offline`、跑的是这一场、那条线程还活着
+            —— 与「这一趟在不在飞」同一套现场）。**跑完那一刻它翻回 `false`**：活着的现场
+            与盘上那份账因此各按各的判据出（跑完再读这一场，读的是盘上那份账）。
+
+        两块合起来才读得清崩在半路那一档：`state: "running"` 说的是盘上停着的那版状态，
+        `in_process: false` 说的是此刻没有任何东西在跑。这一格**不引入「被打断」终态**
+        （那是另一个节点的账），也**不参与任何判定**（进度是给人看的读数）。
+        """
+        ledger = _post_job_progress(self.post_job, directory)
+        running = self._offline_job_running(directory)
+        if ledger is not None and running:
+            # 这一趟正在本进程里跑：块数、当前哪一路、已跑多久都由现场给
+            snapshot = ledger.snapshot()
+            snapshot["in_process"] = True
+            return snapshot
+        progress_module = _offline_progress_module()
+        snapshot = progress_module.snapshot_of(
+            directory,
+            sources=_declared_sources_of(directory),
+            session_id="",
+        )
+        read = _offline_status_document(directory)
+        if read is not None:
+            snapshot["started_at"] = read.get("started_at")
+            snapshot["finished_at"] = read.get("finished_at")
+            # 盘上有结论可读：状态文件落在 `done` / `failed` 就答 `done`，别的档（`running`）
+            # 照它自己那一档如实答 —— 那一版可能是「真的还在跑」，也可能是「崩在半路停在那儿」，
+            # 这一格不替它二选一（「此刻有没有东西在跑」由 `in_process` 那一格回答）。
+            snapshot["state"] = (
+                "done" if read.get("state") in ("done", "failed") else "running"
+            )
+        snapshot["in_process"] = False
+        return snapshot
 
     def _reject_post_job(self) -> None:
         """会后那两趟活的两道闸：还会中动作在跑，或已经有一趟没跑完。
@@ -2188,11 +2409,19 @@ class ServiceRuntime:
             "dir": target,
             "thread": thread,
             "started_at": now_iso(),
+            "finished_at": None,
+            #: 离线那一趟的逐块进度账（下线那条链跑起来之后自己塞进来；纪要那趟是 `None`）
+            "progress": None,
         }
         thread.start()
 
     def _run_post_job(self, kind: str, target: str, claimed_minutes: bool = False) -> None:
-        """线程体：跑会后的某一趟，跑完当场结束（模型用完就关，不留在显存里等下一次）。"""
+        """线程体：跑会后的某一趟，跑完当场结束（模型用完就关，不留在显存里等下一次）。
+
+        **收工那一刻把 `post_job` 记成"已收工"而不是抹掉**：抹掉之后按「生成会后精细稿」
+        跑完一场、再去读那一场的进度，读到的就是一片空白。判"有没有在飞"看
+        `post_job_state()`（它按 `thread.is_alive()` 答），占位的那一格留着。
+        """
         try:
             if kind == "offline":
                 self._run_post_offline(target)
@@ -2201,7 +2430,7 @@ class ServiceRuntime:
         except BaseException:  # 后台线程的异常没有别的落点，兜到底
             _log.exception("会后的活儿（%s）抛出来了：%s", kind, target)
         finally:
-            self.post_job = None
+            _mark_post_job_finished(self.post_job, now_iso())
             _log.info("会后的活儿（%s）收工：%s", kind, target)
 
     def _run_post_offline(self, target: str) -> None:
@@ -2211,11 +2440,24 @@ class ServiceRuntime:
         `minutes=False`：这一趟**不通知纪要那一层**（尾巴上那道
         `_announce_minutes()` 不拉起子会话）—— 纪要归另一个按钮。
         引擎按 `post.engine` / `post.model` / `post.dtype` 现造（缺省就是真离线模型）。
+
+        **逐块进度账在这一趟里立起来**：`run_session(..., progress=…)` 每跑完一块就往
+        场次目录里那份 `meeting_offline_progress.jsonl` 上补一行，同一份现场读数由
+        `GET /api/sessions/{id}` 随取随用（见 `session_status_dict()`）。
         """
+        from meeting.offline import progress as progress_module
         from meeting.offline import runner as offline_runner
 
+        ledger = progress_module.OfflineProgressLedger(
+            target,
+            session_id=str(offline_runner.session_id_of(target)),
+            sources=list(offline_runner.declared_sources(target)),
+        )
+        job = self.post_job
+        if isinstance(job, dict) and str(job.get("dir")) == str(target):
+            job["progress"] = ledger
         _log.info("按「生成会后精细稿」起这一趟离线链：%s", target)
-        offline_runner.run_session(target, minutes=False)
+        offline_runner.run_session(target, minutes=False, progress=ledger)
 
     def _run_post_minutes(self, target: str, *, claimed: bool = False) -> None:
         """「直接出纪要」那一趟：把**手上有的稿子**交给 DSH（R9：缺会后稿就按现有档位降级）。

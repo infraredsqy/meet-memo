@@ -37,6 +37,7 @@ from typing import Any, Callable, Iterable, Sequence
 from meeting import config as config_module
 from meeting import logging_setup
 from meeting.capture.archive import EMPTY_PCM_BYTES
+from meeting.offline import progress as offline_progress
 from meeting.offline import runner as offline_runner
 from meeting.service import app as service_app
 
@@ -482,6 +483,7 @@ def run_post(
     minutes_launcher: Any = None,
     archive_converter: Callable[..., bool] | None = None,
     deadline: float | None = None,
+    progress: offline_progress.OfflineProgressLedger | None = None,
 ) -> dict[str, Any]:
     """把「跑会后一套」跑一遍，交回一份可读摘要（`post()` 与收尾第 4 步共用）。
 
@@ -493,9 +495,15 @@ def run_post(
          **PCM 一个字节都不动**，退出码走 `EXIT_FAILURE`。转码实现只有一份
          （`meeting/capture/archive.py` 的 `convert_to_mp3` + `mp3_path_for`），本模块不另写。
       2. **跑离线那一趟**：`offline_runner.run_session(session_dir, engine=engine,
-         minutes_launcher=…, force=…)` —— **模块属性调用**，好让用例把 `run_session`
-         整个换掉；两个注入参数**一路向下传**（落在 `_announce_minutes()` 的形参上，
-         不落在模块全局上）。
+         minutes_launcher=…, force=…, progress=…)` —— **模块属性调用**，好让用例把 `run_session`
+         整个换掉；三个注入参数**一路向下传**（`minutes_launcher` / `force` 落在
+         `_announce_minutes()` 的形参上、`progress` 落在逐块落盘那一条链上，都不落在模块全局上）。
+         **逐块进度账在这一条入口上也立起来**：`progress` 缺省时本函数按 `runtime._run_post_offline()`
+         同一副样子立一份（场次目录 + `runner.session_id_of()` + `runner.declared_sources()`），
+         `run_session()` 每跑完一块就往场次目录里那份 `meeting_offline_progress.jsonl` 上补一行
+         —— 页面读那一场的会后进度，因此不因「这一趟是命令行拉起的」而空着
+         （`docs/design-intent.md` 第 12 条：落盘跟着这一条链走，不挑入口）。调用方自己立好一份
+         时可以经这一格注入（缺省 `None` = 本函数立）。
       3. **等纪要那一层的终态**：纪要挂在离线链尾巴上（`_announce_minutes()`），产物是场次
          目录根的 `meeting_minutes_status.json` 与 `meeting_final.md`；**要等它落定才报结论**。
          等待是事件驱动的轮询，上界用现成的纪要墙钟键 `minutes.timeout_seconds`。
@@ -647,12 +655,23 @@ def run_post(
             if minutes_launcher is not None
             else None
         )
+        # 逐块进度账（`meeting_offline_progress.jsonl`）：**这一条入口也落**。挂在离线段
+        # 收工入口这一个落点上，`meeting post` 与会后钩子（同一个 `run_post()`）因此都算数，
+        # 落盘跟着链走、不挑是哪个按钮拉起的（`docs/design-intent.md` 第 12 条）。
+        # 调用方注入的那一份优先（用例与下游的「拿旧录音全速重跑」都靠这一格）。
+        if progress is None:
+            progress = offline_progress.OfflineProgressLedger(
+                directory,
+                session_id=str(offline_runner.session_id_of(directory)),
+                sources=list(offline_runner.declared_sources(directory)),
+            )
         try:
             runner_result = offline_runner.run_session(
                 directory,
                 engine=engine,
                 minutes_launcher=minutes_launcher_lane,
                 force=bool(force),
+                progress=progress,
             )
         except BaseException as exc:  # 离线这一层整个抛出来：如实记，**再原样上抛**
             offline_error = f"{type(exc).__name__}: {exc}"

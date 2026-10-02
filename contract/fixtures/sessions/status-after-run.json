@@ -1,0 +1,47 @@
+{
+  "dir": "<path>",
+  "session_id": "<session-id>",
+  "kind": "meeting",
+  "state": "done",
+  "date": "2025-09-06",
+  "mode": "both",
+  "has_offline": true,
+  "post": null,
+  "offline": {
+    "ledger": "meeting_offline_progress.jsonl",
+    "state": "done",
+    "started_at": "<iso>",
+    "finished_at": "<iso>",
+    "elapsed_seconds": null,
+    "current_source": null,
+    "sources": [
+      {
+        "source": "mic",
+        "done": 2,
+        "total": 2,
+        "remaining": 0,
+        "current_chunk": null,
+        "counts": {
+          "transcribed": 1,
+          "silent": 1,
+          "failed": 0,
+          "unjudged": 0
+        }
+      },
+      {
+        "source": "loopback",
+        "done": 2,
+        "total": 2,
+        "remaining": 0,
+        "current_chunk": null,
+        "counts": {
+          "transcribed": 1,
+          "silent": 0,
+          "failed": 1,
+          "unjudged": 0
+        }
+      }
+    ],
+    "in_process": false
+  }
+}
