@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { initialSelection, startWhy, statusLabel } from '../src/home/model';
+import {
+  initialSelection,
+  segmentsView,
+  startButtonLabel,
+  startWhy,
+  statusLabel,
+} from '../src/home/model';
 import { confirmWorkspaceOpen } from '../src/home/confirmWorkspaceOpen';
 import { drainSettled, showsWorkspaceHome } from '../src/home/gate';
 import { offlineNoticeOf, postButtonsView, postIdleNote } from '../src/home/post';
@@ -18,6 +24,7 @@ function row(over: Partial<SessionRow> = {}): SessionRow {
     state: null,
     date: null,
     mode: null,
+    segments: [],
     has_offline: false,
     added_at: '2026-09-21T21:03:00+08:00',
     last_opened_at: '2026-09-21T21:03:00+08:00',
@@ -59,11 +66,55 @@ describe('行状态一眼可读', () => {
   });
 });
 
-describe('「开始录音」在这一行上能不能按', () => {
-  it('空白工作区可按；有会议记录的按不动（续接归下一个节点）', () => {
+describe('「开始 / 接着录」在这一行上能不能按', () => {
+  it('空白工作区可按；录过的目录照样可按——对着它按就是续接（第 9 条翻案）', () => {
     expect(startWhy(row({ kind: 'empty', state: null }))).toBeNull();
-    expect(startWhy(row({ kind: 'meeting', state: 'done' }))).toBe('已有会议记录；续接归下一个节点');
+    expect(startWhy(row({ kind: 'meeting', state: 'done' }))).toBeNull();
+    expect(startWhy(row({ kind: 'meeting', state: 'failed' }))).toBeNull();
     expect(startWhy(row({ dir_exists: false }))).toBe('目录已不在原地，只显示，录不了');
+  });
+
+  it('动作钮的名字跟着行走：录过的叫「接着录」，没录过的叫「开始录音」', () => {
+    expect(startButtonLabel(row({ kind: 'empty', state: null }))).toBe('开始录音');
+    expect(startButtonLabel(row({ kind: 'meeting', state: 'done' }))).toBe('接着录');
+    expect(startButtonLabel(row({ kind: 'meeting', state: 'recording' }))).toBe('接着录');
+  });
+});
+
+describe('详情区的段读数（续接过的会看得出接过）', () => {
+  it('盘上段账原文 → 每段一行 + 合计（合计只数写完的段，第 7 条）', () => {
+    const view = segmentsView(
+      row({
+        state: 'done',
+        segments: [
+          { index: 1, started_at: '2026-09-21T10:02:00+08:00', ended_at: '2026-09-21T10:19:00+08:00', duration_seconds: 61.5 },
+          { index: 2, started_at: '2026-09-21T11:30:00+08:00', ended_at: '2026-09-21T11:32:00+08:00', duration_seconds: 122.3 },
+        ],
+      }),
+    );
+    expect(view).not.toBeNull();
+    expect(view?.total).toBe('共 2 段 · 3 分 4 秒');
+    expect(view?.lines.map((line) => line.label)).toEqual(['段 1', '段 2']);
+    expect(view?.lines[0]).toMatchObject({ time: '10:02–10:19', seconds: '1 分 2 秒' });
+    expect(view?.lines[1]).toMatchObject({ time: '11:30–11:32', seconds: '2 分 2 秒' });
+  });
+
+  it('还在录的那段：时刻写到「起」，时长如实写「没写完」，合计不计它', () => {
+    const view = segmentsView(
+      row({
+        state: 'recording',
+        segments: [
+          { index: 1, started_at: '2026-09-21T10:02:00+08:00', ended_at: '2026-09-21T10:19:00+08:00', duration_seconds: 61.5 },
+          { index: 2, started_at: '2026-09-21T11:30:00+08:00', ended_at: null, duration_seconds: null },
+        ],
+      }),
+    );
+    expect(view?.total).toBe('共 2 段 · 1 分 2 秒');
+    expect(view?.lines[1]).toMatchObject({ time: '11:30 起', seconds: '没写完' });
+  });
+
+  it('没有段账（还没开过会）时交回 null，详情区不摆这一格', () => {
+    expect(segmentsView(row({ kind: 'empty', state: null }))).toBeNull();
   });
 });
 

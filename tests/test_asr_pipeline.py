@@ -762,6 +762,72 @@ def test_pipeline_keeps_reading_across_segments(session_dir: Path):
     assert len(stamps) == 2 and stamps[0] <= stamps[1]
 
 
+def test_resume_opens_a_gap_and_never_rereads_the_old_segment(session_dir: Path):
+    """续接开场三件事：记号行落进两段之间、断口行推给出口、旧段一个字节不重读。
+
+    上一场留下的现场：段 1 里有语音 + 静默（重读它就会多出行），临时稿里留着
+    上一场的最后一行；本段的空段文件已由采集侧开出（生产次序：采集先起步，
+    转写随后——所以「盘上最大段号」此刻就指本段）。起来之后旧段没有行、
+    新段照常出行，临时稿里旧正文与新正文之间隔着那条记号行。
+    """
+    from meeting.asr.pipeline import RESUME_GAP_TEXT
+
+    transcriber = SleepingTranscriber(sleep_seconds=0.0)
+    recorder = LineRecorder()
+    pipeline = make_pipeline(session_dir, transcriber, line_sink=recorder)
+    transcript = session_dir / TRANSCRIPT_FILE_TEMPLATE.format(source="mic")
+    with open(session_dir / archive_name("mic", 1), "ab", buffering=0) as handle:
+        handle.write(speech_pcm(0.3) * 3)
+        handle.write(silent_pcm(0.6))
+    transcript.write_text("[09:00] 上一场的最后一行\n", encoding="utf-8")
+    (session_dir / archive_name("mic", 2)).write_bytes(b"")
+    pipeline.start("mic", str(session_dir))
+    try:
+        # 断口行先到（它在读线程与 worker 起来之前就推了）
+        wait_for(lambda: recorder.for_source("mic") or None, what="续接的断口行")
+        with open(session_dir / archive_name("mic", 2), "ab", buffering=0) as handle:
+            for _ in range(3):
+                handle.write(speech_pcm(0.3))
+            time.sleep(TEST_SILENCE_TIMEOUT_SECONDS + 0.1)
+            handle.write(silent_pcm(0.6))
+        wait_for(
+            lambda: (lambda rows: rows if len(rows) >= 2 else None)(recorder.for_source("mic")),
+            what="新段的第一行",
+        )
+    finally:
+        pipeline.stop()
+
+    lines = recorder.for_source("mic")
+    # 恰好两条：断口 + 新段的正文——旧段那段语音要是被重读了，这里就会多出一条
+    assert len(lines) == 2
+    assert getattr(lines[0], "kind") == "gap" and RESUME_GAP_TEXT in str(getattr(lines[0], "text"))
+    assert getattr(lines[1], "kind") == "line"
+    # 临时稿：旧正文 → 记号行 → 新正文；记号行是 LINE_RE 认不出的注释形
+    raw_lines = transcript.read_text(encoding="utf-8").splitlines()
+    assert len(raw_lines) == 3
+    assert raw_lines[0] == "[09:00] 上一场的最后一行"
+    assert raw_lines[1].startswith("<!--") and RESUME_GAP_TEXT in raw_lines[1]
+    assert LINE_RE.match(raw_lines[1]) is None
+    assert LINE_RE.match(raw_lines[2]) is not None
+
+
+def test_a_fresh_session_never_emits_a_gap_line(session_dir: Path):
+    """开场（目录里没有临时稿）那条断口不存在：一行都不推、临时稿也不落记号行。"""
+    from meeting.asr.pipeline import RESUME_GAP_TEXT as _text  # noqa: F401 - 只为读数一致
+
+    transcriber = SleepingTranscriber(sleep_seconds=0.0)
+    recorder = LineRecorder()
+    pipeline = make_pipeline(session_dir, transcriber, line_sink=recorder)
+    pipeline.start("mic", str(session_dir))
+    try:
+        pipeline.stop()
+    finally:
+        if not pipeline._sealed:  # pragma: no cover - stop() 幂等，这里只是双保险
+            pipeline.stop()
+    assert recorder.lines == []
+    assert not (session_dir / TRANSCRIPT_FILE_TEMPLATE.format(source="mic")).exists()
+
+
 def test_a_pause_window_of_digital_silence_produces_no_lines(session_dir: Path):
     """暂停窗口（整段的数字零）**一行转写都不产生**——静音不进正文（第 8 条的隐私线）。
 

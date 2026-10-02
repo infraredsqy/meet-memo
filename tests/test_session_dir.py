@@ -2,8 +2,13 @@
 
 覆盖：
 
-  - `start` **必须显式给目标工作区目录**：缺失 / 不是已存在目录 / 里面已有另一场的
-    `session.json` 都被 `invalid_setting` 拦下；服务侧不建目录、不按日期命名；
+  - `start` **必须显式给目标工作区目录**：缺失 / 不是已存在目录都被 `invalid_setting` 拦下；
+    服务侧不建目录、不按日期命名；目录里已有 `session.json` 的那一档**放行**——
+    那是续接（同一场会再录一段，`docs/design-intent.md` 第 9 条）；
+  - **续接**：对着录过的目录再 start，旧记录的身份三格与段账原样保留在合并后的
+    `session.json` 里，收尾失败那几格从 waiting 重新起算；
+  - **段号分配**：`next_segment_number()` 从盘上实有的段文件认号（最大值 + 1），
+    认名规则与 `archive_name()` 同一条；
   - `session.id` **就是目录名**，`dir` 是工作区目录的绝对路径；
   - **日期**是 `session.json` 的元信息字段（`date`），从开场的时刻取，不来自目录名；
   - `session.json` 字段全貌、**原子写**（**无 `.tmp` 残骸**、读到的永远是完整 JSON）、
@@ -31,8 +36,10 @@ from meeting.session import (
     archive_name,
     archive_segment_number,
     build_session_record,
+    next_segment_number,
     resolve_workspace_dir,
     segment_archive_paths,
+    segment_numbers,
     state_for,
 )
 from meeting.state import DRAIN_STEP_IDS
@@ -54,8 +61,8 @@ def test_resolve_workspace_dir_requires_an_existing_directory(tmp_path):
     assert [item.name for item in tmp_path.iterdir()] == ["跟老王聊周会"]
 
 
-def test_resolve_workspace_dir_refuses_missing_or_dirty_targets(tmp_path):
-    """缺失值 / 不存在的目录 / 已有 session.json 的目录都在这里当场拦下。"""
+def test_resolve_workspace_dir_refuses_missing_targets(tmp_path):
+    """缺失值 / 不存在的目录在这里当场拦下；已有记录的目录放行（那是续接）。"""
     with pytest.raises(ValueError):
         resolve_workspace_dir(None)
     with pytest.raises(ValueError):
@@ -66,8 +73,25 @@ def test_resolve_workspace_dir_refuses_missing_or_dirty_targets(tmp_path):
     taken = tmp_path / "taken"
     taken.mkdir()
     (taken / SESSION_FILE_NAME).write_text("{}", encoding="utf-8")
-    with pytest.raises(ValueError):
-        resolve_workspace_dir(str(taken))
+    # 录过的目录照样解析得回（对着它按 start = 续接同一场会，第 9 条翻案）
+    assert resolve_workspace_dir(str(taken)) == str(taken)
+
+
+def test_next_segment_number_counts_the_segments_on_disk(tmp_path):
+    """下一个段号 = 盘上实有段号的最大值 + 1；两路共一个计器，认名只认三位数字。"""
+    assert next_segment_number(tmp_path) == 1  # 空目录从 1 起
+    (tmp_path / "meeting_audio_mic_001.pcm").write_bytes(b"a")
+    (tmp_path / "meeting_audio_loopback_001.pcm").write_bytes(b"b")
+    assert next_segment_number(tmp_path) == 2  # 续接一场（每路恰好一段）之后得 2
+    (tmp_path / "meeting_audio_mic_002.pcm").write_bytes(b"c")
+    (tmp_path / "meeting_audio_mic_002.mp3").write_bytes(b"m")
+    assert next_segment_number(tmp_path) == 3
+    # 别路的段、认不出的名字都不进计器
+    (tmp_path / "meeting_audio_loopback_010.pcm").write_bytes(b"d")
+    (tmp_path / "meeting_audio_mic_00xx.pcm").write_bytes(b"bad")
+    assert next_segment_number(tmp_path) == 11
+    assert segment_numbers(tmp_path, "mic") == [1, 2]
+    assert segment_numbers(tmp_path, "loopback") == [1, 10]
 
 
 def test_start_action_requires_the_workspace_dir(tmp_path):
@@ -100,15 +124,33 @@ def test_start_action_refuses_a_nonexistent_dir_and_does_not_create_it(tmp_path)
         stack.close()
 
 
-def test_start_action_refuses_a_workspace_that_already_has_a_session(tmp_path):
-    """目录里已有 `session.json`：拒绝，不给它盖第二份现场。"""
-    stack, client, _runtime, out_root = build_client(tmp_path)
+def test_start_action_resumes_a_workspace_that_already_has_a_session(tmp_path):
+    """目录里已有 `session.json`：放行 = 续接。旧记录的身份三格与段账原样保留。"""
+    stack, client, runtime, out_root = build_client(tmp_path)
     try:
-        taken = helpers.allocate_start_dir(out_root)
-        (Path(taken) / SESSION_FILE_NAME).write_text("{}", encoding="utf-8")
-        response = _post(client, "start", {"dir": taken})
-        assert response.status_code == 400
-        assert response.json()["code"] == "invalid_setting"
+        taken = Path(helpers.allocate_start_dir(out_root))
+        assert _post(client, "start", {"dir": str(taken)}).status_code == 200
+        first = read_json(taken / SESSION_FILE_NAME)
+        assert _post(client, "stop").status_code == 200
+        assert _wait_for(
+            lambda: (lambda r: r if r and r["state"] == "done" else None)(
+                read_json(taken / SESSION_FILE_NAME)
+            ),
+            what="第一场收尾落成 done",
+        )
+
+        # 对着同一个目录再 start：不回 400，进场录音
+        assert _post(client, "start", {"dir": str(taken)}).status_code == 200
+        assert runtime.snapshot.session.dir == str(taken)
+        resumed = read_json(taken / SESSION_FILE_NAME)
+        # 身份三格沿用开场那一次（一场会一个身份）；收尾四步重新起算
+        assert resumed["session_id"] == first["session_id"]
+        assert resumed["created_at"] == first["created_at"]
+        assert resumed["started_at"] == first["started_at"]
+        assert resumed["mode"] == first["mode"]
+        assert resumed["date"] == first["date"]
+        assert [step["status"] for step in resumed["drain"]["steps"]] == ["waiting"] * 4
+        assert resumed["interrupted"] is False
     finally:
         stack.close()
 

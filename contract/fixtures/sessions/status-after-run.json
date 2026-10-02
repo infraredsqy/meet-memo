@@ -5,6 +5,14 @@
   "state": "done",
   "date": "2025-09-06",
   "mode": "both",
+  "segments": [
+    {
+      "index": 1,
+      "started_at": "<iso>",
+      "ended_at": "<iso>",
+      "duration_seconds": 0
+    }
+  ],
   "has_offline": true,
   "post": null,
   "offline": {

@@ -59,7 +59,9 @@ from meeting.config import ConfigValueError
 from meeting.session import (
     SESSION_FILE_NAME,
     SessionStore,
+    archive_name,
     build_session_record,
+    next_segment_number,
     resolve_workspace_dir,
     state_for,
     steps_from_ended,
@@ -543,6 +545,11 @@ class ServiceRuntime:
         #: **清提示级时它与判定器那份记账一起清**（唯一入口 `_clear_hints()`）：只清一边的话，
         #: 两者会有一刻对不上、旧记账还会影响下一场的键集合判据（复审 m3）。
         self._hint_keys: tuple[tuple[str, str, str], ...] = ()
+
+        #: 本场开场读到的**旧场次记录**（`None` = 新场；有值 = 续接，`start_session()` 写、
+        #: `_session_record()` 读）：旧段的段账、各路旧段文件名表与场次身份三格从它合并，
+        #: 让续接那一场落盘的每一版 `session.json` 都带着前几段的完整账（第 9 条）。
+        self._resumed_record: dict[str, Any] | None = None
 
         # 收尾 task 句柄（属性名冻结；启动时赋值、走完含被取消那趟后置空）
         self._drain_task: asyncio.Task | None = None
@@ -1626,38 +1633,78 @@ class ServiceRuntime:
     ) -> dict[str, Any]:
         """按当前快照组装一份 `session.json` 的内容（盘上那一版的唯一组装点）。
 
-        段账从采集引擎现场取（`segments` / `audio_duration_seconds` / 各路的段文件名表）；
-        引擎还没起（开场第一版落盘那一刻）时按「还没有段」写：`segments: []`、
-        权威时长 `0.0`——开场第一版在 `backend.start()` 之前，这是唯一的形状。
+        段账从采集引擎现场取（`segments` / 各路的段文件名表），并**与开场读到的旧记录
+        合并**（`_resumed_record`）：续接（同一工作区再录一段，第 9 条）时旧段的原账
+        一个字不动地保留，本段（引擎里那一条）追加在后面；引擎还没起（开场第一版落盘
+        那一刻）时本段还没有账，只把**即将开出的段文件名**按命名规则预告进去
+        （`next_segment_number()`——与引擎构造时定的段号同一条算式，盘上状态未变，两处同值）。
+
+        `audio_duration_seconds` 是**权威时长**（第 7 条）：= 合并后各段
+        `duration_seconds` 之和，**未写完的段不计入**——它是这份文件里唯一被当判据的
+        元信息，按段列表现算而不是沿用旧合计，旧段账残缺时也能自愈。
+        场次身份三格（`date` / `created_at` / `started_at` / `mode`）在续接档沿用
+        **开场那一次**的值（一场会一个身份；本段自己的起止戳在 `segments` 里），
+        新一场取本场的值。除此之外元信息一律不当判据（第 6 条）。
         """
         devices = {item.id: item.device_name for item in self.snapshot.sources}
-        # `getattr` 而非属性访问：替身（null）没有 `.session` 这一位，那一刻就是「还没有段」
+        # `getattr` 而非属性访问：替身（null/dev）没有 `.session` 这一位，那一刻就是「还没有段」
         engine = (
             getattr(self.capture_backend, "session", None)
             if self.capture_backend is not None
             else None
         )
-        segments = engine.segment_records() if engine is not None else []
+        previous = self._resumed_record if isinstance(self._resumed_record, dict) else {}
+        old_sources = (
+            previous.get("sources") if isinstance(previous.get("sources"), list) else []
+        )
+        old_archives = {
+            str(item.get("id")): [str(name) for name in (item.get("archives") or [])]
+            for item in old_sources
+            if isinstance(item, dict) and item.get("id") is not None
+        }
+        old_segments = [
+            dict(item)
+            for item in (previous.get("segments") or [])
+            if isinstance(item, dict)
+        ]
+        if engine is not None:
+            new_segments = engine.segment_records()
+            new_archives = {
+                source: list(engine.archives_for(source)) for source in SOURCE_IDS
+            }
+        else:
+            new_segments = []
+            upcoming = next_segment_number(session.dir, SOURCE_IDS)
+            new_archives = {
+                source: [archive_name(source, upcoming)] for source in SOURCE_IDS
+            }
+        segments = old_segments + new_segments
+        # 旧表 + 本段名，保序去重（替身不落盘时新旧可能同名；段表里同名两行就成了谎话）
+        archives = {
+            source: list(
+                dict.fromkeys(old_archives.get(source, []) + new_archives[source])
+            )
+            for source in SOURCE_IDS
+        }
+        duration = sum(
+            float(item["duration_seconds"])
+            for item in segments
+            if isinstance(item.get("duration_seconds"), (int, float))
+        )
         return build_session_record(
             session_id=session.id,
             session_dir=session.dir,
-            mode=session.mode,
+            mode=str(previous.get("mode") or session.mode),
             state=state,
-            created_at=session.started_at,
-            started_at=session.started_at,
+            created_at=str(previous.get("created_at") or session.started_at),
+            started_at=str(previous.get("started_at") or session.started_at),
             devices=devices,
             steps=steps,
             ended_at=ended_at,
             interrupted=interrupted,
             segments=segments,
-            audio_duration_seconds=(
-                engine.audio_duration_seconds() if engine is not None else 0.0
-            ),
-            archives=(
-                {source: engine.archives_for(source) for source in ("mic", "loopback")}
-                if engine is not None
-                else None
-            ),
+            audio_duration_seconds=duration,
+            archives=archives,
         )
 
     def _write_session(
@@ -1704,6 +1751,11 @@ class ServiceRuntime:
 
         落点 = 请求**显式**给的目标工作区目录（`args.dir`，已存在的目录）：本方法**不建目录、
         不按日期命名、没有默认落点**（`docs/design-intent.md` 第 3、4 条）。
+
+        目标目录里**已有** `session.json` 时这一场是**续接**（第 9 条：一段 = 一次录制，
+        同一工作区再录一段）：开场先把旧记录读进来（`_resumed_record`），本段的段账与
+        旧段合并着写盘；旧段的归档一个字节不碰（采集引擎按下一个段号开**新**文件）。
+        新一场与续接场的差别只在「有没有旧账可合并」，后面的流程一条不分岔。
         """
         mode = DEFAULT_SESSION_MODE if mode is None else mode
 
@@ -1713,7 +1765,8 @@ class ServiceRuntime:
         if self.snapshot.top_state == "ended" and self._is_draining():
             raise self._draining_error(self.snapshot.session)
 
-        # ② 校验落点（**显式给、已存在、里面没有另一场的记录**；不建目录）
+        # ② 校验落点（**显式给、已存在**；不建目录）。已有记录的那一档 = 续接：
+        #    先把旧记录读进来（本场落盘的每一版都要跟它合并），再动任何东西
         try:
             session_dir = resolve_workspace_dir(dir)
         except ValueError as exc:
@@ -1723,6 +1776,11 @@ class ServiceRuntime:
                         "legal": "已存在的目录（本服务不设默认落点、不建目录）"},
             ) from exc
         session_id = Path(session_dir).name
+        resumed_record = self.store.read_session_json(session_dir)
+        resuming = resumed_record is not None
+        self._resumed_record = resumed_record
+        # 本段将开出的段号（与引擎构造时同一条算式；此刻引擎还没建，盘上还没有本段文件）
+        planned_segment = next_segment_number(session_dir, SOURCE_IDS)
 
         # ② 校验 args（**在建目录之前**）
         if mode not in SESSION_MODES:
@@ -1767,17 +1825,23 @@ class ServiceRuntime:
                 ),
             )
         except Exception as exc:
-            # **不进入 recording**：把刚写下的那份 session.json 收走并留痕（目录是用户的，
-            # 只清本场写入的文件，不删工作区目录本身）
-            self.store.remove_session_dir(session_dir)
+            # **不进入 recording**。新场：把刚写下的那份 session.json 收走并留痕
+            # （目录是用户的，只清本场写入的文件，不删工作区目录本身）。
+            # 续接：**旧记录原样在盘上**（原子写没有半截态，这一写没碰到目标文件），
+            # 什么都不收——收走它等于把用户那场会抹掉。
+            if not resuming:
+                self.store.remove_session_dir(session_dir)
             _log.error(
-                "场次开始失败：%s 的 %s 写不进去（%s: %s）；已收走本场写入的 %s：%s",
+                "场次开始失败：%s 的 %s 写不进去（%s: %s）：%s",
                 session_id, SESSION_FILE_NAME, type(exc).__name__, exc,
-                SESSION_FILE_NAME, session_dir,
+                "旧记录原样保留（续接档，未动盘）" if resuming
+                else f"已收走本场写入的 {SESSION_FILE_NAME}",
             )
             raise ActionError(
                 "capture_unavailable",
-                f"{SESSION_FILE_NAME} 写不进工作区目录，已收走本场写入的文件并放弃这一场",
+                f"{SESSION_FILE_NAME} 写不进工作区目录，"
+                + ("旧记录原样保留，本场放弃" if resuming
+                   else "已收走本场写入的文件并放弃这一场"),
                 status=503,
                 detail={"session_id": session_id, "dir": session_dir,
                         "error": f"{type(exc).__name__}: {exc}"},
@@ -1793,7 +1857,11 @@ class ServiceRuntime:
         # `_clear_session_summary()`）：上一场的行与那几次总结不许跟着进这一场。
         self._clear_session_summary(reason="新的一场开始")
         start_recording(self.snapshot, session=session, mode=mode, devices=devices)
-        _log.info("场次开始：%s（目录 %s，mode=%s）", session_id, session_dir, mode)
+        _log.info(
+            "场次开始：%s（目录 %s，mode=%s%s）",
+            session_id, session_dir, mode,
+            f"，续接第 {planned_segment} 段（旧记录已合并）" if resuming else "",
+        )
         # `idle → recording` 的副作用会把两路 `health` 推到 `capturing`（phase2 §3.5.2），
         # 逐路落一条（阈值取 `mode`：本场采哪几路是这一档的口径）
         self._log_health_migrations(
@@ -1808,9 +1876,33 @@ class ServiceRuntime:
         except Exception as exc:
             message = getattr(exc, "message", None) or f"{type(exc).__name__}: {exc}"
             _log.error("采集起不来：%s（场次 %s）", message, session_id)
-            self.store.remove_session_dir(session_dir)
-            _log.warning("已收走本场写入的 %s：%s（采集起不来，盘上不留这一场）",
-                         SESSION_FILE_NAME, session_dir)
+            if resuming:
+                # 续接失败：把旧记录**原样写回**（第一版已被本轮覆盖），再收走本轮
+                # 建出的段文件——工作区回到按下去之前的样子，旧段一个字节不丢
+                try:
+                    self.store.write_session_json(session_dir, resumed_record or {})
+                except OSError:
+                    _log.error(
+                        "续接失败后旧 %s 写回失败（%s）：%s",
+                        SESSION_FILE_NAME, session_dir,
+                        "盘上留着的是本场第一版（含旧段账），旧段归档完好",
+                    )
+                for source in SOURCE_IDS:
+                    planned = Path(session_dir) / archive_name(source, planned_segment)
+                    try:
+                        planned.unlink()
+                    except FileNotFoundError:
+                        pass
+                    except OSError:
+                        _log.warning("续接失败清场：%s 收不走（如实记账）", planned)
+                _log.warning(
+                    "已把 %s 的旧记录写回、本轮段文件收走（采集起不来，工作区回到原样）",
+                    session_dir,
+                )
+            else:
+                self.store.remove_session_dir(session_dir)
+                _log.warning("已收走本场写入的 %s：%s（采集起不来，盘上不留这一场）",
+                             SESSION_FILE_NAME, session_dir)
             self._abort_session(session)
             raise ActionError(
                 "capture_unavailable",
@@ -2328,6 +2420,38 @@ class ServiceRuntime:
         mode = str(record["mode"]) if isinstance(record.get("mode"), str) else None
         return state, date, mode
 
+    def _disk_segment_cells(self, record: dict[str, Any] | None) -> list[dict[str, Any]]:
+        """盘上 `session.json` 的**段读数**（界面上「两段的时长与时间」的来源）。
+
+        每段四格：`index` / `started_at` / `ended_at` / `duration_seconds`——
+        段账里给人看的就这四样（`pauses` / `sources` 是对账用的格子，不进界面）。
+        盘上形状不对的那一条如实跳过；这一格只是把盘上的读数端出来给人看（第 6 条）。
+        状态文件不在场时交回空表。
+        """
+        if not isinstance(record, dict):
+            return []
+        rows: list[dict[str, Any]] = []
+        raw = record.get("segments")
+        for item in raw if isinstance(raw, list) else []:
+            if not isinstance(item, dict):
+                continue
+            duration = item.get("duration_seconds")
+            rows.append(
+                {
+                    "index": item.get("index") if isinstance(item.get("index"), int) else None,
+                    "started_at": item.get("started_at")
+                    if isinstance(item.get("started_at"), str)
+                    else None,
+                    "ended_at": item.get("ended_at")
+                    if isinstance(item.get("ended_at"), str)
+                    else None,
+                    "duration_seconds": float(duration)
+                    if isinstance(duration, (int, float))
+                    else None,
+                }
+            )
+        return rows
+
     def workspace_open(self, dir: Any, confirm: bool = False) -> dict[str, Any]:
         """`workspace_open`：打开/收编一个**已存在**的目录，登记进注册表。
 
@@ -2407,8 +2531,9 @@ class ServiceRuntime:
         顶层第三格 `post_job`（会后进度界面节点 `52b24392`）：`post_job_state()` 的原文
         —— 此刻服务进程里在飞的那一趟会后（`{kind, dir, started_at}`）或 `null`。它是
         界面那格全局「显卡忙不忙」的会后一半读数（另一半「本机正在录」从快照状态读，
-        不走这里）；**每行仍是十一键**，这一格在应答体顶层、不进任何一行，快照九键
-        一个字不动。
+        不走这里）；**每行十二键**，这一格在应答体顶层、不进任何一行，快照九键
+        一个字不动。行里的 `segments` 是这场会**各段的时长与时间**（续接节点加上去的
+        读数，盘上段账原文四格，两段的会看得出接过）。
         """
         rows: list[dict[str, Any]] = []
         for entry in self.registry.entries():
@@ -2427,6 +2552,7 @@ class ServiceRuntime:
                     "state": state,
                     "date": date,
                     "mode": mode,
+                    "segments": self._disk_segment_cells(record),
                     "has_offline": has_offline_transcript(path),
                     "added_at": entry["added_at"],
                     "last_opened_at": entry["last_opened_at"],
@@ -2490,6 +2616,9 @@ class ServiceRuntime:
         路径要过与那只清单端点同一套判据（规范化后的绝对路径比对）：目录已不在原地、
         或不在工作台清单里，都按 404 如实回一句（见 `_session_status_error()`）。
 
+        `segments` 那一格与清单端点同一来源（`_disk_segment_cells()`，盘上段账原文），
+        界面在详情区摆「各段的时长与时间」。
+
         `offline` 那一格是**会后离线的进度读数**，两路各一份：跑过几块 / 共几块、
         此刻在跑哪一路、从起跑到现在过了多久。三样东西合起来就是会后视图那一片进度区
         要的「第几块 / 共几块、正在跑哪一路、已经跑了多久」。
@@ -2541,6 +2670,7 @@ class ServiceRuntime:
             "state": state,
             "date": date,
             "mode": mode,
+            "segments": self._disk_segment_cells(record),
             "has_offline": has_offline_transcript(directory),
             "post": post,
             "offline": self._offline_progress_for(directory),

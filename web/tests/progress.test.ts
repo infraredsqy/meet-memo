@@ -38,6 +38,7 @@ function row(over: Partial<SessionRow> = {}): SessionRow {
     state: null,
     date: null,
     mode: null,
+    segments: [],
     has_offline: false,
     added_at: '2026-09-21T21:03:00+08:00',
     last_opened_at: '2026-09-21T21:03:00+08:00',
@@ -77,6 +78,7 @@ function status(
     state: 'done',
     date: '2026-09-21',
     mode: 'both',
+    segments: [],
     has_offline: false,
     post: null,
     offline: {

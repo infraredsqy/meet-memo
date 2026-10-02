@@ -23,7 +23,7 @@ import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from meeting.backends.base import SOURCE_IDS
 from meeting.state import DRAIN_STEP_IDS
@@ -87,6 +87,40 @@ def segment_archive_paths(
             found.append((number, item))
     found.sort(key=lambda pair: pair[0])
     return [path for _number, path in found]
+
+
+def segment_numbers(session_dir: Path | str, source: str, *, suffix: str = ".pcm") -> list[int]:
+    """这一路盘上实有各段的序号（升序）；目录不存在 / 一个段都没有时交回空表。
+
+    `next_segment_number()` 的底账：序号只从**盘上实有的段文件**认出来
+    （`segment_archive_paths()` 同一条认名规则），不读 `session.json`——
+    元信息不当判据，盘上的段文件才是「这场会录了几段」的现场事实。
+    """
+    return [
+        number
+        for number in (
+            archive_segment_number(path.name[: -len(suffix)], source)
+            for path in segment_archive_paths(session_dir, source, suffix=suffix)
+        )
+        if number is not None
+    ]
+
+
+def next_segment_number(
+    session_dir: Path | str, sources: Iterable[str] = SOURCE_IDS
+) -> int:
+    """下一个**没被用过**的段号 = 各路盘上实有段号的最大值 + 1；没有段时从 1 起。
+
+    段号是**一场会**的（两路共一个计器，两路的第 N 段拼成同一段时间轴），
+    因此取各路的最大值再 +1：开场（空目录）得 1；续接（同一工作区再录一段）得
+    已有段号 + 1——**先定段号、再开写侧**是硬次序：`open_pcm()` 是截断写，
+    段号解析晚于打开就会把上一段的 PCM 清成零字节（没有任何报警的那一种丢）。
+    """
+    highest = 0
+    for source in sources:
+        for number in segment_numbers(session_dir, source):
+            highest = max(highest, number)
+    return highest + 1
 
 
 def state_for(*, top_state: str, ended_phase: str | None = None, has_failed_step: bool = False) -> str:
@@ -156,8 +190,8 @@ def build_session_record(
         不对账、不改结论**（第 6 条）。
 
     `archives` 是每一路的段文件名表（序号升序）；不给时按「恰好一段」声明——开场
-    第一版落盘时引擎还没起、此刻还没有段账，段 1 的文件名由命名规则确定。本节点内
-    每场每路恰好这一段；同一个工作区续接再加段，是下游节点的活。
+    第一版落盘时引擎还没起、此刻还没有段账，段 1 的文件名由命名规则确定。续接
+    （同一工作区再录一段）时由 runtime 把旧表与新段名合并进来再传。
     """
     devices = devices or {}
     if steps is None:
@@ -213,8 +247,12 @@ def steps_from_ended(ended: Any) -> list[dict[str, Any]]:
 def resolve_workspace_dir(value: Any) -> str:
     """把 start 请求 / 命令行给的目标工作区目录算成**绝对路径**（不建目录）。
 
-    校验三件事：必给、目录已存在、里面没有另一场的 `session.json`。
-    一条不符合就抛 `ValueError`（message 直接进动作层的 `invalid_setting`）。
+    校验两件事：必给、目录已存在。一条不符合就抛 `ValueError`
+    （message 直接进动作层的 `invalid_setting`）。
+
+    目录里**已有** `session.json` 不再拒绝（`docs/design-intent.md` 第 9 条翻案）：
+    一个工作区 = 一场会（第 3 条），对着录过的目录按 start 就是**续接**——
+    同一场会再录一段，段账与权威时长由 runtime 合并（`start_session()`）。
     """
     text = None if value is None else str(value).strip()
     if not text:
@@ -228,8 +266,6 @@ def resolve_workspace_dir(value: Any) -> str:
     path = Path(os.path.normpath(str(path)))
     if not path.is_dir():
         raise ValueError(f"目标工作区目录不存在（只接受已存在的目录，不自动建）：{path}")
-    if (path / SESSION_FILE_NAME).exists():
-        raise ValueError(f"目标工作区目录里已经有一场会的 {SESSION_FILE_NAME}：{path}")
     return str(path)
 
 
@@ -338,8 +374,10 @@ __all__ = [
     "archive_name",
     "archive_segment_number",
     "build_session_record",
+    "next_segment_number",
     "resolve_workspace_dir",
     "segment_archive_paths",
+    "segment_numbers",
     "state_for",
     "steps_from_ended",
 ]

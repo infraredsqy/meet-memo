@@ -23,6 +23,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -676,8 +677,32 @@ def test_capture_workspace_group(tmp_path, make_client, contract_regen):
     empty_dir.mkdir()
     meeting_dir = place / "meeting_ws"
     meeting_dir.mkdir()
+    # 段账给两段（续接过的形状）：时间戳按 ISO 形状写（掩成 <iso>），
+    # 秒数走掩码（`duration_seconds` 在 ZERO_KEYS 里，落 0）
     (meeting_dir / "session.json").write_text(
-        '{"session_id": "meeting_ws", "state": "done", "date": "2026-09-21", "mode": "both"}',
+        json.dumps(
+            {
+                "session_id": "meeting_ws",
+                "state": "done",
+                "date": "2026-09-21",
+                "mode": "both",
+                "segments": [
+                    {
+                        "index": 1,
+                        "started_at": "2026-09-21T10:00:00+08:00",
+                        "ended_at": "2026-09-21T10:19:00+08:00",
+                        "duration_seconds": 61.5,
+                    },
+                    {
+                        "index": 2,
+                        "started_at": "2026-09-21T11:30:00+08:00",
+                        "ended_at": "2026-09-21T11:32:00+08:00",
+                        "duration_seconds": 122.3,
+                    },
+                ],
+            },
+            ensure_ascii=False,
+        ),
         encoding="utf-8",
     )
     suspected_dir = place / "suspected_ws"
@@ -787,8 +812,25 @@ def test_capture_session_status_group(tmp_path, make_client, contract_regen) -> 
     place.mkdir()
     session_dir = place / "250906"
     session_dir.mkdir()
+    # 段账给一段（形状样本；时间戳按 ISO 形状写、秒数走掩码落 0）
     (session_dir / "session.json").write_text(
-        '{"session_id": "250906", "state": "done", "date": "2025-09-06", "mode": "both"}',
+        json.dumps(
+            {
+                "session_id": "250906",
+                "state": "done",
+                "date": "2025-09-06",
+                "mode": "both",
+                "segments": [
+                    {
+                        "index": 1,
+                        "started_at": "2025-09-06T20:00:00+08:00",
+                        "ended_at": "2025-09-06T20:03:00+08:00",
+                        "duration_seconds": 3.0,
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
         encoding="utf-8",
     )
     # 这一场有一份会后精细稿（`has_offline` 那一格因此为真）

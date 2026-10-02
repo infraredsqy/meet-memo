@@ -598,12 +598,12 @@ describe('工作区样本（4.8 / 4.9，会后进度界面节点 52b24392 接的
     expect(listFixtures('sessions')).toEqual([...SESSIONS_FIXTURES].sort());
   });
 
-  it('应答体顶层恰好三键；每行恰好十一键，post_job 不进任何一行', () => {
+  it('应答体顶层恰好三键；每行恰好十二键，post_job 不进任何一行', () => {
     const listing = sessionsResponseSchema.parse(readFixture('sessions', 'after-open'));
     expect(Object.keys(listing).sort()).toEqual(['post_job', 'recent', 'sessions']);
     expect(listing.sessions.length).toBeGreaterThan(0);
     for (const row of listing.sessions) {
-      expect(Object.keys(row), row.dir).toHaveLength(11);
+      expect(Object.keys(row), row.dir).toHaveLength(12);
     }
   });
 
@@ -620,12 +620,17 @@ describe('工作区样本（4.8 / 4.9，会后进度界面节点 52b24392 接的
     expect(sessionsResponseSchema.safeParse(afterOpen).success).toBe(false);
   });
 
-  it('单场状态样本：前七格与列表同源，post / offline 两格回答「跑到哪儿了」', () => {
+  it('单场状态样本：前八格与列表同源，post / offline 两格回答「跑到哪儿了」', () => {
     const parsed = sessionStatusSchema.parse(readFixture('sessions', 'status-after-run'));
     expect(Object.keys(parsed).sort()).toEqual([
-      'date', 'dir', 'has_offline', 'kind', 'mode', 'offline', 'post', 'session_id', 'state',
+      'date', 'dir', 'has_offline', 'kind', 'mode', 'offline', 'post', 'segments', 'session_id',
+      'state',
     ]);
     expect(parsed.post).toBeNull();
+    // 段读数与列表同行同源：盘上段账的原文（这一场恰好一段；秒数走掩码落 0）
+    expect(parsed.segments).toEqual([
+      { index: 1, started_at: expect.any(String), ended_at: expect.any(String), duration_seconds: 0 },
+    ]);
     // 跨进程读盘那份账：走秒量如实 null，四档计数两路各一份
     expect(parsed.offline.in_process).toBe(false);
     expect(parsed.offline.elapsed_seconds).toBeNull();

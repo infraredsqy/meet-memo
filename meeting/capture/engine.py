@@ -44,7 +44,7 @@ from meeting.backends.base import (
 )
 from meeting.capture.archive import PcmArchiveWriter, SAMPLE_RATE, SAMPLE_WIDTH
 from meeting.capture.levels import frame_level
-from meeting.session import archive_name, segment_archive_paths
+from meeting.session import archive_name, next_segment_number, segment_archive_paths
 from meeting.state import now_iso
 
 _log = logging.getLogger("meeting.capture.engine")
@@ -337,8 +337,11 @@ class CaptureSession:
 
     生命周期（`meeting/service/runtime.py` 的调用顺序）：
 
-      - 构造：**把两路的段 1 归档文件都建出来**（`meeting_audio_<source>_001.pcm`），
-        并起两路写线程；此刻还没有读侧；
+      - 构造：**先定本段段号、再把两路的段归档文件都建出来**并起两路写线程；此刻
+        还没有读侧。段号 = `meeting/session.py` 的 `next_segment_number()`（盘上实有
+        段号最大值 + 1，空目录从 1 起）——**次序不能反**：`open_pcm()` 是截断写，
+        段号解析晚于打开就会把上一段的 PCM 清成零字节；开场（空目录）建段 1，
+        续接（同一工作区再录）建下一个序号的新段文件，旧段一个字节不碰；
       - `start()`：按 `mode` 起该采的几路读侧与电平刻度（未选中的那一路起静音节拍器），
         同时落下**本段**的起点戳——一段 = 一次录制（start→finalize，`docs/design-intent.md`
         第 9 条）；
@@ -380,7 +383,11 @@ class CaptureSession:
         self._pause_event = threading.Event()
         #: 段内暂停区间（墙钟 ISO；`{"start": …, "end": …}`，end 为 None = 还在暂停中）
         self._pause_intervals: list[dict[str, str | None]] = []
-        #: 本段的起止戳与在录时长（一段 = 一次录制；本节点每场每路恰好一段）
+        #: **本段段号**（一段 = 一次录制；开场 1，续接取盘上已有段号 + 1）。
+        #: 必须在开写侧**之前**定死——`open_pcm()` 是截断写，段号解析晚于打开会把
+        #: 上一段的 PCM 清成零字节（本节点的最大坑，见 `next_segment_number()`）。
+        self.segment_number = next_segment_number(self.session_dir, SOURCE_IDS)
+        #: 本段的起止戳与在录时长（一段 = 一次录制）
         self._segment_started_at: str | None = None
         self._segment_ended_at: str | None = None
         self._segment_duration_seconds: float | None = None
@@ -388,7 +395,7 @@ class CaptureSession:
         self.workers: dict[str, _SourceWorker] = {}
         for source in SOURCE_IDS:
             writer = PcmArchiveWriter(
-                _archive_path(self.session_dir, source, 1), label=source
+                _archive_path(self.session_dir, source, self.segment_number), label=source
             )
             writer.open()
             self.writers[source] = writer
@@ -488,10 +495,11 @@ class CaptureSession:
     # -- 段账 ---------------------------------------------------------------
 
     def segment_records(self) -> list[dict[str, Any]]:
-        """本场的段列表（`session.json` 的 `segments` 那一格的来源）。
+        """本段那一条段账（`session.json` 的 `segments` 那一格的**新增项**）。
 
-        本节点每场每路恰好一段（段 1）；还在录时 `ended_at` 与 `duration_seconds`
-        是 `None`，收尾那一刻由 `finalize()` 结账。
+        一场会可以有多个段（续接 = 同一工作区再录一段）：本类只交回**自己这一段**，
+        与旧段的合并归 runtime（`_session_record()`）。还在录时 `ended_at` 与
+        `duration_seconds` 是 `None`，收尾那一刻由 `finalize()` 结账。
         """
         with self._lock:
             pauses = [dict(interval) for interval in self._pause_intervals]
@@ -500,7 +508,7 @@ class CaptureSession:
             duration = self._segment_duration_seconds
         return [
             {
-                "index": 1,
+                "index": self.segment_number,
                 "started_at": started,
                 "ended_at": ended,
                 "sources": list(self.requested),
@@ -510,18 +518,18 @@ class CaptureSession:
         ]
 
     def audio_duration_seconds(self) -> float:
-        """权威时长：实际录到的音频时长（不含暂停）= 各段在录时长之和。
+        """**本段**的在录时长（实际录到的音频，不含暂停）。
 
         只数**写完的段**（还在录的那段没有账可结）；每个数的来历是写侧的**内容字节**
-        （`÷ 32000`），与墙钟无关。
+        （`÷ 32000`），与墙钟无关。整场（各段之和）的合计归 runtime 合并段账后另算。
         """
         with self._lock:
             duration = self._segment_duration_seconds
         return 0.0 if duration is None else round(duration, 3)
 
     def archives_for(self, source: str) -> list[str]:
-        """这一路写下的段文件名表（`session.json` 的 `sources[*].archives` 的来源）。"""
-        return [archive_name(source, 1)]
+        """这一路**本段**写下的段文件名（`session.json` 的 `sources[*].archives` 的新增项）。"""
+        return [archive_name(source, self.segment_number)]
 
     # -- 收尾 -------------------------------------------------------------
 
@@ -567,7 +575,8 @@ class CaptureSession:
     def transcode(self) -> None:
         """收尾第 2 步：各段 PCM → MP3。**不做决定论的口径**，转不动就抛（该步记 `failed`）。
 
-        逐段转（`meeting/session.py` 枚举出的段文件，本节点每路恰好一段）。判据照旧是
+        逐段转（`meeting/session.py` 枚举出的**整场**段文件——续接过的会每路多段，
+        旧段与新段一并转；旧段 MP3 已在的也照转一遍，产物内容不变）。判据照旧是
         `convert_to_mp3()` 的空文件口径：0 字节的段不产出 MP3；写满静音的段字节非空，
         照转（盘上事实如此，产物里就是一段静音）。
         """

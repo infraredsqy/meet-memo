@@ -32,6 +32,11 @@ VAD 实例与自己的缓冲，每 0.5 秒重读一次段长上限（V1 的 `_TU
     [HH:MM] 文本
     [HH:MM] [[识别失败: 超时 20s]]
 
+**续接**（同一工作区再录一段，`docs/design-intent.md` 第 9 条）：开场临时稿已在本场目录里
+的那一档，起线程之前各路追加一条 `<!-- [HH:MM] … -->` 注释形的记号行、各推一条
+`kind="gap"` 的行——两段之间那截没录的时间在稿子与界面上都留一道看得见的口子；
+读头从盘上实有的最大段号接起，旧段一个字节不重读（临时稿里的旧正文不会被抄第二遍）。
+
 **文件名常量为什么落在这里**（`phase2/task.md` §4 要的那句说明）：产物落在**场次目录**里，
 而场次目录的唯一来源是 `start(mode, session_dir)` 收到的那个参数 —— 常量跟着**唯一使用者**
 走，读这一份模块就知道盘上会有哪两个文件；`meeting/cli.py` 不参与运行期产物命名
@@ -61,7 +66,7 @@ from typing import Any, Callable, Protocol, runtime_checkable
 from meeting import config as config_module
 from meeting.asr import glm as glm_module
 from meeting.backends.base import SOURCE_IDS, TranscriptLine
-from meeting.session import archive_name
+from meeting.session import archive_name, next_segment_number
 
 _log = logging.getLogger("meeting.asr.pipeline")
 
@@ -113,6 +118,14 @@ READER_JOIN_TIMEOUT_SECONDS = 2.0
 
 #: 每路的产物文件名（`source ∈ mic / loopback`）
 TRANSCRIPT_FILE_TEMPLATE = "meeting_transcript_{source}.md"
+
+#: 续接开场那条断口的话（`.md` 记号行与界面 gap 行共用这一句）。
+#:
+#: 一场会续接过（同一工作区再录一段，`docs/design-intent.md` 第 9 条），两段之间
+#: 隔着一截没录的时间——这条话把它明说在稿子里：`.md` 里落在两段正文之间，
+#: 界面上以 `kind="gap"` 的行推给转写区。措辞直说「续接」「没录」，
+#: 绕着说的词（休息之类）一概不用。
+RESUME_GAP_TEXT = "续接：上面是上一段的稿子，两段之间有一段没录"
 
 #: 转写健康度 `behind` 的**积压门槛**（段）。
 #:
@@ -394,20 +407,24 @@ def tail_archive_segments(
     idle_seconds: float = DEFAULT_TAIL_IDLE_SECONDS,
     archive_poll_seconds: float = DEFAULT_ARCHIVE_POLL_SECONDS,
     first_seen: Callable[[str, int], None] | None = None,
+    start_index: int = 1,
 ) -> None:
-    """按**段序号**尾读一路归档：段 1、段 2、…逐段接续，拼起来就是连续时间轴。
+    """按**段序号**尾读一路归档：从 `start_index` 起逐段接续，拼起来就是连续时间轴。
 
+    - `start_index` 是读头的**起步段号**（缺省 1）：续接（同一工作区再录一段）的
+      一场从这里直接接到**本段**——旧段的字节一个都不重读，临时稿里旧正文不会被
+      抄第二遍；单文件场景与新场照旧从 1 起步；
     - `segment_path(index)` 交回第 `index` 段的路径；交回 `None` 表示**不会再有下一段**
       （单文件场景借此保持 `tail_archive()` 的老行为：读到 EOF 就守着这一个文件）；
     - 当前段还没出现时按 `archive_poll_seconds` 等它；读到 EOF 后，**下一序号的段文件
       已经出现**就接过去，否则守着当前段继续等新字节；
     - 每一块的盖章口径与 `tail_archive()` 同一条：`on_chunk(data, time.time())`，读到那一刻
-      的墙钟。跨段不换章：续接（下游节点）留下的时间洞在这里只是「EOF 等了很久」，
-      断口语义归下游，本层不表达；
+      的墙钟。跨段不换章：续接留下的时间洞在这里只是「EOF 等了很久」，
+      断口语义归开场那条记号行（`start()` 里的续接两件事），本层不另外表达；
     - 其余口径（`"r+b"` 不隐式建文件、文件被删原样上抛、`first_seen` 每段一次）与
       `tail_archive()` 一致。
     """
-    index = 1
+    index = max(1, int(start_index))
     while not stop.is_set():
         path = segment_path(index)
         if path is None:
@@ -526,6 +543,9 @@ class TranscriptionPipeline:
         self.session_dir: str | None = None
         self.mode: str | None = None
         self.sources: tuple[str, ...] = ()
+        #: 读头的**起步段号**（`start()` 里定）：开场 1；续接接到本段（盘上最大段号），
+        #: 旧段的字节一个都不重读
+        self._start_segment: int = 1
 
         self._stop = threading.Event()
         self._draining = threading.Event()
@@ -554,7 +574,14 @@ class TranscriptionPipeline:
     # -- 起 ---------------------------------------------------------------
 
     def start(self, mode: str, session_dir: str) -> None:
-        """起两路读线程与 worker（**幂等**：重复调用什么都不做）。"""
+        """起两路读线程与 worker（**幂等**：重复调用什么都不做）。
+
+        目录里已有本场的临时稿（`.md` 在场）时这一场是**续接**：开场做两件事——
+        各路临时稿追加一条记号行（`<!-- … -->` 形，读侧跳过）、各推一条
+        `kind="gap"` 的行；读头从**盘上实有的最大段号**接起（采集侧开场已开出本段的
+        新段文件），旧段的字节一个都不重读、旧正文不会被抄第二遍。
+        两件事都在读线程与 worker 起来之前做完，记号行因此排在所有新行之前。
+        """
         with self._lock:
             if self._started:
                 return
@@ -566,9 +593,21 @@ class TranscriptionPipeline:
             self.session_dir = str(session_dir)
             self.sources = tuple(_sources_for_mode(mode))
             os.makedirs(self.session_dir, exist_ok=True)
+            # 读头从盘上实有的最大段号接起（`next_segment_number() - 1` = 最大段号，
+            # 没有段时为 0 → 落回 1）：采集侧先开本段的新段文件，转写随后起步，
+            # 所以这一号在盘上已经在场；开场（空目录）它就是 1。
+            self._start_segment = max(1, next_segment_number(session_dir, SOURCE_IDS) - 1)
+            resumed = any(
+                os.path.exists(self._transcript_path(source))
+                for source in self.sources
+            )
             for source in self.sources:
                 self._vads[source] = self._vad_factory()
                 self._handles[source] = None
+        if resumed:
+            # 续接的两件事（锁外做：出口那一头会一路调回 runtime，别攥着本类自己的锁）
+            self._open_resume_gap()
+        with self._lock:
             self._worker = threading.Thread(
                 target=self._worker_loop, name="asr-worker", daemon=True
             )
@@ -585,8 +624,9 @@ class TranscriptionPipeline:
                 self._reader_threads[source] = thread
                 thread.start()
             _log.info(
-                "转写流水线已起：mode=%s session=%s 读 %s（归档尾读，采集与模型解耦）",
-                self.mode, self.session_dir, "、".join(self.sources),
+                "转写流水线已起：mode=%s session=%s 读 %s（归档尾读，读头从第 %s 段接起%s）",
+                self.mode, self.session_dir, "、".join(self.sources), self._start_segment,
+                "；续接开场，旧段不重读" if resumed else "",
             )
 
     # -- 出口 -------------------------------------------------------------
@@ -614,7 +654,8 @@ class TranscriptionPipeline:
         """一路读线程：按段序号游标尾读归档，把新字节喂给这一路的 VAD。
 
         段列表不问 `session.json`（开场第一版还没有段账，而且元信息不当判据）：按确定的
-        命名规则逐序号找盘上的段文件，序号升序接续 = 连续时间轴。
+        命名规则逐序号找盘上的段文件，序号升序接续 = 连续时间轴。起步段号在 `start()`
+        里定（开场 1；续接接到本段，旧段一个字节都不重读）。
         """
 
         def on_chunk(data: bytes, captured_at: float) -> None:
@@ -627,7 +668,7 @@ class TranscriptionPipeline:
             _log.info("转写开始尾读归档：%s（从偏移 %s 起）", seen_path, offset)
 
         def segment_path(index: int) -> str | None:
-            # 每个序号都值得等：续接（下游节点）会在同一工作区里落下第 2、3…段
+            # 每个序号都值得等：续接之后同一场会还会落下更多段
             return self._segment_path(source, index)
 
         try:
@@ -639,6 +680,7 @@ class TranscriptionPipeline:
                 idle_seconds=self._idle_seconds,
                 archive_poll_seconds=self._archive_poll_seconds,
                 first_seen=first_seen,
+                start_index=self._start_segment,
             )
         except Exception as exc:  # noqa: BLE001 - 一路读线程出事不许带崩另一路
             with self._lock:
@@ -813,6 +855,44 @@ class TranscriptionPipeline:
 
     # -- 落盘 -------------------------------------------------------------
 
+    def _transcript_path(self, source: str) -> str:
+        """这一路临时稿的路径（`meeting_transcript_<source>.md`，名出一处）。"""
+        return os.path.join(str(self.session_dir), TRANSCRIPT_FILE_TEMPLATE.format(source=source))
+
+    def _open_resume_gap(self) -> None:
+        """续接开场的两件事：各路临时稿追加一条记号行 + 各推一条 `kind="gap"` 的行。
+
+        记号行落在**两段正文之间**（此刻还没有任何新行，它就是临时稿的最后一行），
+        形状取 `<!-- … -->` 注释形（先例是会后产物里「缺了哪一段」的那条注释）：
+        `LINE_RE` 认不出它，读侧（纪要切块、行数统计）会跳过这一行、不把它当发言；
+        它照旧计入 splitlines 的行数分母——那是现行口径，这里不为它开口子。
+        gap 行走既有的行出口推给界面，转写区把它画成断口——两段之间那截没录的
+        时间从此看得见。锁外调用（`start()` 在锁释放之后调它）。
+        """
+        at = time.time()
+        for source in self.sources:
+            self._append_marker(source, at, RESUME_GAP_TEXT)
+            self._emit_line(
+                TranscriptLine(ts=float(at), source=str(source), text=RESUME_GAP_TEXT, kind="gap")
+            )
+        _log.info(
+            "续接开场：各路临时稿落了一条记号行、各推一条断口行（读头从第 %s 段接起）",
+            self._start_segment,
+        )
+
+    def _append_marker(self, source: str, at: float, text: str) -> None:
+        """往这一路的临时稿追加一条注释形记号行（**独立小开的句柄**，写完即关）。
+
+        只在 `start()` 里、读线程与 worker 都还没起来时调用——此刻没有别人在写这一路，
+        一支临时的追加句柄就够了，与 `_write_line()` 的常驻句柄互不打扰。
+        """
+        path = self._transcript_path(source)
+        line = f"<!-- [{_stamp(at)}] {text} -->\n"
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(line)
+            handle.flush()
+
     def _write_line(self, source: str, captured_at: float, text: str) -> None:
         """追加一行到这一路的产物（**追加模式、逐行 flush**）。
 
@@ -825,7 +905,7 @@ class TranscriptionPipeline:
         这两条竞态。写在锁里之后，两种情况都收得很干净：写完了才关，或者发现句柄已空、
         重开一个继续写。
         """
-        path = os.path.join(str(self.session_dir), TRANSCRIPT_FILE_TEMPLATE.format(source=source))
+        path = self._transcript_path(source)
         line = f"[{_stamp(captured_at)}] {text}\n"
         with self._lock:
             handle = self._handles.get(source)
@@ -1056,6 +1136,7 @@ __all__ = [
     "FRAME_MILLISECONDS",
     "MIN_SEGMENT_SECONDS",
     "READER_JOIN_TIMEOUT_SECONDS",
+    "RESUME_GAP_TEXT",
     "SAMPLE_RATE",
     "SAMPLE_WIDTH",
     "SILENCE_TIMEOUT_SECONDS",

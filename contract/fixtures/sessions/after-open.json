@@ -9,6 +9,7 @@
       "state": null,
       "date": null,
       "mode": null,
+      "segments": [],
       "has_offline": false,
       "added_at": "<iso>",
       "last_opened_at": "<iso>"
@@ -22,6 +23,20 @@
       "state": "done",
       "date": "2026-09-21",
       "mode": "both",
+      "segments": [
+        {
+          "index": 1,
+          "started_at": "<iso>",
+          "ended_at": "<iso>",
+          "duration_seconds": 0
+        },
+        {
+          "index": 2,
+          "started_at": "<iso>",
+          "ended_at": "<iso>",
+          "duration_seconds": 0
+        }
+      ],
       "has_offline": false,
       "added_at": "<iso>",
       "last_opened_at": "<iso>"
@@ -35,6 +50,7 @@
       "state": null,
       "date": null,
       "mode": null,
+      "segments": [],
       "has_offline": false,
       "added_at": "<iso>",
       "last_opened_at": "<iso>"

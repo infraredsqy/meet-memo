@@ -25,7 +25,7 @@ import {
 } from '../api/sessions';
 import { clampHeartbeatInterval } from '../api/heartbeat';
 import { HEARTBEAT_INTERVAL_DEFAULT_SECONDS } from '../contract';
-import { decisionFor, emptyStateLines, initialSelection, startWhy } from './model';
+import { decisionFor, emptyStateLines, initialSelection, segmentsView, startButtonLabel, startWhy } from './model';
 import {
   advanceChunkRows,
   chunkLedgerReset,
@@ -528,7 +528,7 @@ export function WorkspaceHome({
             disabled={busy || selected === null || whyForSelected !== null}
             onClick={startSelected}
           >
-            开始录音
+            {selected === null ? '开始录音' : startButtonLabel(selected)}
           </button>
         </div>
         <div className="topbar__right">
@@ -641,6 +641,28 @@ export function WorkspaceHome({
                   <span className="kv__v num">{selected.date}</span>
                 </p>
               )}
+              {/* 各段的时长与时间（续接过的会在这里看得出接过）：盘上段账的原文读数，
+                  合计只数写完的段——权威时长是各段在录时长之和（设计意图第 7 条）。 */}
+              {(() => {
+                const segs = segmentsView(selected);
+                if (segs === null) return null;
+                return (
+                  <>
+                    <p className="kv">
+                      <span className="kv__k">录音</span>
+                      <span className="kv__v num">{segs.total}</span>
+                    </p>
+                    {segs.lines.map((line) => (
+                      <p className="kv" key={line.label}>
+                        <span className="kv__k">{line.label}</span>
+                        <span className="kv__v num">
+                          {line.time} · {line.seconds}
+                        </span>
+                      </p>
+                    ))}
+                  </>
+                );
+              })()}
               {whyForSelected !== null && <p className="wspane__why">{whyForSelected}</p>}
 
               {post !== null && (

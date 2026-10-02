@@ -398,7 +398,7 @@ def test_a_session_that_never_ran_post_reports_an_empty_reading(
 def test_the_endpoint_leaves_the_snapshot_and_the_list_alone(
     tmp_path, monkeypatch, restore_config
 ) -> None:
-    """快照顶层九键与列表每行十一键一个字不动（本节点不碰那两处硬门）。"""
+    """快照顶层九键与列表每行十二键各归各位（快照九键是硬门，本节点不碰）。"""
     runtime, previous = _runtime(tmp_path, monkeypatch, **{"post.chunk_seconds": CHUNK_SECONDS})
     session = _workspace_with_audio(tmp_path)
     runtime.workspace_open(str(session))
@@ -416,7 +416,7 @@ def test_the_endpoint_leaves_the_snapshot_and_the_list_alone(
         }
         rows = runtime.sessions_dict()["sessions"]
         assert len(rows) == 1
-        assert len(rows[0]) == 11, sorted(rows[0])
+        assert len(rows[0]) == 12, sorted(rows[0])
     finally:
         config_module.set_current(previous)
 
@@ -426,8 +426,8 @@ def test_the_list_carries_the_post_job_cell_at_the_top_level(
 ) -> None:
     """`GET /api/sessions` 顶层第三格 `post_job`：会后进度界面那格「显卡忙不忙」的读数。
 
-    - 没有会后的活儿在飞时它如实是 `None`；**每行照旧十一键**（这一格在顶层，
-      不进任何一行 —— 行加十二键是越界项，契约 4.8/4.9 两处钉死）；
+    - 没有会后的活儿在飞时它如实是 `None`；**每行照旧十二键**（这一格在顶层，
+      不进任何行 —— 快照九键那道硬门原样）；
     - 离线那一趟在本进程里飞着时它带 `{kind, dir, started_at}` 三格（`post_job_state()`
       的原文，不另造一份形状）；`kind` 答**这一趟跑的是哪条路**（`offline` / `minutes`）；
     - 跑完那一刻线程收工，同一格翻回 `None`（`post_job_state()` 的既有判据）。
@@ -456,7 +456,7 @@ def test_the_list_carries_the_post_job_cell_at_the_top_level(
         assert job["dir"] == str(session)
         assert job["started_at"], "起跑时刻要读得到"
         for row in flying["sessions"]:
-            assert len(row) == 11, sorted(row)
+            assert len(row) == 12, sorted(row)
 
         assert runtime.revision == revision_before, "读它不涨 revision"
     finally:

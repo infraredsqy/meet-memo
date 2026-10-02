@@ -10,7 +10,7 @@ import { isoStringSchema, sessionIdSchema } from './snapshot';
  *   在飞的那一趟会后（全局「显卡忙不忙」的会后一半读数，**不进任何一行**）；
  * - `GET /api/dirs`：目录选择器的现场（起点是用户主目录），一层子目录的名目判读；
  * - `GET /api/sessions/{id}`：单场状态（4.9）——这一场此刻跑到哪一档、会后离线
- *   跑到第几块 / 共几块。**不进快照、不进行**：快照九键与列表行十一键两道 `.strict()`
+ *   跑到第几块 / 共几块。**不进快照、不进行**：快照九键与列表行十二键两道 `.strict()`
  *   硬门原样。
  *
  * 三条都是**纯读**：不涨 `revision`、不广播、不写任何东西。
@@ -18,6 +18,18 @@ import { isoStringSchema, sessionIdSchema } from './snapshot';
 
 /** 一个目录的名目判读：三档 + `missing`。`suspected` 是"疑似会议目录"的兜底档。 */
 export const dirKindSchema = z.enum(['empty', 'meeting', 'unknown', 'missing']);
+
+/** 注册表里的一行：`dir` 是规范化的绝对路径（去重判据），时刻两格秒精度。 */
+export const sessionSegmentCellSchema = z
+  .object({
+    /** 段号（一段 = 一次录制，从 1 起）。 */
+    index: z.number().int().nullable(),
+    started_at: z.string().nullable(),
+    ended_at: z.string().nullable(),
+    /** 这一段的在录时长（不含暂停）；还在录的那段没有账，如实 `null`。 */
+    duration_seconds: z.number().nullable(),
+  })
+  .strict();
 
 /** 注册表里的一行：`dir` 是规范化的绝对路径（去重判据），时刻两格秒精度。 */
 export const sessionRowSchema = z
@@ -34,6 +46,8 @@ export const sessionRowSchema = z
     state: z.enum(['recording', 'draining', 'done', 'failed']).nullable(),
     date: z.string().nullable(),
     mode: z.string().nullable(),
+    /** 这场会各段的时长与时间（续接过的会看得出接过）；盘上没有段账时是空数组。 */
+    segments: z.array(sessionSegmentCellSchema),
     /** 这一场有没有会后精细稿（`meeting_offline_transcript_<source>.md` 在不在盘上）。
      *  R29：界面照它渲染「出纪要」按钮上那一格，**不自己猜、不去试文件**。 */
     has_offline: z.boolean(),
@@ -44,7 +58,7 @@ export const sessionRowSchema = z
 
 /**
  * 服务进程里在飞的那一趟会后（`GET /api/sessions` 顶层第三格，`null` = 没有在跑的）。
- * 全局「显卡忙不忙」的会后一半读数；**不进任何一行**（行十一键一字不动）。
+ * 全局「显卡忙不忙」的会后一半读数；**不进任何一行**（行十二键一字不动）。
  */
 export const postJobCellSchema = z
   .object({
@@ -161,8 +175,8 @@ export const offlineProgressSchema = z
   .strict();
 
 /**
- * `GET /api/sessions/{id}` 的应答体（4.9）：前七格与列表同一行同源，后两格回答
- * 「这一场此刻跑到哪儿了」。**它不进快照、也不进列表行** —— 快照九键与行十一键
+ * `GET /api/sessions/{id}` 的应答体（4.9）：前八格与列表同一行同源，后两格回答
+ * 「这一场此刻跑到哪儿了」。**它不进快照、也不进列表行** —— 快照九键与行十二键
  * 两道 `.strict()` 硬门一个字没动。
  */
 export const sessionStatusSchema = z
@@ -173,6 +187,7 @@ export const sessionStatusSchema = z
     state: z.enum(['recording', 'draining', 'done', 'failed']).nullable(),
     date: z.string().nullable(),
     mode: z.string().nullable(),
+    segments: z.array(sessionSegmentCellSchema),
     has_offline: z.boolean(),
     post: sessionPostViewSchema.nullable(),
     offline: offlineProgressSchema,
@@ -180,6 +195,7 @@ export const sessionStatusSchema = z
   .strict();
 
 export type DirKind = z.infer<typeof dirKindSchema>;
+export type SessionSegmentCell = z.infer<typeof sessionSegmentCellSchema>;
 export type SessionRow = z.infer<typeof sessionRowSchema>;
 export type SessionsResponse = z.infer<typeof sessionsResponseSchema>;
 export type DirRow = z.infer<typeof dirRowSchema>;

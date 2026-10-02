@@ -2510,6 +2510,53 @@ def test_single_pass_over_multiple_segments_feeds_one_concatenated_wav(tmp_path)
     assert seg1.exists() and seg2.exists()  # 段文件一个字节都不动
 
 
+def test_a_two_segment_session_feeds_both_segments_of_both_routes(tmp_path) -> None:
+    """续接过的一场（每路两段）整链验收：两段都到引擎、audio_seconds 是两段之和。
+
+    spec 完成判定「会后链拿这场会的音频喂模型时，两段都能被读到」的那一条：
+    每路的段 1 + 段 2 按序拼成一份 wav 送进（假）引擎，逐字节可比；状态文件与
+    运行报告的秒数读数跟着变成两段之和。全程假引擎，一次真模型调用都不发生。
+    """
+    session = tmp_path / "250919"
+    session.mkdir()
+    amplitudes = {"mic": (300, 700), "loopback": (120, 560)}
+    for source, (first, second) in amplitudes.items():
+        _write_segment(session, source, 1, 1.0, amplitude=first)
+        _write_segment(session, source, 2, 1.0, amplitude=second)
+    seen: list[tuple[str, bytes]] = []
+
+    class ReadingEngine:
+        def transcribe(self, audio_path):
+            seen.append((Path(audio_path).name, Path(audio_path).read_bytes()))
+            return [OfflineSegment(0.0, 2.0, "S01", "两段拼成的一条轴")]
+
+    summary = run_session(
+        session, engine=ReadingEngine(), config=FakeConfig(**{"post.chunk_seconds": 0})
+    )
+
+    assert summary["state"] == "done"
+    # 两路各被调一次；每路拿到的数据区 = 它自己的段 1 + 段 2（按序、逐字节可比）
+    assert len(seen) == 2
+    expected = {
+        source: _constant_pcm(1.0, first) + _constant_pcm(1.0, second)
+        for source, (first, second) in amplitudes.items()
+    }
+    assert sorted(payload[44:] for _name, payload in seen) == sorted(expected.values())
+    # 状态文件：整场 done，两路的秒数读数都是两段之和；对照表的 audio 那格同源
+    status = read_status(session)
+    assert status["state"] == "done"
+    for source in ("mic", "loopback"):
+        cell = status["artifacts"][source]
+        assert cell["state"] == "done"
+        assert cell["audio_seconds"] == pytest.approx(2.0)
+        document = artifacts.read_speakers_artifact(session / cell["speakers"])
+        assert document["audio"]["seconds"] == pytest.approx(2.0)
+    # 运行报告逐路那一行的秒数读数同源
+    for source in ("mic", "loopback"):
+        assert float(report_row(session, source)[2]) == pytest.approx(2.0)
+    assert not (session / CHUNK_DIR_NAME).exists()
+
+
 def test_a_corrupted_wall_clock_changes_no_conclusion(tmp_path) -> None:
     """故意把墙钟那一栏改错：程序的行为与结论**一个字都不变**（元信息不当判据）。
 
