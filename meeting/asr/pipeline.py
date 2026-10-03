@@ -558,6 +558,8 @@ class TranscriptionPipeline:
         self._vads: dict[str, VoiceActivitySegmenter] = {}
         self._handles: dict[str, Any] = {}
         self._sealed = False
+        # 第一趟 `stop()` 算好的记账（幂等档原样交回它，不再重算、不覆写 note）
+        self._last_drain: dict[str, Any] | None = None
         self._started = False
         self._model_failed = False
         #: 收队 deadline（`stop()` 里设；`worker_alive()` 用它判「还在收尾预算内」）
@@ -944,6 +946,13 @@ class TranscriptionPipeline:
         """
         with self._lock:
             if self._sealed:
+                # 幂等档：**原样交回第一趟的记账**（不重算、不覆写 note）。第一趟预算耗尽
+                # 留了未完段时，这里再算一遍 `budget=0.0 / unfinished=0` 就是假账 ——
+                # `backlog_depth()` 还大于 0，与那句「队列已清空」自相矛盾；
+                # `_drain_note()` 还会顺手覆写 `last_unfinished_note`。第一趟没算到记账
+                # 就崩了的残局（`_last_drain is None`）按老口径兜底。
+                if self._last_drain is not None:
+                    return self._last_drain
                 return self._drain_note(budget=0.0, unfinished=0)
             self._sealed = True
 
@@ -979,6 +988,8 @@ class TranscriptionPipeline:
             outstanding = int(self.segments_seen) - int(self.segments_done)
         unfinished = max(self.segments.qsize(), outstanding)
         note = self._drain_note(budget=budget, unfinished=unfinished)
+        # 第一趟的记账存档：之后每一次 `stop()`（幂等档）都原样交回它
+        self._last_drain = note
         if unfinished:
             _log.warning(
                 "转写收尾预算用尽：还有 %s 段没做完（预算 %.1fs = 30 + %s × (%.1fs + 5)，"
@@ -1109,11 +1120,13 @@ class TranscriptionPipeline:
 def _sources_for_mode(mode: str) -> tuple[str, ...]:
     """本场读哪几路归档：与采集侧同一套取值域（`meeting.capture.engine`）。
 
-    采集侧的 `sources_for_mode()` 是唯一口径来源，这里 import 它（不抄一份取值域）。
+    采集侧的 `sources_for_mode()` 是唯一口径来源，这里 import 它（不抄一份取值域），
+    未知 mode 也由它当场抛 `ValueError`（与采集侧同一条消息、同一个 fail-fast 口径）——
+    同一个冻结取值域不允许采集侧 fail-fast、转写侧静默回退成两路全读。
     """
     from meeting.capture.engine import sources_for_mode
 
-    return tuple(sources_for_mode(mode)) if mode in ("both", "mic", "loopback") else tuple(SOURCE_IDS)
+    return tuple(sources_for_mode(mode))
 
 
 def _stamp(captured_at: float) -> str:

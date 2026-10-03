@@ -39,6 +39,7 @@ from meeting.asr.pipeline import (
     TranscriptionPipeline,
     VoiceActivitySegmenter,
     _format_failure,
+    _sources_for_mode,
 )
 from meeting.service.runtime import compute_drain_budget
 from meeting.session import archive_name
@@ -1132,6 +1133,62 @@ def test_stop_is_idempotent_and_closes_the_transcript_files(session_dir: Path):
     assert pipeline._handles == {}, "收尾必须把手上的产物句柄关干净"
     # 句柄关掉之后文件仍是可读的正常产物（追加模式 + 逐行 flush 的结果）
     assert line_texts(session_dir / TRANSCRIPT_FILE_TEMPLATE.format(source="mic"))
+
+
+def test_stop_idempotent_returns_the_first_drain_note_verbatim(session_dir: Path):
+    """第一趟预算耗尽留了未完段时，第二次 `stop()` **原样交回第一趟的记账**。
+
+    幂等档不再重算 `budget=0.0 / unfinished=0` 的假账：那一刻 `backlog_depth()` 还
+    大于 0，与「队列已清空」那句 note 自相矛盾；`last_unfinished_note` 也不该被它覆写。
+    """
+    blocker = BlockingTranscriber(hold_seconds=3.0)
+    pipeline = make_pipeline(
+        session_dir,
+        blocker,
+        timeout=1.0,
+        # 注入一只「预算 0.02 秒」的算盘：真公式的下限是 30 秒，用例不真等它
+        budget_fn=lambda backlog, timeout: 0.02,
+    )
+    pipeline.start("mic", str(session_dir))
+    try:
+        pipeline._enqueue("mic", time.time(), speech_pcm(1.0))
+        wait_for(lambda: blocker.started.is_set() or None, what="假模型已经把 worker 按住")
+        for _ in range(4):
+            pipeline._enqueue("mic", time.time(), speech_pcm(1.0))
+        first = pipeline.stop()
+        note_after_first = pipeline.last_unfinished_note
+        second = pipeline.stop()
+    finally:
+        blocker.release.set()
+        pipeline.stop()
+
+    assert first["unfinished"] >= 1, f"第一趟预算耗尽该留未完段：{first}"
+    assert second == first, f"幂等档原样交回第一趟的记账，不重算：{second}"
+    assert second["budget"] == first["budget"] == 0.02, (
+        f"幂等档不该重算成 budget=0.0 的假账：{second}"
+    )
+    assert "还有" in second["note"], f"留了未完段，note 不该说「队列已清空」：{second['note']}"
+    assert pipeline.last_unfinished_note == note_after_first == first["note"], (
+        "幂等档不得覆写 last_unfinished_note"
+    )
+    # 假账的对账线：第二趟 stop() 的那一刻 worker 还被按住，队列里确实还有段 ——
+    # note 的 unfinished 与 backlog_depth() 必须同向（旧实现在这里是 0 对 >0 的矛盾）
+    assert pipeline.backlog_depth() > 0, "worker 还被按住，队列里该还有段"
+    assert second["unfinished"] > 0
+
+
+def test_sources_for_mode_unknown_mode_fails_fast_like_the_capture_side():
+    """未知 mode 当场抛 `ValueError`（与采集侧 `sources_for_mode()` 同一条），不再静默回退。
+
+    同一个冻结取值域不允许一处 fail-fast 一处静默：采集侧对未知 mode 抛
+    `未知的采集模式：…`，转写侧取值也走同一个口径来源（不抄一份取值域）。
+    """
+    from meeting.capture.engine import SOURCE_IDS as CAPTURE_SIDE_SOURCE_IDS
+
+    assert _sources_for_mode("both") == tuple(CAPTURE_SIDE_SOURCE_IDS)
+    assert _sources_for_mode("mic") == ("mic",)
+    with pytest.raises(ValueError, match="未知的采集模式"):
+        _sources_for_mode("nope")
 
 
 def test_segmenter_caps_a_single_segment_at_the_configured_length(session_dir: Path, monkeypatch):

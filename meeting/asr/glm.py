@@ -203,7 +203,12 @@ class GlmAsrTranscriber:
         上层写占位符，保证时间线不断且缺口可见。
         """
         import numpy as np
-        import torch
+
+        # `torch` 首导也进进程级锁（`meeting/importlock.py`，与 `_load_models()`、会后链
+        # 同一把）：冷进程两条链并发首启时，这里的 `import torch` 与某条加载链的首导
+        # 可能同时进行。只包 import 这一行，`_load_models()` 同线程二次进入（RLock 可重入）。
+        with heavy_imports():
+            import torch
 
         if self.transcriber is None:
             self._load_transcriber()

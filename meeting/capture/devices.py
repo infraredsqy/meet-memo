@@ -463,7 +463,12 @@ def mic_candidates(
         ]
         matched_prefix = bool(cands)
     if not cands:
-        log.warning("mic device '%s' not found, using default input", name)
+        # V1 的原话（`using default input`）留在 docstring 引文里（`:396`）；V2 的这一步
+        # **不回落系统默认输入**：候选空表交回 `select_microphone()`，落 `probe_failed`。
+        # 日志照实说 —— 沿用 V1 话术会把排查引到「已经在用默认输入录」那条死路上。
+        log.warning(
+            "mic device '%s' not found（不回落系统默认输入，本路落 probe_failed）", name
+        )
         return ([], False, False)
     if not any(is_pseudo_capture(endpoint.name) for endpoint in cands):
         return (cands, False, matched_prefix)

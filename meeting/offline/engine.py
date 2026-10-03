@@ -14,8 +14,9 @@
      `transcript_parser.py` 只住在 V1 的临时 scratch 里（不在发行树、不在 PyPI）。
 
 重依赖惰性：`torch` / `transformers` / `numpy` 一律在函数体内 import
-（`meeting/asr/glm.py` 的既有纪律）；模型加载那一处的首次 import 包在
-`meeting/importlock.py` 的进程级锁里（与会中 ASR 的首导互斥，理由见 `_load_models()`）。
+（`meeting/asr/glm.py` 的既有纪律）；`torch` / `transformers` 的首次 import 包在
+`meeting/importlock.py` 的进程级锁里（与会中 ASR 的首导互斥，理由见 `_load_models()`；
+`transcribe()` 前置与 `_resolve_device()` 的 `import torch` 是同一把锁）。
 `dtype` 的合法取值与 `_resolve_device` 的形态照抄
 官方 helper（`moss_transcribe_diarize/inference_utils.py:50-71`），那是本项目实测跑通的那一份。
 """
@@ -261,7 +262,10 @@ class MossOfflineEngine:
 
     def transcribe(self, audio_path: str | Path) -> list[OfflineSegment]:
         """跑一遍整段音频，返回引擎原始标签的分段列表（不做编号规范化）。"""
-        import torch
+        # `torch` 首导也进进程级锁（`meeting/importlock.py`，与 `_load_models()` 同一把；
+        # 同线程进 `_load()` 再入锁是 RLock，可重入不死锁）。只包 import 这一行。
+        with heavy_imports():
+            import torch
 
         self._load()
         waveform = _decode_audio(audio_path)
@@ -371,7 +375,11 @@ def _torch_dtype_from_name(torch, name: str):
 
 def _resolve_device(name: str) -> str:
     """`auto` → 有 CUDA 就用 `cuda:0`，否则 `cpu`。"""
-    import torch
+    # `torch` 首导也进进程级锁（同一把，`meeting/importlock.py`）：构造引擎
+    # （`MossOfflineEngine.__init__`）与别的加载链并发首启时串行化。
+    # 只包 import 这一行，`is_available()` 的调用在锁外 —— 那不是首导。
+    with heavy_imports():
+        import torch
 
     if name == "auto":
         return "cuda:0" if torch.cuda.is_available() else "cpu"

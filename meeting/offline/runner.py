@@ -784,8 +784,9 @@ def samples_to_count_floats(samples: Any) -> Any:
         # `32767`:与 `write_chunk_wav()` 同一档（写出去的 wav 就是这么换算的）
         return np.clip(data, -1.0, 1.0) * np.float32(32767.0)
     if data.dtype.kind in "iu":
-        # `int32` 上取绝对值：`abs(int16 的 -32768)` 会溢出成负数，于是满量程的负样本
-        # 会被读成 0（**更**保守的一侧）。这里先升位再交给 `_peak_counts()`。
+        # 本函数在这里只把整数样本**升位到 `int32`**（给后续运算留余量）；
+        # 绝对值与取峰都不在这一步 —— 那两步在 `_peak_counts()`（`abs` 之后
+        # 升 `int64` 取最大），升位正是为了让 `abs(int16 的 -32768)` 不溢出。
         return data.astype(np.int32)
     raise TypeError(f"波形的 dtype 该是 float 或 int，收到 {data.dtype}")
 

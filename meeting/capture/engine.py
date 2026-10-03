@@ -409,21 +409,39 @@ class CaptureSession:
         self._segment_duration_seconds: float | None = None
         self.writers: dict[str, PcmArchiveWriter] = {}
         self.workers: dict[str, _SourceWorker] = {}
-        for source in SOURCE_IDS:
-            writer = PcmArchiveWriter(
-                _archive_path(self.session_dir, source, self.segment_number), label=source
-            )
-            writer.open()
-            self.writers[source] = writer
-            self.workers[source] = _SourceWorker(
-                source,
-                self._sources.get(source),
-                writer,
-                emit=emit,
-                frame_interval=self.frame_interval,
-                active=source in self.requested and source in self._sources,
-                pause_event=self._pause_event,
-            )
+        # **抛错之前自己拉起来的东西自己收干净**（与 `start()` 同一条纪律，见 `start()`）：
+        # 两路逐个 `open()`（建段文件 + 起写线程），第二路抛错时构造原样上抛，已 `open()`
+        # 的第一路写线程与句柄不能没人收 —— 上抛之前先把已记账的 writer 逐个 `close()`
+        # （`close()` 幂等、容忍半开状态：句柄开了线程没起的那一档也收得干净）。
+        # 收尾自己再抛只记 warning：上抛的主因仍是构造失败的那个原异常。
+        try:
+            for source in SOURCE_IDS:
+                writer = PcmArchiveWriter(
+                    _archive_path(self.session_dir, source, self.segment_number), label=source
+                )
+                # 先记账再 `open()`：`open()` 半路抛错时它自己也在收尾名单里
+                self.writers[source] = writer
+                writer.open()
+                self.workers[source] = _SourceWorker(
+                    source,
+                    self._sources.get(source),
+                    writer,
+                    emit=emit,
+                    frame_interval=self.frame_interval,
+                    active=source in self.requested and source in self._sources,
+                    pause_event=self._pause_event,
+                )
+        except Exception:
+            for writer in self.writers.values():
+                try:
+                    writer.close()
+                except Exception:  # noqa: BLE001 - 收尾失败不掩盖构造失败的主因
+                    _log.warning(
+                        "构造失败收尾：关 %s 的归档写侧失败（原异常照上抛）",
+                        writer.label,
+                        exc_info=True,
+                    )
+            raise
 
     # -- 起 ---------------------------------------------------------------
 

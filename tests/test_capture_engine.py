@@ -779,3 +779,48 @@ def test_stop_before_any_start_is_harmless(tmp_path: Path):
     session.stop()
     session.stop()
     assert (tmp_path / archive_name("mic")).exists()
+
+
+def test_init_closes_opened_writers_when_a_later_open_fails(tmp_path: Path, monkeypatch):
+    """第二路 `open()` 抛错：已 `open()` 的第一路 writer 被 `close()`，原异常照上抛。
+
+    构造逐路 `open()`（建段文件 + 起写线程），第二路炸了时构造原样上抛 ——
+    第一路的写线程与句柄若没人收就是实打实的泄漏。`start()` 有「抛错之前自己拉起来的
+    东西自己收干净」的纪律，构造补上同一条：收尾（`close()`）失败只记 warning，
+    上抛的主因仍是构造失败的那个原异常。
+    """
+    from meeting.capture import engine as engine_module
+
+    real_open = engine_module.PcmArchiveWriter.open
+    real_close = engine_module.PcmArchiveWriter.close
+    opened: list[str] = []
+    closed: list[engine_module.PcmArchiveWriter] = []
+
+    def flaky_open(self):
+        if opened:  # 炸在第二路（loopback）上：第一路（mic）已经 open 过
+            raise RuntimeError("第二路 open 按计划炸了")
+        opened.append(self.label)
+        real_open(self)
+
+    def spy_close(self, **kwargs):
+        closed.append(self)
+        real_close(self, **kwargs)
+
+    monkeypatch.setattr(engine_module.PcmArchiveWriter, "open", flaky_open)
+    monkeypatch.setattr(engine_module.PcmArchiveWriter, "close", spy_close)
+
+    with pytest.raises(RuntimeError, match="第二路 open"):
+        CaptureSession(
+            mode="both",
+            session_dir=str(tmp_path),
+            sources={},
+            emit=lambda fact: None,
+        )
+
+    assert opened == ["mic"], f"炸在第二路的 open 上，第一路已开：{opened}"
+    assert [w.label for w in closed] == ["mic", "loopback"], (
+        f"已 open 的第一路必须被收干净（半开的第二路也容忍 close）：{closed}"
+    )
+    # 收尾是真收尾：两路写侧的句柄都已交还（close 走完的读数）
+    assert all(writer._handle is None for writer in closed)
+
