@@ -19,6 +19,7 @@ import threading
 
 import pytest
 
+from meeting import atomicio
 from meeting.offline import artifacts
 
 
@@ -819,7 +820,8 @@ def test_writes_are_atomic_leaving_no_tmp_behind(tmp_path) -> None:
 def test_atomic_write_retries_while_the_target_is_held(tmp_path, monkeypatch) -> None:
     """目标文件被别人拿在手里时（Windows 的 `WinError 32`）退避重试，不把写盘让掉。"""
     target = tmp_path / "meeting_offline_status.json"
-    real_replace = artifacts.os.replace
+    # 实现住在 `meeting/atomicio.py`（两包共用），`os.replace` 的桩打在它身上
+    real_replace = atomicio.os.replace
     attempts = []
 
     def flaky_replace(src, dst):
@@ -828,7 +830,7 @@ def test_atomic_write_retries_while_the_target_is_held(tmp_path, monkeypatch) ->
             raise PermissionError(32, "另一个程序正在使用此文件")
         return real_replace(src, dst)
 
-    monkeypatch.setattr(artifacts.os, "replace", flaky_replace)
+    monkeypatch.setattr(atomicio.os, "replace", flaky_replace)
     artifacts.write_status(
         target,
         session_id="250919",
@@ -849,7 +851,7 @@ def test_atomic_write_gives_up_after_the_retries(tmp_path, monkeypatch) -> None:
     def always_busy(src, dst):
         raise PermissionError(32, "另一个程序正在使用此文件")
 
-    monkeypatch.setattr(artifacts.os, "replace", always_busy)
+    monkeypatch.setattr(atomicio.os, "replace", always_busy)
     with pytest.raises(PermissionError):
         artifacts.write_text_atomic(tmp_path / "x.md", "正文", retries=2)
 

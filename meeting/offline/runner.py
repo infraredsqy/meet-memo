@@ -39,7 +39,8 @@
   3. **块失败必须露出来**：某一块抛错或一段都没交回时，那一路落 `partial`（状态文件里
      `partial = true`、`error` 写明是哪一段区间没有转写），报告里单列一节列出缺失区间，
      转写文件第一行是一条注释行说明缺了哪一段。**静默 `done` 加一段悄悄消失的音频
-     是禁止的**：这份转写是下游的权威底本。
+     是禁止的**：这份转写是下游那份会后稿的底本（两份稿平级，不叫「权威」，
+      `docs/design-intent.md` 第 11 条）。
 
 块数为 1 时（音频不长于块长、或 `post.chunk_seconds = 0`）走的就是单趟：引擎拿到的是
 原始音频路径，标签不带命名空间，产物与加这个键之前逐字一致。
@@ -58,7 +59,7 @@
 拦下。往上一格放宽（例如按 dBFS 给一个 -60 dB 的地板）就开始赌「安静的话还算不算话」：
 `meeting/asr/glm.py` 的 `_is_noise_segment` 用 VAD + RMS(<150) + 语音帧(<5) 三条 AND
 判「近静音」，那条口径服务于**会中**的逐段预判（丢一段的代价是那一行没有字，且那一段
-本来就只有 10 秒），会后这一层丢一段的代价是**权威底本整块消失**，两者不对称，
+本来就只有 10 秒），会后这一层丢一段的代价是**下游那份底本整块消失**，两者不对称，
 所以这里取的是比它更严、也不需要 VAD 的一档：**只要有一个够得着半格的样本，这一块照跑**。
 `_is_noise_segment` 与这里的分工是「会中预筛按概率丢、会后闸门按全零丢」，
 两处都把命中的那一段记成**成功的「什么都没识别出来」**，都不记成失败。
@@ -91,7 +92,7 @@ float32 的整段波形会被 `int()` 截成一串 0 —— 一串真有声的�
      （见下面「产物里的尺子名」那一节）。
 
 代价这一栏如实说：单趟跑的 MP3 现在**多花一次解码**（短于块长的录音才走这条路，默认块长
-450 秒，也就是一次**短会议**的解码），换回来的是「短会议的权威底本不许被整段假正文污染」。
+450 秒，也就是一次**短会议**的解码），换回来的是「短会议的下游底本不许被整段假正文污染」。
 整段一次跑**不再有绕开门的那一档**。
 
 **产物里的尺子名对得上产品路径实际走的那一条**（`ChunkRun.gate_method` / 逐路的
@@ -411,6 +412,10 @@ class ChunkRun:
     （`gate_unjudged`）、可能交出 0 段（`no_segments`）、也可能抛错（`engine_error`）——
     三种情形下 `gate` 那一格都是 `unjudged`，`reason` 说的是**引擎那一边的结果**。
     两个结论各说一件事，读方按 `gate` 看「门判过没有」、按 `reason` 看「这段为什么没有字」。
+
+    `reason` 是**构造时显式给出的词档**（`REASON_*` 常量直接传）：失败档的错误消息虽然
+    仍以 `{词档}：` 开头（对照表 `chunks[].error` 的既有盘上格式，读方按它读），但词档
+    本身不再从错误消息原文反推 —— `error` 只负责人话，机器读 `reason` 这一格。
     """
 
     index: int
@@ -419,6 +424,11 @@ class ChunkRun:
     segments: int = 0
     wall_seconds: float = 0.0
     error: str | None = None
+    #: 这一块的**机器可读结论词**（`REASON_*` 常量，构造时显式给；表见类说明）。
+    #: 与 `error` 分工：`error` 是带词档前缀的人话原话（盘上格式不变），`reason` 是
+    #: 程序读的那一个词 —— 三处词档消费点（`ChunkRun.reason` 本格、`_record_chunk_runs()`
+    #: 的 `reasons` 分布、`_failure_reasons()`）都只认它，不再 `split("：")` 反推。
+    reason: str = ""
     #: 这一块是数字静音、跳过了引擎调用（见模块头「数字静音门」）
     silent: bool = False
     #: 门在这一块上的结论：`silent` / `not_silent` / `unjudged`
@@ -433,26 +443,6 @@ class ChunkRun:
     @property
     def span(self) -> tuple[float, float]:
         return (round(float(self.offset), 3), round(float(self.offset + self.seconds), 3))
-
-    @property
-    def reason(self) -> str:
-        """这一块的**机器可读结论词**（表见类说明）。
-
-        「没声跳过」「这一块没跑成」「引擎跑成了却没交回段」「跑成了但段全是零时长」这四档
-        各有一个词；`gate_unjudged` 是叠在上面的一层：门判不了那一段时，它在上面四档之外
-        再多说一句「这一段的静音与否没人判过」。
-        """
-        if self.silent:
-            return REASON_DIGITAL_SILENCE
-        if self.error is not None:
-            return str(self.error).split("：", 1)[0]
-        if self.segments == 0:
-            return REASON_NO_SEGMENTS
-        if self.gate == GATE_UNJUDGED:
-            return REASON_GATE_UNJUDGED
-        if self.zero_span_segments:
-            return REASON_ZERO_SPAN_SEGMENTS
-        return REASON_TRANSCRIBED
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -683,8 +673,9 @@ def samples_to_counts(samples: Any) -> Any:
         # `32767`:与 `write_chunk_wav()` 同一档（写出去的 wav 就是这么换算的）
         return (np.clip(data, -1.0, 1.0) * np.float32(32767.0)).astype(np.int32)
     if data.dtype.kind in "iu":
-        # `int32` 上取绝对值：`abs(int16 的 -32768)` 会溢出成负数，
-        # 于是「峰值 <= 0」对满量程的负样本也成立（**更**保守的一侧）。
+        # 本函数在这里只把整数样本**升位到 `int32`**（给后续运算留余量）；
+        # 绝对值与取峰都不在这一步 —— 那两步在 `_peak_counts()`（`abs` 之后
+        # 升 `int64` 取最大），升位正是为了让 `abs(int16 的 -32768)` 不溢出。
         return data.astype(np.int32)
     raise TypeError(f"波形的 dtype 该是 float 或 int，收到 {data.dtype}")
 
@@ -840,8 +831,8 @@ def is_digital_silence(samples: Any) -> bool:
     不会走到这里被当成空。
 
     与 `meeting/asr/glm.py` 的 `_is_noise_segment` 的关系写在模块头：那一条服务于会中
-    逐段预判，三条 AND 里带 VAD；这一条服务于会后权威底本，只认「一个够得着半格的样本
-    都没有」。
+    逐段预判，三条 AND 里带 VAD；这一条服务于会后稿那条下游底本，只认「一个够得着半格
+    的样本都没有」。
     """
     scaled = samples_to_count_floats(samples)
     if scaled.size == 0:
@@ -1886,6 +1877,9 @@ def _minutes_gate(
         _log.info("会后纪要被 --force 重跑：这一趟不看终态，直接拉起：%s", session_dir)
         return None
 
+    # 纪要那一层的四档词表（函数体内 import：本模块顶层的惰性纪律一个字不动）
+    from meeting.minutes.status import STATE_DELIVERED, STATE_FAILED, STATE_RUNNING
+
     directory = Path(session_dir)
     status_path = directory / MINUTES_STATUS_NAME
     if not status_path.is_file():
@@ -1901,7 +1895,7 @@ def _minutes_gate(
     if not isinstance(document, dict):
         return None
     state = str(document.get("state") or "")
-    if state in ("running", "failed", ""):
+    if state in (STATE_RUNNING, STATE_FAILED, ""):
         # 没跑完 / 跑砸了 / 状态文件里那一格读不出来：放行给启动器（现状口径一个字没动）
         return None
 
@@ -1922,7 +1916,7 @@ def _minutes_gate(
             "reason": "纪要已是终态且 meeting_final.md 过得了那四条判据，不再拉起子会话",
         }
 
-    if state == "delivered":
+    if state == STATE_DELIVERED:
         # 已经交付过 DSH web 服务端，产物还没落：**不重复拉起**（再拉一趟会让同一场生成两遍）
         _log.info("会后纪要已交付 DSH web 服务端（产物还没落），这一趟不再拉起：%s", session_dir)
         return {
@@ -2352,6 +2346,7 @@ def _execute_chunks(
                     index=step.index,
                     offset=step.offset,
                     seconds=step.seconds,
+                    reason=REASON_ENGINE_ERROR,
                     error=f"{REASON_ENGINE_ERROR}：切块失败 {type(exc).__name__}: {exc}",
                 )
                 runs.append(run)
@@ -2367,6 +2362,7 @@ def _execute_chunks(
                     index=step.index,
                     offset=step.offset,
                     seconds=step.seconds,
+                    reason=REASON_DIGITAL_SILENCE,
                     silent=True,
                     gate=gate_verdict,
                     gate_method=measured.method,
@@ -2395,6 +2391,7 @@ def _execute_chunks(
                         index=step.index,
                         offset=step.offset,
                         seconds=step.seconds,
+                        reason=REASON_ENGINE_LOAD_ERROR,
                         error=_load_failure_note(engine, load_failure),
                     )
                     _note_progress(progress, source, run, spans=[])
@@ -2412,6 +2409,7 @@ def _execute_chunks(
                     offset=step.offset,
                     seconds=step.seconds,
                     wall_seconds=time.monotonic() - begun,
+                    reason=REASON_ENGINE_ERROR,
                     error=f"{REASON_ENGINE_ERROR}：{type(exc).__name__}: {exc}",
                     gate=gate_verdict,
                     gate_method=measured.method,
@@ -2432,6 +2430,7 @@ def _execute_chunks(
                     offset=step.offset,
                     seconds=step.seconds,
                     wall_seconds=wall,
+                    reason=REASON_NO_SEGMENTS,
                     error=f"{REASON_NO_SEGMENTS}：引擎交回 0 段",
                     gate=gate_verdict,
                     gate_method=measured.method,
@@ -2457,6 +2456,13 @@ def _execute_chunks(
                 seconds=step.seconds,
                 segments=len(produced),
                 wall_seconds=wall,
+                reason=(
+                    # 门判不了且引擎跑成了（段有真实时长，0 段那一档在上面已走
+                    # `no_segments`）→ `gate_unjudged`；其次零时长段；都轮不上才是
+                    # 正常的 `transcribed`（词档取法与原先 `reason` 的推导序一致）
+                    REASON_GATE_UNJUDGED if gate_verdict == GATE_UNJUDGED
+                    else (REASON_ZERO_SPAN_SEGMENTS if zero_span else REASON_TRANSCRIBED)
+                ),
                 gate=gate_verdict,
                 gate_method=measured.method,
                 gate_detail=measured.detail if measured.silent is None else None,
@@ -2642,8 +2648,8 @@ def _record_chunk_runs(metric: artifacts.SourceMetrics, runs: Sequence[ChunkRun]
         if run.error is None:
             continue
         metric.missing_spans.append(run.span)
-        reason = str(run.error).split("：", 1)[0]
-        metric.reasons[reason] = metric.reasons.get(reason, 0) + 1
+        # 词档读 `ChunkRun.reason`（构造时显式给的那一个词），不再从 error 消息原文 split 反推
+        metric.reasons[run.reason] = metric.reasons.get(run.reason, 0) + 1
     metric.partial = bool(metric.missing_spans)
 
 
@@ -2759,13 +2765,17 @@ def _failure_reasons(metric: artifacts.SourceMetrics) -> set[str]:
     """这一路缺区间的原因词档（从逐块记账里取，`engine_error` / `no_segments` 这些）。
 
     摘要与状态文件里那句话带上它，读的人一眼分得清「丢的那几块是显存不够」与
-    「丢的那几块一段都没交回」。
+    「丢的那几块一段都没交回」。词读逐块那一行的 `reason` 格（构造时显式给的
+    `REASON_*` 常量），不再从 error 消息原文 split 反推。
     """
-    return {
-        str(run["error"]).split("：", 1)[0]
-        for run in metric.chunks
-        if run.get("error")
-    }
+    reasons: set[str] = set()
+    for run in metric.chunks:
+        if not run.get("error"):
+            continue
+        word = str(run.get("reason") or "")
+        if word:
+            reasons.add(word)
+    return reasons
 
 
 def _write_failed_status(
@@ -2962,7 +2972,7 @@ def _write_source_artifacts(
     于是「不同块的 `S01`」在 `number_speakers()` 眼里天然是两个键，各自拿一个编号。
 
     这一路缺了区间（`metric.partial`）时，转写**第一行**是一条注释行写明缺的是哪一段：
-    转写是下游的权威底本，读它的人与程序都该在第一行就看到这件事
+    转写是下游那份会后稿的底本，读它的人与程序都该在第一行就看到这件事
     （`artifacts.read_transcript_lines()` 认这条注释并跳过，行格式契约不受影响）。
 
     没声跳过的区间另起**一条**注释行（`silent_note()`）：两份注释各说一件事，

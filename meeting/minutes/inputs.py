@@ -18,25 +18,21 @@ phase3 的验收脚本拿它核「这一轮喂了几条」）与人（打开场�
   - **两个来源一条都没有 → `mode = "none"`**：调用方据此不启动 DSH、状态文件记 `failed` +
     原因。**不许静默出一份空纪要** —— 一份没有输入的纪要会以「这场会什么都没定」的样子交出去；
   - **写盘原子**：先写一份本调用独占的临时文件再 `os.replace` 换上去。读方（界面、下游程序）
-    随时可能来读，半份 JSON 比晚一点落地坏得多。这一份小实现是**本包自己**的
-    （`meeting.offline.artifacts.write_text_atomic` 是那个包的私有工具，跨包去拿等于把两个包
-    的收尾链捆在一起）。
+    随时可能来读，半份 JSON 比晚一点落地坏得多。这一份实现与 `meeting.offline.artifacts`
+    那一份逐行同构，因此提成了**两包共用**的小模块 `meeting.atomicio`（实现只留一份，
+    这里留同名转发别名，本包内外的调用方一个都不用改）。
 """
 
 from __future__ import annotations
 
 import json
-import os
-import threading
-import time as _time
-import uuid
 from collections.abc import Mapping, Sequence
-from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from meeting.atomicio import REPLACE_RETRIES, write_text_atomic
 from meeting.minutes.chunk import (
     MODES,
     WORKING_DIR,
@@ -218,14 +214,14 @@ def write_inputs_for_session(
     """找输入 → 组清单 → 落盘，返回那份清单（`runner` 的第一步走的就是它）。
 
     落点：`<场次目录>/working/inputs.json`（spec 交付物表钉死的）。
+
+    `mode` 落 `none` 时清单**照落**：读方要看得见「这一场查过了、确实什么都没有」；
+    但「这一档不启动 DSH、状态记 `failed` + 原因，不许静默出一份空纪要」的闸门
+    在 `meeting/minutes/runner.py` 的 `run()` 里 —— 本函数只落清单、不发车。
     """
     session = Path(session_dir)
     found = tuple(entries) if entries is not None else entries_for_session(session)
     document = build_inputs_document(session, found)
-    if document["mode"] == MODE_NONE:
-        # 一条都没有：清单照落（读方要看得见「这一场查过了、确实什么都没有」），
-        # 但调用方**不许**接着启动 DSH —— 那会出一份没有输入的纪要。
-        pass
     write_inputs(session / WORKING_DIR / INPUTS_NAME, document)
     return document
 
@@ -240,48 +236,9 @@ def source_ids_with_transcripts(session_dir: str | Path) -> tuple[str, ...]:
     return tuple(item.source for item in entries_for_session(session_dir))
 
 
-#: `os.replace` 的瞬时失败里，Windows 那一档的 `winerror`（拒绝访问 / 共享冲突 / 锁冲突）
-_TRANSIENT_WINERRORS = frozenset({5, 32, 33})
-
-#: 退避重试的次数（同一份文件被界面读着的那几十毫秒里重试几次就够）
-REPLACE_RETRIES = 5
-
-
-def write_text_atomic(path: str | Path, text: str, *, retries: int = REPLACE_RETRIES) -> Path:
-    """写一份文本产物：先写一份**本调用独占的**临时文件，再 `os.replace` 换上去。
-
-    与 `meeting/offline/artifacts.py` 的同名工具同一条路子（各写各的临时文件、瞬时失败短退避、
-    重试用尽时收拾掉残骸），但**本包自己留一份**：那个函数是那个包的私有工具，跨包去拿会把
-    两个包的收尾链捆在一起。
-    """
-    target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_name(
-        f"{target.name}.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex[:8]}.tmp"
-    )
-    tmp.write_text(text, encoding="utf-8")
-    attempts = max(1, int(retries))
-    try:
-        for attempt in range(attempts):
-            try:
-                os.replace(tmp, target)
-            except OSError as exc:
-                if attempt + 1 >= attempts or not _is_transient_replace_error(exc):
-                    raise
-                _time.sleep(0.02 * (attempt + 1))
-            else:
-                return target
-        return target  # pragma: no cover - 上面那一支已经返回或抛出
-    finally:
-        with suppress(OSError):
-            tmp.unlink(missing_ok=True)
-
-
-def _is_transient_replace_error(exc: OSError) -> bool:
-    """这次 `os.replace` 的失败是不是**瞬时**那一档（目标是别的进程正拿在手里的文件）。"""
-    if isinstance(exc, (PermissionError, FileNotFoundError)):
-        return True
-    return getattr(exc, "winerror", None) in _TRANSIENT_WINERRORS
+#: `os.replace` 的瞬时失败判定、独占临时文件名与退避重试：与 `meeting.offline.artifacts`
+#: 共用同一份实现，住在 `meeting/atomicio.py`（`REPLACE_RETRIES` 是它的重试次数常量，
+#: 这里转发导出，`__all__` 与既有调用方一个不动）。
 
 
 __all__ = [

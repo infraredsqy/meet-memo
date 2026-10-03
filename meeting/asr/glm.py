@@ -39,11 +39,14 @@ sounddevice / soundcard 那一半），V2 只搬识别那一半 —— 采集在
 from __future__ import annotations
 
 import logging
+import sys
+import threading
 import time
 from dataclasses import dataclass
 
 from meeting import config as config_module
 from meeting.asr.guards import _DeadlineStop, _LoopGuard, _strip_repeat_loops
+from meeting.importlock import heavy_imports
 
 #: 本项目自己的 logger（V1 那一行是 `logging.getLogger("meeting")`）
 log = logging.getLogger("meeting.asr.glm")
@@ -132,15 +135,27 @@ def _load_from_hub(loader, **kwargs):
 def _load_models():
     """加载 Processor 与模型权重，返回 `(processor, transcriber)`。
 
-    重依赖全在函数体内惰性 import。**这是本模块唯一的模型入口**，也是测试的接缝：
+    重依赖全在函数体内惰性 import，且整段 import 包进 `heavy_imports()`（进程级锁，
+    `meeting/importlock.py`）：本模块（会中链）与 `meeting/offline/engine.py`（会后链）
+    在各自的后台线程里首次 import transformers，两线程同时首导同一模块时其一可能见到
+    半初始化的模块对象（260928-2 实测），进程级锁把两条首导串行化。进程正在退出时
+    （`sys.is_finalizing()`）当场抛 `RuntimeError`（本模块加载失败本就以裸异常上抛，
+    由调用链记账），不触任何 import。
+
+    **这是本模块唯一的模型入口**，也是测试的接缝：
     用例用 `monkeypatch.setattr(meeting.asr.glm, "_load_models", fake)` 打在**同一份模块对象**上
     —— 别在别处写 `from meeting.asr.glm import _load_models` 那种绑到另一个模块对象的引用，
     那正是 V1 那个「测试一边通过一边什么都没验」的坑（`docs/v1-lineage.md` 的 C9 / E9）。
 
     处理器无额外 kwargs；模型 `dtype=torch.bfloat16, device_map="auto"`。
     """
-    from transformers import GlmAsrForConditionalGeneration, AutoProcessor
-    import torch
+    if sys.is_finalizing():
+        raise RuntimeError("进程正在退出，会中 ASR 模型加载中断；重新开会话时会再次加载")
+    log.debug("会中 ASR：准备首次 import torch/transformers（thread=%s）", threading.current_thread().name)
+    with heavy_imports():
+        from transformers import GlmAsrForConditionalGeneration, AutoProcessor
+        import torch
+    log.debug("会中 ASR：torch/transformers import 完成（thread=%s）", threading.current_thread().name)
 
     log.info("loading GLM-ASR model...")
     # 加载耗时：第二场会（或 `release_gpu()` 之后重载）到底要等多久，今天只有这一条读数。

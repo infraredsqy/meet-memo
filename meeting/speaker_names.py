@@ -36,8 +36,8 @@
     动作侧按既有 `invalid_setting` 记账回执）——读不出还整份覆盖，会把用户逐条确认过
     的名字无声抹掉，抢救的机会就没了。
 
-纯标准库（`json` / `logging` / `pathlib`）；原子写复用 `meeting.offline.artifacts`
-的 `write_text_atomic()`（先写本调用独占的临时文件，再 `os.replace` 换上去）。
+纯标准库（`json` / `logging` / `pathlib`）；原子写复用两包共用的
+`meeting.atomicio.write_text_atomic()`（先写本调用独占的临时文件，再 `os.replace` 换上去）。
 """
 
 from __future__ import annotations
@@ -47,6 +47,7 @@ import logging
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from meeting.atomicio import write_text_atomic
 from meeting.minutes.chunk import (
     LIVE_TRANSCRIPT_TEMPLATE,
     OFFLINE_TRANSCRIPT_TEMPLATE,
@@ -56,7 +57,6 @@ from meeting.offline.artifacts import (
     SPEAKERS_NAME_TEMPLATE,
     ArtifactContractError,
     read_speakers_artifact,
-    write_text_atomic,
 )
 from meeting.state import SOURCE_LABELS
 

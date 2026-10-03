@@ -565,6 +565,28 @@ def test_package_import_pulls_no_heavy_dependency() -> None:
 
 
 # ---------------------------------------------------------------------------
+# 退出守卫：进程正在退出时不发起任何 import（260928-2 那场 (b) 机制的守门用例）
+# ---------------------------------------------------------------------------
+
+
+def test_load_models_refuses_to_import_while_interpreter_is_finalizing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`sys.is_finalizing()` 为真时 `_load_models` 当场抛本模块的专用异常。
+
+    守卫在一切 import **之前**：退出期再首导 torch/transformers 只会被拦腰打断成
+    一句莫名 `ImportError`（daemon 线程），如实报「进程正在退出，会后链中断」，
+    状态文件那一格才有诚实的话可写。
+    """
+    monkeypatch.setattr(sys, "is_finalizing", lambda: True)
+
+    with pytest.raises(
+        engine_module.EngineShutdownInterrupted, match="进程正在退出"
+    ):
+        engine_module._load_models("whatever", dtype="bfloat16", device="cpu")
+
+
+# ---------------------------------------------------------------------------
 # release_engine（b1c6a58e 的 d6）：丢引用 + 请 torch 把缓存还给系统
 # ---------------------------------------------------------------------------
 

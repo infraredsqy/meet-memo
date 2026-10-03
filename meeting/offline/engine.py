@@ -14,7 +14,9 @@
      `transcript_parser.py` 只住在 V1 的临时 scratch 里（不在发行树、不在 PyPI）。
 
 重依赖惰性：`torch` / `transformers` / `numpy` 一律在函数体内 import
-（`meeting/asr/glm.py` 的既有纪律）。`dtype` 的合法取值与 `_resolve_device` 的形态照抄
+（`meeting/asr/glm.py` 的既有纪律）；模型加载那一处的首次 import 包在
+`meeting/importlock.py` 的进程级锁里（与会中 ASR 的首导互斥，理由见 `_load_models()`）。
+`dtype` 的合法取值与 `_resolve_device` 的形态照抄
 官方 helper（`moss_transcribe_diarize/inference_utils.py:50-71`），那是本项目实测跑通的那一份。
 """
 
@@ -22,11 +24,25 @@ from __future__ import annotations
 
 import logging
 import re
+import sys
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, Sequence
 
+from meeting.importlock import heavy_imports
+
 log = logging.getLogger("meeting.offline.engine")
+
+
+class EngineShutdownInterrupted(RuntimeError):
+    """进程正在退出（`sys.is_finalizing()`），会后链的模型加载不再发起。
+
+    收尾那一段是 daemon 线程在跑，解释器退出会把进行中的 import 拦腰打断——那一档
+    报出来只会是一句不知所云的 `ImportError`。加载入口因此在触任何 import 之前先看
+    这一格，退出期就如实抛本异常：状态文件照常落 `failed`、`error` 写明「进程正在
+    退出，会后链中断，可从工作台重新发起」，下一趟从工作台重按按钮即可。
+    """
 
 #: 官方 helper 的提示词（`inference_utils.py:13-17` 的 `DEFAULT_PROMPT`，逐字）
 DEFAULT_PROMPT = (
@@ -379,12 +395,30 @@ def _load_from_hub(loader, model: str, **kwargs):
 def _load_models(model: str, *, dtype: str, device: str):
     """加载 Processor 与模型权重，返回 `(processor, model_obj, torch_dtype)`。
 
-    重依赖全在函数体内惰性 import。**这是本模块唯一的模型入口**，也是测试的接缝：
-    用例用 `monkeypatch.setattr(meeting.offline.engine, "_load_models", fake)` 打在
+    重依赖全在函数体内惰性 import，且整段 import 包进 `heavy_imports()`（进程级锁，
+    `meeting/importlock.py`）：会中 ASR 与本模块都在各自的后台线程里首次 import
+    transformers，两线程同时首导同一模块时其一可能见到半初始化的模块对象
+    （260928-2 实测的 `ImportError: cannot import name AutoModelForCausalLM`），
+    进程级锁把两条首导串行化。import 前后各一条 debug 日志（带线程名），
+    下次偶现时对照日志就能定案是哪两条链撞的。
+
+    进程正在退出时（`sys.is_finalizing()`）当场抛 `EngineShutdownInterrupted`，
+    不触任何 import：daemon 线程在退出期继续首导只会被拦腰打断成一句莫名 `ImportError`。
+
+    **这是本模块唯一的模型入口**，也是测试的接缝：用例用
+    `monkeypatch.setattr(meeting.offline.engine, "_load_models", fake)` 打在
     **同一份模块对象**上。
     """
-    import torch
-    from transformers import AutoModelForCausalLM, AutoProcessor
+    if sys.is_finalizing():
+        raise EngineShutdownInterrupted(
+            "进程正在退出，会后链中断，可从工作台重新发起"
+        )
+    thread = threading.current_thread().name
+    log.debug("会后引擎加载：准备首次 import torch/transformers（thread=%s）", thread)
+    with heavy_imports():
+        import torch
+        from transformers import AutoModelForCausalLM, AutoProcessor
+    log.debug("会后引擎加载：torch/transformers import 完成（thread=%s）", thread)
 
     log.info("加载 MOSSTD：%s（dtype=%s device=%s）", model, dtype, device)
     torch_dtype = _torch_dtype_from_name(torch, dtype)
