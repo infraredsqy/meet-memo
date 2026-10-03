@@ -1,6 +1,8 @@
 """命令行入口（phase1 §3.3 / §3.4 / R15）。
 
-只认两个词：`meeting web` / `meeting post`（**不加第三个词**）。
+命令词三个：`meeting web` / `meeting post` / `meeting replay`——每条仍是
+`meeting <动词>` 的两词命令形（R15 说的表面形状照守）。`replay` 是重放验证工具
+（`a3b684bd`：拿旧录音全速重跑离线链），只用来验证，不是第二条生产路径。
 
 五个退出码常量在**本模块**模块级定义（§3.4 冻结表），`main()` 的每个出口一律
 `sys.exit(<常量>)`，log 里「退出原因与退出码」那一行也写常量名 —— **本模块里不出现裸数字**
@@ -38,6 +40,7 @@ from meeting import config as config_module
 from meeting import logging_setup
 from meeting.capture.archive import EMPTY_PCM_BYTES
 from meeting.offline import progress as offline_progress
+from meeting.offline import replay as offline_replay
 from meeting.offline import runner as offline_runner
 from meeting.service import app as service_app
 from meeting.session import (
@@ -65,13 +68,15 @@ EXIT_NAMES: tuple[tuple[str, int], ...] = (
     ("EXIT_INTERRUPTED", EXIT_INTERRUPTED),
 )
 
-ACTIONS = ("web", "post")
+ACTIONS = ("web", "post", "replay")
 
 USAGE = (
     "用法：meeting <动作词>\n"
-    "  可用动作词：web / post\n"
-    "    web   起本地服务（只监听 127.0.0.1），前台跑到 Ctrl+C\n"
-    "    post  只跑会后那一套：meeting post <场次目录> [--force]\n"
+    "  可用动作词：web / post / replay\n"
+    "    web    起本地服务（只监听 127.0.0.1），前台跑到 Ctrl+C\n"
+    "    post   只跑会后那一套：meeting post <场次目录> [--force]\n"
+    "    replay 拿旧录音全速重跑离线链（验证用）：meeting replay <场次目录> "
+    "[--seconds N | --chunks N]\n"
 )
 
 #: `post` 那一行在用法说明里的样子（字符串常量名进文案，**不写裸数字**）
@@ -83,6 +88,19 @@ POST_USAGE = (
 
 #: `post` 认的开关（本轮**只有** `--force` 一个）
 POST_FLAGS: tuple[str, ...] = ("--force",)
+
+#: `replay` 那一行在用法说明里的样子（验证工具：只读素材、产物写自己的落地）
+REPLAY_USAGE = (
+    "用法：meeting replay <场次目录> [--seconds N | --chunks N] [--out 目录]\n"
+    "  <场次目录>   拿哪一场的录音来重放（素材只读，原目录一个字节不动）\n"
+    "  --seconds N  只重放前 N 秒（上限表达一：秒）\n"
+    "  --chunks N   只重放每路前 N 块（按生效的 post.chunk_seconds 换算成秒；"
+    "该值 <= 0 时这一档拒跑）\n"
+    "  --out 目录   拷贝与产物的落点（每遍给一个新目录；缺省落在系统临时目录）\n"
+)
+
+#: `replay` 认的开关（三个都带取值）
+REPLAY_FLAGS: tuple[str, ...] = ("--seconds", "--chunks", "--out")
 
 # ---------------------------------------------------------------------------
 # 会后编排（`meeting post` 这条入口的 run_post()；`PostProcessHook._run()` 也调它，
@@ -156,7 +174,7 @@ def _log() -> logging.Logger:
 
 
 def main(argv: list[str] | None = None) -> None:
-    """唯一入口：`web` / `post` 两个词。"""
+    """唯一入口：`web` / `post` / `replay` 三个词。"""
     args = list(sys.argv[1:] if argv is None else argv)
 
     if not args:
@@ -170,6 +188,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if action == "post":
         post(args[1:])
+        return
+    if action == "replay":
+        replay(args[1:])
         return
 
     print(USAGE, end="", file=sys.stderr)
@@ -477,6 +498,184 @@ def _report_post_outcome(outcome: dict[str, Any], exit_code: int) -> None:
             file=sys.stderr,
             flush=True,
         )
+
+
+# ---------------------------------------------------------------------------
+# `meeting replay` —— 重放验证工具（a3b684bd：只读素材、产物写自己的落地、绝不拉纪要）
+# ---------------------------------------------------------------------------
+
+
+def _parse_replay_args(argv: Sequence[str]) -> dict[str, Any]:
+    """解析 `meeting replay` 后面那一串：交回 `{"dir", "seconds", "chunks", "out"}`。
+
+    形状照 `_parse_post_args()`：校验落在可直调的函数上、`ValueError` 里那句话就是
+    终端文案。三个开关都带取值（`--seconds 300` 这种）；上限两种给其一，都给与都不给
+    的裁决在 `offline_replay.cap_to_seconds()` 里（这里只认形）。`--out` 只记形状，
+    存不存在由工具侧现建。
+    """
+    args = list(argv)
+    seconds: float | None = None
+    chunks: int | None = None
+    out: Path | None = None
+    positionals: list[str] = []
+    index = 0
+    while index < len(args):
+        item = args[index]
+        if item in REPLAY_FLAGS:
+            if index + 1 >= len(args):
+                raise ValueError(f"{item} 缺少取值")
+            value = args[index + 1]
+            if item == "--seconds":
+                try:
+                    seconds = float(value)
+                except ValueError:
+                    raise ValueError(f"--seconds 要一个正数，收到 {value!r}") from None
+            elif item == "--chunks":
+                try:
+                    chunks = int(value)
+                except ValueError:
+                    raise ValueError(f"--chunks 要一个正整数，收到 {value!r}") from None
+            else:
+                out = Path(value)
+            index += 2
+            continue
+        if item.startswith("-") and item != "-":
+            raise ValueError(f"未定义的开关：{item!r}（本轮只认 {' / '.join(REPLAY_FLAGS)}）")
+        positionals.append(item)
+        index += 1
+
+    if not positionals:
+        raise ValueError("缺少位置参数 <场次目录>")
+    if len(positionals) > 1:
+        raise ValueError(
+            "位置参数只收一个 <场次目录>，收到 "
+            + "、".join(repr(item) for item in positionals)
+        )
+    directory = Path(positionals[0])
+    if not directory.is_dir():
+        raise ValueError(f"场次目录不存在（或者不是目录）：{directory}")
+    return {
+        "dir": directory.resolve(),
+        "seconds": seconds,
+        "chunks": chunks,
+        "out": out,
+    }
+
+
+def replay(argv: Sequence[str] | None = None) -> None:
+    """`meeting replay <场次目录> [--seconds N | --chunks N] [--out 目录]` —— 跑完就退。
+
+    与 `post()` 同一套骨架：解析参数（用法错 → 用法说明 + `EXIT_REJECTED`）→
+    **读配置并生效**（`_load_config_or_exit()`：上限换算与造引擎都读用户那份配置）→
+    按生效配置重建服务级日志 → 调 `offline_replay.run_replay()` → 打读数并按整场
+    `state` 挑 `sys.exit(<常量>)`（`failed` → `EXIT_FAILURE`，其余 → `EXIT_OK`；
+    上限/素材那一路的 `ValueError` → `EXIT_REJECTED`）。
+
+    **每个出口都 `sys.exit(<常量>)`，`sys.exit()` 之前一律 `sys.stdout.flush()`**（本模块
+    既有纪律）。这一条**不碰纪要层**：`run_replay()` 直调 `run_session(minutes=False)`，
+    `announce_minutes` 保持缺省的隔离闸——本工具只验证离线转写链。
+    """
+    try:
+        options = _parse_replay_args(sys.argv[2:] if argv is None else argv)
+    except ValueError as exc:
+        print(REPLAY_USAGE, end="", file=sys.stderr, flush=True)
+        print(f"用法错误：{exc}", file=sys.stderr, flush=True)
+        print(
+            "退出原因与退出码：用法错误（replay 的参数） -> EXIT_REJECTED",
+            file=sys.stderr,
+            flush=True,
+        )
+        sys.stdout.flush()
+        sys.exit(EXIT_REJECTED)
+
+    # 配置与日志的时序照 post() 那一套（①bootstrap → ②读配置 → ③按生效值重建）：
+    # 上限按块的换算读 `post.chunk_seconds`、缺省引擎读 `post.engine/model/dtype`，
+    # 都必须来自用户写的那份 config.json 而不是默认值表。
+    try:
+        logging_setup.setup_service_logging(config_module.default_log_dir())
+    except OSError as exc:
+        print(
+            f"注意：默认日志目录不可写（{exc}），bootstrap 阶段只有终端可写",
+            file=sys.stderr,
+            flush=True,
+        )
+    loaded = _load_config_or_exit()
+
+    log_dir = loaded.get("log.dir")
+    try:
+        logging_setup.setup_service_logging(
+            log_dir,
+            level=loaded.get("log.level"),
+            max_bytes=loaded.get("log.max_bytes"),
+            backup_count=loaded.get("log.backup_count"),
+        )
+    except OSError as exc:
+        print(
+            f"启动前提不成立：主 log 不可写：{log_dir}（{type(exc).__name__}: {exc}）",
+            file=sys.stderr,
+            flush=True,
+        )
+        sys.stdout.flush()
+        sys.exit(EXIT_STARTUP_UNMET)
+
+    try:
+        _log().info(
+            "重放开始：%s（seconds=%s，chunks=%s，out=%s）",
+            options["dir"], options["seconds"], options["chunks"], options["out"],
+        )
+    except Exception:  # pragma: no cover - 日志尚未初始化时只打印终端
+        pass
+
+    try:
+        reading = offline_replay.run_replay(
+            options["dir"],
+            seconds=options["seconds"],
+            chunks=options["chunks"],
+            work_dir=options["out"],
+            config=loaded,
+        )
+    except KeyboardInterrupt:
+        print("重放被强制打断（Ctrl+C）。", file=sys.stderr, flush=True)
+        try:
+            _log().error("重放被强制打断 -> EXIT_INTERRUPTED")
+        except Exception:  # pragma: no cover - 同上
+            pass
+        sys.stdout.flush()
+        sys.exit(EXIT_INTERRUPTED)
+    except ValueError as exc:
+        # 上限换算不出 / 素材目录指不对这一档：如实拒绝，不打引擎。
+        print(f"拒跑：{exc}", file=sys.stderr, flush=True)
+        try:
+            _log().error("重放拒跑：%s -> EXIT_REJECTED", exc)
+        except Exception:  # pragma: no cover - 同上
+            pass
+        sys.stdout.flush()
+        sys.exit(EXIT_REJECTED)
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"
+        try:
+            _log().exception("重放抛出来了：%s", options["dir"])
+        except Exception:  # pragma: no cover - 同上
+            pass
+        print(f"重放失败：{error}", file=sys.stderr, flush=True)
+        sys.stdout.flush()
+        sys.exit(EXIT_FAILURE)
+
+    print(offline_replay.format_reading(reading), flush=True)
+    summary_state = str((reading.get("summary") or {}).get("state") or "")
+    exit_code = EXIT_FAILURE if summary_state == "failed" else EXIT_OK
+    try:
+        _log().info(
+            "退出原因与退出码：重放结束（%s） -> %s", summary_state, _exit_name(exit_code)
+        )
+    except Exception:  # pragma: no cover - 同上
+        pass
+    print(
+        f"退出原因与退出码：重放结束（{summary_state}） -> {_exit_name(exit_code)}",
+        flush=True,
+    )
+    sys.stdout.flush()
+    sys.exit(exit_code)
 
 
 # ---------------------------------------------------------------------------
