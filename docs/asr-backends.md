@@ -72,7 +72,9 @@
 **可复现的四条路**（每条都在仓库根 `C:\Users\<user>\tools\meeting` 下跑）：
 
 1. **读当前值**（不加载模型）：`python -c "from meeting import config; [print(k, repr(config.DEFAULT_VALUES[k])) for k in ('post.engine','post.model','post.dtype','post.chunk_seconds')]"`
-2. **走产品路径重跑一趟会后链**（会长跑，要真权重、真占卡）：
+2. **重跑一趟会后链**（会长跑，要真权重、真占卡）。两把落法：
+   - **验证参数与改动**（`a3b684bd`）：`meeting replay <场次目录> [--seconds N | --chunks N] [--out 目录]` —— 素材**截断复制**进 `--out` 指定的落地（缺省落系统临时目录，每遍一个新目录），在那份拷贝上跑与生产同一条 `run_session`；原目录一个字节不动，只验证离线链、**不拉纪要**，跑完打印实时率（墙钟 ÷ 盘上实测音频时长）、每块耗时与失败原因分布。分段归档（`9063d8b`）落地之前的旧录音是无段号命名（`meeting_audio_<source>.mp3` 这种），现行链按 `meeting_audio_<source>_<NNN>` 枚举段、对它们直接 `run_session` 取不到音频——`meeting replay` 对旧命名退认，拷贝写盘时落成现行命名（段 001）。
+   - **在原目录上重跑**（产物落回那一场）：
    ```pwsh
    $env:HF_HUB_OFFLINE = "1"
    python -c "from meeting.offline.runner import run_session; run_session(r'<场次目录>')"

@@ -28,12 +28,13 @@
 
 **外部前置条件：`ffmpeg` 要在 PATH 上**（`pydub` 靠它转 MP3；装机时一并装）。它缺席时服务照常起、照常录，只是收尾第 2 步 `transcode` 如实记 `failed`，**归档 PCM 原样留在场次目录里**（一个字节都不丢）。
 
-命令面只有两个词：
+命令面三个词：
 
 | 命令 | 现在干什么 |
 |---|---|
 | `meeting web` | 起本地服务，前台跑到 `Ctrl+C` |
 | `meeting post <场次目录>` | **已经接上**：只跑会后那一套（音频归档补齐 → 会后离线转写与说话人聚类 → 会后纪要），不开界面、不起服务，跑完打印每层的结论与产物绝对路径就退出 |
+| `meeting replay <场次目录>` | **已经接上**（`a3b684bd`）：重放验证——把那一场的素材截断复制进 `--out` 指定的目录，在拷贝上全速重跑会后离线转写链；只验证、不拉纪要，跑完打印实时率、每块耗时与失败原因分布就退出 |
 
 两种起法等价，选一种：
 
@@ -42,13 +43,16 @@ meeting web                     # 装过包（console script，指向 meeting.cl
 python -m meeting web           # 不装包也行，在仓库根跑
 meeting post <场次目录>          # 只跑会后那一套，跑完就退
 python -m meeting post <场次目录>
+meeting replay <场次目录>        # 重放验证：只读素材，在拷贝上重跑离线链
+python -m meeting replay <场次目录>
 ```
 
 - **不做可编辑安装也能跑**：在仓库根目录跑 `python -m meeting <动作词>` 即可（`python -m` 会把当前工作目录放进 `sys.path`）。
 - **`meeting post` 认一个开关**：`--force`（重复给也照收）。它是本轮**唯一**会再次花钱的开关 —— 它无视两层的终态、把离线转写与纪要都重跑一遍；不给它时那一趟按幂等闸走：两层都已是终态且产物齐就一个引擎调用、一个子进程都不产生（终端打一句「无待办」），只差一层就只补那一层，任一层停在 `running` 就**拒跑**（退出码 `2`，提示里点名那一个状态文件并给出 `--force`）。
 - **`meeting post` 要一个位置参数**：`<场次目录>` 给全（**不猜最新一场、不列目录内容、没有交互菜单**）。不给它、给多了、指到不存在的路径、或写了 `--force` 以外的开关，都会打印用法说明并以退出码 `2` 结束。
-- **`--help` 这类开关没有**：`meeting` 不带参数、或写了 `web` / `post` 以外的词（例如 `meeting serve`），都会打印用法说明并以退出码 `2` 结束。
+- **`--help` 这类开关没有**：`meeting` 不带参数、或写了 `web` / `post` / `replay` 以外的词（例如 `meeting serve`），都会打印用法说明并以退出码 `2` 结束。
 - **`meeting post` 读配置、也按生效配置重建服务级日志**（与 `web()` 同一套：配置损坏退出码 `3`、取值非法退出码 `2`，`log.dir` 那四格生效）。它的落点是命令行显式给的那一个场次目录。
+- **`meeting replay <场次目录>` 认三个开关**：`--seconds N` / `--chunks N` / `--out 目录`（`a3b684bd`）。上限两种表达给其一：`--seconds N` 只重放前 N 秒；`--chunks N` 只重放**每路**前 N 块，按生效的 `post.chunk_seconds` 换算成秒（该值 `<= 0` 时块语义塌缩，这一档如实拒跑）；都不给就是整场，同给两个拒绝。`--out` 指定拷贝与产物的落点（缺省落系统临时目录，每遍给一个新目录）。它**只验证离线链、绝不拉纪要**：素材截断复制进 `--out` 的落地，在那份拷贝上直调 `run_session(..., minutes=False)`——生产链零改动，那一场的产物一个字节不动（用例拿 digest 树断言）。跑完打印实时率（墙钟 ÷ 盘上实测音频时长）、每块耗时与失败原因分布（`transcribed` / `silent` / `failed` / `unjudged` 四档）。
 
 起好之后终端会打印两样：`URL：…`、`log 路径：…`。要调端口用 `MEETING_PORT=8766 meeting web`；不想让它开浏览器就设 `MEETING_NO_BROWSER=1`（测试与无头场景用，浏览器打开失败只警告、不阻塞启动）。
 
@@ -248,8 +252,8 @@ $env:MEETING_CAPTURE="dev"; $env:MEETING_NO_BROWSER="1"; meeting web
 | 常量 | 取值 | 触发条件 | 现在能走到吗 |
 |---|---|---|---|
 | `EXIT_OK` | `0` | 正常跑完：空闲态按 `Ctrl+C`；收尾四步走到 `done` / `skipped` 之后关停 | 能 |
-| `EXIT_FAILURE` | `1` | 收尾有步骤 `failed`；`meeting post` 那一趟没做成（音频转不动、离线那一层 `failed`、纪要落 `failed` 或等它落终态等过了 `minutes.timeout_seconds`）；`meeting web` 起步这一路（组装应用 / 构造服务器对象）出的意外 | 能 |
-| `EXIT_REJECTED` | `2` | 四个触发面：**用法错误**（不带参数 / 动作词不在 `web` `post` 里 / `post` 的位置参数不对 / 未定义的开关）、**配置值非法**、**端口被占**（两种情形都算）、**`meeting post` 的幂等闸拒跑**（有状态文件停在 `running`） | 能 |
+| `EXIT_FAILURE` | `1` | 收尾有步骤 `failed`；`meeting post` 那一趟没做成（音频转不动、离线那一层 `failed`、纪要落 `failed` 或等它落终态等过了 `minutes.timeout_seconds`）；`meeting replay` 那一趟没做成（整场落在 `failed`，或重放路上抛异常）；`meeting web` 起步这一路（组装应用 / 构造服务器对象）出的意外 | 能 |
+| `EXIT_REJECTED` | `2` | 四个触发面：**用法错误**（不带参数 / 动作词不在 `web` `post` `replay` 里 / `post` 或 `replay` 的位置参数不对 / 未定义的开关；`meeting replay` 的上限换算不出——两开关同给、`--chunks` 撞上 `post.chunk_seconds <= 0`——与素材目录指不对也落这一档）、**配置值非法**、**端口被占**（两种情形都算）、**`meeting post` 的幂等闸拒跑**（有状态文件停在 `running`） | 能 |
 | `EXIT_STARTUP_UNMET` | `3` | 启动前提不成立：主 log 不可写、`config.json` 读不出来或不是合法 JSON | 能 |
 | `EXIT_INTERRUPTED` | `130` | 收尾中途第二次 `Ctrl+C`；已经停在 `ended·draining` 时按下的那一次 | 能 |
 
@@ -519,7 +523,7 @@ minutes_dsh_web 里「真子进程 / 真阈值等待」的用例改按用例级 
   - **等纪要那一层落终态**：纪要挂在离线链的尾巴上（那条入口起线程就返回），`meeting post` 拉起之后要等它落定才报结论 —— 上界取现成的 `minutes.timeout_seconds`（默认四小时），事件驱动的读盘等待，落定即返回。**拉起 ≠ 落定**：到上界还没落定时如实报 `timeout`（既不谎报成功也不写成 `failed`）。
 
   **幂等闸落在花钱之前**：两层各有「已完成」判据（状态文件终态 + 产物齐，缺一条就不算完成），据此分四档 —— 两层都到终态且音频已归档 → 打一句「无待办」、一个引擎调用与一个子进程都不产生；只差一层 → 只补那一层；任一层停在 `running` → 拒跑（`EXIT_REJECTED`，点名状态文件 + 给出 `--force`）；`--force` → 两层都重跑。
-- **会后由谁拉起**：收尾第 4 步什么都不拉起（那一格停在 `waiting`）；「生成会后精细稿」（`post_offline`）只跑离线那条链（`run_session(..., minutes=False)`），「直接出纪要」（`post_minutes`）只拉起纪要那一层；`meeting post` 仍是命令行那两条路，调 `meeting/cli.py` 的 `run_post()`。**会后跑到哪一档看哪一只**：`GET /api/sessions/{id}`（`a9affaa8`）给「第几块 / 共几块、正在跑哪一路、已经跑了多久」，成不成仍看场次目录里的状态文件与那几份产物。
+- **会后由谁拉起**：收尾第 4 步什么都不拉起（那一格停在 `waiting`）；「生成会后精细稿」（`post_offline`）只跑离线那条链（`run_session(..., minutes=False)`），「直接出纪要」（`post_minutes`）只拉起纪要那一层；`meeting post` 仍是命令行那两条路，调 `meeting/cli.py` 的 `run_post()`。命令行上的另一个入口是重放验证 `meeting replay <场次目录>`（`a3b684bd`）：素材截断复制进它自己的 `--out` 落地，在拷贝上直调 `run_session(..., minutes=False)`——不经 `run_post()`、不碰纪要层，那一场的产物一个字节不动，只拿来验证参数与改动。**会后跑到哪一档看哪一只**：`GET /api/sessions/{id}`（`a9affaa8`）给「第几块 / 共几块、正在跑哪一路、已经跑了多久」，成不成仍看场次目录里的状态文件与那几份产物。
 - **反复重跑不再拉起第二个子会话**：纪要那一层的启动器在建线程**之前**先把「这一层在飞」落到盘上（`meeting/minutes/status.py` 的 `mark_running()`，那一版 `state = "running"` 在 `launch()` 返回之前就落定），盘上已经停着 `running` 时当场抛 `AlreadyRunningError`、这一趟不起线程；离线那一趟的尾巴也会先过一道闸（`_minutes_gate()`）：纪要已是 `done` 且 `meeting_final.md` 过得了那四条判据时**不调启动器**。`--force` 是唯一会再次花钱的开关。
 - **前端**：`web/` 已经落地（React + TypeScript 严格模式 + Vite 6 + vitest 2 + zod），产物落 `web/dist`。**会中主视图已经接上**（`070b31e0` phase2：状态胶囊与时长、两路电平表、每路健康、告警区（致命横幅 + 提示级）、心跳四级本地态与「采集已停」处置、实时转写区、告警出声开关；`1987cb20` phase3 接上总结区：四档窗口 + 主按钮 + 进行中那一句 + 结果 / 失败面板 + 本场总结记录回看；数据全部来自服务推送，界面不造派生数据）。还没进来的：设置抽屉、转写历史回看（契约章 7 的保留登记，界面上只有位置与禁用态）。**工作区首页已经接上**（e2f6166b：`web/src/home/` 的 `WorkspaceHome` —— 左侧清单读 `GET /api/sessions`、空态 logo、目录选择器弹窗（起点 `~/`、非空父目录「进这一层」）、非空收编与删除确认弹窗、Windows 大小写并一行、选中那一场详情里的**会后两个按钮**（`post_offline` / `post_minutes`，按钮上那一格按 `has_offline` 渲染）。`HomeGate` 的分流判据在 `home/gate.ts`：`idle` 且没有场次、或 `ended` 且收尾四步都落定（`post` 停 `waiting` 算落定）→ 工作台；其余给会中主视图 —— 于是收尾落定那一刻页面自己回到工作台，会后按钮就在那一场的详情里）。**续接的界面面**（`670d72b5`）：对录过的行顶栏动作钮改名「接着录」（没录过的照旧「开始录音」），详情区在日期下面摆「录音 共 N 段 · 合计」与每段的时长、起止时刻（合计只数写完的段，还在录的那段如实写「没写完」）。工程自己的说明在 `web/README.md`（视图结构、`src/live/` 各管什么、两份样式的来源与抽取口径、两条铁律），这里只点两条链路：
   - **改界面**：`cd web; npm run dev`，vite 起在 5173、`/api` 转发到 `http://127.0.0.1:${MEETING_PORT ?? 8765}`（服务照常跑着，改文案走 HMR，不必刷新）。
