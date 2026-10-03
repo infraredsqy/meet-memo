@@ -12,8 +12,8 @@
 样本出处（更细的出处表在 `contract/README.md`）：
 
   - **进程内 TestClient**（真实 lifespan + startup 钩子 + 动作端点）：idle / recording /
-    alert / ended·done / ended·draining 的快照、三个心跳样本（idle / recording /
-    还没有第一帧）、成功动作、七类失败动作、
+    alert / ended·done / ended·draining 的快照、四个心跳样本（idle / recording /
+    还没有第一帧 / 帧空洞留痕）、成功动作、七类失败动作、
     resync 帧（`hub.py` 的真实广播路径：真订阅者队列灌满 512 后的下一次广播走 `resync()`）；
   - **真服务子进程**：SSE 帧样本（dev 采集替身 + `module:Class` 假转写后端，见
     `tests/_contract.write_transcriber_stub()`）。
@@ -57,7 +57,7 @@ SOURCE_KEYS = {
 }
 HEARTBEAT_KEYS = {
     "service", "server_time", "revision", "top_state",
-    "recording_alive", "seconds_since_last_tick",
+    "recording_alive", "seconds_since_last_tick", "capture_gaps",
 }
 TRANSCRIPT_LINE_KEYS = {"ts", "source", "text", "kind"}
 #: 快照 `settings` 的键全集（`311f84f5` 加了 `summary_default_window`；
@@ -410,6 +410,48 @@ def test_capture_heartbeat_no_first_frame(tmp_path, make_client, contract_regen)
     assert starved["seconds_since_last_tick"] is None
 
     emit({"heartbeat/no-first-frame.json": normalize(heartbeat)}, regen=contract_regen)
+
+
+def test_capture_heartbeat_capture_gaps(tmp_path, make_client, contract_regen):
+    """「帧空洞留痕」的心跳样本（gil-stall-hole）：`capture_gaps` 带一条合并后的账。
+
+    采样办法：dev 替身正常开一场（等 `recording_alive is True`，跟 `no-first-frame`
+    那份正好互补 —— 那份是「一帧都没见过」的未知档，这份要帧已经流过、空洞才有账可记），
+    然后在进程内直调 `runtime.apply_fact()` 打进两条**区间重叠**的 `FrameGap` 事实
+    （同一次冻结、两路刻度线各报一条的真实形状），心跳里应合并为一条。
+
+    确定性：`at` 走 `<iso>` 掩码、`seconds` / `total_seconds` 走走秒掩码落 0、
+    `total_count` 是确定值 —— 这一格样本记的是**形状**（一键三格 + recent 每条两键）。
+    """
+    client = make_client({"capture.backend": "dev"})
+    runtime = client.app.state.runtime
+
+    assert _act(client, "start", {"mode": "both"}).status_code == 200
+    heartbeat = wait_until(
+        lambda: (
+            lambda hb: hb if hb["recording_alive"] is True else None
+        )(client.get("/api/heartbeat").json()),
+        timeout=CAPTURE_POLL_TIMEOUT_SECONDS,
+    )
+    assert heartbeat["capture_gaps"] == {"total_count": 0, "total_seconds": 0.0, "recent": []}
+
+    import time as _time
+
+    from meeting.backends.base import FrameGap
+
+    now = _time.monotonic()
+    runtime.apply_fact(FrameGap(source="mic", seconds=2.4, detected=now))
+    runtime.apply_fact(FrameGap(source="loopback", seconds=2.4, detected=now + 0.01))
+
+    gapped = client.get("/api/heartbeat").json()
+    _assert_heartbeat_shape(gapped)
+    assert gapped["recording_alive"] is True, "空洞是历史事实，recording_alive 只答当下"
+    gaps = gapped["capture_gaps"]
+    assert gaps["total_count"] == 1, "同一回合的两条事实合并为一条"
+    assert len(gaps["recent"]) == 1
+    assert set(gaps["recent"][0]) == {"at", "seconds"}
+
+    emit({"heartbeat/capture-gap.json": normalize(gapped)}, regen=contract_regen)
 
 
 # ---------------------------------------------------------------------------

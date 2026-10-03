@@ -55,12 +55,14 @@ from typing import Any, Callable
 
 from meeting.backends.base import (
     SOURCE_IDS,
+    FrameGap,
     LevelFrame,
     SourceFacts,
     SourceLost,
     SourceProbe,
     TranscriptLine,
 )
+from meeting.capture.gaps import FrameGapDetector
 
 _log = logging.getLogger("meeting.backends.dev")
 
@@ -129,6 +131,13 @@ class DevCaptureBackend:
         self.finalize_calls = 0
         self.transcode_calls = 0
         self.emitted_frames = 0
+        #: 帧空洞自查账（gil-stall-hole）：与真引擎同一套（`FrameGapDetector`，窗口同
+        #: `recording_alive` 那把尺）。dev 的发帧线程只有一条（两路合发），按「这一拍
+        #: 有没有帧出去」记一次账；`stall` / 两路 `lost` 停发的那段在恢复后第一拍算出
+        #: 真实时长；`silence` 发的是零电平**帧**、节拍没断，不算空洞。
+        self._gap_detector = FrameGapDetector(
+            frame_interval=DEV_FRAME_INTERVAL_SECONDS, on_gap=self._report_gap
+        )
 
     # -- 协议 -------------------------------------------------------------
 
@@ -155,6 +164,8 @@ class DevCaptureBackend:
         self._session_dir = session_dir
         self._stop.clear()
         self._frame_index = 0
+        # 新一场从空账起算：跨场的停顿不是本场的空洞（与引擎侧各路刻度线的重立同理）
+        self._gap_detector.reset()
         if self._thread is not None and self._thread.is_alive():
             return
         self._thread = threading.Thread(target=self._run, name="dev-capture", daemon=True)
@@ -293,10 +304,17 @@ class DevCaptureBackend:
                 faults = {source: self.fault_state(source, now) for source in self._sources}
             if "stall" in faults.values():
                 # `stall` = 两路的事实帧整体停发（HTTP 照常应答；开场窗口内
-                # recording_alive 为 null、超窗才为 false，见 docs/contract.md 第 5 章）
+                # recording_alive 为 null、超窗才为 false，见 docs/contract.md 第 5 章）。
+                # 这一拍没有任何帧出去，空洞自查账也不记（恢复后第一拍一算就是真实时长）
                 tick += 1
                 time.sleep(DEV_FRAME_INTERVAL_SECONDS)
                 continue
+
+            # 这一拍有帧要发（`silence` 的零电平帧也是帧）：先记空洞账，再发帧。
+            # `lost` 只断一路 —— 另一路的帧照发，「任意存活路」的整档口径下不算空洞
+            # （那一路的断流由 `SourceLost` 的致命级在报，两句话不重复）。
+            if any(fault != "lost" for fault in faults.values()):
+                self._gap_detector.observe()
 
             for source in self._sources:
                 fault = faults.get(source)
@@ -328,6 +346,12 @@ class DevCaptureBackend:
             self._frame_index += 1
             tick += 1
             time.sleep(DEV_FRAME_INTERVAL_SECONDS)
+
+    def _report_gap(self, seconds: float, detected: float) -> None:
+        """空洞自查账的出口：两路各发一条 `FrameGap`（与引擎两路刻度线各报一条同形，
+        服务侧按整档合并成一条账）。"""
+        for source in self._sources:
+            self._emit_fact(FrameGap(source=source, seconds=seconds, detected=detected))
 
     def _emit_frame(self, source: str, now: float, dbfs: float, peak: float | None = None) -> None:
         peak_value = dbfs if peak is None else peak

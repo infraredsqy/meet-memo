@@ -343,6 +343,26 @@ describe('liveView：一份快照摊成主视图', () => {
     expect(view.channels[0]!.health.tone).not.toBe('stopped');
   });
 
+  it('帧空洞留痕（gil-stall-hole）：gapNote 上视图，但提示级 —— 不弹红、不进判停、发声结构不碰', () => {
+    const snapshot = makeSnapshot();
+    const reply = makeHeartbeat({
+      capture_gaps: {
+        total_count: 1,
+        total_seconds: 2.4,
+        recent: [{ at: T('21:03:20'), seconds: 2.4 }],
+      },
+    });
+    const view = liveView(snapshot, initialHeartbeatState(), null, reply, T('21:03:30'));
+    expect(view.gapNote).toBe('曾中断 2.4 秒，该段内容未记上');
+    // 历史事实不进任何现在时的判档：致命横幅不弹、采集已停不判、告警区照在
+    expect(view.fatal).toBeNull();
+    expect(view.stalled).toBeNull();
+    expect(view.alertsHidden).toBe(false);
+    expect(view.hints).toEqual([]);
+    // 读数照常实时：空洞是过去的事，画面不为此冻结
+    expect(view.channels[0]!.readout).toBe('\u221235.2 dBFS');
+  });
+
   it('采集停了：健康位说的是「采集已停止」，不把它画成「这一路死了」', () => {
     const snapshot = makeSnapshot();
     const reply = makeHeartbeat({ recording_alive: false, seconds_since_last_tick: 3 });

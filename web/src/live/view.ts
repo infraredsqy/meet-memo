@@ -18,7 +18,7 @@ import {
   type HintView,
 } from './alarm';
 import { clockView, formatDbfs, formatWallClock, type ClockView } from './format';
-import { captureStalled, type CaptureStalledView, type HeartbeatState } from './heartbeat';
+import { captureGapNote, captureStalled, type CaptureStalledView, type HeartbeatState } from './heartbeat';
 import { meterView, type MeterView, type StoredLevels } from './levels';
 import {
   pauseBanner,
@@ -63,6 +63,8 @@ export interface LiveView {
   muteLabel: string;
   /** 采集已停那一档；`null` 表示不在这一档。 */
   stalled: CaptureStalledView | null;
+  /** 「本场曾中断」那条提示行（帧空洞账）；没有空洞时是 `null`。 */
+  gapNote: string | null;
   /** 心跳失联：整块告警区收掉（两句话不得同屏）。 */
   alertsHidden: boolean;
   /** 这一场此刻是不是暂停中（读快照的 `session.paused`，界面不自己记）。 */
@@ -145,6 +147,8 @@ export function liveView(
    * 就是服务最后一次收到帧的墙钟（`captureStalled()` 已经算过同一个数）。
    */
   const stalled = captureStalled(reply, snapshot.top_state, heartbeat.stalledBeats);
+  // 「本场曾中断」提示行：读心跳的帧空洞账（历史事实），与上面那条现在时的判档各管一头
+  const gapNote = captureGapNote(reply);
   const dataStopped = lost || stalled !== null;
   const frozenStamp = lost
     ? formatWallClock(heartbeat.frozenAt)
@@ -225,6 +229,7 @@ export function liveView(
     hints: hintLines(snapshot.alerts),
     muteLabel: muteButtonLabel(snapshot.alerts.critical),
     stalled,
+    gapNote,
     alertsHidden: lost,
     paused,
     pauseLabel: pauseButtonLabel(paused),

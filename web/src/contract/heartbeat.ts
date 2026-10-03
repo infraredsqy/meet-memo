@@ -3,9 +3,36 @@ import { isoStringSchema } from './snapshot';
 import { topStateSchema } from './enums';
 
 /**
- * 心跳应答：`GET /api/heartbeat`，**任何状态下都 200**，应答恰好六字段
- * （`docs/contract.md` 第 5 章）。`contract/fixtures/heartbeat/*.json` 是三份样本
- * （idle / recording / no-first-frame）。
+ * 帧空洞账（gil-stall-hole）：录中整进程冻结（GIL 饿死）解冻后，发帧线程第一拍算出的
+ * 真实空洞时长留在这里 —— 空洞是**历史事实**，与 `recording_alive`（「现在采不采得到」）
+ * 语义互不覆盖：恢复之后 `recording_alive` 回 `true`，空洞照旧在账上。
+ */
+export const captureGapsSchema = z
+  .object({
+    /** 本场空洞的累计次数（跨路合并过的回合只算一次）。 */
+    total_count: z.number().int().nonnegative(),
+    /** 本场空洞的总秒数（掩码 0）。 */
+    total_seconds: z.number().nonnegative(),
+    /** 最近至多 10 条，按发生先后排；`at` 是空洞被记录那一刻的墙钟（≈ 空洞结束）。 */
+    recent: z
+      .array(
+        z
+          .object({
+            at: isoStringSchema,
+            seconds: z.number().nonnegative(),
+          })
+          .strict(),
+      )
+      .max(10),
+  })
+  .strict();
+
+export type CaptureGaps = z.infer<typeof captureGapsSchema>;
+
+/**
+ * 心跳应答：`GET /api/heartbeat`，**任何状态下都 200**，应答恰好七字段
+ * （`docs/contract.md` 第 5 章）。`contract/fixtures/heartbeat/*.json` 是四份样本
+ * （idle / recording / no-first-frame / capture-gap）。
  *
  * 两个「心跳」绝不串线 —— 这是最容易踩的一处：
  *
@@ -46,6 +73,13 @@ export const heartbeatSchema = z
      * 后者是布尔结论。显示「多久没读到数据」用前者，画「采集停了」的红灯用后者。
      */
     seconds_since_last_tick: z.number().nullable(),
+    /**
+     * 本场的帧空洞账（gil-stall-hole）：录中冻结解冻后由发帧线程报来的历史事实，
+     * 按整档粒度记（不点名哪一路 —— 冻结冻的是整个进程，两路一起丢；一路单独断流
+     * 由致命级在报）。任何态都在、没有空洞时是零账（不给 `null`）。界面对它只做
+     * 一件事：在告警区摆一条提示行，**不出声、不弹红横幅、不进两拍计数**。
+     */
+    capture_gaps: captureGapsSchema,
   })
   .strict();
 

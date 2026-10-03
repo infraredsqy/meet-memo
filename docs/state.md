@@ -322,7 +322,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 
 ## 4. 心跳与 `recording_alive`
 
-`GET /api/heartbeat` 六字段：`service`（恒 `"meeting"`）/ `server_time` / `revision` / `top_state` / `recording_alive` / `seconds_since_last_tick`。它在**任何状态**下都 200。
+`GET /api/heartbeat` 七字段：`service`（恒 `"meeting"`）/ `server_time` / `revision` / `top_state` / `recording_alive` / `seconds_since_last_tick` / `capture_gaps`。它在**任何状态**下都 200。
 
 - `recording_alive` 的判据是**服务侧的采集帧时钟**：只认 `LevelFrame`（`SourceFacts` / `SourceLost` 不刷新这个钟），窗口 = `max(2.0s, 3 × frame_interval)`，两档算出来都是 **2.0 秒** —— 说白了就是「两秒没收到一帧事实 = 采集停了」。
 - **「还没有第一帧」单独一档**（de899128）：自本场 `start` 起算同一只窗口，窗口内一帧都没到时 `recording_alive` 报 `null`（未知）—— 首帧正常晚约 0.5s 才来，开场竞态不再被算成「已停」；超窗仍无首帧报 `false`（=停，「别把未知做成永不报」）。
@@ -332,6 +332,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 - 界面那个 10 秒心跳周期（`heartbeat.interval_seconds`）**绝不参与**这个窗口的计算 —— 它管的是「界面还看得见服务吗」。
 - 「判定权在服务侧」的硬判据：后端卡住不报任何东西时，`recording_alive` 由帧时钟算出来就是 `false`，HTTP 照常 200。
 - **界面侧的配套口径**：拿到 `recording_alive === false` 要**连续两次读数**才判「采集已停」（连续计数住在界面层一处，任何非 `false` 读数清零），开场那拍 `null` 由此被拦在横幅之外；两拍规则只在界面层，服务侧的窗口计算照旧不看心跳周期（`docs/contract.md` 第 5 章）。
+- **`capture_gaps`：本场的帧空洞账**（gil-stall-hole）。录中整进程冻结（GIL 饿死）时采帧与判停的线程**一起冻住**，解冻后帧时刻立刻刷新 —— `recording_alive` 全程 `true`，丢的内容在判停侧不留痕；留痕的检测点因此在**生产侧**：发帧线程每次产帧先与上一拍做差（墙钟不冻），超同一只窗口就报一条 `FrameGap` 事实、再刷新时刻 —— 同一回合只报一次、首帧前不记。服务侧把事实落进 `capture_gaps`：`{total_count, total_seconds, recent[≤10]}`，区间重叠的（两路各报一条、或同回合紧邻的几拍）合并为一条。**粒度是整档的（不点名哪一路）**：引擎与服务侧都没有现成的各路帧时刻记账（`last_frame_ts` 是一份共享钟），按路记就得新加每路记账；且冻结冻的是整个进程，两路一起丢。暂停期间电平帧照发（既有依赖），所以暂停不构成空洞；dev 注入里 `silence`（发零电平帧）不算、`stall` 才算。这一格**只进心跳、不进快照**：不涨 `revision`、不广播，`recording_alive` 的语义一个字不动 —— 空洞是历史事实，恢复后照旧在账上，界面拿它在告警区摆一条提示行（不出声、不弹红、不进两拍计数）。本场 `start` 清账。
 
 ## 5. 告警
 
@@ -409,7 +410,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 | `fault` | 干什么 | 拿它验什么 |
 |---|---|---|
 | `silence` | 这一路电平落到 −80 dBFS 以下并保持 | 走静默累计 → 静默阈值调小后能进 `alert`，恢复后回 `recording` |
-| `stall` | **两路的事实帧整体停发**（HTTP 照常应答） | `recording_alive` 变 `false` 而服务照常 200；开场一帧都还没见到的那一段先报 `null`（未知档），超窗仍无首帧才落 `false`（口径见第 4 章） |
+| `stall` | **两路的事实帧整体停发**（HTTP 照常应答） | `recording_alive` 变 `false` 而服务照常 200；开场一帧都还没见到的那一段先报 `null`（未知档），超窗仍无首帧才落 `false`（口径见第 4 章）。恢复之后心跳的 `capture_gaps` 记下一条空洞（秒数 = 真实停发时长），gil-stall-hole |
 | `lost` | 直接来一条 `SourceLost`，窗口内这一路整段不发帧 | 流中断立刻起致命级；恢复走 `alert.recover_seconds` |
 
 - 对同一路再次注入（无论故障是否已恢复）**替换前一次注入**并按新的 `after_seconds` / `duration_seconds` 重新计时。
@@ -432,5 +433,5 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 - 会中与会后两套模型的选型、四个 `post.*` 键的取值依据与本机实测：`docs/asr-backends.md`
 - 界面怎么画这四态：`docs/ui-design.md`
 - 前端工程怎么跑、怎么构建：`web/README.md`
-- 契约的可机读基准（36 个 golden 样本与掩码规则）：`contract/README.md`
+- 契约的可机读基准（37 个 golden 样本与掩码规则）：`contract/README.md`
 - 索引：`docs/spec.md`

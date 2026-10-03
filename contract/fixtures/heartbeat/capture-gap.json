@@ -1,0 +1,18 @@
+{
+  "service": "meeting",
+  "server_time": "<iso>",
+  "revision": 2,
+  "top_state": "recording",
+  "recording_alive": true,
+  "seconds_since_last_tick": 0,
+  "capture_gaps": {
+    "total_count": 1,
+    "total_seconds": 0,
+    "recent": [
+      {
+        "at": "<iso>",
+        "seconds": 0
+      }
+    ]
+  }
+}

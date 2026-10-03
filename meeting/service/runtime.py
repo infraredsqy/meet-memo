@@ -42,6 +42,7 @@ from meeting.alerts import AlertJudge, AlertThresholds
 from meeting.asr import pipeline as asr_pipeline
 from meeting.backends.base import (
     SOURCE_IDS,
+    FrameGap,
     LevelFrame,
     ReadOnlyConfig,
     SourceFacts,
@@ -543,6 +544,14 @@ class ServiceRuntime:
         #: 「还没有第一帧」在窗口内报 `None`（未知）、超窗报 `False`（=停）。
         #: 与 `last_frame_ts` 同点写、同点清（`start_session()` 起场 / `__init__` 起步）。
         self.session_start_mono: float | None = None
+
+        # 帧空洞账（gil-stall-hole）：发帧线程报来的 `FrameGap` 落在这里，只进心跳应答
+        #（`heartbeat_dict()` 的 `capture_gaps`），**不进快照、不涨 revision、不广播** ——
+        # 空洞是历史事实，`recording_alive` 只回答「现在采不采得到」，两句话各管一头。
+        # `_capture_gaps` 的条目带区间（`_start` / `_end`，单调钟）供跨路合并，出账时剥掉；
+        # 上限只留给「最近列表」，累计数（`_capture_gap_totals`）不设上限。本场起场清零。
+        self._capture_gaps: list[dict[str, Any]] = []
+        self._capture_gap_totals: dict[str, float] = {"count": 0, "seconds": 0.0}
 
         #: 每一路**上一次落过 log 的** `health`（`_log_health_migrations()` 的比对基线）。
         #: 契约（phase1 §3.13 / phase2 的日志事件清单）把「每一路健康迁移（含原因与阈值）」
@@ -1335,7 +1344,89 @@ class ServiceRuntime:
             "top_state": self.snapshot.top_state,
             "recording_alive": self.recording_alive(),
             "seconds_since_last_tick": self.seconds_since_last_tick(),
+            "capture_gaps": self.capture_gaps_view(),
         }
+
+    # -- 帧空洞账（gil-stall-hole） ---------------------------------------
+
+    #: 「最近列表」的条数上限（有界：更早的只留在累计数里）
+    CAPTURE_GAP_RECENT_LIMIT = 10
+
+    def capture_gaps_view(self) -> dict[str, Any]:
+        """心跳字段 `capture_gaps` 的产出（本场累计 + 有界最近列表）。
+
+        - `total_count` / `total_seconds`：本场空洞的累计次数与总秒数（合并过的回合只算
+          一次；超过最近列表上限的那几条只在这里留数）；
+        - `recent`：最近至多 10 条，按发生先后排，每条 `{"at", "seconds"}` —— `at` 是
+          空洞被记录那一刻的墙钟（ISO，解冻后第一拍 ≈ 空洞结束的时刻）。
+
+        空洞是**历史事实**，与 `recording_alive`（「现在采不采得到」）语义互不覆盖：
+        恢复之后 `recording_alive` 回 `true`，空洞照旧在账上。任何态都给这个字段，
+        没有空洞时是零账（`{"total_count": 0, "total_seconds": 0.0, "recent": []}`），
+        不给 `null`。
+        """
+        return {
+            "total_count": int(self._capture_gap_totals["count"]),
+            "total_seconds": round(float(self._capture_gap_totals["seconds"]), 3),
+            "recent": [
+                {"at": entry["at"], "seconds": round(float(entry["seconds"]), 3)}
+                for entry in self._capture_gaps[-self.CAPTURE_GAP_RECENT_LIMIT:]
+            ],
+        }
+
+    def _reset_capture_gaps(self) -> None:
+        """本场起场清账（与 `last_frame_ts` 同点调；空洞是「本场」的账）。"""
+        self._capture_gaps = []
+        self._capture_gap_totals = {"count": 0, "seconds": 0.0}
+
+    def _apply_frame_gap(self, fact: FrameGap) -> None:
+        """一条帧空洞事实落账：区间重叠的合并为一条（同一空洞回合只算一次）。
+
+        检测在生产侧（`meeting/capture/gaps.py`），这里只管记账：
+        - **区间**：`[detected - seconds, detected]`（发帧线程报的发现时刻与时长，
+          均是采集侧单调钟口径 —— 与 `LevelFrame.ts` 同源，不拿墙钟做差）；
+        - **合并**：新区间与账上最后一条重叠（`interval_start <= last_end`）就是同一
+          回合 —— 两路刻度线在同一次整进程冻结里各报一条、或解冻后紧邻的几拍，都在
+          这里并成一条，累计秒数只加区间的**增量**；
+        - **不提交**：账只进心跳应答，不进快照 —— `revision` 原地不动、不广播，
+          与 `last_frame_ts` 同一档（心跳域的账不参与状态迁移）。
+        """
+        if self.snapshot.top_state not in ("recording", "alert"):
+            return
+        seconds = max(0.0, float(fact.seconds))
+        detected = float(fact.detected)
+        interval_start = detected - seconds
+        interval_end = detected
+        last = self._capture_gaps[-1] if self._capture_gaps else None
+        if last is not None and interval_start <= last["_end"]:
+            # 同一空洞回合：并进最后一条（区间取并集、`at` 沿用先记下的那条）
+            merged_start = min(float(last["_start"]), interval_start)
+            merged_end = max(float(last["_end"]), interval_end)
+            delta = max(0.0, (merged_end - merged_start) - float(last["seconds"]))
+            last["_start"] = merged_start
+            last["_end"] = merged_end
+            last["seconds"] = merged_end - merged_start
+            self._capture_gap_totals["seconds"] = float(self._capture_gap_totals["seconds"]) + delta
+            _log.info(
+                "帧空洞合并进上一条：现在 %.3fs（%s 报 %.3fs，同一回合）",
+                float(last["seconds"]), fact.source, seconds,
+            )
+            return
+        self._capture_gaps.append(
+            {"at": now_iso(), "seconds": seconds, "_start": interval_start, "_end": interval_end}
+        )
+        # 列表本体也按「最近列表」截断（合并只需最后一条；累计数在 `_capture_gap_totals`，不设界）
+        if len(self._capture_gaps) > self.CAPTURE_GAP_RECENT_LIMIT:
+            del self._capture_gaps[: len(self._capture_gaps) - self.CAPTURE_GAP_RECENT_LIMIT]
+        self._capture_gap_totals["count"] = int(self._capture_gap_totals["count"]) + 1
+        self._capture_gap_totals["seconds"] = float(self._capture_gap_totals["seconds"]) + seconds
+        from meeting.state import frame_clock_window
+
+        _log.warning(
+            "帧空洞：本场第 %d 次、%.3fs（窗口 %.3fs，%s 的刻度线在解冻后第一拍报出）",
+            int(self._capture_gap_totals["count"]), seconds,
+            frame_clock_window(self.frame_interval), fact.source,
+        )
 
     # -- 事实分派 ---------------------------------------------------------
 
@@ -1344,6 +1435,8 @@ class ServiceRuntime:
         try:
             if isinstance(fact, LevelFrame):
                 self._apply_level_frame(fact)
+            elif isinstance(fact, FrameGap):
+                self._apply_frame_gap(fact)
             elif isinstance(fact, SourceLost):
                 self._apply_source_lost(fact)
             elif isinstance(fact, SourceFacts):
@@ -2050,6 +2143,8 @@ class ServiceRuntime:
 
         self.last_frame_ts = None
         self.session_start_mono = time.monotonic()
+        # 帧空洞账也是「本场」的账：与 `last_frame_ts` 同点清（上一场的空洞不进这一场）
+        self._reset_capture_gaps()
         self.commit()
         # 健康度节拍**从这一场开始起**（见 `_ensure_transcriber_health_ticker()` 的说明）
         self._ensure_transcriber_health_ticker()

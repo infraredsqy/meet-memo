@@ -1162,6 +1162,19 @@ export function LiveView(): ReactNode {
             </div>
           ))}
 
+          {/* 「本场曾中断」提示行（gil-stall-hole）：帧空洞账是历史事实（录中冻结解冻后
+              发帧线程报上来的），提示级 —— 只上一行字，不出声、不弹红横幅、不进两拍计数。
+              它与「采集已停」那一条分工：那条答「现在停没停」（恢复即收），
+              这条说的是 recording_alive 说不出的那句「那一段内容没记上」 */}
+          {view.gapNote !== null && (
+            <div className="alert alert--hint" role="status">
+              <span className="alert__glyph" aria-hidden="true">
+                {'\u25B2'}
+              </span>
+              <span>{view.gapNote}</span>
+            </div>
+          )}
+
           {/* 心跳迟到：一行弱提示，不出声、无横幅 */}
           {heartbeat.level === '迟到' && heartbeat.lateText !== null && (
             <div className="heartbeat heartbeat--inline">{heartbeat.lateText}</div>

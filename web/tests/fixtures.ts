@@ -105,8 +105,9 @@ export const SUMMARY_FIXTURES = [
 /** 本场总结记录那一份样本的名字（`GET /api/summaries`）。 */
 export const SUMMARIES_FIXTURES = ['after-one'] as const;
 
-/** 三个心跳样本（`no-first-frame` 是「还没有第一帧」的未知档，de899128）。 */
-export const HEARTBEAT_FIXTURES = ['idle', 'no-first-frame', 'recording'] as const;
+/** 四个心跳样本（`no-first-frame` 是「还没有第一帧」的未知档，de899128；
+ *  `capture-gap` 是帧空洞留痕那一档，gil-stall-hole）。 */
+export const HEARTBEAT_FIXTURES = ['capture-gap', 'idle', 'no-first-frame', 'recording'] as const;
 
 /** 设备清单那一份样本（`GET /api/devices`，设置抽屉节点 `311f84f5`）。 */
 export const DEVICES_FIXTURES = ['all'] as const;

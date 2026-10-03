@@ -546,7 +546,7 @@ def test_api_state_revision_grows_by_one_per_state_change(tmp_path, client_facto
 
 
 def test_api_heartbeat_shape_is_the_full_one(tmp_path, client_factory):
-    """`GET /api/heartbeat` 完整版：六字段齐、`service` 字面量必须有、空闲态两字段为 `null`。"""
+    """`GET /api/heartbeat` 完整版：七字段齐、`service` 字面量必须有、空闲态两字段为 `null`。"""
     home = tmp_path / "home_for_heartbeat"
     home.mkdir()
     client = client_factory({"web.dist_dir": str(helpers.missing_dist_dir(home))})
@@ -559,13 +559,15 @@ def test_api_heartbeat_shape_is_the_full_one(tmp_path, client_factory):
         "top_state",
         "recording_alive",
         "seconds_since_last_tick",
+        "capture_gaps",
     }
     assert payload["service"] == "meeting"
     assert isinstance(payload["revision"], int)
     assert payload["top_state"] == "idle"
-    # 空闲态：两字段都是 null（没有采集事实帧在跑）
+    # 空闲态：两字段都是 null（没有采集事实帧在跑）；空洞账是零账、不给 null
     assert payload["recording_alive"] is None
     assert payload["seconds_since_last_tick"] is None
+    assert payload["capture_gaps"] == {"total_count": 0, "total_seconds": 0.0, "recent": []}
 
 
 def test_heartbeat_handler_keeps_the_service_literal_without_runtime():
@@ -591,6 +593,7 @@ def test_heartbeat_handler_keeps_the_service_literal_without_runtime():
         "top_state",
         "recording_alive",
         "seconds_since_last_tick",
+        "capture_gaps",
     }
     assert payload["service"] == "meeting"
 

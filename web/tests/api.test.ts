@@ -639,6 +639,7 @@ describe('心跳轮询', () => {
       top_state: 'recording',
       recording_alive: false,
       seconds_since_last_tick: 4.5,
+      capture_gaps: { total_count: 0, total_seconds: 0, recent: [] },
     };
     const fetchImpl = vi.fn(async () => jsonResponse(200, live)) as unknown as typeof fetch;
     const t0 = Date.parse('2025-09-06T12:00:00+08:00');
@@ -660,6 +661,7 @@ describe('心跳轮询', () => {
       top_state: 'recording',
       recording_alive: true,
       seconds_since_last_tick: 0,
+      capture_gaps: { total_count: 0, total_seconds: 0, recent: [] },
     };
     const t0 = Date.parse('2025-09-06T12:00:00+08:00');
     const fetchImpl = vi.fn(async () => jsonResponse(200, live)) as unknown as typeof fetch;
@@ -702,6 +704,7 @@ describe('心跳轮询', () => {
           top_state: 'idle',
           recording_alive: null,
           seconds_since_last_tick: null,
+          capture_gaps: { total_count: 0, total_seconds: 0, recent: [] },
         }),
       ) as unknown as typeof fetch;
 
@@ -736,6 +739,7 @@ describe('心跳轮询', () => {
           top_state: 'idle',
           recording_alive: null,
           seconds_since_last_tick: null,
+          capture_gaps: { total_count: 0, total_seconds: 0, recent: [] },
         }),
       ) as unknown as typeof fetch;
 

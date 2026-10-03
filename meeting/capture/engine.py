@@ -38,11 +38,13 @@ import numpy as np
 
 from meeting.backends.base import (
     DEFAULT_FRAME_INTERVAL_SECONDS,
+    FrameGap,
     LevelFrame,
     SourceFacts,
     SourceLost,
 )
 from meeting.capture.archive import PcmArchiveWriter, SAMPLE_RATE, SAMPLE_WIDTH
+from meeting.capture.gaps import FrameGapDetector
 from meeting.capture.levels import frame_level
 from meeting.session import archive_name, next_segment_number, segment_archive_paths
 from meeting.state import now_iso
@@ -137,6 +139,12 @@ class _SourceWorker:
         self._user_closed = threading.Event()
         #: 写静音的下一拍（绝对时刻，防漂移）
         self._silence_deadline: float | None = None
+        #: 帧空洞自查账（gil-stall-hole）：发帧线程每次产帧先与上一拍做差，超窗报一次
+        #: `FrameGap` 再发帧 —— 整进程冻结解冻后的第一拍就能算出真实空洞时长，留痕
+        #: 不依赖判停那一侧（它与采帧一起冻）。窗口与 `recording_alive` 同一把尺。
+        self._gap_detector = FrameGapDetector(
+            frame_interval=frame_interval, on_gap=self._report_gap
+        )
         self._threads: list[threading.Thread] = []
         self._lock = threading.Lock()
 
@@ -298,12 +306,16 @@ class _SourceWorker:
         """每 `frame_interval` 秒**无条件**发一帧电平事实（外加一条流存活事实）。
 
         帧节奏由这里保证：与有没有新块无关，静下来时发的是 `-120 dBFS` 的帧。`ts` 用采集侧
-        自己的钟（`time.monotonic()`，与 `alerts.py` 做差的口径一致）。
+        自己的钟（`time.monotonic()`，与 `alerts.py` 做差的口径一致）。发帧前先过一遍
+        帧空洞自查账（`_emit_level()` 的第一步）：与上一拍的间隔超窗就报一次 `FrameGap`
+        —— 暂停期间电平帧照发（既有依赖），所以暂停不构成空洞。
         """
         while not self._stop.wait(self.frame_interval):
             self._emit_level()
 
     def _emit_level(self) -> None:
+        """每 `frame_interval` 秒一帧：先记空洞账（超窗报一次 `FrameGap`），再发电平帧。"""
+        self._gap_detector.observe()
         source = self.source_impl
         samples: np.ndarray
         if source is None:
@@ -324,6 +336,10 @@ class _SourceWorker:
             )
         )
         self._emit_fact(SourceFacts(source=self.source, stream_alive=self.alive))
+
+    def _report_gap(self, seconds: float, detected: float) -> None:
+        """空洞自查账的出口：发一条 `FrameGap` 事实（账的合并归服务侧）。"""
+        self._emit_fact(FrameGap(source=self.source, seconds=seconds, detected=detected))
 
     def _emit_fact(self, fact: Any) -> None:
         try:

@@ -4,5 +4,10 @@
   "revision": 1,
   "top_state": "idle",
   "recording_alive": null,
-  "seconds_since_last_tick": null
+  "seconds_since_last_tick": null,
+  "capture_gaps": {
+    "total_count": 0,
+    "total_seconds": 0,
+    "recent": []
+  }
 }

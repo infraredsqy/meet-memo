@@ -16,6 +16,7 @@ import {
   ERROR_CODES,
   ERROR_CODE_STATUS,
   actionFixtureSchema,
+  captureGapsSchema,
   devicesResponseSchema,
   heartbeatSchema,
   resyncSnapshotSchema,
@@ -514,6 +515,7 @@ describe('心跳样本', () => {
     const beat = heartbeatSchema.parse(readFixture('heartbeat', name));
     expect(beat.service).toBe('meeting');
     expect(Object.keys(beat).sort()).toEqual([
+      'capture_gaps',
       'recording_alive',
       'revision',
       'seconds_since_last_tick',
@@ -523,16 +525,17 @@ describe('心跳样本', () => {
     ]);
   });
 
-  it('两个样本一个不少', () => {
+  it('四个样本一个不少', () => {
     expect(listFixtures('heartbeat')).toEqual([...HEARTBEAT_FIXTURES].sort());
   });
 
-  it('idle 档两字段 null（没有在录的场次，问采集活没活没有意义）', () => {
+  it('idle 档两字段 null（没有在录的场次，问采集活没活没有意义）、空洞账是零账', () => {
     const beat = heartbeatSchema.parse(readFixture('heartbeat', 'idle'));
     expect(beat.top_state).toBe('idle');
     expect(beat.recording_alive).toBeNull();
     expect(beat.seconds_since_last_tick).toBeNull();
     expect(beat.server_time).toBe('<iso>');
+    expect(beat.capture_gaps).toEqual({ total_count: 0, total_seconds: 0, recent: [] });
   });
 
   it('recording 档 recording_alive 为 true、走秒量掩码成 0', () => {
@@ -540,6 +543,7 @@ describe('心跳样本', () => {
     expect(beat.top_state).toBe('recording');
     expect(beat.recording_alive).toBe(true);
     expect(beat.seconds_since_last_tick).toBe(0);
+    expect(beat.capture_gaps).toEqual({ total_count: 0, total_seconds: 0, recent: [] });
   });
 
   it('no-first-frame 档（还没有第一帧，de899128）：录音态而两字段都是 null，不再等同于停止', () => {
@@ -549,10 +553,36 @@ describe('心跳样本', () => {
     expect(beat.seconds_since_last_tick).toBeNull();
   });
 
+  it('capture-gap 档（gil-stall-hole）：空洞账一条、走秒量掩 0、at 走 <iso>，recording_alive 仍为 true', () => {
+    const beat = heartbeatSchema.parse(readFixture('heartbeat', 'capture-gap'));
+    expect(beat.top_state).toBe('recording');
+    expect(beat.recording_alive).toBe(true); // 空洞是历史事实，当下照常活着
+    const gaps = beat.capture_gaps;
+    expect(gaps.total_count).toBe(1);
+    expect(gaps.total_seconds).toBe(0);
+    expect(gaps.recent).toHaveLength(1);
+    expect(gaps.recent[0]).toEqual({ at: '<iso>', seconds: 0 });
+  });
+
+  it('空洞账自身是封闭形状：多一格/超上限都不符合契约', () => {
+    const beat = readFixture('heartbeat', 'capture-gap') as Record<string, unknown>;
+    const gaps = beat['capture_gaps'] as Record<string, unknown>;
+    expect(captureGapsSchema.safeParse({ ...gaps, extra: 1 }).success).toBe(false);
+    const { total_count: _t, ...withoutCount } = gaps;
+    expect(captureGapsSchema.safeParse(withoutCount).success).toBe(false);
+    const flooded = {
+      ...gaps,
+      recent: Array.from({ length: 11 }, () => ({ at: '<iso>', seconds: 0 })),
+    };
+    expect(captureGapsSchema.safeParse(flooded).success).toBe(false);
+  });
+
   it('少一个字段就不符合契约', () => {
     const beat = readFixture('heartbeat', 'idle') as Record<string, unknown>;
     const { recording_alive: _dropped, ...rest } = beat;
     expect(heartbeatSchema.safeParse(rest).success).toBe(false);
+    const { capture_gaps: _droppedGaps, ...withoutGaps } = beat;
+    expect(heartbeatSchema.safeParse(withoutGaps).success).toBe(false);
   });
 });
 

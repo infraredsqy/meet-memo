@@ -51,7 +51,7 @@ HEARTBEAT_STALL_SECONDS = 5.0
 
 HEARTBEAT_FIELDS = {
     "service", "server_time", "revision", "top_state",
-    "recording_alive", "seconds_since_last_tick",
+    "recording_alive", "seconds_since_last_tick", "capture_gaps",
 }
 
 
@@ -94,7 +94,7 @@ def post(client, action: str, args: dict | None = None):
 
 
 def test_idle_heartbeat_fields(tmp_path):
-    """① 空闲态：六字段齐、`service` 字面量在、两字段为 `null`、`revision` 与快照一致。"""
+    """① 空闲态：七字段齐、`service` 字面量在、两字段为 `null`、空洞账零账、revision 一致。"""
     with live(tmp_path) as (client, _runtime, _home):
         response = client.get("/api/heartbeat")
         assert response.status_code == 200
@@ -104,6 +104,7 @@ def test_idle_heartbeat_fields(tmp_path):
         assert payload["top_state"] == "idle"
         assert payload["recording_alive"] is None
         assert payload["seconds_since_last_tick"] is None
+        assert payload["capture_gaps"] == {"total_count": 0, "total_seconds": 0.0, "recent": []}
         # `server_time` 是合法 ISO（按服务侧时间戳算）
         parsed = dt.datetime.fromisoformat(payload["server_time"])
         assert parsed.tzinfo is not None
@@ -487,7 +488,7 @@ def test_consecutive_sessions_do_not_report_stopped_during_opening(tmp_path):
 
 
 def test_heartbeat_over_http_carries_the_service_literal(tmp_path, service_process):
-    """真服务子进程：六字段齐、`service` 字面量在（端口探针靠它认亲）。"""
+    """真服务子进程：七字段齐、`service` 字面量在（端口探针靠它认亲）。"""
     home = tmp_path / "home"
     home.mkdir()
     helpers.write_config_json(home, {})

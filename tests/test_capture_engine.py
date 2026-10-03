@@ -25,7 +25,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from meeting.backends.base import LevelFrame, SourceFacts, SourceLost
+from meeting.backends.base import FrameGap, LevelFrame, SourceFacts, SourceLost
 from meeting.capture.engine import (
     CAPTURE_MODES,
     SILENCE_CHUNK_BYTES,
@@ -441,6 +441,33 @@ def test_pause_writes_silence_and_does_not_record_content(tmp_path: Path):
     ) / 32000
     assert records[0]["duration_seconds"] == pytest.approx(expected_duration, abs=0.001)
     assert session.audio_duration_seconds() == records[0]["duration_seconds"]
+
+
+def test_pause_keeps_the_beat_and_records_no_frame_gap(tmp_path: Path):
+    """暂停期间电平帧照发（既有依赖）→ 帧空洞自查账一拍不缺 → **暂停不构成空洞**。
+
+    空洞账（gil-stall-hole）记的是「发帧线程的节拍断了多久」：暂停只把内容换成静音，
+    刻度线一拍不停，所以整段暂停在账上不留痕。恢复之后也不补记 —— 节拍从没断过。
+    """
+    mic = FakeCaptureSource("mic", chunk=block(900), pace_seconds=0.005)
+    session, facts, _sources = make_session(tmp_path, mic=mic, frame_interval=0.05)
+    session.start()
+    assert wait_for(lambda: len(only(facts, LevelFrame)) >= MIN_SILENCE_FRAMES,
+                    timeout=FRAME_WAIT_TIMEOUT_SECONDS)
+    session.pause()
+    # 暂停窗里打点线程照常发帧（等到若干拍再查账，别跟打点时序赛跑）
+    paused_before = len(only(facts, LevelFrame))
+    assert wait_for(
+        lambda: len(only(facts, LevelFrame)) >= paused_before + MIN_SILENCE_FRAMES,
+        timeout=FRAME_WAIT_TIMEOUT_SECONDS,
+    ), "暂停期间电平帧停发了（这本身就会把暂停误报成采集停）"
+    session.resume()
+    assert wait_for(
+        lambda: len(only(facts, LevelFrame)) >= paused_before + 2 * MIN_SILENCE_FRAMES,
+        timeout=FRAME_WAIT_TIMEOUT_SECONDS,
+    )
+    session.finalize()
+    assert only(facts, FrameGap) == [], "节拍没断，暂停与恢复都不留空洞"
 
 
 def test_pause_is_idempotent_and_resume_without_pause_is_a_no_op(tmp_path: Path):

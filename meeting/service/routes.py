@@ -99,6 +99,7 @@ async def _api_heartbeat(request: Request) -> Response:
                 "top_state": "idle",
                 "recording_alive": None,
                 "seconds_since_last_tick": None,
+                "capture_gaps": {"total_count": 0, "total_seconds": 0.0, "recent": []},
             }
         )
     runtime.bind_from_scope(request.scope)

@@ -105,6 +105,25 @@ class SourceLost:
 
 
 @dataclass(frozen=True)
+class FrameGap:
+    """一条帧空洞事实：发帧线程自查「与上一拍的间隔」超窗时发（gil-stall-hole）。
+
+    墙钟不冻：整进程冻结（GIL 饿死）解冻后的第一拍，发帧线程拿当下与上一拍一减
+    就得到真实空洞时长 —— 这是「留痕」的检测点在生产侧的理由（判停那一侧的线程
+    与采帧一起冻，解冻后帧时刻立刻刷新，账面上不留痕）。
+
+    `seconds` 是空洞时长；`detected` 是发现那一刻的采集侧单调钟（与 `LevelFrame.ts`
+    同一口径，runtime 只拿它做区间合并）；`source` 说明是哪一路的刻度线报的 ——
+    **账本身不分路**：空洞按「任意存活路」的整档粒度记（与判停同粒度），两路在同一次
+    冻结里各报一条时由服务侧合并成一条。后端只报原始事实，不判告警、不带阈值语义。
+    """
+
+    source: str
+    seconds: float
+    detected: float
+
+
+@dataclass(frozen=True)
 class TranscriptLine:
     """一行转写事实。"""
 
@@ -220,6 +239,7 @@ __all__ = [
     "SOURCE_STATUS",
     "TRANSCRIPT_HEALTH",
     "CaptureBackend",
+    "FrameGap",
     "LevelFrame",
     "PostProcessHook",
     "ReadOnlyConfig",

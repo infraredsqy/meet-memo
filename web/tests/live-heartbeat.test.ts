@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   alertsHiddenByHeartbeat,
   applyHeartbeatReading,
+  captureGapNote,
   captureStalled,
   CAPTURE_STOP_CONFIRMATIONS,
   clockLabelWhileLost,
@@ -263,5 +264,56 @@ describe('失联档的几处读数', () => {
 
   it('没有冻结时刻就没有断口', () => {
     expect(transcriptGap(null, T('20:58:13'))).toBeNull();
+  });
+});
+
+describe('captureGapNote：帧空洞账的提示行（gil-stall-hole）', () => {
+  it('一次空洞：`曾中断 X 秒，该段内容未记上`', () => {
+    const beat = makeHeartbeat({
+      capture_gaps: {
+        total_count: 1,
+        total_seconds: 2.4,
+        recent: [{ at: T('21:03:20'), seconds: 2.4 }],
+      },
+    });
+    expect(captureGapNote(beat)).toBe('曾中断 2.4 秒，该段内容未记上');
+  });
+
+  it('多次空洞：次数与总秒数一句说清', () => {
+    const beat = makeHeartbeat({
+      capture_gaps: {
+        total_count: 3,
+        total_seconds: 7.5,
+        recent: [{ at: T('21:03:20'), seconds: 2.4 }],
+      },
+    });
+    expect(captureGapNote(beat)).toBe('曾中断 3 次共 7.5 秒，该段内容未记上');
+  });
+
+  it('零账、缺应答、缺字段（旧服务）：都是 null，null 安全', () => {
+    expect(captureGapNote(null)).toBeNull();
+    expect(captureGapNote(makeHeartbeat())).toBeNull();
+    expect(
+      captureGapNote(makeHeartbeat({ capture_gaps: { total_count: 0, total_seconds: 0, recent: [] } })),
+    ).toBeNull();
+  });
+
+  it('空洞只在提示行说话：不弹红横幅、不进两拍计数', () => {
+    const beat = makeHeartbeat({
+      capture_gaps: {
+        total_count: 1,
+        total_seconds: 2.4,
+        recent: [{ at: T('21:03:20'), seconds: 2.4 }],
+      },
+    });
+    // 两拍计数的单一归并点：`recording_alive` 为 true 的读数清零，空洞账不投任何一拍
+    const state = applyHeartbeatReading(
+      initialHeartbeatState(),
+      { kind: 'reply', heartbeat: beat, status: '正常', lagSeconds: 0 },
+      MS('21:03:30'),
+    );
+    expect(state.stalledBeats).toBe(0);
+    // 现在时的判档不认历史事实：`captureStalled` 只看 `recording_alive`
+    expect(captureStalled(beat, 'recording', state.stalledBeats)).toBeNull();
   });
 });

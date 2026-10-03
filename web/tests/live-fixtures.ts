@@ -117,6 +117,8 @@ export function makeHeartbeat(overrides: Partial<Heartbeat> = {}): Heartbeat {
     top_state: 'recording',
     recording_alive: true,
     seconds_since_last_tick: 0.4,
+    // 帧空洞账（gil-stall-hole）：缺省零账；要空洞的用例自己带 `capture_gaps` 覆盖
+    capture_gaps: { total_count: 0, total_seconds: 0, recent: [] },
     ...overrides,
   };
 }

@@ -240,6 +240,31 @@ export function captureStalled(
 }
 
 /**
+ * 「本场曾中断」那条提示行的字（gil-stall-hole）。
+ *
+ * 数据来自心跳的 `capture_gaps`（帧空洞账）：录中整进程冻结解冻后，发帧线程把真实
+ * 空洞时长报上来，账按整档粒度记 —— 冻结冻的是整个进程，两路一起丢，提示行因此
+ * **不点名哪一路**；一路单独断流是另一件事，由致命级横幅在报。
+ *
+ * 它是**历史事实**的提示，与「采集已停」那一档（`captureStalled`，现在时）分工明确：
+ * 恢复之后 `recording_alive` 回 `true`、停的那一档收掉，这条提示照旧摆着 ——
+ * 「曾中断 X 秒，该段内容未记上」说的正是 `recording_alive` 说不出的那句话。
+ *
+ * 级别 = 提示级（design-intent 第 17 条）：只上一行字，**不出声、不弹红横幅、
+ * 不进两拍计数**（`stalledBeats` 只看 `recording_alive`，与这一格无关）。
+ * 服务没给这一格（旧服务 / 应答被截断）时按零账处理，null 安全。
+ */
+export function captureGapNote(reply: Heartbeat | null): string | null {
+  const gaps = reply?.capture_gaps;
+  if (!gaps || gaps.total_count <= 0) return null;
+  if (gaps.total_count === 1) {
+    const only = gaps.recent[gaps.recent.length - 1]?.seconds ?? gaps.total_seconds;
+    return `曾中断 ${Math.max(0, only).toFixed(1)} 秒，该段内容未记上`;
+  }
+  return `曾中断 ${gaps.total_count} 次共 ${Math.max(0, gaps.total_seconds).toFixed(1)} 秒，该段内容未记上`;
+}
+
+/**
  * 心跳失联时整块告警区收不收。
  *
  * 收。两句话不得同屏（设计章 4.5）：这时候屏幕上说「出事了」的地方只有全屏横幅。

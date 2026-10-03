@@ -33,7 +33,7 @@
 |---|---|---|
 | `/api/state` | GET | 完整快照（第 2 章），`200` |
 | `/api/events` | GET | SSE（第 3 章），`text/event-stream` |
-| `/api/heartbeat` | GET | 六字段心跳（第 5 章），**任何状态下都 200** |
+| `/api/heartbeat` | GET | 七字段心跳（第 5 章），**任何状态下都 200** |
 | `/api/actions` | POST | 动作端点（第 4 章） |
 | `/api/summaries` | GET | 本场总结记录（第 4.7 章），**任何状态下都 200** |
 | `/api/sessions` | GET | 工作区注册表（第 4.8 章），**任何状态下都 200** |
@@ -663,7 +663,7 @@ R10 第四条 / R30：名字要能改、并且记住。这一只动作 + 4.9 的
 
 ## 5. 心跳
 
-`GET /api/heartbeat`，**任何状态下都 200**（包括没有正在录的场次、包括收尾进行中）。应答**恰好六字段**：
+`GET /api/heartbeat`，**任何状态下都 200**（包括没有正在录的场次、包括收尾进行中）。应答**恰好七字段**：
 
 | 字段 | 类型 | 语义 |
 |---|---|---|
@@ -673,6 +673,7 @@ R10 第四条 / R30：名字要能改、并且记住。这一只动作 + 4.9 的
 | `top_state` | string | 四态之一 |
 | `recording_alive` | bool \| null | **采集还活着吗**（判据见下） |
 | `seconds_since_last_tick` | float \| null | 距最近一帧事实的秒数（**掩码 0**）；**一帧都没收到过就是 `null`** |
+| `capture_gaps` | object | **本场的帧空洞账**（gil-stall-hole，见下；任何态都在，零账不给 `null`） |
 
 **`recording_alive` 的语义**：判据是**服务侧的采集帧时钟**。
 
@@ -683,6 +684,35 @@ R10 第四条 / R30：名字要能改、并且记住。这一只动作 + 4.9 的
 - 采样后端 `frame_interval` 读不到或取值不是正数时按 `0.5` 算，只记一条 warning。
 
 **`seconds_since_last_tick` 与 `recording_alive` 不同源**：前者是「多久没收到帧」这个**原始读数**（`round(…, 3)`），后者是**布尔结论**。界面显示「多久没读到数据」用前者，画「采集停了」的红灯用后者。
+
+### `capture_gaps`：本场的帧空洞账（gil-stall-hole）
+
+录中发生 GIL 饿死 / 整进程冻结时，采帧与判停的线程**一起冻住**，解冻后 `last_frame_ts` 立刻刷新 ——
+`recording_alive` 全程 `true`，内容丢了多少秒在判停那一侧不留痕。空洞账补的正是这一半「留痕」：
+
+- **检测点在生产侧**：发帧线程（引擎两路的刻度线，dev 替身自己的合成线程）每次产帧先与
+  上一拍做差 —— 墙钟不冻，解冻后第一拍就得到真实空洞时长；超过与 `recording_alive`
+  **同一把尺**的窗口（`max(2.0s, 3 × frame_interval)`）记为一次空洞事件，**再**刷新时刻。
+  于是**同一空洞回合只记一条**（解冻后逐帧连记这条路在源头就被堵死）；
+- **首帧前无上一帧，天然不记** —— 与 `recording_alive` 的「还没有第一帧」未知档互不干扰；
+- **暂停不构成空洞**（暂停期间电平帧照发，节拍没断）；dev 故障注入里 `silence`（发的是
+  零电平**帧**）不构成空洞，`stall`（两路整体停发）才构成。单路 `lost` 也不构成 —— 另一路
+  帧照发，那一路的断流由 `SourceLost` 的致命级在报，两句话不重复；
+- **粒度 = 「任意存活路」的整档**（与判停同粒度），账**不点名哪一路**：冻结冻的是整个
+  进程，两路一起丢，点名没有意义；整档粒度是侦察结论的落点 —— 引擎与服务侧都没有
+  现成的各路帧时刻记账（`last_frame_ts` 是任意一路都刷新的**一份共享钟**），按路记就得
+  新加每路记账。同一次冻结里两路刻度线各报一条时，服务侧按**区间重叠**合并为一条，
+  累计秒数只加增量；
+- **`recording_alive` 的语义一个字不动**：它只回答「现在采不采得到」。空洞是**历史事实**，
+  恢复之后 `recording_alive` 回 `true`、空洞照旧在账上 —— 界面据此在告警区摆一条提示行
+  （「曾中断 X 秒，该段内容未记上」），提示级：不出声、不弹红横幅、不进两拍计数；
+- **字段形状**（恰好三格）：`total_count`（本场累计次数，合并过的回合只算一次）、
+  `total_seconds`（本场累计秒数，**掩码 0**）、`recent`（**最近至多 10 条**，按发生先后排，
+  每条 `{"at", "seconds"}` 两格 —— `at` 是空洞被记录那一刻的墙钟（ISO，解冻后第一拍
+  ≈ 空洞结束的时刻，**掩码 `<iso>`**）、`seconds` 是空洞秒数（**掩码 0**）。超过 10 条的
+  只在两个累计格里留数）；
+- **只在心跳域**：不进快照、不涨 `revision`、不广播；本场 `start` 清账（上一场的空洞
+  不进这一场），任何态都给这个字段、零账是 `{"total_count": 0, "total_seconds": 0.0, "recent": []}`。
 
 **两个「心跳」绝不串线**（这是最容易踩的一处）：
 
@@ -716,7 +746,7 @@ R10 第四条 / R30：名字要能改、并且记住。这一只动作 + 4.9 的
 
 **服务重启后的自洽**：服务重启后界面重新打开时向服务取状态；服务侧**没有**正在进行的会话，界面上工作台首页列出注册表里的那些会并选中 `recent` 那一场（最近一场只从注册表读，`docs/design-intent.md` 第 4 条；未注册的目录一概不上列表）。**界面不自己记状态、不从浏览器本地存储里恢复任何东西**（第 6 章）。
 
-**这一档的 fixtures**：`contract/fixtures/heartbeat/idle.json`（两字段 `null`）、`contract/fixtures/heartbeat/recording.json`（`recording_alive` 为 `true`、`seconds_since_last_tick` 掩码 0）、`contract/fixtures/heartbeat/no-first-frame.json`（**还没有第一帧**：`top_state` 为 `recording` 而两字段都是 `null` —— 未知档有它自己的样本，界面不再把它等同于「停止」，de899128）。
+**这一档的 fixtures**：`contract/fixtures/heartbeat/idle.json`（两字段 `null`、空洞账零账）、`contract/fixtures/heartbeat/recording.json`（`recording_alive` 为 `true`、`seconds_since_last_tick` 掩码 0）、`contract/fixtures/heartbeat/no-first-frame.json`（**还没有第一帧**：`top_state` 为 `recording` 而两字段都是 `null` —— 未知档有它自己的样本，界面不再把它等同于「停止」，de899128）、`contract/fixtures/heartbeat/capture-gap.json`（**帧空洞留痕**：`recording_alive` 仍为 `true` 而空洞账有一条 —— 历史事实与当下读数各管一头，gil-stall-hole）。
 
 ## 6. 客户端义务
 
@@ -763,7 +793,7 @@ R10 第四条 / R30：名字要能改、并且记住。这一只动作 + 4.9 的
 
 ## 8. fixtures 与掩码（附录）
 
-契约的**可机读基准**是 `contract/fixtures/` 下的 36 个 golden 样本。它们一律**出自真实服务路径**，不是手写的。规则、出处与再生成办法写在 `contract/README.md`；这里给读者一份速查。
+契约的**可机读基准**是 `contract/fixtures/` 下的 37 个 golden 样本。它们一律**出自真实服务路径**，不是手写的。规则、出处与再生成办法写在 `contract/README.md`；这里给读者一份速查。
 
 | 目录 | 样本 | 对应本文件 |
 |---|---|---|
@@ -773,7 +803,7 @@ R10 第四条 / R30：名字要能改、并且记住。这一只动作 + 4.9 的
 | `summaries/` | `after-one`（按过一次之后的本场总结记录，**1**） | 第 4.7 节 |
 | `sessions/` | `empty`（空注册表） / `after-open`（登记三档目录之后的清单 + `recent`） / `status-after-run`（单场状态：两份块账 + 状态文件落好之后的那一读） / `status-interrupted`（单场状态的**被打断档**：盘上落 `interrupted` 的那一读，b1c6a58e）（**4**） | 第 4.8 / 4.9 节 |
 | `devices/` | `all`（两路各一份候选端点表；枚举走假件，名字与 `is_default` 是确定值）（**1**） | 第 4.10 节 |
-| `heartbeat/` | `idle` / `recording` / `no-first-frame`（**还没有第一帧**的未知档：`top_state` 为 `recording` 而 `recording_alive` 与 `seconds_since_last_tick` 同为 `null`，de899128）（**3**） | 第 5 章 |
+| `heartbeat/` | `idle` / `recording` / `no-first-frame`（**还没有第一帧**的未知档：`top_state` 为 `recording` 而 `recording_alive` 与 `seconds_since_last_tick` 同为 `null`，de899128）/ `capture-gap`（**帧空洞留痕**：`recording_alive` 为 `true` 而空洞账 `total_count` 为 1，gil-stall-hole）（**4**） | 第 5 章 |
 
 **掩码（`tests/_contract.py` 的 `normalize()`）**：fixtures 由真实服务采集，采集里的墙钟、路径、端口、电平每次都不同，落盘前一律换成**自描述占位符**：
 
@@ -786,7 +816,7 @@ R10 第四条 / R30：名字要能改、并且记住。这一只动作 + 4.9 的
 | 服务 URL | `<url>` |
 | 电平（`level_dbfs` / `peak_dbfs` / `dbfs` / `peak` / `bar`） | `<dbfs>` |
 | `envelope` 数组 | **只保结构与长度**：长度不变、逐根换 `<dbfs>`（`bar == envelope[-1]` 的结构断言仍成立） |
-| `elapsed_seconds` 与 `duration_seconds` / `seconds_since_last_tick` / `wall_seconds`（走秒的量，含会中总结那次实测耗时与会后逐块的墙钟） | `0` |
+| `elapsed_seconds` 与 `duration_seconds` / `seconds_since_last_tick` / `wall_seconds` / `total_seconds` / `seconds`（走秒的量，含会中总结那次实测耗时、会后逐块的墙钟与帧空洞账的秒数） | `0` |
 | 自由文本里内嵌的 Windows 绝对路径 | 就地替换成 `<path>`（见下例） |
 | **`revision`**（含 SSE 帧级的 `id:`） | **保留真实值** —— 它由固定的迁移与提交次数决定，同样确定 |
 
