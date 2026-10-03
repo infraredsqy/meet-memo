@@ -463,17 +463,17 @@ describe('detail 键集合与 4.4 表逐条相等（M1，样本层精确）', ()
     ]);
   });
 
-  it('capture_unavailable 三档：每个样本各落在 4.4 写的某一档上', () => {
+  it('capture_unavailable 四档：每个样本各落在 4.4 写的某一档上', () => {
     const { detail } = failureOf('fail-capture-unavailable');
     const variants = ACTION_DETAIL_VARIANTS['capture_unavailable'] ?? [];
     const keys = Object.keys(detail).sort();
     // 样本必须恰好等于其中一档 —— 不在任何一档里就说明形状漂了。
     const matched = variants.some((variant) => variant.slice().sort().join(',') === keys.join(','));
-    expect(matched, `capture_unavailable 样本的键 ${keys.join(',')} 不在 4.4 的三档里`).toBe(true);
+    expect(matched, `capture_unavailable 样本的键 ${keys.join(',')} 不在 4.4 的四档里`).toBe(true);
 
-    // 三档的键并集就是 4.4 表里列出来的那几个：多一个键就落不进任何一档。
+    // 四档的键并集就是 4.4 表里列出来的那五个：多一个键就落不进任何一档。
     const union = new Set(variants.flat());
-    expect([...union].sort()).toEqual(['dir', 'error', 'reason', 'session_id']);
+    expect([...union].sort()).toEqual(['dir', 'error', 'reason', 'session_id', 'source']);
   });
 
   it('invalid_setting 四档：两个样本各落在 4.4 写的某一档上', () => {

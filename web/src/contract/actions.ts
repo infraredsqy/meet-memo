@@ -35,9 +35,11 @@ export const actionRequestSchema = z
  *   拿到的是这一档，见 `docs/contract.md` 4.3）、`{kind, dir, started_at}`（已经有一趟
  *   会后活在跑）、`{top_state, session_id, dir}`（还在录 / 收尾还没落定）、空对象
  *   （`post_stop` 没有在飞的会后可停）—— 五档并起来是这九个键；
- * - `capture_unavailable` 三档（空对象 / `{session_id, dir, error}` /
- *   `{session_id, dir, reason}`）**并起来**是这四个键（`dir` / `error` / `reason` /
- *   `session_id`）—— 样本按它自己那一档写，各档的键都是这四个的子集；
+ * - `capture_unavailable` **四档**：空对象；`{session_id, dir, error}`（第一版
+ *   `session.json` 写不进去）；`{session_id, dir, reason}`（采集起不来）；
+ *   `{source, error}`（`set_source` 重新打开某一路时那个设备打不开）**并起来**是这五个键
+ *   （`dir` / `error` / `reason` / `session_id` / `source`）—— 样本按它自己那一档写，
+ *   各档的键都是这五个的子集；
  * - `not_recording`：空对象；
  * - `invalid_setting` 四档（`{key, value, legal}` / `{source, fault, error}` / 空 /
  *   `{action, known}`）并起来是这八个键；
@@ -73,8 +75,13 @@ export const ACTION_DETAIL_KEYS: Readonly<
 export const ACTION_DETAIL_VARIANTS: Readonly<
   Record<string, readonly (readonly string[])[]>
 > = {
-  // 空对象；第一版 session.json 写不进去；采集起不来。
-  capture_unavailable: [[], ['session_id', 'dir', 'error'], ['session_id', 'dir', 'reason']],
+  // 四档：空对象；第一版 session.json 写不进去；采集起不来；set_source 重开时设备打不开。
+  capture_unavailable: [
+    [],
+    ['session_id', 'dir', 'error'],
+    ['session_id', 'dir', 'reason'],
+    ['source', 'error'],
+  ],
   // 照 docs/contract.md 4.4 的五档逐条抄：start 那一档（没有失败步时 failed_steps 是空数组）；
   // 纪要那一层的账停在 running（重复按「直接出纪要」）；已经有一趟会后活在跑（post_stop
   // 撞上纪要在飞也是这一档）；还在录 / 收尾还没落定；post_stop 没有在飞的会后可停（空对象）。
@@ -219,7 +226,7 @@ export const speakerOkSchema = z
 /**
  * 逐档 `detail` 形状（4.4）。`detail` **恒是对象** —— 没有补充信息时给**空对象 `{}`**，
  * 所以基档就是 `{}`，各档在它上面补键。补出来的键一律 `optional()`：
- * `capture_unavailable` 有三档、`invalid_setting` 有四档，界面按**有哪个键就显示哪个键**来画。
+ * `capture_unavailable` 有四档、`invalid_setting` 有四档，界面按**有哪个键就显示哪个键**来画。
  *
  * **契约已列的键收可选校验，契约之外的键原样放行**（`catchall(z.unknown())`）。
  * 这样收放的理由来自 6.7 与 4.4 的配合：
