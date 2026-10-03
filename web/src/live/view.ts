@@ -18,7 +18,13 @@ import {
   type HintView,
 } from './alarm';
 import { clockView, formatDbfs, formatWallClock, type ClockView } from './format';
-import { captureGapNote, captureStalled, type CaptureStalledView, type HeartbeatState } from './heartbeat';
+import {
+  captureGapNote,
+  captureStalled,
+  lostPredicate,
+  type CaptureStalledView,
+  type HeartbeatState,
+} from './heartbeat';
 import { meterView, type MeterView, type StoredLevels } from './levels';
 import {
   pauseBanner,
@@ -128,7 +134,7 @@ export function liveView(
    * 冒充「我问不到」—— 刚开机那十秒里音频明明在流，屏幕却写成数据已停，那正是设计章 4.5
    * 明令不许犯的那类错。所以这一档要等 `lastReplyAt` 有值。
    */
-  const lost = heartbeat.level === '失联' && heartbeat.lastReplyAt !== null;
+  const lost = lostPredicate(heartbeat);
 
   /**
    * 「采集已停」那一档：服务**在应答**（HTTP 通、`server_time` 也新），

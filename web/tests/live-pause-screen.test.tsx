@@ -69,19 +69,6 @@ function pausedSnapshot(): Snapshot {
   });
 }
 
-function fakeEventsClient(handlers: EventsClientHandlers = {}): EventsClient {
-  captured.handlers = handlers;
-  return {
-    connect: () => undefined,
-    close: () => undefined,
-    state: () => 'open',
-    resyncCount: () => 0,
-    parse: () => {
-      throw new Error('这一档不走同步解析那条读法');
-    },
-  } as unknown as EventsClient;
-}
-
 function fakeHeartbeatClient(): HeartbeatClient {
   return {
     setIntervalFromSnapshot: () => undefined,
@@ -97,22 +84,30 @@ function fakeHeartbeatClient(): HeartbeatClient {
   } as unknown as HeartbeatClient;
 }
 
-/** 挂载会中那一屏，再把一份快照推给它（首帧之前它只画占位）。 */
+/**
+ * 挂载会中那一屏。SSE 那条唯一连接现在在 `App` 顶层（web-homegate-dual-sse），
+ * `LiveView` 只吃 `events` 转手源 —— 用例给一份订阅即收快照的假源，把快照喂进去。
+ */
 async function mountLive(snapshot: Snapshot): Promise<TestRenderer.ReactTestRenderer> {
   (globalThis as unknown as { window: unknown }).window = {
     addEventListener: () => undefined,
     removeEventListener: () => undefined,
   };
   (globalThis as unknown as { document: unknown }).document = { body: {} };
-  createEventsClientMock.mockImplementation((handlers) => fakeEventsClient(handlers));
   createHeartbeatClientMock.mockImplementation(() => fakeHeartbeatClient());
 
+  const source = {
+    use(handlers: EventsClientHandlers): () => void {
+      captured.handlers = handlers;
+      handlers.onSnapshot?.(snapshot, { resync: false, dropped: 0 });
+      return () => undefined;
+    },
+  };
   let renderer!: TestRenderer.ReactTestRenderer;
   await act(async () => {
-    renderer = TestRenderer.create(createElement(LiveView));
-  });
-  await act(async () => {
-    captured.handlers?.onSnapshot?.(snapshot, { resync: false, dropped: 0 });
+    renderer = TestRenderer.create(
+      createElement(LiveView, { snapshot, events: source as never }),
+    );
   });
   mounted = renderer;
   return renderer;

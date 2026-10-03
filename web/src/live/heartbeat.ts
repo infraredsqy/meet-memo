@@ -265,15 +265,24 @@ export function captureGapNote(reply: Heartbeat | null): string | null {
 }
 
 /**
+ * 失联那条判据的单一出处（web-lost-stalled-predicate-duplication）：
+ * 判定体与原先三处内联逐字一致 —— 「观察过一次应答之后」才算数（`lastReplyAt`
+ * 有值），诚实的「我还没问到」不冒充「我问不到」（设计章 4.5）。
+ */
+export function lostPredicate(state: HeartbeatState): boolean {
+  return state.level === '失联' && state.lastReplyAt !== null;
+}
+
+/**
  * 心跳失联时整块告警区收不收。
  *
  * 收。两句话不得同屏（设计章 4.5）：这时候屏幕上说「出事了」的地方只有全屏横幅。
  *
  * **一次应答都没成功过时不算**（`lastReplyAt` 还是空）：那一档「我还没问到」，
- * 收掉告警区会把一条真实存在的致命告警藏起来。判据与 `view.ts` 里那一处同一口径。
+ * 收掉告警区会把一条真实存在的致命告警藏起来。判据 = `lostPredicate()`。
  */
 export function alertsHiddenByHeartbeat(state: HeartbeatState): boolean {
-  return state.level === '失联' && state.lastReplyAt !== null;
+  return lostPredicate(state);
 }
 
 /**

@@ -48,37 +48,12 @@ import {
 } from './post';
 import { SPEAKER_RENAME_ACTION, duplicateNameHolders, namesRows, type NamesRowView } from './names';
 import { failureFrom, type ActionFailureView } from '../failure';
+import { FailureBlock } from '../failure-ui';
 import type { DirsResponse, SessionRow, SessionStatus, SessionsResponse } from '../contract';
 
 // ---------------------------------------------------------------------------
 // 小料
 // ---------------------------------------------------------------------------
-
-/** 失败块（位置归首页的清单下方；与 LiveView 的同形不同处共用同一套 `fail` 类名）。 */
-function HomeFailure({ failure }: { failure: ActionFailureView }): ReactNode {
-  if (failure.kind === 'forbidden') {
-    return (
-      <div className="fail">
-        <div className="fail__why">请求被拦截 · HTTP {failure.status}（未到达动作端点）</div>
-        <div className="fail__next">{failure.text}</div>
-      </div>
-    );
-  }
-  return (
-    <div className="fail">
-      <div className="fail__why">
-        <code>{failure.code}</code> · {failure.message}
-      </div>
-      {failure.detail.length > 0 && (
-        <ul className="fail__next">
-          {failure.detail.map((line) => (
-            <li key={line}>{line}</li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
 
 /** 一只确认弹窗（非空目录当工作区 / 从列表移除共用这一只）。 */
 function ConfirmDialog({
@@ -658,7 +633,9 @@ export function WorkspaceHome({
       (data) => setBrowse(data),
       (error) => {
         const view = failureFrom(error);
-        setBrowseError(view.kind === 'forbidden' ? view.text : view.message);
+        setBrowseError(
+          view.kind === 'envelope' || view.kind === 'drain' ? view.message : view.text
+        );
       },
     );
   };
@@ -991,7 +968,15 @@ export function WorkspaceHome({
               )}
             </div>
           )}
-          {failure !== null && <HomeFailure failure={failure} />}
+          {failure !== null && (
+            <FailureBlock
+              failure={failure}
+              logPath={null}
+              extraLines={[]}
+              /** forbidden 档照 HomeFailure 的旧画法只有 why + next 两行，不带说明行。 */
+              forbiddenNote={false}
+            />
+          )}
         </div>
       </section>
 

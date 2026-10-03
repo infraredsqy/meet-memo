@@ -11,6 +11,7 @@ import {
   type HeartbeatTick,
 } from './api';
 import { failureFrom, type ActionFailureView } from './failure';
+import { FailureBlock } from './failure-ui';
 import type { Heartbeat, LevelsData, PostJobCell, Snapshot, SummaryWindowChoice } from './contract';
 import { HEARTBEAT_INTERVAL_DEFAULT_SECONDS } from './contract';
 import { decideAlarmSound, initialAlarmSound } from './live/alarm';
@@ -21,12 +22,14 @@ import {
   frozenClockValue,
   initialHeartbeatState,
   lostBanner,
+  lostPredicate,
   recoveredNoteText,
   recoveredNoteVisible,
   HEARTBEAT_GUIDANCE,
   type HeartbeatState,
 } from './live/heartbeat';
 import { emptyLossRecord, observeLosses, type LossRecord } from './live/loss';
+import { drainFailure as drainFailureOf, drainFailedSteps as drainFailedStepsOf } from './live/drain';
 import { holdFrameWhileDataStopped, releaseHeldFrame, type StoredLevels } from './live/levels';
 import { healthView } from './live/status';
 import { createAlarmSound, browserAudioContextFactory } from './live/sound';
@@ -61,6 +64,7 @@ import { fetchSessions } from './api/sessions';
 import { gpuBusyView } from './home/progress';
 import { SettingsDrawer } from './settings/SettingsDrawer';
 import { HomeGate } from './home/HomeGate';
+import { createEventsSource, type EventsSource } from './home/events-source';
 
 /**
  * 会中主视图。
@@ -206,58 +210,6 @@ function Channel({
   );
 }
 
-/** 失败块的公共画法：原因、下一步、log 路径（可复制）。 */
-function FailureBlock({
-  failure,
-  logPath,
-  drainFailedSteps,
-}: {
-  failure: ActionFailureView;
-  logPath: string | null;
-  drainFailedSteps: string[];
-}): ReactNode {
-  if (failure.kind === 'forbidden') {
-    return (
-      <div className="fail">
-        <div className="fail__why">
-          请求被拦截 · HTTP {failure.status}（未到达动作端点）
-        </div>
-        <div className="fail__next">{failure.text}</div>
-        <div className="fail__log">
-          这一档没有失败信封、也没有 code —— 服务在中间件那一道就把它挡回去了。
-        </div>
-      </div>
-    );
-  }
-  return (
-    <div className="fail">
-      <div className="fail__why">
-        <code>{failure.code}</code> · {failure.message}
-      </div>
-      {failure.detail.length > 0 && (
-        <ul className="fail__next">
-          {failure.detail.map((line) => (
-            <li key={line}>{line}</li>
-          ))}
-        </ul>
-      )}
-      {drainFailedSteps.length > 0 && (
-        <ul className="fail__next">
-          {drainFailedSteps.map((line) => (
-            <li key={line}>{line}</li>
-          ))}
-        </ul>
-      )}
-      {logPath !== null && (
-        <>
-          <code className="codeblock">{logPath}</code>
-          <div className="fail__log">log：{logPath}</div>
-        </>
-      )}
-    </div>
-  );
-}
-
 /**
  * 总结结果面板与失败面板共用的那一块（设计章 2.3）。
  *
@@ -337,10 +289,22 @@ function SummaryFailureCard({
   );
 }
 
-/** 会中主视图（由 `home/HomeGate` 在非空闲形势下渲染出去；组件本体不动）。 */
-export function LiveView(): ReactNode {
+/**
+ * 会中主视图（由 `home/HomeGate` 在非空闲形势下渲染出去）。
+ *
+ * **SSE 那条唯一连接在 `App.tsx` 顶层**：全页恰一个 `EventSource`（web-homegate-dual-sse）。
+ * LiveView 只经 `events` 转手源注册五路回调 —— 挂件晚于首帧时，源侧把积压帧补递上来；
+ * 卸载即清空。心跳那条轮询仍由本组件自持（照旧）。
+ */
+export function LiveView({
+  snapshot: snapshotProp,
+  events,
+}: {
+  snapshot: Snapshot;
+  events: EventsSource;
+}): ReactNode {
   /** 服务推过来的那一份。界面手上这份是**副本**，分歧以服务为准。 */
-  const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  const [snapshot, setSnapshot] = useState<Snapshot>(snapshotProp);
   const [observedAt, setObservedAt] = useState<string>(() => new Date().toISOString());
   const [connection, setConnection] = useState<ConnectionState>('closed');
   const [levels, setLevels] = useState<{ revision: number; data: LevelsData } | null>(null);
@@ -386,7 +350,6 @@ export function LiveView(): ReactNode {
   const summary = summaryRef.current;
   const [, bumpSummary] = useState(0);
 
-  const eventsRef = useRef<ReturnType<typeof createEventsClient> | null>(null);
   const heartRef = useRef<ReturnType<typeof createHeartbeatClient> | null>(null);
   /** 心跳四级的最新一份：轮询回调要拿它判「这一跳是不是刚从失联回来」。 */
   const heartbeatRef = useRef<HeartbeatState>(heartbeat);
@@ -403,8 +366,11 @@ export function LiveView(): ReactNode {
     setLosses((previous) => observeLosses(previous, next, at));
   }, []);
 
+  // SSE 那条唯一连接的接线：挂载即往源侧注册五路回调 —— 晚于首帧的积压帧在
+  // 注册这一刻补递上来（快照以源侧的最后一份为准），卸载即清空（转手结构见
+  // `home/events-source.ts`）。连接本体的 connect/close 归 `App` 顶层。
   useEffect(() => {
-    const client = createEventsClient({
+    return events.use({
       onConnectionState: setConnection,
       onSnapshot: applySnapshot,
       onLevels: (data) => setLevels({ revision: data.revision, data }),
@@ -414,18 +380,14 @@ export function LiveView(): ReactNode {
       },
       onError: (error) => {
         console.error(error);
-        setFailure({
-          kind: 'envelope',
-          code: 'invalid_setting',
-          message: error.message,
-          detail: [],
-          fields: {},
-        });
+        // SSE 的错误没有失败信封（不是动作应答），走 unclassified，不编码。
+        setFailure({ kind: 'unclassified', text: error.message });
       },
     });
-    eventsRef.current = client;
-    client.connect();
+  }, [events, applySnapshot]);
 
+  // 心跳那条自持的轮询（照旧）：周期来自快照的 settings（见下面那条 effect）。
+  useEffect(() => {
     const heart = createHeartbeatClient((tick: HeartbeatTick) => {
       if (tick.kind === 'reply') setReply(tick.heartbeat);
       const at = Date.now();
@@ -445,12 +407,10 @@ export function LiveView(): ReactNode {
     heart.start();
 
     return () => {
-      client.close();
       heart.stop();
-      eventsRef.current = null;
       heartRef.current = null;
     };
-  }, [applySnapshot]);
+  }, []);
 
   // 心跳周期来自快照的 settings（服务是唯一来源），周期改了不必刷新页面。
   useEffect(() => {
@@ -597,8 +557,7 @@ export function LiveView(): ReactNode {
    * 不把估出来的数据继续画成在动）：下面的效果把手上的帧按住，视图只吃按住的
    * 那一份；恢复（失联解除 / 采集恢复）那一刻松手，下一帧起立刻回到实时。
    */
-  const dataStopped =
-    (heartbeat.level === '失联' && heartbeat.lastReplyAt !== null) ||
+  const dataStopped = lostPredicate(heartbeat) ||
     (snapshot !== null &&
       captureStalled(reply, snapshot.top_state, heartbeat.stalledBeats) !== null);
 
@@ -626,7 +585,7 @@ export function LiveView(): ReactNode {
     return liveView(snapshot, heartbeat, frames, reply, observedAt, live, losses);
   }, [snapshot, heartbeat, levels, heldLevels, dataStopped, reply, observedAt, nowMs, losses]);
 
-  const lost = heartbeat.level === '失联' && heartbeat.lastReplyAt !== null;
+  const lost = lostPredicate(heartbeat);
   const stalled = view?.stalled ?? null;
   const logPath = snapshot?.service.log_path ?? null;
   const alarmSoundOn = snapshot?.settings.alarm_sound ?? false;
@@ -668,32 +627,14 @@ export function LiveView(): ReactNode {
     setJumpVisible(false);
   }, []);
 
-  const drainFailedSteps = useMemo(() => {
-    const steps = snapshot?.ended?.steps ?? [];
-    return steps
-      .filter((step) => step.status === 'failed')
-      .map((step) => `收尾第 ${step.id} 步失败：${step.error ?? step.detail}`);
-  }, [snapshot]);
-
   /**
-   * 收尾失败那一档要画的那块明细。
-   *
-   * 两个来路：动作失败（用户按了 stop 而收尾报错）与服务侧自己的收尾失败
-   * （`ended.error` 有值、或某一步 `status = failed`）。后者这一趟没有任何动作，
-   * `failure` 是空的 —— 不从这里兜一份出来的话，页面上就只剩一条
-   * 「收尾出事了，先别关机」的标题，原因与 log 路径一个字都没有。
+   * 收尾失败那一档要画的那块明细（读法在 `live/drain.ts`，本组件只转手）。
    */
-  const drainFailure = useMemo<ActionFailureView | null>(() => {
-    if (failure !== null) return failure;
-    const ended = snapshot?.ended;
-    if (ended === undefined || ended === null) return null;
-    const detail = [
-      ...(ended.error === null ? [] : [`收尾失败：${ended.error}`]),
-      ...drainFailedSteps,
-    ];
-    if (detail.length === 0) return null;
-    return { kind: 'envelope', code: 'persist_failed', message: '收尾没走完', detail, fields: {} };
-  }, [failure, snapshot, drainFailedSteps]);
+  const drainFailedSteps = useMemo(() => drainFailedStepsOf(snapshot), [snapshot]);
+  const drainFailureView = useMemo<ActionFailureView | null>(
+    () => drainFailureOf(failure, snapshot, drainFailedSteps),
+    [failure, snapshot, drainFailedSteps],
+  );
 
   const bodyClass = [
     'page--live',
@@ -705,7 +646,7 @@ export function LiveView(): ReactNode {
     document.body.className = bodyClass;
   }, [bodyClass]);
 
-  if (snapshot === null || view === null) {
+  if (view === null) {
     return (
       <main className="shell page--live">
         <p className="hint">正在等待服务的首份快照…（连接：{connection}）</p>
@@ -1178,7 +1119,7 @@ export function LiveView(): ReactNode {
             <FailureBlock
               failure={failure}
               logPath={logPath}
-              drainFailedSteps={drainFailedSteps}
+              extraLines={drainFailedSteps}
             />
           )}
         </section>
@@ -1212,22 +1153,21 @@ export function LiveView(): ReactNode {
               这一档的失败明细不只来自动作失败 —— 服务自己在收尾里出事时
               （`ended.error` 有值、或某一步 `status = failed`）也要画出来，
               所以判据是「收尾没走到 done + 有错可报」 */}
-          {snapshot.ended.phase !== 'done' && drainFailure !== null && (
+          {snapshot.ended.phase !== 'done' && drainFailureView !== null && (
             <FailureBlock
-              failure={drainFailure}
+              failure={drainFailureView}
               logPath={logPath}
-              drainFailedSteps={drainFailedSteps}
+              extraLines={drainFailedSteps}
             />
           )}
         </section>
       )}
-
       {/* 动作失败与拒绝：按 code 分派，detail 有哪个键显示哪个键（契约 6.7）。
           它排在告警区外面：失联时那一整块要收掉（两句话不同屏），
           而动作失败讲的是「刚才这一下没成」这件事 */}
       {failure !== null && (
         <section className="band band--alert" aria-label="失败">
-          <FailureBlock failure={failure} logPath={logPath} drainFailedSteps={drainFailedSteps} />
+          <FailureBlock failure={failure} logPath={logPath} extraLines={drainFailedSteps} />
         </section>
       )}
 
@@ -1327,9 +1267,25 @@ export function LiveView(): ReactNode {
 }
 
 export function App(): ReactNode {
+  const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  /**
+   * 那条唯一 SSE 连接的接线盘（web-homegate-dual-sse）：全页恰一个 `EventSource` ——
+   * 连接本体在这里 connect/close；快照同时喂判屏（gate 的 state）与源侧转手槽位。
+   */
+  const { source, clientHandlers } = useMemo(() => createEventsSource(setSnapshot), [setSnapshot]);
+  const clientRef = useRef<ReturnType<typeof createEventsClient> | null>(null);
+  useEffect(() => {
+    const client = createEventsClient(clientHandlers);
+    clientRef.current = client;
+    client.connect();
+    return () => {
+      client.close();
+      clientRef.current = null;
+    };
+  }, [clientHandlers]);
   return (
     <ShellErrorBoundary>
-      <HomeGate />
+      <HomeGate snapshot={snapshot} events={source} />
     </ShellErrorBoundary>
   );
 }
