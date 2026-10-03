@@ -562,3 +562,26 @@ def test_package_import_pulls_no_heavy_dependency() -> None:
     output = (result.stdout or "") + (result.stderr or "")
     assert result.returncode == 0, output
     assert (result.stdout or "").strip() == "heavy=", output
+
+
+# ---------------------------------------------------------------------------
+# release_engine（b1c6a58e 的 d6）：丢引用 + 请 torch 把缓存还给系统
+# ---------------------------------------------------------------------------
+
+
+def test_release_engine_drops_model_references_and_reports_the_drop() -> None:
+    """带着权重的那一格：processor / transcriber 两格引用丢掉，交回 True。"""
+    engine = SimpleNamespace(processor=object(), transcriber=object())
+    assert engine_module.release_engine(engine) is True
+    assert engine.processor is None
+    assert engine.transcriber is None
+    # 幂等：第二次起没有可丢的（False），再来一遍也不抛
+    assert engine_module.release_engine(engine) is False
+
+
+def test_release_engine_survives_a_bare_fake_and_reports_no_drop() -> None:
+    """假引擎（两格都缺席）：安静 no-op、交回 False，torch 缺席也不抛。"""
+    class Bare:
+        pass
+
+    assert engine_module.release_engine(Bare()) is False

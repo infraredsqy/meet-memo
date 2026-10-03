@@ -37,12 +37,16 @@ _log = logging.getLogger("meeting.backends.post")
 #: 后台线程的名字（出现在线程转储与 log 里，一眼能认出是哪一条）
 THREAD_NAME = "post-offline"
 
-#: 状态文件里 `state` 的四档（`meeting.offline.artifacts.STATES` 同值）
+#: 状态文件里 `state` 的五档（`meeting.offline.artifacts.STATES` 同值）
 STATE_RUNNING = "running"
 STATE_DONE = "done"
 STATE_FAILED = "failed"
 #: 一路整条没交回、另一路跑成那一档：产物可用（它是终态），顶层那一格与 `done` 分开写
 STATE_PARTIAL = "partial"
+#: 跑到块边界被人停那一档（b1c6a58e）：也是**终态**。补账判据把它算进「已落定」——
+#: 打断之后同目录再炸出来的异常不许把 `interrupted` 盖成 `failed`（那一格说的是
+#: 「人停的」，不是「引擎炸了」）。
+STATE_INTERRUPTED = "interrupted"
 
 
 class PostProcessHook:
@@ -114,7 +118,11 @@ class PostProcessHook:
                 except artifacts.ArtifactContractError:
                     existing = None
             disk = existing or {}
-            settled = str(disk.get("state") or "") in (STATE_FAILED, STATE_PARTIAL)
+            settled = str(disk.get("state") or "") in (
+                STATE_FAILED,
+                STATE_PARTIAL,
+                STATE_INTERRUPTED,
+            )
             artifacts.write_status(
                 path,
                 session_id=str(disk.get("session_id") or Path(session_dir).name),
@@ -143,6 +151,7 @@ def _now_iso() -> str:
 __all__ = [
     "STATE_DONE",
     "STATE_FAILED",
+    "STATE_INTERRUPTED",
     "STATE_PARTIAL",
     "STATE_RUNNING",
     "THREAD_NAME",

@@ -20,9 +20,10 @@ import { statusLabel } from './model';
  * 2. **进度读数**：`GET /api/sessions/{id}` 的 `offline` 那份 → 每路一条的读数与
  *    进度条百分比。**分母按路各算各的**（契约 4.9：合成一个整场分母就是在造一个
  *    不存在的量，设计意图第 9 条）。
- * 3. **「真在跑 vs 停着一版 running」**：`offline.in_process` 与 `offline.state`
- *    各答各的事（契约 4.9）；进程崩在半路那一场盘上停着 `running`，读数如实分两层，
- *    **不另立终态**（「被打断」归另一个节点）。
+ * 3. **「真在跑 vs 停着一版 running vs 被打断」**：`offline.in_process` 与 `offline.state`
+ *    各答各的事（契约 4.9）；进程崩在半路那一场盘上停着 `running`，读数如实分两层；
+ *    「被打断」是盘上自己的终态（b1c6a58e，R28）—— 自成一相，**不许掉进「跑完了」**，
+ *    阶段行明说「被打断、可以重跑」。
  * 4. **全局「显卡忙不忙」**（b1/b2）：忙 = 有模型开着 —— 本机正在录（快照状态）
  *    ∨ 会后那趟在本进程跑（`GET /api/sessions` 顶层的 `post_job`）。`meeting post`
  *    命令行那趟活在另一进程、服务看不见，这一格因此不点亮 —— 如实显示。
@@ -110,7 +111,7 @@ export interface OfflineRoadView {
   counts: OfflineSourceProgress['counts'];
 }
 
-export type OfflinePhase = 'in-flight' | 'stale-running' | 'finished' | 'never-run';
+export type OfflinePhase = 'in-flight' | 'stale-running' | 'interrupted' | 'finished' | 'never-run';
 
 export interface ProgressView {
   phase: OfflinePhase;
@@ -138,13 +139,16 @@ const ZERO_COUNTS = { transcribed: 0, silent: 0, failed: 0, unjudged: 0 };
 
 /**
  * 阶段那一格的图形标记（形状是「不靠颜色」的那一半）：真在跑画 `spinner`（`null`），
- * 停着一版 running 画红叉（「出事了」那一档的形状），终态画实心块打勾，没跑过画空心框。
+ * 停着一版 running 画红叉（「出事了」那一档的形状），**被打断同画红叉**（这一场
+ * 没跑完、需要人决定要不要重按），终态画实心块打勾，没跑过画空心框。
  */
 export function phaseMark(phase: OfflinePhase): string | null {
   switch (phase) {
     case 'in-flight':
       return null;
     case 'stale-running':
+      return 'glyph--cross';
+    case 'interrupted':
       return 'glyph--cross';
     case 'finished':
       return 'glyph--done';
@@ -162,9 +166,11 @@ export function progressView(status: SessionStatus): ProgressView {
     ? 'in-flight'
     : onDiskRunning
       ? 'stale-running'
-      : offline.state === 'idle'
-        ? 'never-run'
-        : 'finished';
+      : offline.state === 'interrupted'
+        ? 'interrupted'
+        : offline.state === 'idle'
+          ? 'never-run'
+          : 'finished';
 
   const roads: OfflineRoadView[] = offline.sources.map((road) => ({
     source: road.source,
@@ -195,9 +201,11 @@ export function progressView(status: SessionStatus): ProgressView {
         : '正在跑'
       : phase === 'stale-running'
         ? '盘上停着一版「在跑」，此刻没有任何东西在跑'
-        : phase === 'never-run'
-          ? '这一场还没跑过会后'
-          : `跑完了（盘上记作 ${offline.state}）`;
+        : phase === 'interrupted'
+          ? '被打断：这一趟停了，已跑的部分留在逐块账里，重新按按钮可从头再跑'
+          : phase === 'never-run'
+            ? '这一场还没跑过会后'
+            : `跑完了（盘上记作 ${offline.state}）`;
 
   return {
     phase,
@@ -400,7 +408,8 @@ export function gpuBusyView(postJob: PostJobCell | null, recording: boolean): Gp
  *   一起楔死）；翻账由组件那头的「不用刷顺手刷一遍列表」接住；
  * - 手上已有一份读数、且它说「真在跑」（`in_process`）或「盘上停着 `running`」→ 问
  *   （后者也要问：万一那一趟其实还活着，读数会翻回 `in_process: true`）；
- * - 其余（终态、还没跑过、什么都没选）→ 不问。
+ * - 其余（终态、**被打断**（b1c6a58e：它也是终态，重按按钮才再跑）、还没跑过、
+ *   什么都没选）→ 不问。
  */
 export function shouldWatch(
   row: SessionRow | null,

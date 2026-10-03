@@ -262,7 +262,8 @@ def test_a_stale_running_status_file_is_answered_as_it_is_on_disk(
     盘上停着上一次落的那版 `running`、账上只有 mic 的第一块，而这一趟谁都没在跑
     （进程重启过、命令行跑完退出了）。读数如实分两层：`state` 就是盘上那个 `running`
     （不在这里替它二选一），`in_process` 答 `false` 把「此刻没有东西在跑」说破 ——
-    两块合起来读得出「盘上写着在跑、其实没在跑」。**不引入「被打断」终态**。
+    两块合起来读得出「盘上写着在跑、其实没在跑」。被打断是另一档（`b1c6a58e` 落地）：
+    那一场照盘答 `interrupted`，与这一档分得开。
     """
     runtime, previous = _runtime(tmp_path, monkeypatch, **{"post.chunk_seconds": CHUNK_SECONDS})
     session = _workspace_with_audio(tmp_path)
@@ -320,6 +321,28 @@ def test_a_partial_status_file_is_answered_as_partial(
         body = runtime.session_status_dict(str(session))
         assert body["offline"]["state"] == "partial", "盘上那份的终态照它答"
         assert body["offline"]["in_process"] is False
+        assert body["post"] is None
+    finally:
+        config_module.set_current(previous)
+
+
+def test_an_interrupted_status_file_is_answered_as_interrupted(
+    tmp_path, monkeypatch, restore_config
+) -> None:
+    """盘上落 `interrupted`（人停在块边界）的那一场：这一格答 `interrupted`，**不许折成 running**。
+
+    折档行（b1c6a58e 之前）只认 `done` / `partial` / `failed` 三档，`interrupted` 会掉进
+    「别的档一律折 running」的兜底 —— 被人停下的那一场就在读数上永远「在跑」了。加进
+    白名单之后它与那三档同一个姿态：盘上写什么就答什么。
+    """
+    runtime, previous = _runtime(tmp_path, monkeypatch, **{"post.chunk_seconds": CHUNK_SECONDS})
+    session = _workspace_with_audio(tmp_path)
+    _ledger_and_status(session, status_state="interrupted")
+    runtime.workspace_open(str(session))
+    try:
+        body = runtime.session_status_dict(str(session))
+        assert body["offline"]["state"] == "interrupted", "盘上那份的终态照它答"
+        assert body["offline"]["in_process"] is False, "此刻没有任何东西在跑"
         assert body["post"] is None
     finally:
         config_module.set_current(previous)

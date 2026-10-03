@@ -332,6 +332,48 @@ def test_a_failing_background_run_keeps_a_ledger_the_runner_already_settled(
     assert status["artifacts"]["loopback"]["state"] == "done"
 
 
+def test_an_interrupted_ledger_is_not_overwritten_by_a_later_failure(
+    tmp_path, monkeypatch
+) -> None:
+    """盘上那一版是 `interrupted`（人停在块边界）时，补账**不把它盖成 `failed`**。
+
+    打断之后同目录再炸出来的异常（进程收尾的最后一口气）不许把「人停的」改写成
+    「引擎炸了」—— 补账判据把 `interrupted` 算进「已落定」（b1c6a58e）。
+    """
+    session = synth_session(tmp_path / "250919")
+    reason = "interrupted：跑到第 2/5 块被停下"
+
+    def settling_run_session(session_dir, **_kwargs):
+        artifacts.write_status(
+            Path(session_dir) / artifacts.STATUS_NAME,
+            session_id="250919",
+            state="interrupted",
+            started_at="2025-09-19T20:00:00",
+            sources=["mic", "loopback"],
+            artifacts={"mic": {"state": "interrupted", "reason": "interrupted"}},
+            finished_at="2025-09-19T20:00:11",
+            error=reason,
+        )
+        raise RuntimeError("收尾时又炸了一下")
+
+    from meeting.offline import runner
+
+    monkeypatch.setattr(runner, "run_session", settling_run_session)
+
+    post_module.PostProcessHook().launch(str(session))
+    status = wait_until(
+        lambda: (
+            lambda doc: doc
+            if doc.get("finished_at") not in (None, "2025-09-19T20:00:11")
+            else None
+        )(read_status(session)),
+        what="补账把状态文件重写过一遍",
+    )
+    assert status["state"] == "interrupted", status["state"]
+    assert reason in str(status["error"]), status["error"]
+    assert status["artifacts"]["mic"]["reason"] == "interrupted"
+
+
 def test_a_failing_background_run_keeps_the_earlier_status_fields(
     tmp_path, monkeypatch
 ) -> None:

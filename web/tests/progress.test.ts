@@ -223,6 +223,25 @@ describe('进度读数（offline 那份 → 每路一条）', () => {
     expect(view.inProcess).toBe(false);
   });
 
+  it('被打断（b1c6a58e）：自成一相，明说「停了、可以重跑」，不许掉进「跑完了」', () => {
+    const view = progressView(status({}, {
+      state: 'interrupted',
+      in_process: false,
+      finished_at: '2026-09-21T22:20:00+08:00',
+      sources: [
+        road({ done: 1, total: 2, remaining: 1,
+          counts: { transcribed: 1, silent: 0, failed: 0, unjudged: 0 } }),
+        road({ source: 'loopback' }),
+      ],
+    }));
+    expect(view.phase).toBe('interrupted');
+    expect(view.phaseLabel).toBe(
+      '被打断：这一趟停了，已跑的部分留在逐块账里，重新按按钮可从头再跑',
+    );
+    expect(view.onDiskState).toBe('interrupted');
+    expect(view.inProcess).toBe(false);
+  });
+
   it('终态照盘上那份答（partial 不折成 done）；没跑过是另一档', () => {
     const partial = progressView(status({}, { state: 'partial', in_process: false }));
     expect(partial.phase).toBe('finished');
@@ -421,21 +440,25 @@ describe('要不要轮询（有活动才问）', () => {
     const selected = row({ state: 'done', kind: 'meeting' });
     expect(shouldWatch(selected, job(), status({}, { state: 'done', in_process: false }))).toBe(false);
     expect(shouldWatch(selected, job(), status({}, { state: 'idle' }))).toBe(false);
+    // 被打断也是终态（b1c6a58e）：重按按钮才再跑，轮询照样收尾
+    expect(shouldWatch(selected, job(), status({}, { state: 'interrupted', in_process: false }))).toBe(false);
   });
 
   it('终态、没跑过、没选中：不问', () => {
     const selected = row({ state: 'done', kind: 'meeting' });
     expect(shouldWatch(selected, null, status({}, { state: 'done', in_process: false }))).toBe(false);
     expect(shouldWatch(selected, null, status({}, { state: 'idle' }))).toBe(false);
+    expect(shouldWatch(selected, null, status({}, { state: 'interrupted', in_process: false }))).toBe(false);
     expect(shouldWatch(selected, null, null)).toBe(false);
     expect(shouldWatch(null, job(), null)).toBe(false);
   });
 });
 
 describe('阶段图形标记（形状通道）', () => {
-  it('真在跑是转的（spinner → null）、停着一版是红叉、终态打勾、没跑过空心框', () => {
+  it('真在跑是转的（spinner → null）、停着一版与被打断是红叉、终态打勾、没跑过空心框', () => {
     expect(phaseMark('in-flight')).toBeNull();
     expect(phaseMark('stale-running')).toBe('glyph--cross');
+    expect(phaseMark('interrupted')).toBe('glyph--cross');
     expect(phaseMark('finished')).toBe('glyph--done');
     expect(phaseMark('never-run')).toBe('glyph--idle');
   });

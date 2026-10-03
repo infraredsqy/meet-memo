@@ -41,8 +41,10 @@ import {
 import {
   POST_MINUTES_ACTION,
   POST_OFFLINE_ACTION,
+  POST_STOP_ACTION,
   postButtonsView,
   postIdleNote,
+  postStopView,
 } from './post';
 import { SPEAKER_RENAME_ACTION, duplicateNameHolders, namesRows, type NamesRowView } from './names';
 import { failureFrom, type ActionFailureView } from '../failure';
@@ -304,6 +306,17 @@ const POST_LABELS: Readonly<Record<string, string>> = {
   [POST_MINUTES_ACTION]: '直接出纪要',
 };
 
+/**
+ * 待确认的三只弹窗：收编非空目录 / 从列表移除 / 「新会议会打断正在跑的会后」。
+ * 打断那只只在 **offline 档在飞**时摆出来（minutes 在飞没有东西会被打断，不弹）；
+ * `viaConfirm` 记登记走哪半边——非空目录收编那半边要带 `confirm: true`（R20），
+ * 空/会议目录那半边走普通登记。
+ */
+type ConfirmState =
+  | { what: 'unknown'; dir: string }
+  | { what: 'remove'; dir: string }
+  | { what: 'post-interrupt'; dir: string; viaConfirm: boolean };
+
 // ---------------------------------------------------------------------------
 // 首页本体
 // ---------------------------------------------------------------------------
@@ -318,7 +331,7 @@ export function WorkspaceHome({
   // 选择器的两层弹窗与待确认的一只
   const [picker, setPicker] = useState(false);
   const [browse, setBrowse] = useState<DirsResponse | null>(null);
-  const [confirm, setConfirm] = useState<{ what: 'unknown' | 'remove'; dir: string } | null>(null);
+  const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   /** 选择器取数失败的暂存（弹窗里画一行，不顶掉首页的失败块）。 */
   const [browseError, setBrowseError] = useState<string | null>(null);
   /** 会后那两个按钮的动作回执（一句话：这一趟已起 / 被拒的原因在失败块里）。 */
@@ -512,6 +525,14 @@ export function WorkspaceHome({
 
   // -- 动作 ----------------------------------------------------------------
 
+  /**
+   * 「新会议」的登记入口。**offline 档会后在跑时先弹一句确认**（R28 / 设计意图第
+   * 13 条）：「启动新会议会打断会后总结，是否继续」——在飞的是 minutes 时**不弹**
+   * （没有东西会被打断；服务对 minutes 的停止也如实拒，d3），登记直接走。非空目录
+   * （need-confirm）先按 R20 问收编，过了之后再按同一条件问打断（两问都过才登记）。
+   * 不确认就什么都不发；确认之后先打停止动作（受理即回，不等块边界），再走原来的
+   * 登记。读数是顶层 `post_job`，服务端对登记动作不设闸 —— 拦与放都在这一只弹窗里。
+   */
   const openDir = (
     dir: string,
     kindHint: 'empty' | 'meeting' | 'need-confirm',
@@ -520,11 +541,43 @@ export function WorkspaceHome({
       setConfirm({ what: 'unknown', dir });
       return;
     }
+    if (postJob !== null && postJob.kind === 'offline') {
+      setConfirm({ what: 'post-interrupt', dir, viaConfirm: false });
+      return;
+    }
+    openDirNow(dir);
+  };
+
+  /** 登记本体（确认弹窗放行之后走这里；`workspace_open` 动作 + 失败块 + 刷新）。 */
+  const openDirNow = (dir: string): void => {
     setFailure(null);
     setBusy(true);
     void postAction('workspace_open', { dir })
       .then(
         () => undefined,
+        (error) => setFailure(failureFrom(error)),
+      )
+      .then(() => {
+        setBusy(false);
+        reloadAfterAction();
+      });
+  };
+
+  /**
+   * 停掉正在跑的「生成会后精细稿」（R28 / b1c6a58e）：打一只 `post_stop`，受理即回。
+   * 界面随即靠轮询看到状态翻成「被打断」、按钮回到可按。
+   */
+  const stopPost = (): void => {
+    if (postJob === null || postJob.kind !== 'offline') return;
+    setFailure(null);
+    setPostNote(null);
+    setBusy(true);
+    void postAction(POST_STOP_ACTION, { dir: postJob.dir })
+      .then(
+        () =>
+          setPostNote(
+            '停止已受理：这一趟会在当前块收尾之后停下（盘上状态写成「被打断」）。',
+          ),
         (error) => setFailure(failureFrom(error)),
       )
       .then(() => {
@@ -620,6 +673,8 @@ export function WorkspaceHome({
   /** 进度区的读数（有读数才算；读不出来就画失败那一行）。 */
   const prog = status === null ? null : progressView(status);
   const progMark = prog === null ? null : phaseMark(prog.phase);
+  /** 停止入口（R28 / b1c6a58e）：这一场的 offline 在飞时出现在进度区头行。 */
+  const stop = postStopView(postJob, selected?.dir ?? null);
 
   const openFromPicker = (item: { dir: string; kind: PickPath['kind'] }): void => {
     setPicker(false);
@@ -855,6 +910,19 @@ export function WorkspaceHome({
                         {prog.phaseLabel}
                       </span>
                     )}
+                    {/* 停止入口（R28 / b1c6a58e）：只在这一场的 offline 在飞时出现。
+                        受理即回——当前块收尾之后停，盘上状态写成「被打断」。 */}
+                    {stop.visible && (
+                      <button
+                        className="btn btn--small btn--ghost wsprog__stop"
+                        type="button"
+                        disabled={busy}
+                        title="停在当前块收尾之后；已跑过的块留在逐块账里，重新按按钮可从头再跑"
+                        onClick={stopPost}
+                      >
+                        停止
+                      </button>
+                    )}
                     <button
                       className="btn btn--small btn--ghost wsprog__toggle"
                       type="button"
@@ -961,6 +1029,12 @@ export function WorkspaceHome({
           onConfirm={() => {
             const dir = confirm.dir;
             setConfirm(null);
+            // 收编这一问过了（R20）；offline 档在飞时接着问打断（review-1 m2）——
+            // 两问都过才登记，任何一问取消都零发送。
+            if (postJob !== null && postJob.kind === 'offline') {
+              setConfirm({ what: 'post-interrupt', dir, viaConfirm: true });
+              return;
+            }
             setFailure(null);
             setBusy(true);
             void confirmWorkspaceOpen(dir, {
@@ -995,6 +1069,48 @@ export function WorkspaceHome({
                 setBusy(false);
                 reloadAfterAction();
               });
+          }}
+          onCancel={() => setConfirm(null)}
+        />
+      )}
+
+      {confirm !== null && confirm.what === 'post-interrupt' && (
+        <ConfirmDialog
+          title="启动新会议会打断正在跑的会后，是否继续？"
+          text="上一场的「生成会后精细稿」还在跑。继续的话先停掉它——已跑完的块留在逐块账里，盘上状态写成「被打断」，以后可以重新按按钮从头再跑——然后登记你挑的这个目录。取消就什么都不发生。"
+          confirmLabel="打断并继续"
+          busy={busy}
+          onConfirm={() => {
+            const { dir, viaConfirm } = confirm;
+            setConfirm(null);
+            setFailure(null);
+            setBusy(true);
+            // 确认 = 先停、再登记（R28）：停止动作受理即回（不等块边界），登记照走。
+            // 弹窗只在 offline 档在飞时出现；这只守卫接的是「弹窗开着的那一会儿，
+            // 在飞那趟自己收了工」——此刻不发 stop、登记照走。minutes 在飞不弹此窗
+            // （openDir 已收窄，没有东西会被打断）。登记按来路走：非空目录收编那半边
+            // 带 `confirm: true`（R20 / review-1 m2），其余走普通登记。
+            const flying = postJob;
+            const stopFirst =
+              flying !== null && flying.kind === 'offline'
+                ? postAction(POST_STOP_ACTION, { dir: flying.dir }).then(
+                    () => undefined,
+                    (error) => setFailure(failureFrom(error)),
+                  )
+                : Promise.resolve();
+            void stopFirst.then(() => {
+              if (viaConfirm) {
+                void confirmWorkspaceOpen(dir, {
+                  onFail: setFailure,
+                  reload: () => {
+                    setBusy(false);
+                    reloadAfterAction();
+                  },
+                });
+                return;
+              }
+              openDirNow(dir);
+            });
           }}
           onCancel={() => setConfirm(null)}
         />

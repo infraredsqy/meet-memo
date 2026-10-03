@@ -766,8 +766,23 @@ def test_status_file_carries_the_silent_spans_of_the_whole_session(tmp_path) -> 
 
 
 def test_status_file_rejects_an_unknown_state(tmp_path) -> None:
-    """状态只认四档（`running` / `done` / `partial` / `failed`），写别的一律抛
-    （不许在盘上留下一版读不懂的状态）。"""
+    """状态只认五档（`running` / `done` / `partial` / `failed` / `interrupted`），写别的一律抛
+    （不许在盘上留下一版读不懂的状态）。`interrupted` 是「打断会后」节点（b1c6a58e）加的
+    那一档：跑到块边界被人停的终态。"""
+    artifacts.write_status(
+        tmp_path / "status.json",
+        session_id="250919",
+        state="interrupted",
+        started_at="2025-09-19T20:00:00",
+        sources=["mic"],
+        artifacts={},
+        finished_at="2025-09-19T20:01:00",
+        error="interrupted：跑到第 2/5 块被停下",
+    )
+    document = artifacts.read_status(tmp_path / "status.json")
+    assert document["state"] == "interrupted"
+    assert document["finished_at"] == "2025-09-19T20:01:00"
+    assert "跑到第 2/5 块" in (document["error"] or "")
     with pytest.raises(ValueError):
         artifacts.write_status(
             tmp_path / "status.json",

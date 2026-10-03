@@ -1,0 +1,56 @@
+{
+  "dir": "<path>",
+  "session_id": "<session-id>",
+  "kind": "meeting",
+  "state": "done",
+  "date": "2026-09-07",
+  "mode": "both",
+  "segments": [
+    {
+      "index": 1,
+      "started_at": "<iso>",
+      "ended_at": "<iso>",
+      "duration_seconds": 0
+    }
+  ],
+  "has_offline": false,
+  "post": null,
+  "offline": {
+    "ledger": "meeting_offline_progress.jsonl",
+    "state": "interrupted",
+    "started_at": "<iso>",
+    "finished_at": "<iso>",
+    "elapsed_seconds": null,
+    "current_source": null,
+    "sources": [
+      {
+        "source": "mic",
+        "done": 1,
+        "total": 2,
+        "remaining": 1,
+        "current_chunk": null,
+        "counts": {
+          "transcribed": 1,
+          "silent": 0,
+          "failed": 0,
+          "unjudged": 0
+        }
+      },
+      {
+        "source": "loopback",
+        "done": 0,
+        "total": null,
+        "remaining": null,
+        "current_chunk": null,
+        "counts": {
+          "transcribed": 0,
+          "silent": 0,
+          "failed": 0,
+          "unjudged": 0
+        }
+      }
+    ],
+    "in_process": false
+  },
+  "speakers": []
+}

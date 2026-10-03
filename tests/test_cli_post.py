@@ -956,6 +956,44 @@ def test_the_callers_ledger_keeps_a_partial_run_as_it_is(
     assert written["artifacts"]["mic"]["reason"] == "engine_error"
 
 
+def test_the_callers_ledger_keeps_an_interrupted_run_as_it_is(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """盘上那一版是 `interrupted`（人停在块边界）时，补账照它那一档留着（b1c6a58e）。
+
+    打断之后编排函数再接住一个异常（收尾的最后一口气），不许把「人停的」盖成
+    「这一趟失败」—— 补账判据把 `interrupted` 算进已落定的终态。
+    """
+    session = synth_session(tmp_path / "250919")
+    status_path = session / OFFLINE_STATUS_NAME
+    disk_reason = "mic：interrupted：跑到第 2/5 块被停下"
+
+    def an_interrupted_run_that_later_explodes(session_dir, **_kwargs):
+        offline_artifacts.write_status(
+            status_path,
+            session_id="250919",
+            state="interrupted",
+            started_at="2025-09-19T20:00:00",
+            sources=["mic", "loopback"],
+            artifacts={"mic": {"state": "interrupted", "reason": "interrupted"}},
+            finished_at="2025-09-19T20:00:11",
+            error=disk_reason,
+        )
+        raise RuntimeError("收尾那一步炸了")
+
+    monkeypatch.setattr(
+        offline_runner, "run_session", an_interrupted_run_that_later_explodes
+    )
+
+    with pytest.raises(RuntimeError, match="收尾那一步炸了"):
+        run_post(session, minutes_launcher=RecordingLauncher())
+
+    written = json.loads(status_path.read_text(encoding="utf-8"))
+    assert written["state"] == "interrupted", written["state"]
+    assert disk_reason in str(written["error"])
+    assert written["artifacts"]["mic"]["reason"] == "interrupted"
+
+
 def test_post_reports_an_exploding_offline_run_as_a_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

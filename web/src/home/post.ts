@@ -1,4 +1,4 @@
-import type { SessionRow } from '../contract';
+import type { PostJobCell, SessionRow } from '../contract';
 
 /**
  * 工作台上那一场会后的两个按钮的纯逻辑（`docs/requirements.md` R26 / R29）。
@@ -11,6 +11,9 @@ import type { SessionRow } from '../contract';
 /** 按钮的名字：各自说清跑的是什么（R26）。 */
 export const POST_OFFLINE_ACTION = 'post_offline';
 export const POST_MINUTES_ACTION = 'post_minutes';
+
+/** 停掉那一趟的动作名（R28 / b1c6a58e）：post_* 族，只停「生成会后精细稿」这一趟。 */
+export const POST_STOP_ACTION = 'post_stop';
 
 export interface PostButtonsView {
   /** 「生成会后精细稿」能不能按。 */
@@ -87,4 +90,29 @@ export function unsettledOfflineNotice(row: SessionRow): string {
 /** 两个按钮下面那行小声说明：都不按就什么都不发生。 */
 export function postIdleNote(): string {
   return '都不按，这一场就什么都不跑。';
+}
+
+// ---------------------------------------------------------------------------
+// 停掉那一趟（R28 / b1c6a58e）：入口在进度区头行，只在「这一场的 offline 在飞」时出现
+// ---------------------------------------------------------------------------
+
+export interface PostStopView {
+  /** 停止入口显不显示。 */
+  visible: boolean;
+}
+
+/**
+ * 停止入口的判据：**这一场**的 offline 那一趟正在本进程里飞。
+ *
+ * 三条同时成立才出现：`post_job` 在飞（顶层第三格非 null）、跑的是精细稿那一趟
+ * （`kind: 'offline'` —— 纪要那一趟是另一套机制，服务对它的 stop 请求如实拒，入口
+ * 因此不摆）、跑的正是选中这一场（入口长在进度区头行上，只管自己这一场）。
+ */
+export function postStopView(postJob: PostJobCell | null, selectedDir: string | null): PostStopView {
+  const visible =
+    postJob !== null &&
+    postJob.kind === 'offline' &&
+    selectedDir !== null &&
+    postJob.dir === selectedDir;
+  return { visible };
 }

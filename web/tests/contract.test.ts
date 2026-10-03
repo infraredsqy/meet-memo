@@ -587,6 +587,9 @@ describe('工作区样本（4.8 / 4.9，会后进度界面节点 52b24392 接的
     if (name === 'status-after-run') {
       const parsed = sessionStatusSchema.parse(readFixture('sessions', name));
       expect(parsed.offline.state).toBe('done');
+    } else if (name === 'status-interrupted') {
+      const parsed = sessionStatusSchema.parse(readFixture('sessions', name));
+      expect(parsed.offline.state).toBe('interrupted');
     } else {
       const parsed = sessionsResponseSchema.parse(readFixture('sessions', name));
       // 两份采集里都没有会后的活儿在飞 → 顶层第三格如实 null
@@ -594,7 +597,7 @@ describe('工作区样本（4.8 / 4.9，会后进度界面节点 52b24392 接的
     }
   });
 
-  it('三份样本一个不少：目录里没有多余的工作区样本', () => {
+  it('样本一个不少：目录里没有多余的工作区样本', () => {
     expect(listFixtures('sessions')).toEqual([...SESSIONS_FIXTURES].sort());
   });
 
@@ -649,6 +652,20 @@ describe('工作区样本（4.8 / 4.9，会后进度界面节点 52b24392 接的
     expect(parsed.speakers).toEqual([
       { key: 'mic', source: 'mic', label: '本地', name: null, segments: null },
     ]);
+  });
+
+  it('单场状态被打断档（b1c6a58e）：offline.state 照盘答 interrupted、不折成 running', () => {
+    const parsed = sessionStatusSchema.parse(readFixture('sessions', 'status-interrupted'));
+    expect(parsed.offline.state).toBe('interrupted');
+    expect(parsed.offline.in_process).toBe(false);
+    expect(parsed.offline.finished_at).toEqual(expect.any(String));
+    // 打断前跑过的块照读：mic 1/2，loopback 没开跑（total 未知如实 null）
+    const mic = parsed.offline.sources.find((road) => road.source === 'mic');
+    const loopback = parsed.offline.sources.find((road) => road.source === 'loopback');
+    expect(mic?.done).toBe(1);
+    expect(mic?.total).toBe(2);
+    expect(loopback?.done).toBe(0);
+    expect(loopback?.total).toBeNull();
   });
 
   it('单场状态多一格/少一格都不符合契约', () => {

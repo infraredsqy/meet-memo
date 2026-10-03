@@ -265,11 +265,12 @@ def test_summarize_and_its_two_codes_are_registered():
     `workspace_open` / `workspace_remove` 两只是工作台收编节点 `e2f6166b` 加的；
     `post_offline` / `post_minutes` 两只是会后按钮节点（`05a48b6a`）加的；
     `pause` / `resume` / `set_source` 是暂停那一个节点（`10770b41`）加的；
-    末尾 `speaker_rename` 是人名节点（`91b6752e`）加的那一只。"""
+    `speaker_rename` 是人名节点（`91b6752e`）加的那一只；
+    `post_stop` 是打断会后那个节点（`b1c6a58e`）加的。"""
     assert ACTION_NAMES == (
         "start", "stop", "mute_session", "settings_update", "reprobe", "dev_inject",
         "summarize", "workspace_open", "workspace_remove",
-        "post_offline", "post_minutes",
+        "post_offline", "post_minutes", "post_stop",
         "pause", "resume", "set_source",
         "speaker_rename",
     )

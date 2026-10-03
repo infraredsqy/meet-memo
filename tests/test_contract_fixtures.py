@@ -885,6 +885,81 @@ def test_capture_session_status_group(tmp_path, make_client, contract_regen) -> 
     )
 
 
+def test_capture_session_status_interrupted_group(tmp_path, make_client, contract_regen) -> None:
+    """`GET /api/sessions/{id}` 的**被打断档**（b1c6a58e）：`offline.state` 照盘上答
+    `interrupted`。
+
+    采集形状与 `status-after-run` 同一条路：场次目录里落一份逐块账（mic 两块里跑了
+    一块、loopback 没跑）与一版 `interrupted` 状态文件，登记进工作台之后打那只端点。
+    打断这一档要回答的是「停了、可以重按」：`offline.state` 是盘上自己的终态
+    `interrupted`（折档行把它照盘透传，不许折回 `running`）、`in_process` 是 `false`。
+    """
+    from meeting.offline import artifacts as offline_artifacts
+    from meeting.offline import progress as offline_progress
+
+    client = make_client({"capture.backend": "dev"})
+
+    place = tmp_path / "contract-session-interrupted"
+    place.mkdir()
+    session_dir = place / "260907"
+    session_dir.mkdir()
+    (session_dir / "session.json").write_text(
+        json.dumps(
+            {
+                "session_id": "260907",
+                "state": "done",
+                "date": "2026-09-07",
+                "mode": "both",
+                "segments": [
+                    {
+                        "index": 1,
+                        "started_at": "2026-09-07T20:00:00+08:00",
+                        "ended_at": "2026-09-07T20:03:00+08:00",
+                        "duration_seconds": 3.0,
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    offline_progress.write_progress(
+        offline_progress.ledger_path(session_dir),
+        session_id="260907",
+        sources=["mic", "loopback"],
+        rows=[
+            offline_progress.ChunkProgress(
+                "mic", 1, 0.0, 450.0, "transcribed",
+                "[00:00] **c01:S01**: 被打断前跑完的那一块", 3, 41.7,
+            ).to_row(chunks_total=2),
+        ],
+    )
+    offline_artifacts.write_status(
+        session_dir / offline_artifacts.STATUS_NAME,
+        session_id="260907",
+        state="interrupted",
+        started_at="2026-09-07T20:00:00",
+        sources=["mic", "loopback"],
+        artifacts={},
+        finished_at="2026-09-07T20:01:30",
+        error="interrupted：跑到第 1/2 块被停下；没开跑：loopback",
+    )
+
+    opened = _act(client, "workspace_open", {"dir": str(session_dir)})
+    assert opened.status_code == 200, opened.text
+
+    queried = client.get(f"/api/sessions/{quote(str(session_dir), safe='')}")
+    assert queried.status_code == 200, queried.text
+    body = queried.json()
+    assert body["offline"]["state"] == "interrupted"
+    assert body["offline"]["in_process"] is False
+
+    emit(
+        {"sessions/status-interrupted.json": normalize(body)},
+        regen=contract_regen,
+    )
+
+
 # ---------------------------------------------------------------------------
 # SSE 帧样本（真服务子进程：dev 替身 + module:Class 假转写后端）
 # ---------------------------------------------------------------------------

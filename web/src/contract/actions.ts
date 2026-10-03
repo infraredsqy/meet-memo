@@ -166,12 +166,14 @@ export const summarizeOkSchema = z
   .strict();
 
 /**
- * 会后两个按钮（`post_offline` / `post_minutes`）的成功体：通用信封 + 一个 `post` 键。
+ * 会后两个按钮（`post_offline` / `post_minutes`）与停掉那一趟（`post_stop`）的成功体：
+ * 通用信封 + 一个 `post` 键。
  *
  * 这一格说的是「这一趟跑的是**哪一场**、跑的**哪一趟**」（`{kind, dir}`），回执里
  * **没有**「跑完了没有」这一格 —— 那一趟可能跑一小时，跑成什么样由这一场盘上的
  * 状态文件回答（`meeting_offline_status.json` / `meeting_minutes_status.json`，
- * 见 `docs/requirements.md` R26 与 R27）。
+ * 见 `docs/requirements.md` R26 与 R27）。`stopping` 只有 `post_stop` 的受理回执才带
+ * （`true` = 旗标已立，线程在下一块开跑前收场；起跑那两只动作没有这一格）。
  */
 export const postOkSchema = z
   .object({
@@ -181,6 +183,7 @@ export const postOkSchema = z
       .object({
         kind: z.enum(['offline', 'minutes']),
         dir: z.string(),
+        stopping: z.boolean().optional(),
       })
       .strict(),
   })

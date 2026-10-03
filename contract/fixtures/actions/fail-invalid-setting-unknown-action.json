@@ -5,7 +5,7 @@
   "body": {
     "ok": false,
     "code": "invalid_setting",
-    "message": "不认识的动作名：'definitely_not_an_action'（可用：start / stop / mute_session / settings_update / reprobe / dev_inject / summarize / workspace_open / workspace_remove / post_offline / post_minutes / pause / resume / set_source / speaker_rename）",
+    "message": "不认识的动作名：'definitely_not_an_action'（可用：start / stop / mute_session / settings_update / reprobe / dev_inject / summarize / workspace_open / workspace_remove / post_offline / post_minutes / post_stop / pause / resume / set_source / speaker_rename）",
     "detail": {
       "action": "definitely_not_an_action",
       "known": [
@@ -20,6 +20,7 @@
         "workspace_remove",
         "post_offline",
         "post_minutes",
+        "post_stop",
         "pause",
         "resume",
         "set_source",

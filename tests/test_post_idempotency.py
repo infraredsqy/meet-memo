@@ -584,6 +584,28 @@ def test_a_running_minutes_layer_rejects_the_run(
     assert len(launcher.calls) == launcher_calls
 
 
+def test_an_interrupted_offline_layer_reruns_from_scratch_without_force(
+    tmp_path: Path,
+) -> None:
+    """被打断的那一场（b1c6a58e）：不带 `--force` 也放行，离线段**从头再跑**。
+
+    打断落的是终态 `interrupted`：幂等闸只拦 `running`（interrupted 天然放行），
+    「已完成」判据只认 `done`（interrupted 照样整段重跑）—— spec 的完成判定
+    「打断之后重新按按钮，能从头再跑」在命令行这一条入口上的落点。
+    """
+    session, engine, launcher = a_finished_session(tmp_path / "250919")
+    write_offline_status(session, state="interrupted")
+    engine_calls = len(engine.calls)
+
+    summary = run_post(session, engine=engine, minutes_launcher=launcher)
+
+    assert summary["exit_code"] == EXIT_OK, summary.get("error")
+    assert len(engine.calls) > engine_calls, "打断之后重按：离线段从头再跑"
+    assert json.loads((session / OFFLINE_STATUS_NAME).read_text(encoding="utf-8"))[
+        "state"
+    ] == "done"
+
+
 def test_force_takes_the_running_layer_along_and_rebuilds_both(tmp_path: Path) -> None:
     """带 `--force` → `running` 那一档放行，**两层都重跑**（两条计数都涨）。"""
     session, engine, launcher = a_finished_session(tmp_path / "250919")

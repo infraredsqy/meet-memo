@@ -112,8 +112,14 @@ export const HEARTBEAT_FIXTURES = ['idle', 'recording'] as const;
 export const DEVICES_FIXTURES = ['all'] as const;
 
 /**
- * 工作区三份样本（4.8 / 4.9）：空注册表、登记三档目录之后的清单 + `recent`、
- * 单场状态（两份块账 + 状态文件落好之后的那一读）。
+ * 工作区四份样本（4.8 / 4.9）：空注册表、登记三档目录之后的清单 + `recent`、
+ * 单场状态（两份块账 + 状态文件落好之后的那一读）、单场状态的**被打断档**
+ * （b1c6a58e：盘上落 `interrupted` 的那一读）。
  */
-export const SESSIONS_FIXTURES = ['empty', 'after-open', 'status-after-run'] as const;
+export const SESSIONS_FIXTURES = [
+  'empty',
+  'after-open',
+  'status-after-run',
+  'status-interrupted',
+] as const;
 

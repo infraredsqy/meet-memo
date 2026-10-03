@@ -545,7 +545,7 @@ describe('detail 键集合与 4.4 表逐条相等（M1，样本层精确）', ()
  * （`reprobe` 落地时就漏在这里）。下面两条一条钉枚举、一条钉它**覆盖得住服务报的 `known`**。
  */
 describe('动作名清单与样本里的 known 对齐（看守）', () => {
-  it('`ACTION_NAMES` 逐字十五个，`actionNameSchema` 就是这一份', () => {
+  it('`ACTION_NAMES` 逐字十六个，`actionNameSchema` 就是这一份', () => {
     expect([...ACTION_NAMES]).toEqual([
       'start',
       'stop',
@@ -558,6 +558,7 @@ describe('动作名清单与样本里的 known 对齐（看守）', () => {
       'workspace_remove',
       'post_offline',
       'post_minutes',
+      'post_stop',
       'pause',
       'resume',
       'set_source',
@@ -566,7 +567,7 @@ describe('动作名清单与样本里的 known 对齐（看守）', () => {
     expect(actionNameSchema.options).toEqual([...ACTION_NAMES]);
   });
 
-  it('十五个名字全过 schema，清单外的名字与大小写变体被拒', () => {
+  it('十六个名字全过 schema，清单外的名字与大小写变体被拒', () => {
     expectVerdicts(
       actionNameSchema,
       ['PAUSE', 'START', 'Summarize', 'setSource', ''],

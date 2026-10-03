@@ -200,7 +200,7 @@ from typing import Any, Sequence, TYPE_CHECKING
 
 from meeting import config as config_module
 from meeting.offline import artifacts
-from meeting.offline.engine import OfflineEngine, OfflineSegment
+from meeting.offline.engine import OfflineEngine, OfflineSegment, release_engine
 from meeting.offline.progress import ChunkProgress, OfflineProgressLedger
 from meeting.offline.speakers import number_speakers
 from meeting.session import archive_name, segment_archive_paths
@@ -252,6 +252,11 @@ REASON_NO_SEGMENTS = "no_segments"
 #: 分块模式下**每一块都失败**：这一路一段都没留下来（与「一块坏、别的块还在」的
 #: `partial` 分开记，下游按这个词档区分「全丢」与「缺一段」）
 REASON_ALL_CHUNKS_FAILED = "all_chunks_failed"
+#: **这一路跑到块边界被停**（「打断会后」节点 b1c6a58e）：取消旗标在逐块主循环顶命中，
+#: 当前块跑完、下一块开跑前收场 —— 这一路带着已经跑完的那些块提前结束。它与 `not_run`
+#: （压根没轮到）分开记：跑过几块、停在第几块写在逐路的 `error` 那一句话里，未跑的块
+#: 进 `missing_spans`（缺口只供人读，不进任何判定 —— `docs/design-intent.md` 第 6 条）。
+REASON_INTERRUPTED = "interrupted"
 #: 数字静音门跳过的那一块。**它不是失败**：这个词只进 `reasons` 这个分布，
 #: 不进缺失区间（见模块头「数字静音门」）。
 REASON_DIGITAL_SILENCE = "digital_silence"
@@ -1256,6 +1261,7 @@ def run_session(
     minutes: bool = True,
     announce_minutes: bool = False,
     progress: OfflineProgressLedger | None = None,
+    cancel: Any = None,
 ) -> dict:
     """对一场会跑完会后离线转写，落三份产物 + 状态文件，返回摘要 dict。
 
@@ -1263,9 +1269,17 @@ def run_session(
     `post.dtype` 现造一台。`config` 是可选的那一份配置对象（`meeting.config.Config`），
     缺省读进程当前生效值。
 
+    `cancel` 是**可注入的取消旗标**（callable，返回真 = 请求停；缺省 `None` = 现行为，
+    CLI 那一路与一切既有调用一个字不改）：在**逐块主循环顶**检查（单趟与分块共这一条
+    主循环），当前块跑完、下一块开跑前收场 —— 正在跑的那一块不掐。命中之后这一趟
+    **当场走到返回**（引擎是本函数的局部变量，引用计数随返回释放；`finally` 里再补一次
+    显式让显存，`release_engine()`），盘上状态由本函数自己写成 `interrupted`（终态写入
+    只归它），纪要那一层**不通知**（半份稿不当完整输入）。**打断检查只落在块边界**：
+    「状态立刻写成被打断」在块边界语义下是「当前块收尾后立刻」。
+
     `minutes_launcher` / `force` / `minutes` 是尾巴上那道纪要通知（`_announce_minutes()`）
     的三个入参，**一路向下传**（不落在模块全局上）：`minutes_launcher` 非空时用它替掉
-    「按 `minutes.hook` 解析出来的启动器」，`force = True` 时跳过那道「已是终态」的闸，
+    「按 `minutes.hook` 解析出来的启动器」，`force = True` 时跳过那道「已完成」的闸，
     `minutes = False` 时**这一趟根本不通知纪要那一层**。
 
     `announce_minutes` 是离线链拉起纪要的**人工放行开关**（缺省 `False`）：不放行就在尾巴上
@@ -1282,7 +1296,9 @@ def run_session(
     **一路的失败不带走整场**：那一路的失败原因落进报告与状态文件，另一路照常跑。
     整场那一档因此有三档：每一路都没交回落 `failed`，至少一路跑成、也至少一路整条
     没交回落 `partial`，每一路都交回落 `done` —— **只看顶层 `state` 这一格**就分得开
-    「两路都成」与「一路整条没交回」。
+    「两路都成」与「一路整条没交回」。**被打断是这之外的第四档**（`cancel` 命中才落）：
+    `interrupted`，缺口（哪一路跑到第几块、哪些路没开跑、哪些产物没有）如实拼进
+    `error` 那一格 —— 只供人读，不作任何判据（`docs/design-intent.md` 第 6 条）。
 
     **"一路整条失败"这件事读得出来**：状态文件的 `artifacts.<source>` **每一路都有一格**
     （跑成的、没跑成的都有），那一格自带 `state` / `reason` / `error` —— 只看这几个字段
@@ -1332,6 +1348,7 @@ def run_session(
     begun = time.monotonic()
     report_path: Path | None = None
     descriptor: dict[str, Any] = {}
+    interrupted = False
 
     try:
         # 描述符先按「引擎还不存在」备一版（`engine_descriptor(config, None)` 的 `device`
@@ -1361,20 +1378,30 @@ def run_session(
             artifacts={},
         )
 
+        interrupted = False
         for source in sources:
-            metrics.append(
-                _run_one_source(
-                    directory,
-                    source,
-                    engine=engine,
-                    engine_error=engine_error,
-                    session_id=session_id,
-                    descriptor=descriptor,
-                    config=config,
-                    per_source=per_source,
-                    progress=progress,
-                )
+            # **逐路边界也是块边界**：上一路收场之后、下一路开跑之前再核一次旗标 ——
+            # 单趟场上每路只有一块，「下一块开跑前停」在这里兑现成「下一路开跑前停」。
+            if cancel is not None and cancel():
+                interrupted = True
+                _log.info("会后离线：取消旗标已立，%s 这一路不再开跑", source)
+                break
+            metric = _run_one_source(
+                directory,
+                source,
+                engine=engine,
+                engine_error=engine_error,
+                session_id=session_id,
+                descriptor=descriptor,
+                config=config,
+                per_source=per_source,
+                progress=progress,
+                cancel=cancel,
             )
+            metrics.append(metric)
+            if metric.reasons.get(REASON_INTERRUPTED):
+                interrupted = True
+                break
         total_wall = time.monotonic() - begun
 
         report_path = artifacts.write_report(
@@ -1407,28 +1434,74 @@ def run_session(
         # （`finish()` 内部兜住落盘失败），原来那个异常照旧上抛。
         if progress is not None:
             progress.finish(finished_at=_now_iso())
+        # **模型当场让出显存**（`docs/design-intent.md` 第 21 条：跑完、打断、失败都当场
+        # 结束）：丢掉引擎手里那两格引用、再请 torch 把缓存还给系统。引用计数本来就随
+        # 本函数返回清掉引擎，但 PyTorch 的缓存分配器**不会自动**把预留显存还给驱动 ——
+        # 服务进程是常驻的，不清缓存那一格就一直白占（会中 `release_gpu()` 的先例，
+        # `meeting/backends/transcribe.py`）。假件与没装 torch 的机器上安静跳过。
+        if engine is not None:
+            try:
+                release_engine(engine)
+            except Exception:  # pragma: no cover - 释放失败不影响这一趟的结论
+                _log.warning("会后离线：引擎显存释放那一步出意外（不影响这一趟）", exc_info=True)
 
-    failed = [item for item in metrics if item.state != "done"]
+    failed = [item for item in metrics if item.state != "done" and not item.reasons.get(REASON_INTERRUPTED)]
     # **顶层那一档必须把「一路整条没交回」立起来**：这一档从前只有 `done` / `failed` 两档，
     # 一路跑成、一路整条失败时顶层落 `done` —— 读方只看 `state` 这一格，会以为这一层没问题。
     # 三档的分法：每一路都没交回落 `failed`（一份产物都出不来）；至少一路跑成、至少一路
     # 整条没交回，落 `partial`（缺的是哪一路看 `artifacts.<source>`）；每一路都交回了落
     # `done`。**没声跳过那一档不在这里**：那一路的 `state` 仍是 `done`（它什么都没出错）。
-    if metrics and len(failed) == len(metrics):
+    # **打断档在这三档之前**（b1c6a58e）：旗标命中就落 `interrupted`，跑成的那几路照旧
+    # 带着 `done` 的格子，没跑到的那几路补上 `interrupted` 的格子（下面现开）。
+    if interrupted:
+        state = "interrupted"
+    elif metrics and len(failed) == len(metrics):
         state = "failed"
     elif failed:
         state = "partial"
     else:
         state = "done"
     error = None
-    if failed:
+    if interrupted:
+        # **缺口注记（d7，只供人读）**：哪一路跑到第几块、哪些路没开跑 —— 读被打断
+        # 那一场的人从这一句就知道缺了什么。任何代码都不许拿它当判据。
+        gap_notes = [
+            f"{item.source}：{item.error}"
+            for item in metrics
+            if item.reasons.get(REASON_INTERRUPTED)
+        ]
+        never_ran = [str(source) for source in sources if source not in per_source]
+        if never_ran:
+            gap_notes.append(
+                "没开跑：" + "、".join(never_ran) + "（逐块账里没有它们的行）"
+            )
+        error = "；".join(gap_notes) or "interrupted：取消旗标在块边界命中，这一趟收场"
+        # 没跑到的那几路**也要有格子**（同 `_write_failed_status()` 的兜法）：
+        # `reason = interrupted`，读方按同一套键读得出「缺的是哪几路」。
+        for source in sources:
+            per_source.setdefault(
+                source,
+                _failed_source_row(
+                    artifacts.SourceMetrics(
+                        source=str(source),
+                        state="interrupted",
+                        reasons={REASON_INTERRUPTED: 1},
+                    )
+                ),
+            )
+    elif failed:
         error = "；".join(f"{item.source}：{item.error or item.state}" for item in failed)
     # 有一路缺了一段（跑了分块、其中某块没成）时整场仍落 `done`（产物可用、那一格是终态），
     # 但 `partial` 明确立起来、`error` 里补一句「哪一段没有转写」：
     # **一份少了 450 秒却报 `done` 的转写，下游读不出它少了东西**。
-    degraded = [item for item in metrics if item.state == "done" and item.partial]
+    # **被打断的那一路也进这一格**（b1c6a58e）：它缺的是「没跑到的那些块」——
+    # 打断场顶层 `partial` 落假就等于说「这场不缺东西」，与缺口注记自相矛盾。
+    degraded = [
+        item for item in metrics
+        if item.state in ("done", "interrupted") and item.partial
+    ]
     partial = bool(degraded)
-    if degraded:
+    if degraded and not interrupted:
         note = "；".join(
             f"{item.source}：{_missing_spans_note(item.missing_spans)}"
             f"（原因：{'/'.join(sorted(_failure_reasons(item))) or REASON_ENGINE_ERROR}，"
@@ -1469,8 +1542,17 @@ def run_session(
         gate=gate,
     )
 
-    if not minutes:
+    if interrupted:
+        # **打断那一趟不通知纪要**（b1c6a58e）：稿子不完整（哪几块没跑写在 `error` 里），
+        # 拿半份稿出纪要就是把「缺一段」偷偷传给下游。重按按钮从头跑完的那一趟
+        # 走的是正常路径，纪要等那一次。
         minutes_summary: dict[str, Any] = {
+            "hook": "skipped",
+            "announced": False,
+            "reason": "这一趟被打断：稿子不完整，纪要那一层不通知",
+        }
+    elif not minutes:
+        minutes_summary = {
             "hook": "skipped",
             "announced": False,
             "reason": "这一趟只要会后精细稿",
@@ -1489,6 +1571,7 @@ def run_session(
         "session_id": session_id,
         "session_dir": str(directory),
         "state": state,
+        "interrupted": interrupted,
         "partial": partial,
         "silent": bool(silent_spans),
         "silent_spans": [[round(float(a), 3), round(float(b), 3)] for a, b in silent_spans],
@@ -1508,6 +1591,67 @@ def run_session(
         session_id, state, len(sources), total_wall,
     )
     return summary
+
+
+def write_interrupted_status(
+    session_dir: str | Path,
+    *,
+    reason: str,
+) -> dict[str, Any] | None:
+    """把盘上停在 `running` 的那版离线状态补成 `interrupted`（**服务启动对账**用）。
+
+    「被打断」终态的第二个写点：`run_session` 自己的打断终态由它自己落（它手里有全部
+    现场），这一只给**进程死了、盘上停着 running** 的对账用（服务重启时发现上一趟
+    offline 会后没跑完，b1c6a58e 的 d5）—— 从盘上读（状态文件 + 逐块账）拼出**同一
+    形状**的终态：同十二格、`state = "interrupted"`、缺口注记拼进 `error`。
+
+    盘上不是 `running`（已经是终态、或压根没有状态文件）时**什么都不写**、交回 `None`
+    ——对账不许把已经落定的终态翻掉。写完交回盘上那一版（读方据此记 log）。
+    """
+    directory = Path(session_dir)
+    status_path = directory / artifacts.STATUS_NAME
+    try:
+        existing = artifacts.read_status(status_path)
+    except artifacts.ArtifactContractError:
+        return None
+    if str(existing.get("state") or "") != "running":
+        return None
+    from meeting.offline import progress as progress_module
+
+    session_id = str(existing.get("session_id") or directory.name)
+    sources = [str(item) for item in existing.get("sources") or []]
+    snapshot = progress_module.snapshot_of(
+        directory, sources=sources, session_id=session_id
+    )
+    per_road = []
+    missing_any = False
+    for road in snapshot["sources"]:
+        total = road["total"]
+        per_road.append(
+            f"{road['source']} 跑过 {road['done']}/{total if total is not None else '?'} 块"
+        )
+        if road["remaining"] not in (None, 0):
+            missing_any = True
+    gap = "；".join(per_road) if per_road else "逐块账读不出（这一趟可能一块都没落）"
+    note = (
+        f"{REASON_INTERRUPTED}：{reason}；{gap}；"
+        "正式稿与对照表都还没有（已跑块的文字在逐块账里），重按按钮可从头再跑"
+    )
+    artifacts.write_status(
+        status_path,
+        session_id=session_id,
+        state="interrupted",
+        started_at=str(existing.get("started_at") or _now_iso()),
+        sources=sources,
+        artifacts=dict(existing.get("artifacts") or {}),
+        finished_at=_now_iso(),
+        error=note,
+        partial=missing_any,
+        silent=bool(existing.get("silent")),
+        silent_spans=list(existing.get("silent_spans") or []) or None,
+        gate=dict(existing.get("gate") or {}) or None,
+    )
+    return artifacts.read_status(status_path)
 
 
 def _announce_minutes(
@@ -1833,13 +1977,24 @@ def _run_one_source(
     config: Any,
     per_source: dict[str, dict[str, Any]],
     progress: OfflineProgressLedger | None = None,
+    cancel: Any = None,
 ) -> artifacts.SourceMetrics:
     """跑一路：取音频 → 算切法 → 逐块调引擎 → 编号 → 落两份按路的产物 → 交回度量。
+
+    `cancel` 是**可注入的取消旗标**（callable，返回真 = 请求停）：透传给
+    `_execute_chunks()`，在逐块主循环顶检查 —— 当前块跑完、下一块开跑前收场
+    （正在跑的那一块不掐：引擎是同步推理，块级 `except` 会把异常吞成块失败）。
+    缺省 `None` = 现行为（CLI 与一切既有调用一个字不改）。
 
     本函数**不抛**：这一路的任何失败都记进度量（`state = "failed"` + `error`），
     让另一路照常跑完。返回时 `per_source` 里已经补上这一路的产物名 —— **跑成与没跑成
     都有那一格**（没跑成的那一路是 `_failed_source_row()` 出的简版：`state = "failed"`、
     `reason` 与 `error`，三份产物名照旧缺席）。
+
+    **被打断的那一路也有一格**（`state = "interrupted"`、`reason = interrupted`）：
+    正式稿与对照表不由这里写 —— 那两份是「整路跑完」才写的产物，半份稿缺哪几段的
+    说明行只有完整跑完的那次才写得周全；半份材料就是逐块账上已有的那几行（每块当场
+    落盘），未跑的块进 `missing_spans` 与顶层 `error` 的缺口注记。
 
     分块由 `post.chunk_seconds` 定（见模块头那一节）：块数为 1 时引擎拿到原始音频路径
     （单趟），块数多于一的时候逐块切、逐块调，块内编号带 `cNN:` 命名空间、时间轴加偏移。
@@ -1861,6 +2016,7 @@ def _run_one_source(
     paths, note = resolve_audio(directory, source)
     segments: list[OfflineSegment] = []
     wrote_artifacts = False
+    stopped = False
 
     if paths is None:
         metric.state = "failed"
@@ -1890,7 +2046,7 @@ def _run_one_source(
                 # 分母在**进逐块循环之前**定下来（这一路切了几块）：它来自切块计划，
                 # 不因某一块失败或跳过而增减。
                 progress.start_source(source, len(plan.chunks))
-            segments, runs, load_failure = _execute_chunks(
+            segments, runs, load_failure, stopped = _execute_chunks(
                 directory,
                 source,
                 paths,
@@ -1899,6 +2055,7 @@ def _run_one_source(
                 waveform=waveform,
                 decode_attempted=decode_attempted,
                 progress=progress,
+                cancel=cancel,
             )
         except Exception as exc:  # 切法/解码抛错：这一路失败，另一路照跑
             metric.state = "failed"
@@ -1920,7 +2077,30 @@ def _run_one_source(
                 )
             _log.exception("会后离线：%s 这一路引擎抛错（如实记账，继续跑另一路）", source)
         else:
-            if load_failure is not None:
+            if stopped:
+                # **块边界命中了取消旗标**：这一路带着已跑完的那几块就地收场（b1c6a58e）。
+                # 正式稿与对照表照旧不写（半份稿不由这里落）；已跑块的成败照旧进度量，
+                # 未跑的块进缺失区间 —— 缺口记录只供人读（`docs/design-intent.md` 第 6 条）。
+                metric.reasons[REASON_INTERRUPTED] = 1
+                metric.state = "interrupted"
+                _record_chunk_runs(metric, runs)
+                ran_indexes = {run.index for run in runs}
+                for step in plan.chunks:
+                    if step.index in ran_indexes:
+                        continue
+                    metric.missing_spans.append(
+                        (float(step.offset), float(step.offset) + float(step.seconds))
+                    )
+                metric.partial = bool(metric.missing_spans)
+                metric.error = (
+                    f"{REASON_INTERRUPTED}：跑到第 {len(runs)}/{len(plan.chunks)} 块被停下"
+                    f"（前 {len(runs)} 块的文字在逐块账里；这一路的正式稿与对照表没有落）"
+                )
+                _log.warning(
+                    "会后离线：%s 被打断：已跑 %d/%d 块，下一块开跑前收场",
+                    source, len(runs), len(plan.chunks),
+                )
+            elif load_failure is not None:
                 # **引擎加载这一档**：这一路一块都没跑（模型压根没起来），失败原因按
                 # `engine_load_error` 记，不折成逐块那句笼统的 `engine_error`——两者是
                 # 两件要分别动手的事（模型没起来 / 模型起来了、某一块没跑成）。
@@ -2042,8 +2222,17 @@ def _execute_chunks(
     waveform: Any = None,
     decode_attempted: bool = False,
     progress: OfflineProgressLedger | None = None,
-) -> tuple[list[OfflineSegment], list[ChunkRun], str | None]:
-    """按切法逐块调引擎，交回 `(拼回整场时间轴的分段, 逐块记账, 加载失败原话)`。
+    cancel: Any = None,
+) -> tuple[list[OfflineSegment], list[ChunkRun], str | None, bool]:
+    """按切法逐块调引擎，交回 `(拼回整场时间轴的分段, 逐块记账, 加载失败原话, 被打断没有)`。
+
+    第四个交回值是**打断档**（b1c6a58e）：`cancel` 是可注入的取消旗标（callable，返回真
+    = 请求停），在**逐块主循环顶**检查 —— 当前块跑完、下一块开跑前收场，正在跑的那一块
+    不掐（引擎是同步推理，线程模型下从外部掐不动一个正在跑的 CUDA 调用；块级 `except`
+    还会把普通异常吞成块失败照跑下一块，用异常表达取消因此行不通）。命中即带着已
+    merged 的结果提前返回，`stopped = True`；`cancel=None`（CLI 与既有调用）一个检查都
+    不插，行为逐字不变。**单趟与分块共用这一条主循环，打断也不开特例**：单趟场上
+    「跑到一半」只有整场开始前那一个块边界。
 
     `paths` 是这一路的**段路径表**（序号升序 = 连续时间轴）。单趟（块数为 1）时**不切块**：
     恰好一段时把那一段的原始音频路径喂引擎，产物与加 `post.chunk_seconds` 之前逐字一致；
@@ -2109,8 +2298,18 @@ def _execute_chunks(
 
     merged: list[OfflineSegment] = []
     runs: list[ChunkRun] = []
+    stopped = False
     try:
         for step in steps:
+            # **打断检查点（块与块之间唯一的一处）**：当前块跑完、下一块开跑前停
+            # （b1c6a58e）。旗标是可注入的 callable，`None` = 从不命中（现行为）。
+            if cancel is not None and cancel():
+                stopped = True
+                _log.info(
+                    "会后离线：%s 命中取消旗标，第 %d 块不再开跑（已跑 %d/%d 块）",
+                    source, step.index, len(runs), len(steps),
+                )
+                break
             try:
                 target = (
                     _materialize_chunk(directory, audio_paths, step, waveform)
@@ -2202,7 +2401,7 @@ def _execute_chunks(
                     _log.error(
                         "会后离线：%s 这一路引擎没加载起来（%s）", source, load_failure
                     )
-                    return [], [], load_failure
+                    return [], [], load_failure, False
 
             begun = time.monotonic()
             try:
@@ -2275,7 +2474,7 @@ def _execute_chunks(
     finally:
         if materialize or series_concat:
             clear_chunk_dir(directory)
-    return merged, runs, None
+    return merged, runs, None, stopped
 
 
 def _materialize_chunk(
@@ -2664,15 +2863,22 @@ def _failed_source_row(metric: artifacts.SourceMetrics) -> dict[str, Any]:
     「哪一路什么都没有」这件事因此读不出来。这一格与落了产物的那一路**同形**：
     同样的键、缺的只是那三个产物名（这一路本来就没落文件）与逐路读数。
 
-    `reason` 取这一路最要紧的那一个词档（加载失败 > 没音频 > 引擎抛错 > 一段都没交回），
-    与 `state` 合起来就是「这一路是怎么没的」；`error` 放着那句话的原话。
+    `reason` 取这一路最要紧的那一个词档（被打断 > 加载失败 > 没音频 > 引擎抛错 > 一段
+    都没交回），与 `state` 合起来就是「这一路是怎么没的」；`error` 放着那句话的原话。
+    `partial` / `missing_spans` 两格照度量**原样带**：失败的路这两格本来就是空/假
+    （它整条没交回，没有「缺哪几块」可说），被打断的那一路带着未跑块的真实区间。
 
     跑过的那一路的 `reasons` 一定有词（每条失败路径都往那里记一笔），也因此**走不到**
     次序表的兜底：兜底那一版状态文件给没轮到的路现开一格时，自己把 `REASON_NOT_RUN`
     记进 `reasons`（见 `_write_failed_status()`），下面按词自身认它 —— 于是「这一路压根
     没跑」在这一格上说得出口，读方按原因筛「是不是引擎的锅」时也不会把它算进去。
     """
-    if metric.reasons.get(REASON_NOT_RUN):
+    if metric.reasons.get(REASON_INTERRUPTED):
+        # 打断那一档（b1c6a58e）按词自身认，与 `not_run` 同一套手法：它不在
+        # `_REASON_PRIORITY` 次序表里（次序表说的是「跑过一场之后怎么没的」），
+        # 兜成 `engine_error` 会把「被人停下」说成「引擎的锅」。
+        reason = REASON_INTERRUPTED
+    elif metric.reasons.get(REASON_NOT_RUN):
         # 兜底那一版给没轮到的路现开的那一格：明写着这个词（引擎一次都没被喊过）。
         reason = REASON_NOT_RUN
     elif metric.error is None and not metric.reasons:
@@ -2694,8 +2900,8 @@ def _failed_source_row(metric: artifacts.SourceMetrics) -> dict[str, Any]:
             "audio_seconds": round(float(metric.audio_seconds), 3),
             "state": metric.state,
             "reason": reason,
-            "partial": False,
-            "missing_spans": [],
+            "partial": bool(metric.partial),
+            "missing_spans": [list(item) for item in metric.missing_spans],
             "silent": False,
             "silent_spans": [],
             "gate": dict(metric.gate),

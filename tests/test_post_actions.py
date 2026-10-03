@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 
@@ -695,4 +696,152 @@ def test_post_minutes_is_refused_until_the_drain_has_settled(tmp_path, monkeypat
         assert started == {"kind": "minutes", "dir": str(workspace)}
         assert launched == [str(workspace)], launched
     finally:
+        config_module.set_current(previous)
+
+
+# ---------------------------------------------------------------------------
+# 八、停掉正在跑的「生成会后精细稿」（b1c6a58e，R28）
+# ---------------------------------------------------------------------------
+
+
+def test_post_stop_sets_the_cancel_flag_and_answers_the_receipt(
+    tmp_path, monkeypatch
+) -> None:
+    """offline 在飞时 `post_stop` → 受理回执 `{kind, dir, stopping}` + 旗标立起 + 记录清点。
+
+    受理即回（不等块边界）：旗标立起就回；线程体那一路拿到的是**同一条 Event**
+    （`is_set` 形状递进 `run_session(cancel=…)`），盘上终态归 `run_session` 自己写。
+    在飞记录（`post_jobs.json`）起跑时落、收工时清。
+    """
+    import threading
+
+    from meeting.service import postjobs
+
+    gate = threading.Event()
+    started = threading.Event()
+    seen: dict[str, object] = {}
+
+    runtime, session_dir, previous = _ended_session(tmp_path, monkeypatch)
+
+    def blocking_run_session(target, **kwargs):
+        seen["cancel"] = kwargs.get("cancel")
+        started.set()
+        gate.wait(timeout=JOB_TIMEOUT_SECONDS)
+        return {"state": "done"}
+
+    from meeting.offline import runner as offline_runner
+
+    monkeypatch.setattr(offline_runner, "run_session", blocking_run_session)
+    try:
+        runtime.post_offline({})
+        assert started.wait(timeout=JOB_TIMEOUT_SECONDS)
+        on_disk = json.loads(Path(postjobs.path()).read_text(encoding="utf-8"))
+        assert [item["dir"] for item in on_disk] == [str(session_dir)], (
+            "起跑那一刻在飞记录该在盘上（治「杀了进程就永远停在在跑」的那一格）"
+        )
+        assert [item["kind"] for item in on_disk] == ["offline"]
+
+        receipt = runtime.post_stop({})
+
+        assert receipt == {"kind": "offline", "dir": str(session_dir), "stopping": True}
+        assert seen["cancel"] is not None and seen["cancel"](), (
+            "线程体递进 run_session 的旗标该已立起"
+        )
+        cancel = runtime.post_job["cancel"]
+        assert cancel is not None and cancel.is_set()
+    finally:
+        gate.set()
+        _wait_job_done(runtime)
+        config_module.set_current(previous)
+    assert json.loads(Path(postjobs.path()).read_text(encoding="utf-8")) == [], (
+        "收工之后在飞记录清空（留给下一次起跑）"
+    )
+
+
+def test_post_stop_without_a_flying_job_is_refused(tmp_path, monkeypatch) -> None:
+    """没有在飞的会后 → 409 `draining`、`detail = {}`（那一场已经收工，重按按钮即可）。"""
+    from meeting.service.runtime import ActionError
+
+    runtime, _session_dir, previous = _ended_session(tmp_path, monkeypatch)
+    try:
+        with pytest.raises(ActionError) as info:
+            runtime.post_stop({})
+        assert info.value.code == "draining"
+        assert info.value.status == 409
+        assert info.value.detail == {}
+    finally:
+        config_module.set_current(previous)
+
+
+def test_post_stop_refuses_the_minutes_lane_truthfully(tmp_path, monkeypatch) -> None:
+    """在飞的是纪要那一趟 → 409 `draining`：停的动作只接 offline（机制两样，如实拒）。
+
+    `detail` 与「有一趟在飞」同一形状（`{kind, dir, started_at}`），界面按 `kind`
+    读出「这趟停不了」。
+    """
+    import threading
+
+    from meeting.service.runtime import ActionError
+
+    runtime, session_dir, previous = _ended_session(tmp_path, monkeypatch)
+    gate = threading.Event()
+    started = threading.Event()
+
+    from meeting.backends import registry as registry_module
+
+    class BlockingMinutesImplementation:
+        def launch(self, target: str, **kwargs) -> None:
+            started.set()
+            gate.wait(timeout=JOB_TIMEOUT_SECONDS)
+
+    class FakeResolution:
+        selector = "fake"
+        has_implementation = True
+        implementation = BlockingMinutesImplementation()
+
+    monkeypatch.setattr(registry_module, "resolve_minutes_hook", lambda *a, **k: FakeResolution())
+    try:
+        runtime.post_minutes({})
+        assert started.wait(timeout=JOB_TIMEOUT_SECONDS)
+        with pytest.raises(ActionError) as info:
+            runtime.post_stop({})
+        assert info.value.code == "draining"
+        assert info.value.status == 409
+        assert info.value.detail["kind"] == "minutes"
+        assert info.value.detail["dir"] == str(session_dir)
+    finally:
+        gate.set()
+        _wait_job_done(runtime)
+        config_module.set_current(previous)
+
+
+def test_post_stop_with_another_dir_is_refused(tmp_path, monkeypatch) -> None:
+    """在飞的永远只有一场；`dir` 指到另一场 → 400 `invalid_setting`（legal 带在飞那场）。"""
+    import threading
+
+    from meeting.service.runtime import ActionError
+
+    runtime, session_dir, previous = _ended_session(tmp_path, monkeypatch)
+    gate = threading.Event()
+    started = threading.Event()
+
+    from meeting.offline import runner as offline_runner
+
+    def blocking_run_session(target, **kwargs):
+        started.set()
+        gate.wait(timeout=JOB_TIMEOUT_SECONDS)
+        return {"state": "done"}
+
+    monkeypatch.setattr(offline_runner, "run_session", blocking_run_session)
+    try:
+        runtime.post_offline({})
+        assert started.wait(timeout=JOB_TIMEOUT_SECONDS)
+        with pytest.raises(ActionError) as info:
+            runtime.post_stop({"dir": str(tmp_path / "另一场")})
+        assert info.value.code == "invalid_setting"
+        assert info.value.status == 400
+        assert info.value.detail["legal"] == [str(session_dir)]
+    finally:
+        gate.set()
+        _wait_job_done(runtime)
         config_module.set_current(previous)

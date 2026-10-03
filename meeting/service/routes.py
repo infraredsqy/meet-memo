@@ -1,14 +1,15 @@
 """九条路由的**唯一注册点**（phase2 §3.7 / §3.8 / §3.9 / §3.11 / §3.12；`1987cb20` phase2 加 `summaries`；
 工作台收编节点 e2f6166b 加 `sessions` / `dirs` 两只读端点与 `workspace_open` / `workspace_remove` 两动作；
 会后进度读数节点 `a9affaa8` 加 `sessions/{dir}` 那只单场状态端点；设置抽屉节点 `311f84f5` 加
-`devices` 那只设备清单端点；人名节点 `91b6752e` 加 `speaker_rename` 那只改名动作）。
+`devices` 那只设备清单端点；人名节点 `91b6752e` 加 `speaker_rename` 那只改名动作；打断会后的
+b1c6a58e 加 `post_stop` 那只停掉动作）。
 
 全应用只在这里注册一次：
 
   - `GET /api/state`（完整版，body 就是 `to_dict()` 的产出）；
   - `GET /api/events`（SSE：`snapshot` 先行 + `state` / `levels` / `transcript` 三通道）；
   - `GET /api/heartbeat`（完整版，`service` 字面量必须有）；
-  - `POST /api/actions`（信封 + 十五个动作名 + `code` 表）；
+  - `POST /api/actions`（信封 + 十六个动作名 + `code` 表）；
   - `GET /api/summaries`（本场按过的、成功产出的那几次会中总结；读内存，不落文件）；
   - `GET /api/sessions`（工作区注册表：按路径去重的那一份"我这些会"，读盘上注册表文件）；
   - `GET /api/sessions/{id}`（单场状态：这一场此刻跑到哪一档、会后离线跑过几块 / 共几块、
@@ -222,7 +223,7 @@ async def _api_devices(request: Request) -> Response:
 
 
 async def _api_actions(request: Request) -> Response:
-    """动作端点：信封 + 十五个动作名 + `code` 表（中间件已校验两个必需请求头）。"""
+    """动作端点：信封 + 十六个动作名 + `code` 表（中间件已校验两个必需请求头）。"""
     runtime = _runtime_of(request)
     if runtime is None:  # pragma: no cover - 应用未装配
         return JSONResponse({"error": "runtime 未装配"}, status_code=500)
@@ -316,14 +317,18 @@ async def _api_actions(request: Request) -> Response:
                     "workspace": runtime.workspace_remove(args.get("dir")),
                 }
             )
-        elif action in ("post_offline", "post_minutes"):
-            # 会后的两个按钮（R26）：起一条后台线程即算启动成功，成功体在通用信封上多一个
-            # `post` 键（先例是 `summarize` 的 `summary` / `workspace_open` 的 `workspace`）——
-            # 它说的是「这一趟跑的是哪一场、跑的哪一趟」，跑成什么样由盘上的状态文件回答。
+        elif action in ("post_offline", "post_minutes", "post_stop"):
+            # 会后的两个按钮（R26）与停掉会后精细稿那一趟的动作（b1c6a58e，R28）：
+            # 起一条后台线程即算启动成功 / 立起取消旗标即算受理成功，成功体在通用信封上
+            # 多一个 `post` 键（先例是 `summarize` 的 `summary` / `workspace_open` 的
+            # `workspace`）——「起的是哪一场、停的是哪一场」，停没停成由盘上的状态文件
+            # 回答（`post_stop` 的受理回执多一格 `stopping: true`）。
             started = (
                 runtime.post_offline(args)
                 if action == "post_offline"
                 else runtime.post_minutes(args)
+                if action == "post_minutes"
+                else runtime.post_stop(args)
             )
             return JSONResponse(
                 {"ok": True, "revision": runtime.revision, "post": started}

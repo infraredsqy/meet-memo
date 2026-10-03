@@ -30,7 +30,8 @@
     也不要两个人被合并」），而 `cNN` 让下游想合并时自己算得出来；
   - `id` 一律 `${source}:${local}`：**「这条路的一号等于那条路的一号」在数据结构上表达
     不出来**，跨路不串靠形状（限定名里始终带着 `source`）而不是靠约定；
-  - `state` 记这一路跑完时的终态（`done` / `failed`），`error` 记失败原因（成功时 `null`）。
+  - `state` 记这一路跑完时的终态（`done` / `failed` / `interrupted`，最后一档是
+    「跑到块边界被人停」那一趟，b1c6a58e），`error` 记失败原因（成功时 `null`）。
     读方**一律先看这一格**：一份空表配 `state = "failed"` 说的是「这一路一段都没转出来」，
     与「这一路真的没人说话」是两件事；
   - `headcount` 说清 `speakers` 数组长度**该怎么读**（见下面「类数与人数」那一节）。
@@ -189,7 +190,10 @@ TRANSCRIPT_NOTE_SUFFIX = "-->"
 
 #: 合法状态。`partial` 是**一路整条没交回、另一路跑成了**那一档（见 `write_status()`）：
 #: 从前这一档与「两路都成」在顶层这一格上都写 `done`，读方只看 `state` 分不开。
-STATES = ("running", "done", "partial", "failed")
+#: `interrupted` 是**跑到块边界被人停**那一档（「打断会后」节点 b1c6a58e）：它也是终态
+#: （这一趟不会再自己往下跑了），与 `running`（还有东西在跑）分开写 —— 「杀了进程就
+#: 永远停在在跑」那种状态里，「被打断」这一格是治它的那一半。
+STATES = ("running", "done", "partial", "failed", "interrupted")
 
 
 class ArtifactContractError(ValueError):
@@ -1037,9 +1041,9 @@ def write_status(
     silent_spans: Sequence[Sequence[float]] | None = None,
     gate: dict[str, Any] | None = None,
 ) -> Path:
-    """落状态文件（`running` / `done` / `partial` / `failed` 四档，写盘原子替换）。
+    """落状态文件（`running` / `done` / `partial` / `failed` / `interrupted` 五档，写盘原子替换）。
 
-    **四档各说一件事**，读方只看 `state` 这一格就分得开：
+    **五档各说一件事**，读方只看 `state` 这一格就分得开：
 
       - `done`：这一场声明的每一路都跑成了；
       - `partial`：**至少有一路跑成、也至少有一路整条没交回**（模型没起来、这一路抛错、
@@ -1047,7 +1051,12 @@ def write_status(
         顶层 `state`，从前两种情形都落 `done`，「这一层没问题」就被读出来了；
         缺的是哪一路由 `artifacts.<source>.state` / `reason` / `error` 那几格回答；
       - `failed`：**每一路**都没交回（一份产物都出不来）；
-      - `running`：这一趟还在跑（或者崩在半路停在了那一版）。
+      - `running`：这一趟还在跑（或者崩在半路停在了那一版）；
+      - `interrupted`：**这一趟被人停了**（「打断会后」，b1c6a58e）：取消旗标在块边界
+        命中，当前块跑完、下一块开跑前收场。它也是**终态**（这一趟不会自己往下跑了），
+        与 `running` 分开写 —— 读方按它知道「盘上停着、但不会再有下文」，重按按钮
+        不用 `--force` 就能从头再跑（幂等闸只拦 `running`）。缺了什么写在 `error`
+        那一格（哪一路跑到第几块、哪些产物没有），那份缺口只供人读、不作判据。
 
     这一档看的是「哪一路整条没有」，与紧跟着讲的那个 `partial` 字段**各说一件事**：那个
     字段看的是「某一路缺了区间」（分块跑时某块没成，产物照落、这一路仍落 `done`）。一路

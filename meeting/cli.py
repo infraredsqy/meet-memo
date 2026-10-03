@@ -127,6 +127,12 @@ LAYER_UNKNOWN = "unknown"
 #: 与 `done` 分开写，好让读方在一格上就看出「有一路整条没有」（`artifacts.STATES` 同值）。
 LAYER_PARTIAL = "partial"
 
+#: 离线那一层的**被打断**档（「打断会后」节点 b1c6a58e，`artifacts.STATES` 同值）：
+#: 跑到块边界被人停的**终态**。补账判据把它算进「已落定」（打断之后逃出来的异常不许把
+#: 它盖成 `failed`），幂等闸**不**把它当 `running` —— 打断之后重按按钮 / 再敲
+#: `meeting post` 从头再跑，不需要 `--force`。
+LAYER_INTERRUPTED = "interrupted"
+
 #: 两层共用的「上一趟还在跑 / 崩在半路」那一档（`meeting post` 默认拒跑的那一档）
 LAYER_RUNNING = "running"
 
@@ -727,7 +733,7 @@ def run_post(
 
     ## 幂等闸：判定一律落在**花钱之前**
 
-    两层各有自己的「已完成」判据（**状态文件终态 + 产物齐**，缺一条就不算完成）：
+    两层各有自己的「已完成」判据（**状态文件落 `done` + 产物齐**，缺一条就不算完成）：
 
       - **离线段**：`meeting_offline_status.json` 在、`state == "done"`，且三份产物齐
         （本场声明的每一路各一份 `meeting_offline_transcript_<source>.md` /
@@ -749,7 +755,7 @@ def run_post(
         再次花钱的开关）。
 
     `minutes_launcher` 缺省 `None` 时走产品路径：离线段这一趟**跑**时由
-    `runner.run_session` 尾巴上那道 `_announce_minutes()` 拉起纪要，离线段**已是终态**时
+    `runner.run_session` 尾巴上那道 `_announce_minutes()` 拉起纪要，离线段**已完成**时
     由本函数自己经同一道 `_announce_minutes()` 拉起（**缺什么补什么**的那一半不许只对
     注入了假件的路径生效）。用例塞一个假启动器时，它的交回值说明这一趟走到哪一档 ——
     「这一趟有没有再拉起子会话」于是在用例里留下一份可核对的账。**等待只看那一档、不看是
@@ -829,7 +835,7 @@ def run_post(
         result.update(_summarize_run(result))
         return result
 
-    # 「这一层已是终态」与「这一趟到底跑不跑」是两件事：带 `--force` 时前者的取值照旧，
+    # 「这一层已完成」与「这一趟到底跑不跑」是两件事：带 `--force` 时前者的取值照旧，
     # 但两层都要重跑（`--force` 是本轮唯一会再次花钱的开关）。
     offline_complete = _offline_layer_done(directory, offline_status)
     minutes_complete = _minutes_layer_done(directory, minutes_status)
@@ -849,7 +855,7 @@ def run_post(
     offline_error: str | None = None
     runner_result: dict[str, Any] | None = None
     if offline_done:
-        # 离线段已是终态：**一个引擎调用都不产生**（判据是假引擎的调用次数为 0），
+        # 离线段已完成：**一个引擎调用都不产生**（判据是假引擎的调用次数为 0），
         # 三份离线产物的 sha256 因此一个字节不变。
         try:
             _log().info("离线段已是终态且产物齐，这一趟不重跑：%s", directory)
@@ -936,7 +942,7 @@ def _minutes_step_outcome(
 
       - **离线链跑过**（`runner_result` 有内容）：尾巴上那道 `_announce_minutes()` 已经把
         纪要段该做的事做完了（闸放行→拉起，或闸拦下→`already_done`），这一格按它的交回值出；
-      - **离线链没跑**（离线段已是终态）：这一层单独走一遍
+      - **离线链没跑**（离线段已完成）：这一层单独走一遍
         `_announce_minutes(..., launcher=…)` —— 拉起这一步与离线那一段本来就有各自的闸，
         离线段收工不该连带把纪要段钉住（`--force` 之外，这是「缺什么补什么」的另一半）。
         **注入的假启动器与产品路径都要走这一步**：`launcher` 非空时它被调到一次（用例靠
@@ -1021,7 +1027,7 @@ def _launch_minutes_on_the_product_path(
 ) -> dict[str, Any]:
     """产品路径下补纪要那一层：经**同一道** `_announce_minutes()` 解析实现并拉起，**等它落定**。
 
-    走到这一格的现场是「离线段已是终态、纪要段没到终态」—— 离线链整段没跑，尾巴上那道
+    走到这一格的现场是「离线段已完成、纪要段没到终态」—— 离线链整段没跑，尾巴上那道
     通知因此也没走到，而纪要这一层的拉起点就挂在它上面。**不补这一层的话，纪要再也补不出来**
     （唯一的出路是 `--force`，那会连离线段一起重跑）：`meeting post <场次目录>` 对旧场次目录
     「缺什么补什么」这半条在产品路径上因此必须走这一格。
@@ -1218,7 +1224,7 @@ def _capturing_launcher(
 def _skipped_offline_outcome(
     directory: Path, status: dict[str, Any], *, running: bool = False
 ) -> dict[str, Any]:
-    """离线段这一趟不跑时的结论（`running` 拒跑那一档与「离线段已是终态」那一档共用）。"""
+    """离线段这一趟不跑时的结论（`running` 拒跑那一档与「无待办」那一档共用）。"""
     state = status.get("state")
     hook = LAYER_RUNNING if running else (LAYER_DONE if state == "done" else LAYER_ABSENT)
     return {
@@ -1425,7 +1431,11 @@ def _mark_offline_failed(directory: Path, error: str) -> None:
                 existing = artifacts.read_status(path)
             except artifacts.ArtifactContractError:
                 existing = {}
-        settled = str(existing.get("state") or "") in (LAYER_FAILED, LAYER_PARTIAL)
+        settled = str(existing.get("state") or "") in (
+            LAYER_FAILED,
+            LAYER_PARTIAL,
+            LAYER_INTERRUPTED,
+        )
         artifacts.write_status(
             path,
             session_id=str(existing.get("session_id") or directory.name),
@@ -1656,7 +1666,7 @@ def _offline_outcome(
     与逐路产物上**（`partial` 照盘上那份报，不折成 `done`，也不退回 `absent`）；
     盘上什么都没有才记 `absent`（产品路径上这一档只在 `run_session` 还没跑过时出现）。
 
-    `skipped = True` 时这一层**这一趟没跑**（幂等闸判它已是终态）：状态文件里已有的
+    `skipped = True` 时这一层**这一趟没跑**（幂等闸判它已完成）：状态文件里已有的
     终态照样如实报出来，只多一格 `skipped` 说明这一趟没进引擎。
     """
     status = _offline_status(directory)

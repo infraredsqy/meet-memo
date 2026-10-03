@@ -381,7 +381,7 @@ ACTION_CODES: tuple[str, ...] = (
 #: 动作名清单（phase2 §3.13 + `dca4539b` 的 `reprobe` + `1987cb20` phase2 的 `summarize`
 #: + 工作台收编节点的 `workspace_open` / `workspace_remove` + 会后两个按钮
 #: `post_offline` / `post_minutes` + 暂停节点的 `pause` / `resume` / `set_source`
-#: + 人名节点的 `speaker_rename`）
+#: + 人名节点的 `speaker_rename` + 打断会后的 `post_stop`）
 ACTION_NAMES: tuple[str, ...] = (
     "start",
     "stop",
@@ -394,6 +394,7 @@ ACTION_NAMES: tuple[str, ...] = (
     "workspace_remove",
     "post_offline",
     "post_minutes",
+    "post_stop",
     "pause",
     "resume",
     "set_source",
@@ -748,6 +749,12 @@ class ServiceRuntime:
         # ④ 解析三个后端（唯一入口是 registry；失败回退替身 + warning）
         self._resolve_backends()
 
+        # ④b 会后在飞记录的对账（b1c6a58e 的 d5）：上一趟会后被进程死掉截断时，盘上停着
+        # running、记录还写着 —— 这里把它补成 `interrupted`（治「杀了进程就永远停在在跑」
+        # 那条病）。这是「启动序列不读场次目录」那条口径的**定向例外**：只读记录里点名的
+        # 那一场，不扫任何目录；对账的任何意外只警告，不阻塞启动。
+        self._reconcile_interrupted_post_jobs()
+
         # ⑤ 组装初始快照（`top_state: idle`、`session: null`、`sources` 取 probe() 的三态）
         self._probe_devices()
 
@@ -776,6 +783,71 @@ class ServiceRuntime:
 
         # ⑥ 打开浏览器（尾部；`MEETING_NO_BROWSER=1` 时跳过并落一行日志）
         self._open_browser()
+
+    def _reconcile_interrupted_post_jobs(self) -> None:
+        """启动时对一次「在飞」记录（b1c6a58e 的 d5）：记录里点名的、盘上仍 `running` 的
+        那一场 offline 会后，补成 `interrupted`，然后清记录。
+
+        三档，逐档口径：
+
+          - **offline 档 + 盘上 `running`** → 走 `runner.write_interrupted_status()`（与
+            `run_session` 的打断终态同一形状：十二格、`state = "interrupted"`、缺口注记
+            拼进 `error`，缺口从逐块账读出）。这一格写完，读方（4.9 的 `offline.state`、
+            界面进度区、幂等闸）看到的都是「人停的、可以重按」，而「杀了服务就永远停在
+            在跑」从此只剩不到一次服务生命周期的窗口。
+          - **minutes 档** → 只清记录 + log：纪要那一层的 `running` 由它自己的钩子兜底
+            （`docs/state.md`「进程被杀时钩子把它补成 failed」），这里再补一份就把两层
+            的账搅在一起了。
+          - **盘上不是 `running`**（那趟其实跑完了、或状态文件读不出）→ 只清记录 + log，
+            一个字节都不写 —— 对账不许把已经落定的终态翻掉。
+
+        范围**只有记录里点名的那一场**：记录文件里至多一条（服务单槽），这里读它、处置
+        它、清它，不扫任何目录。CLI（`meeting post`）那一趟既不落记录也不被这一步碰 ——
+        它活在另一个进程，服务分不清「另一进程还在跑」与「都死了」，如实不猜。
+        """
+        from meeting.service import postjobs
+
+        records = postjobs.load()
+        if not records:
+            return
+        try:
+            postjobs.clear()
+        except Exception:  # pragma: no cover - 清不上只警告：盘上状态处置照旧做
+            _log.warning("启动对账：在飞记录清不掉", exc_info=True)
+        for item in records:
+            kind = str(item.get("kind") or "")
+            target = str(item.get("dir") or "")
+            if not target:
+                continue
+            if kind != "offline":
+                _log.info(
+                    "启动对账：上一趟会后的在飞记录（%s：%s）只清不碰"
+                    "——纪要那一层有自己的钩子兜底", kind, target,
+                )
+                continue
+            try:
+                from meeting.offline import runner as offline_runner
+
+                written = offline_runner.write_interrupted_status(
+                    target,
+                    reason="服务重启时这一趟还在跑（进程已结束），按「被打断」收场",
+                )
+            except Exception:
+                _log.warning(
+                    "启动对账：这一场补 interrupted 没写成（只警告，不阻塞启动）：%s",
+                    target, exc_info=True,
+                )
+                continue
+            if written is not None:
+                _log.warning(
+                    "启动对账：上一趟 offline 会后没跑完，盘上状态已补成 interrupted"
+                    "（%s）；重按按钮可从头再跑", target,
+                )
+            else:
+                _log.info(
+                    "启动对账：在飞记录点名的那一场盘上不是 running（可能已跑完或没有状态"
+                    "文件），只清记录：%s", target,
+                )
 
     def _open_browser(self) -> None:
         """打开浏览器这一步：故障一律收成警告，**不阻塞启动**。"""
@@ -2646,10 +2718,10 @@ class ServiceRuntime:
             见 `docs/design-intent.md` 第 6、7 条）。
 
         `offline` 里**两块回答的是两件事**，各有各的判据（契约 4.9）：`state` 照盘上那份
-        如实答（状态文件写着 `running` 就答 `running`，写着 `partial` / `failed` 就照它
-        那一档答，哪怕那一趟早已崩在半路），`in_process` 答「**本进程里此刻有没有这一趟
-        活**」。两块合起来才分得清「真的在跑」与「盘上停着一版 `running`、其实谁都没在跑」
-        —— 后者不另立终态（「被打断」是另一个节点的账），只把这两格如实摆出来。
+        如实答（状态文件写着 `running` 就答 `running`，写着 `partial` / `failed` /
+        `interrupted` 就照它那一档答），`in_process` 答「**本进程里此刻有没有这一趟
+        活**」。两块合起来才分得清「真的在跑」与「盘上停着一版 `running`、其实谁都没在
+        跑」—— 后者照盘上的话答，不替它二选一。
 
         `offline` 是**给人看的读数**：不提交、不涨 `revision`、不广播。这只端点是纯读，
         快照九键一个字不动。
@@ -2696,8 +2768,8 @@ class ServiceRuntime:
         **两块分开说，别混**：
 
           - `offline.state` 照**盘上那份**如实答（契约 4.9：`running` / `done` / `partial` /
-            `failed` / `idle`，外加「盘上有账、而这一趟既不在飞、也没有状态文件回答」那一档
-            `ledger`）。状态文件写着 `done` / `partial` / `failed` 就照它自己那一档答，
+            `failed` / `interrupted` / `idle`，外加「盘上有账、而这一趟既不在飞、也没有状态文件回答」那一档
+            `ledger`）。状态文件写着 `done` / `partial` / `failed` / `interrupted` 就照它自己那一档答，
             写着 `running` 也照它自己那一档答；**进程崩在半路的那一场因此如实答
             `running`**，不在这里替盘上的话做二次解读；
           - `offline.in_process` 另立一格答「**本进程里此刻有没有这一趟活**」，判据取
@@ -2706,8 +2778,9 @@ class ServiceRuntime:
             与盘上那份账因此各按各的判据出（跑完再读这一场，读的是盘上那份账）。
 
         两块合起来才读得清崩在半路那一档：`state: "running"` 说的是盘上停着的那版状态，
-        `in_process: false` 说的是此刻没有任何东西在跑。这一格**不引入「被打断」终态**
-        （那是另一个节点的账），也**不参与任何判定**（进度是给人看的读数）。
+        `in_process: false` 说的是此刻没有任何东西在跑。**`interrupted` 是盘上自己的
+        终态**（b1c6a58e 落地）：停掉的那一场照盘上答 `interrupted`，这一格照旧只透传、
+        不替它下结论，也**不参与任何判定**（进度是给人看的读数）。
         """
         ledger = _post_job_progress(self.post_job, directory)
         running = self._offline_job_running(directory)
@@ -2726,15 +2799,19 @@ class ServiceRuntime:
         if read is not None:
             snapshot["started_at"] = read.get("started_at")
             snapshot["finished_at"] = read.get("finished_at")
-            # 盘上有结论可读：状态文件落在 `done` / `partial` / `failed` 就**照它那一档**答，
-            # 别的档（`running`）也照它自己那一档如实答 —— 那一版可能是「真的还在跑」，
-            # 也可能是「崩在半路停在那儿」，这一格不替它二选一（「此刻有没有东西在跑」由
-            # `in_process` 那一格回答）。**这几档都不许折成 `done`**：折了之后读方
-            # （界面这一格、`GET /api/sessions/{id}` 的 `offline.state`）看到的是一趟
-            # 整个失败的会后与一趟跑成的会后同形 —— 那正是「读方被骗」那一档。
+            # 盘上有结论可读：状态文件落在 `done` / `partial` / `failed` / `interrupted`
+            # 就**照它那一档**答，别的档（`running`）也照它自己那一档如实答 —— 那一版可能
+            # 是「真的还在跑」，也可能是「崩在半路停在那儿」，这一格不替它二选一
+            # （「此刻有没有东西在跑」由 `in_process` 那一格回答）。**这几档都不许折成
+            # `done`**：折了之后读方（界面这一格、`GET /api/sessions/{id}` 的
+            # `offline.state`）看到的是一趟整个失败的会后与一趟跑成的会后同形 ——
+            # 那正是「读方被骗」那一档。**`interrupted` 尤其不许折**（b1c6a58e）：
+            # 折成 `running` 就把「人停的、可以重按」说回「还在跑」。
             mapped = str(read.get("state") or "")
             snapshot["state"] = (
-                mapped if mapped in ("done", "partial", "failed") else "running"
+                mapped
+                if mapped in ("done", "partial", "failed", "interrupted")
+                else "running"
             )
         snapshot["in_process"] = False
         return snapshot
@@ -2931,10 +3008,22 @@ class ServiceRuntime:
 
         `claimed_minutes=True` 表示纪要那一层的 claim 已经在动作本体里同步认过（m2），
         线程体那一趟因此直接起线程、不再认第二次。
+
+        **`cancel` 是打断那一趟的接缝**（b1c6a58e）：offline 档起一条 `threading.Event`
+        塞进 `post_job`，线程体把它以 `is_set` 的形状递给 `run_session(cancel=…)` ——
+        旗标立起后线程在**下一块开跑前**收场，盘上状态由 `run_session` 写成
+        `interrupted`。minutes 档没有这格（`None`）：两档机制不同，本节点只停 offline。
+
+        **起线程之前落一条「在飞」记录**（`meeting/service/postjobs.py`，配置目录的
+        `post_jobs.json`）：`post_job` 是内存事实、进程一死就没，记录是跨进程的那一格
+        ——服务重启时按它把「盘上停着 running」的那一场对账成 `interrupted`（治「杀了
+        进程就永远停在在跑」）。写不上只警告、不挡动作：这张网兜的是重启后那一场，
+        动作本身照常起跑。
         """
+        cancel = threading.Event() if kind == "offline" else None
         thread = threading.Thread(
             target=self._run_post_job,
-            args=(kind, target, claimed_minutes),
+            args=(kind, target, claimed_minutes, cancel),
             name=f"post-{kind}",
             daemon=True,
         )
@@ -2946,28 +3035,52 @@ class ServiceRuntime:
             "finished_at": None,
             #: 离线那一趟的逐块进度账（下线那条链跑起来之后自己塞进来；纪要那趟是 `None`）
             "progress": None,
+            #: 打断接缝（b1c6a58e）：offline 档是一条 `Event`，`post_stop` 立它；纪要那趟 `None`
+            "cancel": cancel,
         }
+        try:
+            from meeting.service import postjobs
+
+            postjobs.record(kind, target, now=self.post_job["started_at"])
+        except Exception:  # 记录落不上只警告：安全网缺席不该挡住产品动作
+            _log.warning("会后在飞记录落不上（不影响这一趟起跑）：%s", target, exc_info=True)
         thread.start()
 
-    def _run_post_job(self, kind: str, target: str, claimed_minutes: bool = False) -> None:
+    def _run_post_job(
+        self,
+        kind: str,
+        target: str,
+        claimed_minutes: bool = False,
+        cancel: threading.Event | None = None,
+    ) -> None:
         """线程体：跑会后的某一趟，跑完当场结束（模型用完就关，不留在显存里等下一次）。
 
         **收工那一刻把 `post_job` 记成"已收工"而不是抹掉**：抹掉之后按「生成会后精细稿」
         跑完一场、再去读那一场的进度，读到的就是一片空白。判"有没有在飞"看
         `post_job_state()`（它按 `thread.is_alive()` 答），占位的那一格留着。
+
+        收工**顺带把在飞记录清掉**：记录还写着而线程活着收了工，说明这一趟是自己跑完的
+        （没被杀），下一趟起跑时会落新记录 —— 留着旧记录会让下一次启动多做一次无谓的
+        对账读盘。清不上只警告（安全网的那一半归启动对账兜）。
         """
         try:
             if kind == "offline":
-                self._run_post_offline(target)
+                self._run_post_offline(target, cancel=cancel)
             else:
                 self._run_post_minutes(target, claimed=claimed_minutes)
         except BaseException:  # 后台线程的异常没有别的落点，兜到底
             _log.exception("会后的活儿（%s）抛出来了：%s", kind, target)
         finally:
             _mark_post_job_finished(self.post_job, now_iso())
+            try:
+                from meeting.service import postjobs
+
+                postjobs.clear()
+            except Exception:  # pragma: no cover - 清记录失败只警告
+                _log.warning("会后在飞记录清不掉（不影响这一趟收工）", exc_info=True)
             _log.info("会后的活儿（%s）收工：%s", kind, target)
 
-    def _run_post_offline(self, target: str) -> None:
+    def _run_post_offline(self, target: str, cancel: threading.Event | None = None) -> None:
         """「生成会后精细稿」那一趟：**只跑离线那一条链，纪要一动不动**（R26）。
 
         跑的是与 `meeting post` 同一段实现（`offline.runner.run_session()`），但
@@ -2978,6 +3091,10 @@ class ServiceRuntime:
         **逐块进度账在这一趟里立起来**：`run_session(..., progress=…)` 每跑完一块就往
         场次目录里那份 `meeting_offline_progress.jsonl` 上补一行，同一份现场读数由
         `GET /api/sessions/{id}` 随取随用（见 `session_status_dict()`）。
+
+        `cancel` 是打断接缝（b1c6a58e）：以 `is_set` 的 callable 形状递进
+        `run_session(cancel=…)` —— 旗标立起后线程在下一块开跑前收场，终态
+        `interrupted` 由 `run_session` 自己落。`None` = 现行为（不插任何检查）。
         """
         from meeting.offline import progress as progress_module
         from meeting.offline import runner as offline_runner
@@ -2991,7 +3108,12 @@ class ServiceRuntime:
         if isinstance(job, dict) and str(job.get("dir")) == str(target):
             job["progress"] = ledger
         _log.info("按「生成会后精细稿」起这一趟离线链：%s", target)
-        offline_runner.run_session(target, minutes=False, progress=ledger)
+        offline_runner.run_session(
+            target,
+            minutes=False,
+            progress=ledger,
+            cancel=(cancel.is_set if cancel is not None else None),
+        )
 
     def _run_post_minutes(self, target: str, *, claimed: bool = False) -> None:
         """「直接出纪要」那一趟：把**手上有的稿子**交给 DSH（R9：缺会后稿就按现有档位降级）。
@@ -3086,6 +3208,68 @@ class ServiceRuntime:
                 self._release_minutes_claim(resolution, target, exc)
             raise
         return {"kind": "minutes", "dir": target}
+
+    def post_stop(self, args: dict[str, Any] | None = None) -> dict[str, Any]:
+        """`post_stop` 动作：停掉正在跑的「生成会后精细稿」那一趟（b1c6a58e，R28）。
+
+        **受理即回，不等块边界**：立起 `post_job` 里那条取消旗标就交回执 —— 线程在
+        下一块开跑前收场（正在跑的那一块不掐：引擎是同步推理），盘上状态由
+        `run_session` 自己写成 `interrupted`（终态写入只归它）。界面随后按读数看到
+        状态翻档、按钮回到可按（重跑闸只拦 `running`，`interrupted` 天然放行）。
+
+        拒的三档（`code` 全落在既有九个里，不加新）：
+
+          - **没有在飞的会后**（或最后一趟已收工）→ 409 `draining`，`detail = {}`；
+          - **在飞的是纪要那一趟**（minutes）→ 409 `draining`：本动作只停 offline——
+            minutes 那一趟「在跑」的可能是 DSH 侧的会话或 headless 子进程，机制两样，
+            本节点不纳入（如实拒，不假装停得了）；`detail` 与「有一趟在飞」同一形状；
+          - **`args["dir"]` 指了另一场** → 400 `invalid_setting`（在飞的永远只有一场，
+            停就停它；指错目录按参数错回）。
+
+        成功体与两个按钮同一信封（`post` 键），多一格 `stopping: true` 说出
+        「停的是哪一场、受理了没有」——「停没停成」由盘上那份状态文件回答。
+        """
+        args = dict(args or {})
+        job = self.post_job
+        thread = job.get("thread") if isinstance(job, dict) else None
+        flying = isinstance(job, dict) and thread is not None and thread.is_alive()
+        if not flying:
+            raise ActionError(
+                "draining",
+                "没有正在跑的会后可停（最后一趟已经收工；被打断/跑完的那一场直接重按按钮即可）",
+                status=409,
+                detail={},
+            )
+        kind = str(job.get("kind"))
+        target = str(job.get("dir"))
+        started_at = job.get("started_at")
+        raw_dir = args.get("dir")
+        if raw_dir is not None and str(raw_dir).strip() and canonical_dir(raw_dir) != canonical_dir(target):
+            raise ActionError(
+                "invalid_setting",
+                f"在飞的会是另一场（{target}）；停就停在飞的那一场",
+                status=400,
+                detail={"key": "dir", "value": str(raw_dir), "legal": [target]},
+            )
+        if kind != "offline":
+            raise ActionError(
+                "draining",
+                f"在飞的是纪要那一趟（{kind}）：停的动作只接「生成会后精细稿」（offline）"
+                "——纪要那一层是另一套机制，本动作停不了它",
+                status=409,
+                detail={"kind": kind, "dir": target, "started_at": started_at},
+            )
+        cancel = job.get("cancel")
+        if not isinstance(cancel, threading.Event):  # pragma: no cover - 旧现场兜底
+            raise ActionError(
+                "action_unavailable",
+                "这一趟没有可立的取消旗标（旧现场）：等它自己收工，或重启服务",
+                status=404,
+                detail={},
+            )
+        cancel.set()
+        _log.info("按「停掉会后」立起取消旗标：%s（offline）；线程在下一块开跑前收场", target)
+        return {"kind": kind, "dir": target, "stopping": True}
 
     def _claim_minutes_layer(self, resolution: Any, target: str) -> bool:
         """起线程之前**同步**认一次「纪要这一层在飞」的账（m2），**返回认没认成**。

@@ -8,10 +8,20 @@ import {
 } from '../src/home/model';
 import { confirmWorkspaceOpen } from '../src/home/confirmWorkspaceOpen';
 import { drainSettled, showsWorkspaceHome } from '../src/home/gate';
-import { offlineNoticeOf, postButtonsView, postIdleNote } from '../src/home/post';
+import { offlineNoticeOf, postButtonsView, postIdleNote, postStopView } from '../src/home/post';
 import { failureFrom } from '../src/failure';
 import { probeDecision } from '../src/api/sessions';
-import type { SessionRow, Snapshot } from '../src/contract';
+import type { PostJobCell, SessionRow, Snapshot } from '../src/contract';
+
+/** 造一份 post_job 读数（顶层第三格的形状，用例只翻自己要翻的那几格）。 */
+function job(over: Partial<PostJobCell> = {}): PostJobCell {
+  return {
+    kind: 'offline',
+    dir: 'C:\\会议\\跟老王聊周会',
+    started_at: '2026-09-21T22:10:00+08:00',
+    ...over,
+  };
+}
 
 /** 造一行注册表（空缺全给 null / 无害值，用例只翻自己要翻的那几格）。 */
 function row(over: Partial<SessionRow> = {}): SessionRow {
@@ -176,6 +186,29 @@ describe('会后那两个按钮（R26 / R29）', () => {
 
   it('底下那行小字说明两个都不按的后果', () => {
     expect(postIdleNote()).toContain('都不按');
+  });
+});
+
+describe('停止入口（R28 / b1c6a58e）', () => {
+  const dir = 'C:\\会议\\跟老王聊周会';
+
+  it('这一场的 offline 在飞：入口出现', () => {
+    expect(postStopView(job({ kind: 'offline', dir }), dir)).toEqual({ visible: true });
+  });
+
+  it('在飞的是纪要那一趟：入口不出现（停的动作只接精细稿，服务对纪要如实拒）', () => {
+    expect(postStopView(job({ kind: 'minutes', dir }), dir)).toEqual({ visible: false });
+  });
+
+  it('在飞的是另一场：入口不出现（它长在这一场的进度区头行上）', () => {
+    expect(postStopView(job({ kind: 'offline', dir: 'C:\\会议\\另一场' }), dir)).toEqual({
+      visible: false,
+    });
+  });
+
+  it('没有在飞的会后 / 没选中：入口不出现', () => {
+    expect(postStopView(null, dir)).toEqual({ visible: false });
+    expect(postStopView(job(), null)).toEqual({ visible: false });
   });
 });
 

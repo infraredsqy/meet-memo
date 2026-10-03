@@ -163,7 +163,8 @@ export const offlineProgressSchema = z
   .object({
     /** 这一场那份逐块账的文件名（`meeting_offline_progress.jsonl`）。 */
     ledger: z.string(),
-    state: z.enum(['running', 'done', 'partial', 'failed', 'idle', 'ledger']),
+    /** `interrupted` 是「跑到块边界被人停」那一档的终态（b1c6a58e，R28）：照盘上如实答。 */
+    state: z.enum(['running', 'done', 'partial', 'failed', 'interrupted', 'idle', 'ledger']),
     in_process: z.boolean(),
     started_at: isoStringSchema.nullable(),
     finished_at: isoStringSchema.nullable(),

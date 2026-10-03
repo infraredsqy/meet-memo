@@ -399,3 +399,43 @@ def _load_models(model: str, *, dtype: str, device: str):
     transcriber = transcriber.to(dtype=torch_dtype).to(device).eval()
     log.info("MOSSTD 就绪：%s", device)
     return processor, transcriber, torch_dtype
+
+
+def release_engine(engine: object) -> bool:
+    """**让出离线引擎占的显存**：丢掉模型引用，然后把 PyTorch 缓存还给系统。
+
+    离线链这一侧的 `release_gpu()` 对应物（会中那一份在 `meeting/backends/transcribe.py`，
+    落点是收尾第 4 步与暂停；`docs/design-intent.md` 第 21 条「跑完、打断、终止，都当场
+    结束」）。调用点在 `run_session()` 的 `finally`：跑成、失败、被打断三条出口都过它。
+
+    为什么引用计数之外还要这一步：`run_session` 返回后引擎对象随引用计数消失，权重张量
+    交还的是 **PyTorch 的缓存分配器**——它把空闲块留在自己手里等下次复用，**不会自动**
+    还给驱动。服务进程常驻，`nvidia-smi` 里那一格就一直白占；`torch.cuda.empty_cache()`
+    才把预留显存还给系统。先丢引用、后清缓存，与会中 `release_gpu()` 同一个次序。
+
+    逐条语义（照会中先例）：
+
+      - **没加载过的引擎是 no-op**：`processor` / `transcriber` 两格本来就是空（假件、
+        没跑过任何块的引擎），只尝试清缓存；
+      - **幂等**：连调几次安全，第二次起两格已经是空；
+      - **`torch` 在函数体内惰性 import**，没装 torch、没卡、`empty_cache()` 自己抛错
+        都只算「这一趟没能清缓存」，不影响引用已经丢掉。
+
+    返回 `True` = 这一次真的丢掉了引用；`False` = 本来就没有可丢的。
+    """
+    dropped = False
+    for attr in ("processor", "transcriber"):
+        if getattr(engine, attr, None) is not None:
+            try:
+                setattr(engine, attr, None)
+                dropped = True
+            except Exception:  # pragma: no cover - 属性抹不掉只算这一格没成
+                log.warning("离线引擎的 %s 引用抹不掉（显存释放打折扣）", attr, exc_info=True)
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:  # 没装 torch / 没 CUDA / 清缓存失败：引用已丢，安静收场
+        log.info("torch.cuda.empty_cache() 跳过（无 CUDA 或依赖缺席，不影响引用释放）")
+    return dropped
