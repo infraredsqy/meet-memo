@@ -49,12 +49,12 @@
 
 ## 3. 动作表与 `code` 表
 
-十五个动作：`start` / `stop` / `mute_session` / `settings_update` / `reprobe` / `dev_inject` / `summarize` / `workspace_open` / `workspace_remove` / `post_offline` / `post_minutes` / `pause` / `resume` / `set_source` / `speaker_rename`。`post_offline` / `post_minutes` 是会后两个按钮（「生成会后精细稿」/「直接出纪要」，R26）：起一条后台线程即算启动成功，成功体在通用信封上多一个 `post: {kind, dir}`；跑成什么样由场次目录里的状态文件回答。`pause` / `resume` 是暂停与继续，`set_source` 是会中关掉某一路 / 重新打开某一路（R24 / R25）；`speaker_rename` 把一个说话人编号的名字写进这一场目录根的人名表（R10 第四条 / R30，成功体多一个 `speaker: {dir, key, name}`）。语义见 `docs/contract.md` 4.3 / 4.11。九个 `code`：
+十六个动作：`start` / `stop` / `mute_session` / `settings_update` / `reprobe` / `dev_inject` / `summarize` / `workspace_open` / `workspace_remove` / `post_offline` / `post_minutes` / `post_stop` / `pause` / `resume` / `set_source` / `speaker_rename`。`post_offline` / `post_minutes` 是会后两个按钮（「生成会后精细稿」/「直接出纪要」，R26）：起一条后台线程即算启动成功，成功体在通用信封上多一个 `post: {kind, dir}`；跑成什么样由场次目录里的状态文件回答。`post_stop` 停掉正在跑的「生成会后精细稿」（R28）：立起取消旗标即回（受理即回，不等块边界），成功体同一个信封、多一格 `stopping: true`，盘上状态写成 `interrupted`。`pause` / `resume` 是暂停与继续，`set_source` 是会中关掉某一路 / 重新打开某一路（R24 / R25）；`speaker_rename` 把一个说话人编号的名字写进这一场目录根的人名表（R10 第四条 / R30，成功体多一个 `speaker: {dir, key, name}`）。语义见 `docs/contract.md` 4.3 / 4.11。九个 `code`：
 
 | `code` | HTTP | 意思 | 谁会回它 |
 |---|---|---|---|
 | `already_recording` | 409 | 已经有一场在录 | `start` / `reprobe` |
-| `draining` | 409 | 上一场还在收尾（或收尾失败后停留），这场不能开；会后两个按钮拿它回「收尾没落定 / 有一趟会在飞」 | `start` / `post_offline` / `post_minutes` |
+| `draining` | 409 | 上一场还在收尾（或收尾失败后停留），这场不能开；会后两个按钮拿它回「收尾没落定 / 有一趟会在飞」；`post_stop` 拿它回「没有在飞的会后可停 / 在飞的是纪要那一趟」 | `start` / `post_offline` / `post_minutes` / `post_stop` |
 | `capture_unavailable` | 503 | 采集后端不可用：没接入、或设备起不来；`set_source` 那一档的 `detail` 是 `{source, error}` | `start` / `set_source` |
 | `not_recording` | 409 | 现在没有在录的场次 | `stop` / `mute_session` / `pause` / `resume` / `set_source` / `dev_inject` / `summarize` |
 | `invalid_setting` | 400 | 参数或键名非法（校验都在动手之前） | 各动作 |
@@ -79,6 +79,7 @@
 | `workspace_open` | 200：写工作区注册表（缺 `dir` / 目录不存在 / 非空未确认 → 400） | 200 | 200 | 200 | 200 |
 | `workspace_remove` | 200：摘一行名单，文件不碰 | 200 | 200 | 200 | 200 |
 | `post_offline` / `post_minutes` | 带 `dir` 且那一行合法 → 200；不带 → 409 `draining`（手上没有可以跑后会的场次） | 409 `draining` | 409 `draining` | 200（这一层没接实现 → 404 `action_unavailable`；有一趟在飞 → 409 `draining`） | 收尾落定（`post` 停 `waiting` 算落定）→ 200；还没落定 → 409 `draining` |
+| `post_stop` | 409 `draining`（没有在飞的会后可停） | 409 `draining`（同左） | 409 `draining`（同左） | 200（在飞的 offline 被受理 → `{kind, dir, stopping: true}`；在飞的是 minutes → 409 `draining`；`dir` 指到另一场 → 400 `invalid_setting`） | 200（同 `ended·done`——停止只看在飞，不看收尾） |
 | `speaker_rename` | `dir` / `key` / `name` 齐且那一行合法 → 200（写这一场目录里的人名表） | 400 `invalid_setting`（盘上 `state` 是 `recording`，会中不提供改名） | 400 `invalid_setting`（同左） | 200 | 400 `invalid_setting`（盘上 `state` 是 `draining`） |
 
 `settings_update` 写的是配置文件，与「这一场录到哪儿」无关，因此**任何状态下都可用**。`mute_session` 只在本场收尾之前可用 —— 收尾完成后本场已无可静音，复位发生在下一场 `start`。`reprobe` 只在**没有场次在跑**的时候可用（`recording` / `alert` 两态回 `already_recording`）：设备在开场前定下来，会中换设备是明文不做的那一档。`summarize` 只在**有场次在跑**的时候可用（它读的是这一场的实时转写）。
@@ -173,6 +174,17 @@
 - `args.dir` **可省**：给了就跑它指定的那一场，且要过与 `GET /api/sessions` 同一套注册表 / 目录判读（不在注册表里、目录不在原地、盘上 `state` 还是 `recording` / `draining` → `invalid_setting`(400)）；省略时跑**收尾刚落定的那一场**（命令行与既有调用走这一路）。
 - 拒绝档固定三条：这一场还没结束 / 收尾还没落定，或已经有一趟会后活在飞 → 409 `draining`；`post_minutes` 那一层的账停在 `running`（纪要 claim 闸同步判）→ 409 `draining`，`detail` 带 `status_path`；这一层没接实现（`post.hook` / `minutes.hook` 缺席）→ 404 `action_unavailable`。
 - 成功体是通用信封 + `post: {kind: "offline"|"minutes", dir}`；回执只说「起没起、跑的哪一场」，跑成什么样由场次目录里的 `meeting_offline_status.json` / `meeting_minutes_status.json` 回答；**跑到哪一档**（第几块 / 共几块、正在跑哪一路、已经跑了多久）由 `GET /api/sessions/{id}` 回答。
+
+**`post_stop`** —— 停掉正在跑的「生成会后精细稿」（R28），语义全文见 `docs/contract.md` 4.3：
+
+```json
+{"action": "post_stop", "args": {"dir": "C:\\会议\\跟老王聊周会"}}
+```
+
+- `args.dir` **可省**：在飞的永远只有一场，省略即停它；给了但指到另一场 → `invalid_setting`(400)，`legal` 里是在飞那一场的目录。
+- **受理即回**：立起取消旗标就交回执，不等块边界——那条线程在当前块跑完、下一块开跑前收场，盘上状态由 `run_session` 写成 `interrupted`（终态写入只归它，`GET /api/sessions/{id}` 的 `offline.state` 照盘答 `interrupted`）。正在跑的那一块不掐（引擎是同步推理）。
+- 拒绝档：没有在飞的会后 → 409 `draining`（`detail` 空对象，那一场重按按钮即可）；在飞的是纪要那一趟 → 409 `draining`（`detail` 带 `kind`——停的动作只接 offline，机制两样，如实拒）；`dir` 指到另一场 → 400 `invalid_setting`。
+- 成功体是通用信封 + `post: {kind: "offline", dir, stopping: true}`。打断之后重按两个按钮、或再敲 `meeting post`，都**从头再跑**（幂等闸只拦 `running`，不需要 `--force`）。
 
 **`speaker_rename`** —— 给一个说话人编号起名（R10 第四条 / R30），形状全文见 `docs/contract.md` 4.11：
 

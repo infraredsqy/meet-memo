@@ -207,7 +207,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 | `meeting_offline_transcript_<source>.md` | 会后精细稿（带说话人编号），每行 `[HH:MM] **S01**: 正文`（**分钟级**） | 人 + 下游对账 |
 | `meeting_offline_speakers_<source>.json` | 类编号 → 每段区间的对照表（`start` / `end` 是**秒级浮点**） | 下游程序 |
 | `meeting_offline_report.md` | 运行报告：逐路的秒数 / 段数 / 类数 / 墙钟 / 实时率、段耗时分布、失败原因分布、缺了哪几段、没声跳过了哪几段、零时长的段有几段 | 人 |
-| `meeting_offline_status.json` | 状态文件：**四档** `running` / `done` / `partial` / `failed`，外加 `partial` / `silent` / `silent_spans` / `error` / `gate`，以及**逐路那一整格** `artifacts.<source>`（`state` / `reason` / `error` / `segments` / `speaker_count` / `audio_seconds` / `partial` / `missing_spans` / `silent` / `silent_spans` / `gate` + 三个产物名，**每一路都有**、跑成与没跑成字段同形；`reason` 跑成的那一路是 `null`、没跑成的那一路按次序挑一个词、兜底那一版给还没轮到的那几路留 `not_run`，取值域见下面「没声、缺段、跑成、跑成而段全零时长：四档分得开」那一节） | 下游程序 + 界面（这一场跑成什么样） |
+| `meeting_offline_status.json` | 状态文件：**五档** `running` / `done` / `partial` / `failed` / `interrupted`（最后一档是「跑到块边界被人停」的终态，b1c6a58e：重按按钮可从头再跑，缺了什么写在 `error` 里），外加 `partial` / `silent` / `silent_spans` / `error` / `gate`，以及**逐路那一整格** `artifacts.<source>`（`state` / `reason` / `error` / `segments` / `speaker_count` / `audio_seconds` / `partial` / `missing_spans` / `silent` / `silent_spans` / `gate` + 三个产物名，**每一路都有**、跑成与没跑成字段同形；`reason` 跑成的那一路是 `null`、没跑成的那一路按次序挑一个词（被打断的那一路是 `interrupted`）、兜底那一版给还没轮到的那几路留 `not_run`，取值域见下面「没声、缺段、跑成、跑成而段全零时长：四档分得开」那一节） | 下游程序 + 界面（这一场跑成什么样） |
 | `meeting_offline_progress.jsonl` | **逐块进度账**（`a9affaa8` 已落地）：每跑完一块补一行 —— 这一块的文字与这一块的落点（`source` / `chunk` / `chunks_total` / `span` / `state` / `text` / `segments` / `wall_seconds` / `error`），第一行是表头；**引擎加载失手那一档也留一行**（`state = failed`、`error` 里带 `engine_load_error`）—— 少了这一行，进程不在场的读方从那只端点的 `sources[].total` 上看到的是 `null` | 人 + `GET /api/sessions/{id}`（这一场跑到第几块） |
 
 - **每路各一份，两路不合并**：转写与对照表的文件名里都带 `<source>`，说话人的限定名一律是 `${source}:${local}`（`mic:S01` 这种形状）。两路的编号互不相认，混成一份就说不出某一行的出处了。进度账是一份、按 `source` 分节，**分母按路各算一份**（这一路切了几块）。
@@ -285,7 +285,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 
 ### 会后纪要生成
 
-纪要那一层由「直接出纪要」按钮（`post_minutes`）或 `meeting post` 拉起（`41465462` 已落地）——后者在离线链的尾巴上通知一次（`run_session()` 的 `_announce_minutes()`），或离线段已是终态时只补这一层；「生成会后精细稿」按钮那一趟（`run_session(..., minutes=False)`）**不**拉起它，纪要归另一个按钮。拉起点起一条 daemon 线程跑 `MinutesHook`，返回即算启动成功，它跑多久都不占收尾预算。这一趟的产物分两处：
+纪要那一层由「直接出纪要」按钮（`post_minutes`）或 `meeting post` 拉起（`41465462` 已落地）——后者在离线链的尾巴上通知一次（`run_session()` 的 `_announce_minutes()`），或离线段已完成（`done` 且产物齐）时只补这一层；「生成会后精细稿」按钮那一趟（`run_session(..., minutes=False)`）**不**拉起它，纪要归另一个按钮。拉起点起一条 daemon 线程跑 `MinutesHook`，返回即算启动成功，它跑多久都不占收尾预算。这一趟的产物分两处：
 
 | 文件 | 内容 | 读者 |
 |---|---|---|
@@ -301,7 +301,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 - **两条分支：探一次 DSH web 服务端，在跑就交付、没在跑才自己起子进程**。拉起之前先探 `minutes.dsh_url` 指的那台（`meeting/minutes/dsh_web.py` 的 `probe()`：先 TCP，再发一次只读、无参数的 RPC 确认协议与鉴权）：**在跑**走 web 分支，把这一场经 `/api` 交付给 DSH web 服务端（三步：`workspace/create` → `session/create`（只带 `workspaceId`）→ `session/prompt` 送提示词全文），**投递 accepted 即算交付完成**，终态记 **`delivered`**；**没在跑**才落回现成的 headless 分支（`launch.launch_headless()`：等子进程退出 + 四条判据校验产物，终态 `done` / `failed`）。走哪一条由探针当场答，**`minutes.hook` 里写 `web` 或 `headless` 都改不了它** —— 配置里那个词只是记在「在飞」那一版上（见下一格）。
 - **`branch` 记实际走的那一条，但「在飞」那一版是例外**：终局那一版记 `web`（交付给 DSH web 服务端）或 `headless`（本进程自己起的子进程）；**拉起方在建线程之前落的那一版 `running` 记的是配置里写的那个词**（`launch.configured_branch()` 校验取值域后原样交回 `auto` / `web` / `headless`）—— 那一刻还没探，配置里写 `web` 而那一台没在跑时，读终局那一版才看得到实际落的是 `headless`。
 - **`delivered` 与 `done` 的分工**：`done` 是「纪要认真校验过、产物在盘上」（headless 那一趟走的四条判据）；`delivered` 是「投递成功了，产物还没（或者不会）经这一层校验」—— 这一层**不等** DSH 那边把纪要写完、也不校验产物，**停不停 DSH 是用户的事**。读方按**产物**判「这一场补不补跑」（`meeting_final.md` 过四条判据就是已完成，终态落在 `done` 与 `delivered` 哪一档都算），按 `delivered` / `running` 判「这一场已经交付过、别再拉起第二个会话」（`meeting post` 的重复拉起闸把这两档并列，`--force` 是重新交付的出路）。
-- **默认隔离，两个人工入口（隔离闸在 `mark_running` 之前）**：这一层默认不碰 DSH —— `run_session(announce_minutes=False)`（缺省）在离线尾巴上安静跳过（钩子零启动、盘上零状态文件，主 log 一行「纪要层隔离：本次非人工发起，跳过」），`MinutesHook.launch(deliver=False)`（缺省）在 `mark_running()` **之前**就返回、连线程都不建。传真的只有两处人工入口：`meeting post`（首跑的尾巴与「离线段已终态、只补纪要」两路都传 `announce_minutes=True`）与「直接出纪要」按钮（`post_minutes` 把 `deliver=True` 递进 `launch()`）。放行标记经 `minutes.runner.run()` 逐层下传，探针 / 交付 / headless 拉起三处各自**默认拒绝**（不放行当场抛 `DeliveryForbidden`，一次网络 / 子进程动作都不发生）。**skipped 不留状态文件**：跳过那一档只出现在返回值与主 log 里，`meeting_minutes_status.json` 的四档取值域一个字不动。
+- **默认隔离，两个人工入口（隔离闸在 `mark_running` 之前）**：这一层默认不碰 DSH —— `run_session(announce_minutes=False)`（缺省）在离线尾巴上安静跳过（钩子零启动、盘上零状态文件，主 log 一行「纪要层隔离：本次非人工发起，跳过」），`MinutesHook.launch(deliver=False)`（缺省）在 `mark_running()` **之前**就返回、连线程都不建。传真的只有两处人工入口：`meeting post`（首跑的尾巴与「离线段已完成、只补纪要」两路都传 `announce_minutes=True`）与「直接出纪要」按钮（`post_minutes` 把 `deliver=True` 递进 `launch()`）。放行标记经 `minutes.runner.run()` 逐层下传，探针 / 交付 / headless 拉起三处各自**默认拒绝**（不放行当场抛 `DeliveryForbidden`，一次网络 / 子进程动作都不发生）。**skipped 不留状态文件**：跳过那一档只出现在返回值与主 log 里，`meeting_minutes_status.json` 的四档取值域一个字不动。
 - **状态文件拉起 DSH 之前先落一份 `running`**（`finished_at` 是空串）：这一版由拉起方在建线程**之前**同步落（`meeting/minutes/status.py` 的 `mark_running()`），终局那一趟覆盖它，进程被杀时钩子把它补成 `failed`，这一格不会永远停在 `running`。盘上已经停着一版 `running` 时，`launch()` 当场抛 `AlreadyRunningError`、不拉起第二个子会话（`--force` 是出路）—— 这一版里的 `branch` 记的是**配置里写的那个词**（那一刻还没探 DSH web 服务端），实际走的那一条由终局那一版覆盖；那一版落盘用一把 **claim 锁**（瞬态文件 `meeting_minutes_status.lock`）把「读现状 + 写 running」裹成跨进程原子的一段，**锁不在产物清单里**，见 `docs/minutes.md` 第 1.1 节。
 - **再入闸那一趟不写状态文件**：环境里有 `MEETING_MINUTES_CHILD=1`（这一趟是 DSH 子会话自己）时 `runner.run()` 当场返回 `skipped`，盘上那份状态文件归父进程那一趟所有。
 - **读方对不认识的 `schema_version`、缺 `state`、`state` 不在四档里一律拒收**，不猜；写盘与离线那一份同档：原子替换。（再入闸那一趟的 `skipped` 只出现在返回值里，它不落盘，读方那四档因此一个字不动。）
@@ -312,11 +312,12 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 
 ### 重启自洽
 
-**启动时不再去读任何别的场次目录**（`docs/design-intent.md` 第 4 条）：原「扫输出根下最新的一场 → 挂 `notice.restart_unfinished` → 把那份记录改写成 `draining + interrupted` → 拦住新场次」这一整条，随「默认输出根」的退场一并拆掉，**不影子保留**。启动序列现在只做：解析后端、探设备、组装初始快照 —— 绝不自动开始录音、也绝不读别的场次目录。
+**启动时不再去读任何别的场次目录**（`docs/design-intent.md` 第 4 条）：原「扫输出根下最新的一场 → 挂 `notice.restart_unfinished` → 把那份记录改写成 `draining + interrupted` → 拦住新场次」这一整条，随「默认输出根」的退场一并拆掉，**不影子保留**。启动序列现在只做：解析后端、探设备、组装初始快照 —— 绝不自动开始录音、也绝不读别的场次目录（唯一的定向例外见本章末条：在飞记录对账，b1c6a58e）。
 
 - 没走完收尾就被打断的那一场，盘上那版 `session.json` 原样留在原地：谁都不去改写它、也不拦新场次的 `start`。
-- 工作区的登记与"最近一场"由收编节点（e2f6166b）落地：注册表住在配置目录 `workspaces.json`，界面经 `GET /api/sessions` 读（形状见 `docs/contract.md` 4.8）——启动序列对场次目录照旧一个字不读。`GET /api/sessions` 顶层另有一格 `post_job`（`52b24392`）：服务进程里此刻在飞的那趟会后（`{kind, dir, started_at}` 或 `null`），它是**内存里的单槽事实**（`runtime.post_job_state()`），不落盘、不进注册表文件，服务重启后自然从 `null` 起步。
-- **这一场此刻跑到哪一档**由 `GET /api/sessions/{id}` 回答（`a9affaa8` 已落地，形状见 `docs/contract.md` 4.9）：会后离线跑到第几块 / 共几块、正在跑哪一路、已经跑了多久。它也是纯读：**启动序列照旧不碰任何场次目录**，这只端点是有人问才去读那一场。
+- 工作区的登记与"最近一场"由收编节点（e2f6166b）落地：注册表住在配置目录 `workspaces.json`，界面经 `GET /api/sessions` 读（形状见 `docs/contract.md` 4.8）——启动序列对场次目录照旧一个字不读（唯一的定向例外见本章末条）。`GET /api/sessions` 顶层另有一格 `post_job`（`52b24392`）：服务进程里此刻在飞的那趟会后（`{kind, dir, started_at}` 或 `null`），它是**内存里的单槽事实**（`runtime.post_job_state()`），不落盘、不进注册表文件，服务重启后自然从 `null` 起步。
+- **这一场此刻跑到哪一档**由 `GET /api/sessions/{id}` 回答（`a9affaa8` 已落地，形状见 `docs/contract.md` 4.9）：会后离线跑到第几块 / 共几块、正在跑哪一路、已经跑了多久。它也是纯读：**启动序列照旧不碰任何场次目录**（唯一的定向例外见下一条），这只端点是有人问才去读那一场。
+- **启动序列唯一的定向例外**（b1c6a58e）：上一趟会后被进程死掉截断时，盘上停着 `running`、`post_job`（内存事实）已经没了——服务起一条「在飞」记录（配置目录 `post_jobs.json`，`meeting/service/postjobs.py`，起 offline / minutes 时落、收工时清），启动时按它把**记录里点名的那一场** offline 会后对账成 `interrupted`（缺口注记从逐块账读出），然后清记录。minutes 档的记录只清 + log（纪要那一层有自己的钩子兜底）；盘上不是 `running` 的只清记录、一个字节不写；CLI（`meeting post`）不落记录也不被对账碰——它活在另一个进程，服务分不清「另一进程还在跑」与「都死了」，如实不猜。范围只有记录里点名的这一场：**不扫任何目录**，「杀了进程就永远停在在跑」那条病从根上收口。
 
 ## 4. 心跳与 `recording_alive`
 

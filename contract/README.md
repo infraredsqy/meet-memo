@@ -1,12 +1,12 @@
 # contract/ —— 双端契约的 golden 样本
 
-> 这个目录是**服务与界面之间那份契约的可机读基准**：`fixtures/` 下的 34 个 JSON 样本一律出自真实服务路径，`tests/test_contract_fixtures.py` 每次跑测试都重走一遍采集、与盘上样本逐字比对，服务侧形状一漂移就红。
+> 这个目录是**服务与界面之间那份契约的可机读基准**：`fixtures/` 下的 35 个 JSON 样本一律出自真实服务路径，`tests/test_contract_fixtures.py` 每次跑测试都重走一遍采集、与盘上样本逐字比对，服务侧形状一漂移就红。
 >
 > 契约正文在 `docs/contract.md`（端点口径、快照 schema、SSE 帧形状、动作信封与 `code`/`detail` 表、心跳语义、客户端义务、保留登记）。这个 README 只讲三件事：**样本从哪儿来、掩码怎么打、怎么再生成**。
 >
 > 代码落点：掩码与采集辅助在 `tests/_contract.py`；比对与再生成在 `tests/test_contract_fixtures.py`；再生成开关 `--regen-contract` 注册在 `tests/conftest.py` 的 `pytest_addoption`。
 
-## 1. 样本清单（34 个）
+## 1. 样本清单（35 个）
 
 | 目录 | 文件 | 采集路径 | 固定的是什么 |
 |---|---|---|---|
@@ -29,7 +29,7 @@
 | | `fail-capture-unavailable.json` | 进程内 TestClient（显式配 `capture.backend: null` 替身；默认 `auto` 已接真采集，`start` 会真开一场） | 503 + `detail` 三键（`{session_id, dir, reason}` 那一档） |
 | | `fail-not-recording.json` | 空闲态 `stop` | 409 + **空对象** `detail` |
 | | `fail-invalid-setting.json` | `start` 带 `mode: "burst"` | 400 + `detail` 三键（`{key, value, legal}`） |
-| | `fail-invalid-setting-unknown-action.json` | 打一个不认识的动作名 | 400 + `detail` 两键（`{action, known}`，`known` 是**十五个动作名**） |
+| | `fail-invalid-setting-unknown-action.json` | 打一个不认识的动作名 | 400 + `detail` 两键（`{action, known}`，`known` 是**十六个动作名**） |
 | | `fail-persist-failed.json` | `monkeypatch` 把 `write_config_values` 换成抛 `OSError` | 500 + `detail = {error}` |
 | | `fail-action-unavailable.json` | 空闲态 `dev_inject`（非 dev 后端） | 404 + **空对象** `detail` |
 | | `fail-transcript-unavailable.json` | 录音中把转写后端拿掉再 `summarize` | 503 + `detail = {health: "stopped"}` |
@@ -38,6 +38,7 @@
 | `devices/` | `all.json` | 进程内 TestClient（设置抽屉节点 `311f84f5`）：**设备枚举走假件**（`sources.py` 两个枚举函数换成固定端点表），读一次 `GET /api/devices` | `{mic, loopback}` 两路各一份、每项六格（`name` / `host_api` / `role` / `index` / `channels` / `is_default`）；名字与默认标记是假件的确定值；纯读，revision 不动 |
 | `sessions/` | `empty.json` / `after-open.json` | 进程内 TestClient（工作台收编节点 e2f6166b）：空注册表一份；再往临时根下造的三个目的目录（空 / 带 `session.json` / 只有音频归档名的疑似档）逐个走 `workspace_open` 之后读 `GET /api/sessions` | `{sessions, recent}`、每行十一键（`dir` / `session_id` / `dir_exists` / `kind` / `suspected` / `state` / `date` / `mode` / `has_offline` / `added_at` / `last_opened_at`）；路径与目录名掩成 `<path>` / `<session-id>` |
 | | `status-after-run.json` | 进程内 TestClient（会后进度读数节点 `a9affaa8`；`speakers` 一格由人名节点 `91b6752e` 加进来）：往临时场次目录里按真实形状落那份逐块进度账（两路各两块，一块静音、一块失败）与状态文件，登记进工作台之后读 `GET /api/sessions/{id}` | `dir` / `session_id` / `kind` / `state` / `date` / `mode` / `has_offline` / `post` / `offline` / `speakers` 十键；`offline` 里两路各一格（`source` / `done` / `total` / `remaining` / `current_chunk` / `counts` 四档计数）；`speakers` 是身份集（样本那一场只有 mic 一路有稿、没有人名表 → 路级身份一行，名字与次数读数如实 `null`）。块号、块数、四档计数是确定值，路径与场次目录名掩成 `<path>` / `<session-id>`，两个墙钟戳掩成 `<iso>`，走秒的量掩成 `0` / `null`。这一份采的是**跨进程那一档**（这一趟早已收工）：`offline.state` 照盘上那份如实答 `done`、`offline.in_process` 如实答 `false` |
+| | `status-interrupted.json` | 进程内 TestClient（打断会后节点 `b1c6a58e`）：往临时场次目录里落那份逐块进度账（mic 两块里跑了一块）与一版 `interrupted` 状态文件，登记进工作台之后读 `GET /api/sessions/{id}` | 形状与 `status-after-run` 同体：`offline.state` 照盘答 **`interrupted`**（折档白名单里有它，不许折回 `running`）、`in_process` 如实 `false`；`sources` 两路各一格（mic `1/2`、loopback `0/null`——没开跑的那一路分母读不出如实 `null`）。路径与目录名掩 `<path>` / `<session-id>`，墙钟戳掩 `<iso>`，走秒量掩 `0` / `null` |
 | `heartbeat/` | `idle.json` | 进程内 TestClient（dev 替身） | 六字段、两字段 `null` |
 | | `recording.json` | 同上，等 `recording_alive is True` | 六字段、`recording_alive` 为 `true` |
 

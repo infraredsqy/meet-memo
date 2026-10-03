@@ -28,7 +28,7 @@
 
 ### 1.1 在飞标记：同一场挂不上两个子会话
 
-拉起这一层的地方有三处 —— 离线那一趟的尾巴（`_announce_minutes()`，`meeting post` 首跑走它）、`meeting post` 在「离线段已是终态、只补纪要」时自己经同一个拉起点补上的那一趟，以及工作台的「直接出纪要」按钮（`post_minutes`，按 `minutes.hook` 解析出的实现直接 `launch()`）。三处走的是同一条拉起契约，**也都过同一道隔离闸**（非人工发起一律安静跳过，见第 1 章），也都可能被用户敲的 `meeting post` 与按下的按钮**同时**走到，因此「这一场已经在飞」这件事必须有盘上的落点：
+拉起这一层的地方有三处 —— 离线那一趟的尾巴（`_announce_minutes()`，`meeting post` 首跑走它）、`meeting post` 在「离线段已完成、只补纪要」时自己经同一个拉起点补上的那一趟，以及工作台的「直接出纪要」按钮（`post_minutes`，按 `minutes.hook` 解析出的实现直接 `launch()`）。三处走的是同一条拉起契约，**也都过同一道隔离闸**（非人工发起一律安静跳过，见第 1 章），也都可能被用户敲的 `meeting post` 与按下的按钮**同时**走到，因此「这一场已经在飞」这件事必须有盘上的落点：
 
 - `MinutesHook.launch()` 在**建线程之前**同步调一次 `meeting/minutes/status.py` 的 `mark_running()`：方法返回时盘上的 `meeting_minutes_status.json` 已经读得出 `state = "running"`，那一趟起线程的动作在它**之后**；
 - `mark_running()` 把「读一遍现状 + 写一版 `running`」这段用一把 `O_CREAT | O_EXCL` 的 **claim 锁**（场次目录根的瞬态文件 `meeting_minutes_status.lock`）裹住，跨进程只有一个进得来：拿不到锁就等 `0.05` 秒再读一遍（最多三次），读到 `running` 就抛 `AlreadyRunningError`、**不覆盖另一趟的账**；
