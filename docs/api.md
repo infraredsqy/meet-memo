@@ -210,14 +210,14 @@
 
 应答是 `{"ok": true, "revision": N, "applied": [...], "pending_restart": [...]}` —— 两个数组里也是同一套点号键名。**成功体里没有 `message` 字段**，需要给人看的话由界面按两个数组自己组织。
 
-**合法键名是逐条列出的 38 个**（不按前缀归组、没有前缀白名单）。表外的任何键名一律 `invalid_setting`(400)，`devices.mic_device` 这种没定名的名字也在表外。
+**合法键名是逐条列出的 40 个**（不按前缀归组、没有前缀白名单）。表外的任何键名一律 `invalid_setting`(400)，`devices.mic_device` 这种没定名的名字也在表外。
 
 | 归类 | 键 | 为什么 |
 |---|---|---|
-| `applied`（10 个） | `alarm.sound` / `asr.max_segment_seconds` / `asr.timeout_seconds` / `asr.max_new_tokens` / `asr.repeat_max_unit` / `asr.repeat_min_coverage` / `devices.mic` / `devices.loopback` / `heartbeat.interval_seconds` / `summary.default_window` | 这十个是热读键，写盘成功就立刻生效。`alarm.sound` 收在这一档，于是勾选出声开关**当场**改运行期行为；设置抽屉那四项（`311f84f5`）收在这一档，改完无需重启 —— 设备改完 `reprobe` 按新值挑，心跳周期与总结缺省档的快照格当场换新值 |
+| `applied`（12 个） | `alarm.sound` / `asr.max_segment_seconds` / `asr.timeout_seconds` / `asr.max_new_tokens` / `asr.repeat_max_unit` / `asr.repeat_min_coverage` / `devices.mic` / `devices.loopback` / `heartbeat.interval_seconds` / `summary.default_window` / `summary.presets_json` / `summary.active_preset` | 这十二个是热读键，写盘成功就立刻生效。`alarm.sound` 收在这一档，于是勾选出声开关**当场**改运行期行为；设置抽屉那四项（`311f84f5`）与总结模型预设两键收在这一档，改完无需重启 —— 设备改完 `reprobe` 按新值挑，心跳周期与总结缺省档的快照格当场换新值，会中换一套模型预设写盘即生效 |
 | `pending_restart`（28 个） | `web.port` / `web.dist_dir` / `log.level` / `log.dir` / `log.max_bytes` / `log.backup_count` / `alert.silence_dbfs` / `alert.silence_seconds` / `alert.recover_seconds` / `alert.alarm_suppress_seconds` / `capture.backend` / `transcriber.backend` / `post.hook` / `post.engine` / `post.model` / `post.dtype` / `post.chunk_seconds` / `minutes.hook` / `minutes.chunk_lines` / `minutes.max_segments` / `minutes.timeout_seconds` / `minutes.dsh_url` / `summary.base_url` / `summary.api_key` / `summary.model` / `summary.extra_body_json` / `summary.deadline_seconds` / `summary.max_attempts` | 这些值在启动时读一次，写盘成功但要重启才生效 |
 
-- **会中总结那七个键**（`summary.base_url` / `summary.api_key` / `summary.model` / `summary.extra_body_json` / `summary.deadline_seconds` / `summary.max_attempts` / `summary.default_window`）里的**缺省档那一键收在热读档**，其余六键归 `pending_restart`：`summary.base_url` / `summary.model` 收非空字符串（默认 `https://api.deepseek.com/v1` 与 `deepseek-chat`），`summary.api_key` 是**可空键**（`null` = 没配，与两个设备键位同形），`summary.extra_body_json` 收「一段合法 JSON 对象的文本」（厂商特有字段），`summary.default_window` 只认 `5m` / `15m` / `30m` / `full` 四档（默认 `15m`；写盘那一刻快照 `settings.summary_default_window` 就换过去），`summary.deadline_seconds` 收 `1.0`–`3600.0` 秒（默认 `25.0`），`summary.max_attempts` 收 `1`–`10`（默认 `3`）。键名与取值范围在 `meeting/config.py`；这一层怎么用见第 3 章 `summarize` 那一段。
+- **会中总结那九个键**（`summary.base_url` / `summary.api_key` / `summary.model` / `summary.extra_body_json` / `summary.presets_json` / `summary.active_preset` / `summary.deadline_seconds` / `summary.max_attempts` / `summary.default_window`）里**缺省档与预设两键收在热读档**，其余六键归 `pending_restart`：`summary.base_url` / `summary.model` 收非空字符串（默认 `https://api.deepseek.com/v1` 与 `deepseek-chat`），`summary.api_key` 是**可空键**（`null` = 没配，与两个设备键位同形），`summary.extra_body_json` 收「一段合法 JSON 对象的文本」（厂商特有字段），`summary.default_window` 只认 `5m` / `15m` / `30m` / `full` 四档（默认 `15m`；写盘那一刻快照 `settings.summary_default_window` 就换过去），`summary.deadline_seconds` 收 `1.0`–`3600.0` 秒（默认 `25.0`），`summary.max_attempts` 收 `1`–`10`（默认 `3`）。**预设两键**（会中切模型）：`summary.presets_json` 收「一段 JSON 数组的文本」，每套一个对象 —— `name` 必填（非空白、不重名），`base_url` / `api_key` / `model` / `extra_body_json` 可省（省了按没配算）；`summary.active_preset` 收空串（不选预设，走平铺四键）或某套预设的 `name`，指向的名字不在清单里当场 `invalid_setting`(400)。两键都写盘那一刻生效：每次总结都是现读配置、现造客户端，设置抽屉「快速总结模型」下拉会中换一套当场走新的。预设未配、清单解析失败、指针空或指向的名字不在清单里时，总结一律回落平铺四键 —— 存量 `config.json` 零迁移。键名与取值范围在 `meeting/config.py`；这一层怎么用见第 3 章 `summarize` 那一段与 `docs/summary.md` 第 5 章。
 
 - **`alarm.sound` 与 `asr.*` 一起当场生效**：写盘那一刻主 log 落一行「alarm.sound 收在热读档，本刻起出声开关 = …」，服务侧同时重取一次生效值视图并提交 —— 紧接着的 `GET /api/state` 里 `settings.alarm_sound` 就是新值，`revision` 涨一格，界面当场按新值决定响不响（设计稿 `docs/ui-design.md` 4.5 要的「勾选立即生效」在这里成立）。
 - **会后那四个键**（`post.engine` / `post.model` / `post.dtype` / `post.chunk_seconds`）也归 `pending_restart`：`post.engine` 与三个后端选择键同形（`auto` / `null` / `module:Class`），`post.model` 收 HF 仓库 id 或本地快照路径，`post.dtype` 只认 `bfloat16` / `bf16` / `float16` / `fp16` / `float32` / `fp32` 这几个档位名，`post.chunk_seconds` 是每块音频的长度上限（整数 `0`–`86400`，默认 `450`，`0` = 关掉分块、整段一次跑）。键名与取值范围的判据在 `meeting/config.py`，档位名要跟 `meeting/offline/engine.py` 的 `DTYPE_NAMES` 对得上，写错的名字在写盘前就被拦下。
@@ -269,5 +269,5 @@ curl.exe -s -X POST http://127.0.0.1:8765/api/actions `
 - 怎么起服务、配置、日志、退出码、跑测试：`docs/service.md`
 - 后端协议与 dev 替身：`docs/backend-protocols.md`
 - 前端工程怎么跑、怎么构建：`web/README.md`
-- 契约的可机读基准（34 个 golden 样本与掩码规则）：`contract/README.md`
+- 契约的可机读基准（35 个 golden 样本与掩码规则）：`contract/README.md`
 - 索引：`docs/spec.md`

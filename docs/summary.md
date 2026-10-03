@@ -74,10 +74,12 @@
 
 `post` 是**注入点**：用例与探针都从这里进，两种写法都收（`post(url, json=…, headers=…, timeout=…)` 与 `post(HttpRequest)`），因此这一层的用例一条网络请求都不发。`temp` / `model` / 密钥是**构造那一刻的快照**，中途改配置不影响已经在飞的那一次。
 
-## 5. 配置：七个键
+## 5. 配置：九个键
 
-六个键是**启动时读一次**、归 `pending_restart`（与 `minutes.*` 同档），改了要重启；缺省档
-`summary.default_window` 收在热读档（`311f84f5`，写盘那一刻快照 `settings.summary_default_window` 就换过去）：
+六个键是**启动时读一次**、归 `pending_restart`（与 `minutes.*` 同档），改了要重启；三键收在
+热读档，写盘那一刻生效值就换 —— 缺省档 `summary.default_window`（`311f84f5`，快照
+`settings.summary_default_window` 当场换过去）与会中切模型两键 `summary.presets_json` /
+`summary.active_preset`（换一套模型预设不用重启，会中可切）：
 
 | 键 | 默认值 | 合法范围 / 形状 | 谁在用 |
 |---|---|---|---|
@@ -85,14 +87,17 @@
 | `summary.api_key` | `null`（= 没配） | 非空字符串，**可空键** | 请求头那一格；**可以走环境变量 `MEETING_SUMMARY_API_KEY`** |
 | `summary.model` | `deepseek-chat` | 非空字符串 | 请求体里那个模型名 |
 | `summary.extra_body_json` | `""`（= 不并） | **一段合法 JSON 对象的文本** | 厂商特有字段，原样并进请求体；空串与 `null` 同解 |
+| `summary.presets_json` | `""`（= 没配，回落平铺四键） | **一段 JSON 数组的文本**：每套一个对象，`name` 必填（非空白、不重名），`base_url` / `api_key` / `model` / `extra_body_json` 可省 | 多套端点预设整装一个键（会中切模型）；套数不设上限，**预设里的密钥不进快照、不在界面回显** |
+| `summary.active_preset` | `""`（= 不选预设，用平铺四键） | 空串，或某套预设的 `name` | 当前用哪一套的指针（会中切模型）；「名字在不在清单里」是 `settings_update` 的写前校验，不在当场拒 |
 | `summary.deadline_seconds` | `25.0` | `1.0`–`3600.0` 秒 | 一次总结的**墙钟 deadline** |
 | `summary.max_attempts` | `3` | 整数 `1`–`10` | 尝试次数**上限**（真正的刹车是 deadline） |
 | `summary.default_window` | `15m` | `5m` / `15m` / `30m` / `full` | `args.window` 省略时用的那一档 |
 
-- **密钥那一格走环境变量**：`MEETING_SUMMARY_API_KEY` 与环境变量那一层另外五个走同一条通路（装载时求值、映射到 `summary.api_key`），优先级仍是环境变量 > `config.json` > 代码默认值。密钥不进仓库：配置文件里写它，或者用环境变量压住它。
+- **密钥那一格走环境变量**：`MEETING_SUMMARY_API_KEY` 与环境变量那一层另外五个走同一条通路（装载时求值、映射到 `summary.api_key`），优先级仍是环境变量 > `config.json` > 代码默认值。密钥不进仓库：配置文件里写它，或者用环境变量压住它。**预设模式不经过这一格**：指针指到某套预设时，密钥取预设里那一格，平铺键（含环境变量）不参与。
 - **`summary.api_key` 是可空键**：与 `devices.mic` / `devices.loopback` 同形——没配就是 `None`。动作层据此点名缺的键（`detail.missing` 报的是**配置键全名**，例如 `["summary.base_url", "summary.api_key"]`）。
 - **`extra_body_json` 用一段文本承载**，不用嵌套段：V2 的配置层是「点号扁平键名的单层映射」、装载时明确拒收 dict 值，为这一个键放开那条硬约束不划算。写进去的不是合法 JSON 对象时，装载那一层当场拒掉。
-- 七个键的键名、默认值与取值域在 `meeting/config.py` 的四张表里（默认值 / 取值域 / 环境变量映射 / 三分表），读数与归一化在 `meeting/summary/settings.py`。
+- **预设两键的取值次序（会中切模型）**：`summary.active_preset` 指到清单里**有名有姓**的那一套 → 端点四件套整套装它的；其余一切（两个键没配、清单解析失败、指针空、指向的名字不在清单里）→ **回落平铺四键**，存量 `config.json` 一个字不用改。预算三件套与缺省档始终走平铺键 —— 它们不在预设里。实际用的是哪一套记在 `from_preset`（空串 = 平铺键），`missing` 因此能把「这套预设缺哪一格」说到点上：预设模式报 `summary.presets_json[名字].api_key` 这样的形状。切换走设置抽屉「快速总结模型」下拉（`settings_update` 写 `summary.active_preset`），两键都收热读档，会中换一套当场生效。
+- 九个键的键名、默认值与取值域在 `meeting/config.py` 的四张表里（默认值 / 取值域 / 环境变量映射 / 三分表），读数与归一化在 `meeting/summary/settings.py`。
 
 ## 6. 墙钟 deadline 与重试
 
@@ -110,7 +115,7 @@ V1 的「3 次 × 硬编码 60 秒超时」（最坏 180 秒）**没搬**——�
 | 窗口里一行都没有 | `true` | 三段都是空的，`lines` 为 0，**一个模型请求都不发** |
 | 失败 | `false` | `error` 是一句人话、`detail` 是机器可读的那一格 |
 
-**配置缺键挡在出门前**：三个端点键缺一个就当场收工，`detail = {"missing": [...]}`，**一个请求都不发**（判据是记账的假客户端读数为 0）。
+**配置缺键挡在出门前**：三个端点键缺一个就当场收工，`detail = {"missing": [...]}`，**一个请求都不发**（判据是记账的假客户端读数为 0）。预设模式下报的是那套预设里缺的格（`summary.presets_json[名字].api_key` 这样的形状）。
 
 ## 7. 服务这一层：动作与记录端点
 
@@ -142,7 +147,7 @@ V1 的「3 次 × 硬编码 60 秒超时」（最坏 180 秒）**没搬**——�
 | 没有在录的场次（`idle` / `ended`） | `not_recording` | 409 | `{}` |
 | `window` 取值非法 | `invalid_setting` | 400 | `{key, value, legal}` |
 | 转写停了 / 没起过 | `transcript_unavailable` | 503 | `{"health": "stopped"}` |
-| 模型端点没配 | `summary_failed` | 502 | `{"missing": ["summary.base_url", …]}` |
+| 模型端点没配 | `summary_failed` | 502 | `{"missing": ["summary.base_url", …]}`；预设模式报那套预设里缺的格（`summary.presets_json[名字].api_key`） |
 | 预算用尽 / 端点报错 / 解析连试带败 | `summary_failed` | 502 | `{"elapsed_seconds": 25.0, "attempts": 3}` |
 | 动手之后出的意外 | `summary_failed` | 502 | `{"error": "<异常类型>: <消息>"}` |
 
@@ -178,7 +183,7 @@ V1 的「3 次 × 硬编码 60 秒超时」（最坏 180 秒）**没搬**——�
 ## 10. 相关文档
 
 - 请求 / 应答 / 逐档 `detail` 的正文：`docs/contract.md` 第 4.4、4.7 节
-- HTTP 面速查（端点表、动作表与 `code` 表在第 3 章；七个键在 `settings_update` 那一张表里，第 4 章）：`docs/api.md`
+- HTTP 面速查（端点表、动作表与 `code` 表在第 3 章；九个键在 `settings_update` 那一张表里，第 4 章）：`docs/api.md`
 - 服务现状（端点表、配置键、跑测试）：`docs/service.md`
 - 前端这一侧（总结区纯逻辑、请求状态机、契约 schema）：`web/README.md`
 - V1 里搬过来的那几件事与不搬的那几条：`docs/v1-lineage.md` 第 4 章
