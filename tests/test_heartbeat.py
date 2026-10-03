@@ -14,7 +14,11 @@
   ⑤ `alert` 态照常给布尔值（`silence` + 测试里显式调小 `alert.silence_seconds`）；
   ⑥ **`SourceFacts` / `SourceLost` 不刷新帧时钟**；
   ⑦ **帧间隔的声明与回退**：`frame_interval` 属性就是声明位，拿不到或取值非正数时按
-     `DEFAULT_FRAME_INTERVAL_SECONDS` 算窗口、**服务照常起、`top_state` 不动**。
+     `DEFAULT_FRAME_INTERVAL_SECONDS` 算窗口、**服务照常起、`top_state` 不动**；
+  ⑧ **「还没有第一帧」报未知**（de899128，开场误报的修法）：自本场 start 起算的同一只
+     窗口（`max(2.0s, 3 × frame_interval)`）内一帧都没到时报 `None`，超窗仍无首帧报
+     `False`（=停，「别把未知做成永不报」）；假采集档连开几场，开场窗口里
+     `recording_alive` 不落 `False`。
 """
 
 from __future__ import annotations
@@ -417,6 +421,64 @@ def test_missing_frame_interval_attribute_falls_back(tmp_path):
             assert client.get("/api/state").json()["top_state"] == "idle"
     finally:
         sys.path.remove(str(module_dir))
+
+
+# ---------------------------------------------------------------------------
+# ⑧ 还没有第一帧：开场窗口内的未知档（de899128）
+# ---------------------------------------------------------------------------
+
+
+def test_recording_alive_is_unknown_until_the_first_frame_arrives(tmp_path):
+    """⑧ 首帧前：开场窗口内报 `None`；窗口拨过去仍无首帧报 `False`。
+
+    stall 全程挡帧（`last_frame_ts` 恒 `None`），两个分支在同一场里先后各验一遍；
+    窗口不真等 —— 开场基准 `session_start_mono` 由用例拨到窗口之外（dev 帧间隔
+    `0.1s`，窗口 `2.0s`）。
+    """
+    with live(tmp_path) as (client, runtime, _home):
+        # `dev_inject` 动作要有在录场次，开场前的那段在进程内直挂替身
+        runtime.capture_backend.inject_fault(
+            source="mic", fault="stall", after_seconds=0.0, duration_seconds=30.0
+        )
+        assert post(client, "start").status_code == 200
+
+        opening = client.get("/api/heartbeat").json()
+        assert opening["top_state"] == "recording"
+        assert opening["recording_alive"] is None, "开场窗口内一帧没到：未知，不算停"
+        assert opening["seconds_since_last_tick"] is None
+
+        runtime.session_start_mono -= frame_clock_window(runtime.frame_interval) + 5.0
+        starved = client.get("/api/heartbeat").json()
+        assert starved["top_state"] == "recording"
+        assert starved["recording_alive"] is False, "超窗仍无首帧：如实报停，别把未知做成永不报"
+        assert starved["seconds_since_last_tick"] is None, "一帧都没收到过，走秒量如实 null"
+
+
+def test_consecutive_sessions_do_not_report_stopped_during_opening(tmp_path):
+    """⑧ 假采集档连开几场：开场窗口里 `recording_alive` 不落 `False`（开场误报的修法）。
+
+    旧口径把「还没收到首帧」直接算成停：dev 替身首帧约 0.1s 后来、真机协议默认 0.5s，
+    10s 的心跳落进这段竞态就误弹「采集已停止」（约 1/6）。这一条在进程内把
+    「start 之后立刻问心跳」连打几场：开场里 `recording_alive` 只许是 `None` 或
+    `True`。每场收尾等 done 再开下一场。
+    """
+    with live(tmp_path) as (client, _runtime, _home):
+        for round_index in range(3):
+            assert post(client, "start").status_code == 200
+            for _ in range(5):
+                payload = client.get("/api/heartbeat").json()
+                if payload["top_state"] in ("recording", "alert"):
+                    assert payload["recording_alive"] in (None, True), (
+                        f"第 {round_index + 1} 场开场把「还没首帧」报成了停："
+                        f"{payload['recording_alive']!r}"
+                    )
+            assert post(client, "stop").status_code == 200
+            wait_until(
+                lambda: (
+                    lambda s: s if s["ended"] and s["ended"]["phase"] == "done" else None
+                )(client.get("/api/state").json()),
+                what=f"第 {round_index + 1} 场收尾停在 done",
+            )
 
 
 # ---------------------------------------------------------------------------

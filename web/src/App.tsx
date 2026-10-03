@@ -606,7 +606,8 @@ export function LiveView(): ReactNode {
    */
   const dataStopped =
     (heartbeat.level === '失联' && heartbeat.lastReplyAt !== null) ||
-    (snapshot !== null && captureStalled(reply, snapshot.top_state) !== null);
+    (snapshot !== null &&
+      captureStalled(reply, snapshot.top_state, heartbeat.stalledBeats) !== null);
 
   // 冻结开始：按住当下这份帧（已在按住就不换 —— 冻结期间来多少帧都不动）；
   // 恢复：松手回实时（levels.ts 的 holdFrameWhileDataStopped / releaseHeldFrame）

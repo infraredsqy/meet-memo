@@ -539,6 +539,10 @@ class ServiceRuntime:
         self.frame_interval: float = 0.5
         self.last_frame_ts: float | None = None
         self.last_fact_at: float | None = None
+        #: 本场 start 的单调钟基准（`recording_alive` 的开场窗口自它起算，de899128）：
+        #: 「还没有第一帧」在窗口内报 `None`（未知）、超窗报 `False`（=停）。
+        #: 与 `last_frame_ts` 同点写、同点清（`start_session()` 起场 / `__init__` 起步）。
+        self.session_start_mono: float | None = None
 
         #: 每一路**上一次落过 log 的** `health`（`_log_health_migrations()` 的比对基线）。
         #: 契约（phase1 §3.13 / phase2 的日志事件清单）把「每一路健康迁移（含原因与阈值）」
@@ -1286,16 +1290,32 @@ class ServiceRuntime:
     # -- 心跳 -------------------------------------------------------------
 
     def recording_alive(self) -> bool | None:
-        """`recording_alive`：`recording` / `alert` 态按帧时钟算；其余态为 `null`。"""
+        """`recording_alive`：`recording` / `alert` 态按帧时钟算；其余态为 `null`。
+
+        「还没有第一帧」单独一档（de899128，开场误报的修法）：首帧正常要比 `start`
+        晚约 0.5s 才来，旧口径把这一段直接算成 `False`，界面的 10s 心跳落进这段
+        竞态窗口就误弹「采集已停止」（约 1/6）。现在自**本场 start** 起算同一只
+        帧时钟窗口（`max(2.0s, 3 × frame_interval)`，公式不新造）：
+
+        - 窗口内还没收到首帧 → `None`（未知）；
+        - 超窗仍无首帧 → `False`（=停）——「别把未知做成永不报」，真饿死仍报得出。
+
+        `session_start_mono` 缺席（理论上只在 start 之前的瞬间）按无法确知处理，
+        如实报 `False`：界面的第一职责是让「采不到」不可能被忽略（design-intent 第 1 条）。
+        """
         if self.snapshot.top_state not in ("recording", "alert"):
             return None
         if self.capture_backend is None:
             return None
-        if self.last_frame_ts is None:
-            return False
         from meeting.state import frame_clock_window
 
         window = frame_clock_window(self.frame_interval)
+        if self.last_frame_ts is None:
+            if self.session_start_mono is None:
+                return False
+            if (time.monotonic() - self.session_start_mono) <= window:
+                return None
+            return False
         return (time.monotonic() - self.last_frame_ts) <= window
 
     def seconds_since_last_tick(self) -> float | None:
@@ -2029,6 +2049,7 @@ class ServiceRuntime:
             self._refresh_transcript_snapshot()
 
         self.last_frame_ts = None
+        self.session_start_mono = time.monotonic()
         self.commit()
         # 健康度节拍**从这一场开始起**（见 `_ensure_transcriber_health_ticker()` 的说明）
         self._ensure_transcriber_health_ticker()

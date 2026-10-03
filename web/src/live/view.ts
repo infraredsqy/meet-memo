@@ -135,12 +135,16 @@ export function liveView(
    * 它与失联**互斥**（HTTP 不通才是失联），两句话不得同屏的约束因此照旧：上面那条
    * `lost` 管「界面看不见服务」，这条管「服务看得见、采集停了」。
    *
+   * 判「停」要**连续两次读数**（de899128）：连续计数住在 `heartbeat.stalledBeats`
+   * 一处（`applyHeartbeatReading()` 记账），这里只读它 —— 开场「还没有第一帧」
+   * 服务报 `null`、单次 `false` 都不进这一档，横幅不再被开场竞态误弹。
+   *
    * 处置与失联同一套（任务书「边界」第 6 条：照失联横幅的结构写；数据冻结同理）：
    * 读数退成 `—`、健康位写「数据已停」、电平冻结压灰、包络时间戳停住。
    * 「停住的那一刻」从应答里倒推：`server_time - seconds_since_last_tick`
    * 就是服务最后一次收到帧的墙钟（`captureStalled()` 已经算过同一个数）。
    */
-  const stalled = captureStalled(reply, snapshot.top_state);
+  const stalled = captureStalled(reply, snapshot.top_state, heartbeat.stalledBeats);
   const dataStopped = lost || stalled !== null;
   const frozenStamp = lost
     ? formatWallClock(heartbeat.frozenAt)

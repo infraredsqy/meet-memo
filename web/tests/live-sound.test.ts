@@ -10,7 +10,7 @@ import {
 import { deadEnvelope, hasAnyReading, holdFrameWhileDataStopped, meterView, releaseHeldFrame, type StoredLevels } from '../src/live/levels';
 import { dbfsToPercent } from '../src/live/format';
 import { liveView } from '../src/live/view';
-import { initialHeartbeatState } from '../src/live/heartbeat';
+import { CAPTURE_STOP_CONFIRMATIONS, initialHeartbeatState } from '../src/live/heartbeat';
 import {
   makeAlert,
   makeAlerts,
@@ -318,7 +318,9 @@ describe('liveView：一份快照摊成主视图', () => {
   it('采集已停：不在失联那一档，但读数与包络也冻住、健康位写「采集已停止」', () => {
     const snapshot = makeSnapshot();
     const reply = makeHeartbeat({ recording_alive: false, seconds_since_last_tick: 42.5 });
-    const view = liveView(snapshot, initialHeartbeatState(), null, reply, T('20:57:40'));
+    // 两拍规则的计数已经攒够（de899128）：这一档只画「确认过停了」的现场
+    const confirmed = { ...initialHeartbeatState(), stalledBeats: CAPTURE_STOP_CONFIRMATIONS };
+    const view = liveView(snapshot, confirmed, null, reply, T('20:57:40'));
     expect(view.stalled).toEqual({ seconds: 42.5, lastFrameAt: '20:56' });
     expect(view.alertsHidden).toBe(false);
     // 与失联同一套冻结处置：读数退成 `—`、健康位写「采集已停止」、电平冻结、时间戳停住
@@ -332,10 +334,20 @@ describe('liveView：一份快照摊成主视图', () => {
     expect(view.channels[1]!.health.chip).toBe('远端 · 采集已停止');
   });
 
+  it('单次 false 还没攒够两拍：横幅判据不成立，画面照常实时', () => {
+    const snapshot = makeSnapshot();
+    const reply = makeHeartbeat({ recording_alive: false, seconds_since_last_tick: 42.5 });
+    const view = liveView(snapshot, initialHeartbeatState(), null, reply, T('20:57:40'));
+    expect(view.stalled).toBeNull();
+    expect(view.channels[0]!.readout).toBe('\u221235.2 dBFS');
+    expect(view.channels[0]!.health.tone).not.toBe('stopped');
+  });
+
   it('采集停了：健康位说的是「采集已停止」，不把它画成「这一路死了」', () => {
     const snapshot = makeSnapshot();
     const reply = makeHeartbeat({ recording_alive: false, seconds_since_last_tick: 3 });
-    const view = liveView(snapshot, initialHeartbeatState(), null, reply, T('20:57:40'));
+    const confirmed = { ...initialHeartbeatState(), stalledBeats: CAPTURE_STOP_CONFIRMATIONS };
+    const view = liveView(snapshot, confirmed, null, reply, T('20:57:40'));
     for (const channel of view.channels) {
       expect(channel.health.dead).toBe(false);
       expect(channel.health.text).toBe('采集已停止');

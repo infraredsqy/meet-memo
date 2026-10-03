@@ -542,6 +542,13 @@ describe('心跳样本', () => {
     expect(beat.seconds_since_last_tick).toBe(0);
   });
 
+  it('no-first-frame 档（还没有第一帧，de899128）：录音态而两字段都是 null，不再等同于停止', () => {
+    const beat = heartbeatSchema.parse(readFixture('heartbeat', 'no-first-frame'));
+    expect(beat.top_state).toBe('recording');
+    expect(beat.recording_alive).toBeNull();
+    expect(beat.seconds_since_last_tick).toBeNull();
+  });
+
   it('少一个字段就不符合契约', () => {
     const beat = readFixture('heartbeat', 'idle') as Record<string, unknown>;
     const { recording_alive: _dropped, ...rest } = beat;

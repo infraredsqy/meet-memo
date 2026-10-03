@@ -13,7 +13,8 @@
      **到点生效、到点自动恢复**；`after_seconds` 到点故障开始、`duration_seconds` 到点故障结束，
      `duration_seconds` 缺省取模块级常量 `DEV_FAULT_DEFAULT_SECONDS`。
      - `silence` = 这一路电平落到 **−80 dBFS 以下并保持**（走 `alerts.py` 的静默累计）；
-     - `stall` = 两路的事实帧**整体停发**（HTTP 照常应答，于是 `recording_alive = false`）；
+     - `stall` = 两路的事实帧**整体停发**（HTTP 照常应答；开场窗口内 `recording_alive`
+        为 `null`、超窗才为 `false`，见 `docs/contract.md` 第 5 章）；
      - `lost` = 直接来一条 `SourceLost`，并且**窗口内这一路整段断流**（一拍电平帧都不发）；
        窗口到点后重新发帧，此后走既有的恢复路径（连着有信号达 `alert.recover_seconds` 回
        `recording`）。这一档与 `stall` 的区别：`stall` 两路都停、一条 `SourceLost` 都不发。
@@ -291,7 +292,8 @@ class DevCaptureBackend:
             with self._lock:
                 faults = {source: self.fault_state(source, now) for source in self._sources}
             if "stall" in faults.values():
-                # `stall` = 两路的事实帧整体停发（HTTP 照常应答，于是 recording_alive = false）
+                # `stall` = 两路的事实帧整体停发（HTTP 照常应答；开场窗口内
+                # recording_alive 为 null、超窗才为 false，见 docs/contract.md 第 5 章）
                 tick += 1
                 time.sleep(DEV_FRAME_INTERVAL_SECONDS)
                 continue

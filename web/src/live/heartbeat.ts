@@ -24,6 +24,16 @@ export type HeartbeatLevel = '正常' | '迟到' | '失联' | '已恢复';
 /** 恢复记录留多久（设计章 4.5：「状态区旁留一条短记录 30 秒」）。 */
 export const RECOVERED_NOTE_SECONDS = 30;
 
+/**
+ * 「采集已停」要**连续这么多次读数**是 `false` 才判（两拍规则，de899128）。
+ *
+ * 开场那一拍服务报的是 `null`（还没有第一帧），单次 `false` 也可能是竞态窗口里的
+ * 误读 —— 一惊一乍的告警会被人关掉（design-intent 第 17 条）。计数是**界面层**的
+ * 确认计数：任何非 `false` 读数（`true` / `null` / 失联）把它清零；服务侧的
+ * `recording_alive` 计算照旧不看界面的心跳周期（契约第 5 章：两个「心跳」不串线）。
+ */
+export const CAPTURE_STOP_CONFIRMATIONS = 2;
+
 export interface HeartbeatState {
   level: HeartbeatLevel;
   /** 这一次失联是从什么时候开始的（本地时钟，毫秒）。 */
@@ -38,6 +48,14 @@ export interface HeartbeatState {
   frozenAt: string | null;
   /** 迟到那一行的字：`心跳迟到 · 8 秒没收到应答`。 */
   lateText: string | null;
+  /**
+   * 连续多少次读数里 `recording_alive === false`（两拍规则的计数）。
+   *
+   * **界面层的单一归并点就是 `applyHeartbeatReading()`**：它在这里记账，冻结判据
+   * （`App.tsx` 的 `dataStopped`）与横幅判据（`view.ts` 的 `stalled`）都只读这一个数
+   * —— 两处各记各的就会漂。任何非 `false` 读数（`true` / `null` / 失联）清零。
+   */
+  stalledBeats: number;
 }
 
 export function initialHeartbeatState(): HeartbeatState {
@@ -49,6 +67,7 @@ export function initialHeartbeatState(): HeartbeatState {
     lastReplyAt: null,
     frozenAt: null,
     lateText: null,
+    stalledBeats: 0,
   };
 }
 
@@ -79,6 +98,13 @@ export function applyHeartbeatReading(
 ): HeartbeatState {
   const lastReplyAt = reading.kind === 'reply' ? reading.heartbeat.server_time : state.lastReplyAt;
 
+  // 两拍规则的计数（单一归并点）：`false` 连着数，`true` / `null` / 失联一并清零。
+  // `null` 是「还没有第一帧」的未知档（de899128），它重置计数正是开场不误报的关键。
+  const stalledBeats =
+    reading.kind === 'reply' && reading.heartbeat.recording_alive === false
+      ? state.stalledBeats + 1
+      : 0;
+
   // 恢复记录到期：先按「现在」把它收掉，再判这一次读数
   const noticeExpired =
     state.noticeSinceMs !== null &&
@@ -96,6 +122,7 @@ export function applyHeartbeatReading(
       // 都停在那一刻（设计章 4.5）。拿不到就沿用上一次的。
       frozenAt: lastReplyAt ?? state.frozenAt,
       lateText: null,
+      stalledBeats,
     };
   }
 
@@ -109,6 +136,7 @@ export function applyHeartbeatReading(
       lastReplyAt,
       frozenAt: state.frozenAt,
       lateText: null,
+      stalledBeats,
     };
   }
 
@@ -119,6 +147,7 @@ export function applyHeartbeatReading(
       noticeSinceMs: noticeExpired ? null : state.noticeSinceMs,
       lastReplyAt,
       lateText: lateHeartbeatText(reading.kind === 'reply' ? reading.lagSeconds : 0),
+      stalledBeats,
     };
   }
 
@@ -128,6 +157,7 @@ export function applyHeartbeatReading(
     noticeSinceMs: noticeExpired ? null : state.noticeSinceMs,
     lastReplyAt,
     lateText: null,
+    stalledBeats,
   };
 }
 
@@ -167,6 +197,11 @@ export function lostBanner(state: HeartbeatState, intervalSeconds: number): Lost
  * 两秒没收到一帧事实就算停）。设计章 4.5 只规定「应答必须带录音存活字段」，
  * 没给这一档的成品文案；任务书「边界」第 6 条指定照失联横幅的结构写。
  *
+ * **两拍规则**（de899128）：`stalledBeats`（`applyHeartbeatReading()` 记的连续
+ * `false` 计数）要够 `CAPTURE_STOP_CONFIRMATIONS` 才判停 —— 开场「还没有第一帧」
+ * 那一档服务报 `null`（未知），不进计数；单次 `false` 不弹横幅。真的饿死时
+ * 计数照样能攒够，不会报不出来。
+ *
  * `seconds_since_last_tick` 是「多久没收到帧」的原始读数；据此倒推出**最后一次收到帧**
  * 的墙钟时刻（分钟级）。它与失联横幅互斥（HTTP 不通才是失联），与致命级横幅也不同屏
  * —— 判据见 `alertsHiddenByHeartbeat()`。
@@ -181,15 +216,19 @@ export interface CaptureStalledView {
 export function captureStalled(
   heartbeat: Heartbeat | null,
   topState: TopState,
+  stalledBeats: number,
 ): CaptureStalledView | null {
   if (heartbeat === null) return null;
   // `idle` / `ended` 态服务给的 `recording_alive` 恒为 `null`（没有在录的场次），
   // 那一档说的是「这场还没在录」，摆出「采集已停」的横幅会吓人一跳。
   if (topState !== 'recording' && topState !== 'alert') return null;
+  // `null` 说的是「第一帧还没到」：先按未知等一等，别急着弹横幅。
   if (heartbeat.recording_alive !== false) return null;
+  // 两拍规则：单次 `false` 不判停（连续计数与这一格同源，见 HeartbeatState.stalledBeats）。
+  if (stalledBeats < CAPTURE_STOP_CONFIRMATIONS) return null;
   const seconds = heartbeat.seconds_since_last_tick;
   if (seconds === null || !Number.isFinite(seconds)) {
-    // `recording_alive` 为假但连「多久没收到帧」都还没记上：一帧都没收到过。
+    // `recording_alive` 为假但连「多久没收到帧」都还没记上：一帧都没收到过（超窗饿死档）。
     // 那一档的「最后一次收到帧」是「还没有过」，不编一个时刻。
     return { seconds: 0, lastFrameAt: '—' };
   }

@@ -12,7 +12,8 @@
 样本出处（更细的出处表在 `contract/README.md`）：
 
   - **进程内 TestClient**（真实 lifespan + startup 钩子 + 动作端点）：idle / recording /
-    alert / ended·done / ended·draining 的快照、两个心跳样本、成功动作、七类失败动作、
+    alert / ended·done / ended·draining 的快照、三个心跳样本（idle / recording /
+    还没有第一帧）、成功动作、七类失败动作、
     resync 帧（`hub.py` 的真实广播路径：真订阅者队列灌满 512 后的下一次广播走 `resync()`）；
   - **真服务子进程**：SSE 帧样本（dev 采集替身 + `module:Class` 假转写后端，见
     `tests/_contract.write_transcriber_stub()`）。
@@ -364,6 +365,51 @@ def test_capture_recording_group(tmp_path, make_client, contract_regen):
         },
         regen=contract_regen,
     )
+
+
+def test_capture_heartbeat_no_first_frame(tmp_path, make_client, contract_regen):
+    """「还没有第一帧」的心跳样本（de899128）：录音态而 `recording_alive` 为 `null`。
+
+    采样办法：进程内直调 dev 替身的 `inject_fault()` 把 `stall` 挂上**再** start
+    （`dev_inject` 动作要有在录场次才挂得上，开场前的那段只能进程内直挂）——合成线程
+    第一拍就看到停发，本场从 start 起一帧都没见过。于是开场窗口（2.0s）内的心跳读到的
+    正是「还没有第一帧」那一档：`recording_alive` 与 `seconds_since_last_tick` 同为
+    `null`，而 `top_state` 已经是 `recording`。这一档从此有自己的样本，界面不再把
+    它等同于「停止」。
+
+    样本落盘之后顺手把窗口走完的那一档验掉（幂等样本要的确定性由 stall 全程挡帧保证）：
+    超窗仍无首帧，`recording_alive` 落 `false` —— 「别把未知做成永不报」，真饿死报得出。
+    """
+    client = make_client({"capture.backend": "dev"})
+    runtime = client.app.state.runtime
+    runtime.capture_backend.inject_fault(
+        source="mic", fault="stall", after_seconds=0.0, duration_seconds=30.0
+    )
+
+    started = _act(client, "start", {"mode": "both"})
+    assert started.status_code == 200, started.text
+
+    heartbeat = wait_until(
+        lambda: (
+            lambda hb: hb
+            if hb["top_state"] == "recording" and hb["recording_alive"] is None
+            else None
+        )(client.get("/api/heartbeat").json()),
+        timeout=CAPTURE_POLL_TIMEOUT_SECONDS,
+    )
+    _assert_heartbeat_shape(heartbeat)
+    assert heartbeat["seconds_since_last_tick"] is None, "一帧都没收到过，走秒量如实 null"
+
+    starved = wait_until(
+        lambda: (
+            lambda hb: hb if hb["recording_alive"] is False else None
+        )(client.get("/api/heartbeat").json()),
+        timeout=CAPTURE_POLL_TIMEOUT_SECONDS,
+    )
+    assert starved["top_state"] == "recording"
+    assert starved["seconds_since_last_tick"] is None
+
+    emit({"heartbeat/no-first-frame.json": normalize(heartbeat)}, regen=contract_regen)
 
 
 # ---------------------------------------------------------------------------

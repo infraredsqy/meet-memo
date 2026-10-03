@@ -4,6 +4,7 @@ import {
   alertsHiddenByHeartbeat,
   applyHeartbeatReading,
   captureStalled,
+  CAPTURE_STOP_CONFIRMATIONS,
   clockLabelWhileLost,
   frozenClockValue,
   initialHeartbeatState,
@@ -30,6 +31,20 @@ function reply(serverTime: string, status: '正常' | '迟到' | '失联', lagSe
     heartbeat: makeHeartbeat({ server_time: serverTime }),
     status,
     lagSeconds,
+  };
+}
+
+/** `recording_alive === false` 的一次读数（「采集已停」那一档的输入）。 */
+function stoppedReply(serverTime: string, seconds: number | null) {
+  return {
+    kind: 'reply' as const,
+    heartbeat: makeHeartbeat({
+      server_time: serverTime,
+      recording_alive: false,
+      seconds_since_last_tick: seconds,
+    }),
+    status: '正常' as const,
+    lagSeconds: 0,
   };
 }
 
@@ -140,33 +155,91 @@ describe('lostBanner：失联横幅的正文', () => {
 });
 
 describe('captureStalled：采集已停那一档', () => {
-  it('录音中 + recording_alive 为假：算得出最后一次收到帧的时刻', () => {
+  it('录音中 + recording_alive 为假 + 连续计数够两拍：算得出最后一次收到帧的时刻', () => {
     const view = captureStalled(
       makeHeartbeat({ server_time: T('20:57:31'), recording_alive: false, seconds_since_last_tick: 42.5 }),
       'recording',
+      CAPTURE_STOP_CONFIRMATIONS,
     );
     expect(view).toEqual({ seconds: 42.5, lastFrameAt: '20:56' });
   });
 
+  it('两拍规则（de899128）：单次 false 不摆这一档，计数够两次才判停', () => {
+    const beat = makeHeartbeat({ recording_alive: false, seconds_since_last_tick: 42.5 });
+    expect(captureStalled(beat, 'recording', 0)).toBeNull();
+    expect(captureStalled(beat, 'recording', 1)).toBeNull();
+    expect(captureStalled(beat, 'recording', CAPTURE_STOP_CONFIRMATIONS)).toEqual({
+      seconds: 42.5,
+      lastFrameAt: '20:56',
+    });
+  });
+
   it('recording_alive 为真：不在这一档', () => {
-    expect(captureStalled(makeHeartbeat({ recording_alive: true }), 'recording')).toBeNull();
+    expect(captureStalled(makeHeartbeat({ recording_alive: true }), 'recording', CAPTURE_STOP_CONFIRMATIONS)).toBeNull();
+  });
+
+  it('recording_alive 为 null（还没有第一帧）：不在这一档', () => {
+    expect(
+      captureStalled(makeHeartbeat({ recording_alive: null, seconds_since_last_tick: null }), 'recording', CAPTURE_STOP_CONFIRMATIONS),
+    ).toBeNull();
   });
 
   it('空闲与已结束不摆这一档（服务给的 recording_alive 本来就是 null）', () => {
-    expect(captureStalled(makeHeartbeat({ recording_alive: null }), 'idle')).toBeNull();
-    expect(captureStalled(makeHeartbeat({ recording_alive: false }), 'ended')).toBeNull();
+    expect(captureStalled(makeHeartbeat({ recording_alive: null }), 'idle', CAPTURE_STOP_CONFIRMATIONS)).toBeNull();
+    expect(captureStalled(makeHeartbeat({ recording_alive: false }), 'ended', CAPTURE_STOP_CONFIRMATIONS)).toBeNull();
   });
 
-  it('一帧都没收到过：不编一个时刻', () => {
+  it('一帧都没收到过（超窗饿死档）：判停之后仍不编一个时刻', () => {
     const view = captureStalled(
       makeHeartbeat({ recording_alive: false, seconds_since_last_tick: null }),
       'recording',
+      CAPTURE_STOP_CONFIRMATIONS,
     );
     expect(view).toEqual({ seconds: 0, lastFrameAt: '—' });
   });
 
   it('还没拿到应答时不出现', () => {
-    expect(captureStalled(null, 'recording')).toBeNull();
+    expect(captureStalled(null, 'recording', CAPTURE_STOP_CONFIRMATIONS)).toBeNull();
+  });
+});
+
+describe('两拍规则的连续计数（de899128，归并点在 applyHeartbeatReading）', () => {
+  it('false 连着数：一拍 1、两拍 2', () => {
+    const one = applyHeartbeatReading(initialHeartbeatState(), stoppedReply(T('20:57:10'), 3), MS('20:57:10'));
+    expect(one.stalledBeats).toBe(1);
+    const two = applyHeartbeatReading(one, stoppedReply(T('20:57:20'), 13), MS('20:57:20'));
+    expect(two.stalledBeats).toBe(2);
+  });
+
+  it('true 把计数清零', () => {
+    const one = applyHeartbeatReading(initialHeartbeatState(), stoppedReply(T('20:57:10'), 3), MS('20:57:10'));
+    const back = applyHeartbeatReading(one, reply(T('20:57:20'), '正常'), MS('20:57:20'));
+    expect(back.stalledBeats).toBe(0);
+  });
+
+  it('null（还没有第一帧的未知档）把计数清零 —— 开场不误报的关键一格', () => {
+    const one = applyHeartbeatReading(initialHeartbeatState(), stoppedReply(T('20:57:10'), 3), MS('20:57:10'));
+    const unknown = applyHeartbeatReading(
+      one,
+      {
+        kind: 'reply' as const,
+        heartbeat: makeHeartbeat({ server_time: T('20:57:20'), recording_alive: null, seconds_since_last_tick: null }),
+        status: '正常',
+        lagSeconds: 0,
+      },
+      MS('20:57:20'),
+    );
+    expect(unknown.stalledBeats).toBe(0);
+  });
+
+  it('失联（读不到应答）也把计数清零：任何非 false 读数都重置', () => {
+    const one = applyHeartbeatReading(initialHeartbeatState(), stoppedReply(T('20:57:10'), 3), MS('20:57:10'));
+    const lost = applyHeartbeatReading(
+      one,
+      { kind: 'error', error: new Error('HTTP 502'), status: '失联' },
+      MS('20:57:20'),
+    );
+    expect(lost.stalledBeats).toBe(0);
   });
 });
 

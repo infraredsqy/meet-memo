@@ -4,7 +4,8 @@ import { topStateSchema } from './enums';
 
 /**
  * 心跳应答：`GET /api/heartbeat`，**任何状态下都 200**，应答恰好六字段
- * （`docs/contract.md` 第 5 章）。`contract/fixtures/heartbeat/*.json` 是两份样本。
+ * （`docs/contract.md` 第 5 章）。`contract/fixtures/heartbeat/*.json` 是三份样本
+ * （idle / recording / no-first-frame）。
  *
  * 两个「心跳」绝不串线 —— 这是最容易踩的一处：
  *
@@ -28,12 +29,15 @@ export const heartbeatSchema = z
     revision: z.number().int(),
     top_state: topStateSchema,
     /**
-     * 采集还活着吗。`recording` / `alert` 态给 bool，`idle` / `ended` 态给 `null`
-     * （没有在录的场次，问这个没有意义）。
+     * 采集还活着吗。`idle` / `ended` 态给 `null`（没有在录的场次，问这个没有意义）；
+     * `recording` / `alert` 态给 bool，**开场那一拍除外**（de899128）：自本场 start
+     * 起算的帧时钟窗口（`max(2.0s, 3 × frame_interval)`）内还没收到第一帧时报
+     * `null`（未知），超窗仍无首帧才报 `false`。
      *
-     * 判据是服务侧的采集帧时钟：窗口 = `max(2.0s, 3 × frame_interval)`，只认 `LevelFrame`。
-     * 后端卡住不报任何东西时它会算成 `false`，而 HTTP 照常 200 ——
-     * 这正是「只看 HTTP 通不通会漏掉录音线程已卡死」的判据。
+     * 窗口照旧是服务侧的采集帧时钟：只认 `LevelFrame`。后端卡住不报任何东西时它会
+     * 算成 `false`，而 HTTP 照常 200 —— 这正是「只看 HTTP 通不通会漏掉录音线程已
+     * 卡死」的判据。界面拿到 `false` 还要**连续两次读数**才判停（见
+     * `live/heartbeat.ts` 的两拍规则）。
      */
     recording_alive: z.boolean().nullable(),
     /**
