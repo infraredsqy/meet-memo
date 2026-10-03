@@ -36,7 +36,6 @@ from __future__ import annotations
 
 import logging
 import threading
-from datetime import datetime
 from typing import Any
 
 #: 「这一层已经在飞」那一档（`meeting/minutes/status.py` 定义，本模块原样转出）：
@@ -193,34 +192,19 @@ class MinutesHook:
             self._mark_failed(session_dir, exc)
 
     def _mark_failed(self, session_dir: str, exc: BaseException) -> None:
-        """把状态文件补成 `failed`（**尽力而为**：连这一步都失败就只留一条 log）。"""
+        """把状态文件补成 `failed`（**尽力而为**：连这一步都失败就只留一条 log）。
+
+        字段口径只有一份：`meeting/minutes/status.py` 的 `mark_failed()` —— 盘上那一版的
+        `mode` / `branch` / `started_at` / `artifacts` / `dsh` 照留，`state` 与 `error`
+        覆盖成这一趟的账。`meeting/service/runtime.py` 的 claim 退回兜底支走的是同一个函数
+        （本方法仍在，是给它 `getattr` 找的那一格：实现带上它时退回直接落在实现上）。
+        """
         try:
             from meeting.minutes import status as status_module
 
-            path = status_module.status_path(session_dir)
-            existing: dict = {}
-            if path.exists():
-                try:
-                    existing = status_module.read_status(path)
-                except status_module.StatusError:
-                    existing = {}
-            status_module.write_session_status(
-                session_dir,
-                state=STATE_FAILED,
-                mode=str(existing.get("mode") or "none"),
-                branch=str(existing.get("branch") or "headless"),
-                started_at=str(existing.get("started_at") or _now_iso()),
-                error=f"{type(exc).__name__}: {exc}",
-                artifacts=dict(existing.get("artifacts") or {}),
-                dsh=dict(existing.get("dsh") or {}),
-            )
+            status_module.mark_failed(session_dir, f"{type(exc).__name__}: {exc}")
         except Exception:  # pragma: no cover - 兜底那一步失败时不掩盖原异常
             _log.exception("会后纪要状态文件补写失败（原异常照上面那条 log）")
-
-
-def _now_iso() -> str:
-    """现在的 ISO 时刻（与 `meeting/offline/runner.py` 的 `_now_iso()` 同形）。"""
-    return datetime.now().isoformat(timespec="seconds")
 
 
 def minutes_hook_selector() -> str:

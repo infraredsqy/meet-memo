@@ -356,8 +356,9 @@ class SessionStore:
     def remove_session_dir(self, session_dir: str) -> None:
         """`start` 写盘失败后把这一场刚写的东西清掉（主 log 的留痕由调用方写）。
 
-        **场内**清：只删本场写入的 `session.json` 与它的临时副本，不动工作区目录本身；
-        目录是用户给的，软件不删它。
+        **场内**清：只删本场写入的 `session.json`，不动工作区目录本身；
+        目录是用户给的，软件不删它。`session.json` 的临时副本归
+        `write_session_json()` 的 `finally` 兜底，不在这道清理里。
         """
         session_file = self.session_file(session_dir)
         try:

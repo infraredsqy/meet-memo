@@ -876,11 +876,7 @@ def run_post(
         # 落盘跟着链走、不挑是哪个按钮拉起的（`docs/design-intent.md` 第 12 条）。
         # 调用方注入的那一份优先（用例与下游的「拿旧录音全速重跑」都靠这一格）。
         if progress is None:
-            progress = offline_progress.OfflineProgressLedger(
-                directory,
-                session_id=str(offline_runner.session_id_of(directory)),
-                sources=list(offline_runner.declared_sources(directory)),
-            )
+            progress = offline_progress.OfflineProgressLedger.for_session(directory)
         try:
             # **人工入口显式放行**（隔离闸）：`meeting post` 首跑这一路把 `announce_minutes=True`
             # 递进离线链的尾巴 —— 纪要那一层只有人工发起才被拉起。
@@ -1410,58 +1406,26 @@ def _minutes_layer_done(directory: Path, status: dict[str, Any] | None = None) -
 def _mark_offline_failed(directory: Path, error: str) -> None:
     """把 `meeting_offline_status.json` 补成 `failed`（**尽力而为**：补不上只留一条 log）。
 
-    与 `meeting/backends/post.py` 的 `_mark_failed()` 同一个口径：先读回上一版、保留里面的
-    场次编号 / 开始时刻 / 路清单 / 逐路产物，再写终态与原因。写盘方式走 `artifacts.py` 的
-    `write_status()`（原子替换），**字段与取值域一个字不改**。
+    字段口径只有一份：`meeting/offline/artifacts.py` 的 `mark_failed_if_unset()` ——
+    先读回上一版，盘上停着终态账（`failed` / `partial` / `interrupted`）就沿用它的
+    `error` 与 `partial` / `silent` / `silent_spans` / `gate`：异常从 `run_session` 逃出来
+    之前，离线段自己**已经现场写过**一版（`runner._write_failed_status()` 落 `failed`，
+    一路跑成那种场面落 `partial`），那一版里的话比这里收到的通用串准
+    （`engine_load_error` 这类词档只在它那儿）。否则补一版 `failed` 并写上这次的原因。
+    `meeting/backends/post.py` 的线程体兜底走的是同一个函数。
 
-    **盘上那一版已经是终态时照它自己那一版留着**：异常从 `run_session` 逃出来之前，
-    离线段自己**已经现场写过**一版（`runner._write_failed_status()` 落 `failed`，或者一路
-    跑成那种场面落 `partial`），那一版里的话比这里收到的通用串准（`engine_load_error`
-    这类词档只在它那儿）。改写前先读回盘上那一份，它已经是 `failed` / `partial` 就沿用
-    它的 `error` 与 `partial` / `silent` / `silent_spans` / `gate` 四格 —— 否则读方在顶层
-    `error` 这一格上读不到「是加载失败还是跑失败」，而那句话刚刚才写好。
+    本函数只剩「尽力而为」这一层壳：补写失败只留一条 log，
+    不掩盖调用方正在上抛的那条异常。
     """
     try:
         from meeting.offline import artifacts
 
-        path = directory / artifacts.STATUS_NAME
-        existing: dict[str, Any] = {}
-        if path.exists():
-            try:
-                existing = artifacts.read_status(path)
-            except artifacts.ArtifactContractError:
-                existing = {}
-        settled = str(existing.get("state") or "") in (
-            LAYER_FAILED,
-            LAYER_PARTIAL,
-            LAYER_INTERRUPTED,
-        )
-        artifacts.write_status(
-            path,
-            session_id=str(existing.get("session_id") or directory.name),
-            state=str(existing.get("state")) if settled else LAYER_FAILED,
-            started_at=str(existing.get("started_at") or _now_iso()),
-            sources=list(existing.get("sources") or []),
-            artifacts=dict(existing.get("artifacts") or {}),
-            finished_at=_now_iso(),
-            error=str(existing.get("error") or error) if settled else str(error),
-            partial=bool(existing.get("partial")) if settled else False,
-            silent=bool(existing.get("silent")) if settled else False,
-            silent_spans=list(existing.get("silent_spans") or []) if settled else None,
-            gate=dict(existing.get("gate") or {}) if settled else None,
-        )
+        artifacts.mark_failed_if_unset(directory, error)
     except Exception:  # pragma: no cover - 补写失败时不掩盖原来那条异常
         try:
             _log().exception("会后离线状态文件补写失败（原异常照上面那条 log）")
         except Exception:
             pass
-
-
-def _now_iso() -> str:
-    """现在的 ISO 时刻（与 `meeting/offline/runner.py` 的 `_now_iso()` 同形）。"""
-    from datetime import datetime
-
-    return datetime.now().isoformat(timespec="seconds")
 
 
 def _failure_summary(

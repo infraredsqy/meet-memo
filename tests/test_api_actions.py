@@ -157,6 +157,38 @@ def test_action_names_and_codes_are_the_frozen_ones():
     }
 
 
+def test_action_registry_is_reconciled_with_action_names():
+    """分发的登记表与 `ACTION_NAMES` 一字不差地对上（routes 的启动期对账把两边钉死）。
+
+    从前动作名有两份清单：`ACTION_NAMES` 与 routes 里那条 if/elif 链，靠纪律同步 ——
+    加名漏加分支时请求穿过分发链落到函数末尾，什么都不做却回 `ok: true`。现在分发只认
+    `_ACTION_HANDLERS` 那张表，且本用例导入 `meeting.service.routes` 那一刻对账就已经
+    跑过（对不上，导入当场炸）；这里再把结论摆到明面上钉一次。
+    """
+    from meeting.service import routes as routes_module
+
+    assert set(routes_module._ACTION_HANDLERS) == set(ACTION_NAMES)
+    assert len(routes_module._ACTION_HANDLERS) == len(ACTION_NAMES)
+
+
+def test_action_registry_reconciliation_rejects_drift(monkeypatch):
+    """对账器按字面意思执法：任何一边多一个名、少一个名，都当场炸，报哪个名字漂了。"""
+    from meeting.service import routes as routes_module
+
+    original = dict(routes_module._ACTION_HANDLERS)
+
+    missing = {name: handler for name, handler in original.items() if name != "reprobe"}
+    monkeypatch.setattr(routes_module, "_ACTION_HANDLERS", missing)
+    with pytest.raises(RuntimeError, match="reprobe"):
+        routes_module._reconcile_action_registry()
+
+    extra = dict(original)
+    extra["phantom_action"] = original["start"]
+    monkeypatch.setattr(routes_module, "_ACTION_HANDLERS", extra)
+    with pytest.raises(RuntimeError, match="phantom_action"):
+        routes_module._reconcile_action_registry()
+
+
 def test_success_and_failure_envelope_shapes(tmp_path):
     """成功体 `{ok, revision}`（`settings_update` 多两个数组）；失败体带 `code` / `message` / `detail`。"""
     with live(tmp_path) as (client, _runtime, _home, _out):

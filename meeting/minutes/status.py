@@ -259,6 +259,41 @@ def write_session_status(
     return document
 
 
+def mark_failed(session_dir: str | Path, error: str) -> dict[str, Any]:
+    """把纪要状态文件补成 `failed` + 原因；盘上那一版的身世能留的都留着。
+
+    「读回盘上那一版 → 沿用 `mode` / `branch` / `started_at` / `artifacts` / `dsh` 五格
+    （缺格按缺省补：`none` / `headless` / 现在 / 空 / 空）→ 覆盖 `state = "failed"` 与
+    `error`」这段写法，从前在两个调用点逐字各抄一份（`meeting/backends/minutes.py` 的
+    线程体兜底、`meeting/service/runtime.py` 的 claim 退回兜底支），现在只有这一份 ——
+    claim 闸与启动对账读的都是这份文件，补账口径因此只能有一处。
+
+    读不动盘上那一版（文件不在场、不合契约）时按空账补。这一层没有 offline 那份
+    「已是终态账就沿用」的判据（`meeting/offline/artifacts.py::mark_failed_if_unset`）：
+    纪要这一层的补账只发生在「这一趟整个炸出来」的现场，`state` 如实落 `failed`。
+    写盘走 `write_session_status()`（原子替换、过读方契约）；写不下去时异常原样抛给
+    调用方，由调用方记 log（不掩盖各自那条更早的异常）。返回写下去的那份状态。
+    """
+    session = Path(session_dir)
+    existing: dict[str, Any] = {}
+    path = status_path(session)
+    if path.exists():
+        try:
+            existing = read_status(path)
+        except StatusError:
+            existing = {}
+    return write_session_status(
+        session,
+        state=STATE_FAILED,
+        mode=str(existing.get("mode") or "none"),
+        branch=str(existing.get("branch") or "headless"),
+        started_at=str(existing.get("started_at") or now_iso()),
+        error=str(error),
+        artifacts=dict(existing.get("artifacts") or {}),
+        dsh=dict(existing.get("dsh") or {}),
+    )
+
+
 def lock_path(session_dir: str | Path) -> Path:
     """claim 锁的落点（场次目录根，与状态文件并列）。"""
     return Path(session_dir) / LOCK_NAME
@@ -398,6 +433,7 @@ __all__ = [
     "StatusError",
     "build_status",
     "lock_path",
+    "mark_failed",
     "mark_running",
     "now_iso",
     "parse_status_document",

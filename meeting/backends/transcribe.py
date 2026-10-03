@@ -14,7 +14,7 @@
   - `bind(line_sink, *, config)`：记下出口与只读配置视图（runtime 在 `start()` 之前调）；
   - `start(mode, session_dir)`：起流水线（**起步失败不阻塞录音** —— 转写坏了可以重跑，R1 的立场）；
   - `stop()`：停转写（关读线程 + 在收尾预算内把队列里剩下的段尽量做完）；
-  - `release_gpu()`：把会中模型占的显存让出去（收尾第 4 步 `launch()` 之前调；**不在协议里**，
+  - `release_gpu()`：把会中模型占的显存让出去（收尾第 4 步与暂停动作调；**不在协议里**，
     只是这个具体后端多出来的一个方法，调用点用 `getattr` 防御式取它）；
   - `acquire_gpu()`：把会中模型**重新拉起来**（暂停之后继续时调；同样**不在协议里**，
     同样走防御式取法）。它与 `release_gpu()` 是同一件事的两半 —— 「要用的时候才拉起来，
@@ -67,9 +67,10 @@ DRAIN_STOP_SLACK_SECONDS = 1.0
 
 #: `release_gpu()` 等在飞推理收干净的上界（秒）。
 #:
-#: **为什么是这个量级**：会中模型由进程级单例长期持有，而会后离线链（MOSSTD，`meeting/offline/`）
-#: 在收尾第 4 步 `launch()` 之后就**紧接着开始加载**。16 GB 卡上两份模型同住才是真风险，所以
-#: 第 4 步之前要把会中这一份让出去（`meeting/service/runtime.py` 的 `_drain_post()`）。
+#: **为什么是这个量级**：会中模型由进程级单例长期持有，一场录完就该让出显存 —— 收尾第 4 步
+#: （`meeting/service/runtime.py` 的 `_drain_post()`）做的正是这件事（R26 之后这一步不再
+#: 拉起任何会后动作，释放是它仅剩的活），依据是 `docs/design-intent.md` 第 21 条
+#: 「用完即关」：暂停、打断、终止、跑完都当场结束，显存不占到场次之外。
 #:
 #: 丢掉引用之前要等在飞的推理收干净（否则 worker 那一帧还握着旧模型，而下一段会经
 #: `_transcriber_or_create()` 再造一份 —— 两份 GLM 同时在卡上，每份约 4.3 GiB 权重）。
@@ -303,12 +304,13 @@ class TranscriberBackend:
     def release_gpu(self) -> bool:
         """**让出会中模型占的显存**：等干净在飞的推理，丢掉模型引用，然后清一次缓存。
 
-        生产调用点有两处：**收尾第 4 步**（`meeting/service/runtime.py` 的 `_drain_post()`）—— 在
-        `post.launch()` **之前**（`launch()` 一返回，那条 daemon 线程就已经在跑 `run_session()`，
-        会后离线链 MOSSTD 的加载紧接着就开始，放在 `launch()` 之后等于没做）；以及**暂停那个动作**
-        （同一文件的 `pause_session()`，`10770b41` 起：暂停让模型当场退出显存，`resume` 由配对的
-        `acquire_gpu()` 把它拉回来）。暂停那一处经 `_submit_model_lifecycle()` 提交到后台的单线程
-        执行器，不等它做完才回应答。
+        生产调用点有两处：**收尾第 4 步**（`meeting/service/runtime.py` 的 `_drain_post()`）——
+        R26 之后这一步不再拉起任何会后动作，把会中模型让出显存是它仅剩的活
+        （`docs/design-intent.md` 第 21 条「用完即关」：录完了模型就当场退出显卡，
+        与之后跑不跑会后无关），这一步受收尾那一条 deadline 约束（见下面「等的上界」）；
+        以及**暂停那个动作**（同一文件的 `pause_session()`，`10770b41` 起：暂停让模型当场退出
+        显存，`resume` 由配对的 `acquire_gpu()` 把它拉回来）。暂停那一处经
+        `_submit_model_lifecycle()` 提交到后台的单线程执行器，不等它做完才回应答。
 
         逐条语义：
 

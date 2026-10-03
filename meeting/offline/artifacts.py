@@ -196,6 +196,11 @@ TRANSCRIPT_NOTE_SUFFIX = "-->"
 #: 永远停在在跑」那种状态里，「被打断」这一格是治它的那一半。
 STATES = ("running", "done", "partial", "failed", "interrupted")
 
+#: 「盘上停着一版已落定的账」的三档（`mark_failed_if_unset()` 的沿用判据；与
+#: `meeting/backends/post.py` 的 `STATE_FAILED` / `STATE_PARTIAL` / `STATE_INTERRUPTED`
+#: 同值）：`interrupted`（人停的）也算 —— 后来逃出来的异常不许把它盖成 `failed`（b1c6a58e）。
+_SETTLED_STATES = ("failed", "partial", "interrupted")
+
 
 class ArtifactContractError(ValueError):
     """读到的产物不满足字段契约（`schema_version` / `source` 缺失或版本不认识）。
@@ -1049,6 +1054,64 @@ def read_status(path: Path | str) -> dict[str, Any]:
     return document
 
 
+def _now_iso() -> str:
+    """现在的 ISO 时刻（与 `meeting/offline/runner.py` 的 `_now_iso()` 同形）。"""
+    from datetime import datetime
+
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def mark_failed_if_unset(session_dir: Path | str, error: str) -> Path:
+    """把状态文件补成 `failed` + 原因；**盘上停着一版已落定的账时沿用那一版的字段**。
+
+    「读回状态文件 → 盘上已是终态账则沿用它的字段 → 否则补 `failed` + 原因」这一段，
+    从前在两个调用点逐字各抄一份（`meeting/backends/post.py` 的线程体兜底与
+    `meeting/cli.py::run_post()` 上抛前那次补账），现在只有这一份 —— 幂等闸、启动对账
+    与读回侧都读这份文件，补账口径因此只能有一处。
+
+    沿用判据（**以原有两处的口径为准，字段一个不变**）：
+
+      - `session_id` / `started_at` / `sources` / `artifacts` 照读回的那一版
+        （缺格按缺省补：编号退回目录名、开始时刻退回现在、路清单与产物表退回空）；
+      - 盘上那一版已落定（`failed` / `partial` / `interrupted` 三档）→ `state` / `error` /
+        `partial` / `silent` / `silent_spans` / `gate` 六格照它自己那一版留：
+        `engine_load_error` 这类词档只在 runner 现场写的那一版里，比调用方手里的通用串准；
+        `interrupted`（人停的）不许被后来逃出来的异常盖成 `failed`（引擎炸的），b1c6a58e；
+      - 否则（没有文件、读不动、或停着 `running` / `done`）→ `state = "failed"`、
+        `error` 用这次递进来的串、`partial` / `silent` 落假、`silent_spans` / `gate` 落空；
+      - `finished_at` 一律写现在（补账这一刻就是收工时刻）。
+
+    读不动盘上那一版（不合契约）时按空账补：兜底归写方这一段，读侧照旧走
+    「拿不准的文件拒收」那条闸，两边各管各的一段。写盘走 `write_status()`（原子替换）。
+    **整段尽力而为**：
+    写不下去时异常原样抛给调用方，由调用方记 log（不掩盖各自那条更早的异常）。
+    返回写下去的路径。
+    """
+    directory = Path(session_dir)
+    path = directory / STATUS_NAME
+    existing: dict[str, Any] = {}
+    if path.exists():
+        try:
+            existing = read_status(path)
+        except ArtifactContractError:
+            existing = {}
+    settled = str(existing.get("state") or "") in _SETTLED_STATES
+    return write_status(
+        path,
+        session_id=str(existing.get("session_id") or directory.name),
+        state=str(existing.get("state")) if settled else "failed",
+        started_at=str(existing.get("started_at") or _now_iso()),
+        sources=list(existing.get("sources") or []),
+        artifacts=dict(existing.get("artifacts") or {}),
+        finished_at=_now_iso(),
+        error=str(existing.get("error") or error) if settled else str(error),
+        partial=bool(existing.get("partial")) if settled else False,
+        silent=bool(existing.get("silent")) if settled else False,
+        silent_spans=list(existing.get("silent_spans") or []) if settled else None,
+        gate=dict(existing.get("gate") or {}) if settled else None,
+    )
+
+
 __all__ = [
     "ArtifactContractError",
     "KNOWN_SCHEMA_MAJOR",
@@ -1067,6 +1130,7 @@ __all__ = [
     "format_transcript_line",
     "incomplete_note",
     "is_transcript_note",
+    "mark_failed_if_unset",
     "minute_stamp",
     "parse_speakers_document",
     "read_speakers_artifact",

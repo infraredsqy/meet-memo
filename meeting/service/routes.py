@@ -9,7 +9,9 @@ b1c6a58e 加 `post_stop` 那只停掉动作）。
   - `GET /api/state`（完整版，body 就是 `to_dict()` 的产出）；
   - `GET /api/events`（SSE：`snapshot` 先行 + `state` / `levels` / `transcript` 三通道）；
   - `GET /api/heartbeat`（完整版，`service` 字面量必须有）；
-  - `POST /api/actions`（信封 + 十六个动作名 + `code` 表）；
+  - `POST /api/actions`（信封 + 十六个动作名 + `code` 表；分发走 `_ACTION_HANDLERS`
+    那张「动作名 → 处理器」登记表，并在导入时与 runtime 的 `ACTION_NAMES` 对账 ——
+    两份名单对不上，服务起不来）；
   - `GET /api/summaries`（本场按过的、成功产出的那几次会中总结；读内存，不落文件）；
   - `GET /api/sessions`（工作区注册表：按路径去重的那一份"我这些会"，读盘上注册表文件）；
   - `GET /api/sessions/{id}`（单场状态：这一场此刻跑到哪一档、会后离线跑过几块 / 共几块、
@@ -29,7 +31,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import Any, Callable
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
@@ -219,12 +221,152 @@ async def _api_devices(request: Request) -> Response:
 
 
 # ---------------------------------------------------------------------------
-# POST /api/actions
+# POST /api/actions —— 动作登记表（分发只认这张表，函数末尾没有第三条出路）
 # ---------------------------------------------------------------------------
+
+#: 动作处理器：`(runtime, args) → 额外成功键`（async；`None` = 通用信封
+#: `{"ok": true, "revision": N}` 就够）。每个动作成功体的形状只写在**这一处** ——
+#: 从前「分支 + 成功体」要在 if/elif 链和返回体两处一起写的日子到此为止。
+_ActionHandler = Callable[[ServiceRuntime, dict[str, Any]], Any]
+
+
+async def _act_start(runtime: ServiceRuntime, args: dict[str, Any]) -> None:
+    runtime.start_session(args.get("mode"), args.get("dir"))
+
+
+async def _act_stop(runtime: ServiceRuntime, args: dict[str, Any]) -> None:
+    runtime.stop_session("user")
+
+
+async def _act_mute_session(runtime: ServiceRuntime, args: dict[str, Any]) -> None:
+    runtime.mute_session()
+
+
+async def _act_settings_update(runtime: ServiceRuntime, args: dict[str, Any]) -> dict[str, Any]:
+    extra = runtime.settings_update(args)
+    return {"applied": extra["applied"], "pending_restart": extra["pending_restart"]}
+
+
+async def _act_reprobe(runtime: ServiceRuntime, args: dict[str, Any]) -> None:
+    runtime.reprobe()
+
+
+async def _act_dev_inject(runtime: ServiceRuntime, args: dict[str, Any]) -> None:
+    runtime.dev_inject(args)
+
+
+async def _act_summarize(runtime: ServiceRuntime, args: dict[str, Any]) -> dict[str, Any]:
+    # 成功体在通用信封上多一个 `summary` 键（先例是 `settings_update` 的
+    # `applied` / `pending_restart`）；`revision` 是**当前**版本号 —— 总结是只读的，
+    # 这里不提交、不涨版本、不广播。
+    # `summarize()` 是一条协程：那一次模型调用在**工作线程**里跑
+    # （`runtime._summary_wait()`，复审 minor 6），等它的只有本请求这一条协程 ——
+    # 于是总结那几秒里 `/api/state` 与三个 SSE 通道照常应答。
+    return {"summary": await runtime.summarize(args)}
+
+
+async def _act_workspace_open(runtime: ServiceRuntime, args: dict[str, Any]) -> dict[str, Any]:
+    # 成功体在通用信封上多一个 `workspace` 键（先例是 `summarize` 的 `summary`）：
+    # 判别档位与去重回扣由服务给，界面不派生；失败档（目录不存在、非空未确认、
+    # 注册表写盘失败）走 ActionError 的 `code` 表。
+    return {
+        "workspace": runtime.workspace_open(args.get("dir"),
+                                            confirm=bool(args.get("confirm"))),
+    }
+
+
+async def _act_workspace_remove(runtime: ServiceRuntime, args: dict[str, Any]) -> dict[str, Any]:
+    return {"workspace": runtime.workspace_remove(args.get("dir"))}
+
+
+async def _act_post_offline(runtime: ServiceRuntime, args: dict[str, Any]) -> dict[str, Any]:
+    return {"post": runtime.post_offline(args)}
+
+
+async def _act_post_minutes(runtime: ServiceRuntime, args: dict[str, Any]) -> dict[str, Any]:
+    return {"post": runtime.post_minutes(args)}
+
+
+async def _act_post_stop(runtime: ServiceRuntime, args: dict[str, Any]) -> dict[str, Any]:
+    return {"post": runtime.post_stop(args)}
+
+
+async def _act_pause(runtime: ServiceRuntime, args: dict[str, Any]) -> None:
+    runtime.pause_session()
+
+
+async def _act_resume(runtime: ServiceRuntime, args: dict[str, Any]) -> None:
+    runtime.resume_session()
+
+
+async def _act_set_source(runtime: ServiceRuntime, args: dict[str, Any]) -> None:
+    runtime.set_source(args)
+
+
+async def _act_speaker_rename(runtime: ServiceRuntime, args: dict[str, Any]) -> dict[str, Any]:
+    # 说话人改名（R10 第四条 / R30）：只写这一场目录里的人名表（不拉任何离线/纪要、
+    # 不动快照），成功体在通用信封上多一个 `speaker` 键——写了哪一场、哪一个键、
+    # 现在叫什么；界面改完当场生效走的是重问单场状态那一跳。
+    return {"speaker": runtime.speaker_rename(args)}
+
+
+#: 会后的两个按钮（R26）与停掉会后精细稿那一趟的动作（b1c6a58e，R28）共用同一条
+#: 成功体规矩：起一条后台线程即算启动成功 / 立起取消旗标即算受理成功，成功体在通用
+#: 信封上多一个 `post` 键——「起的是哪一场、停的是哪一场」，停没停成由盘上的状态文件
+#: 回答（`post_stop` 的受理回执多一格 `stopping: true`）。
+_ACTION_HANDLERS: dict[str, _ActionHandler] = {
+    "start": _act_start,
+    "stop": _act_stop,
+    "mute_session": _act_mute_session,
+    "settings_update": _act_settings_update,
+    "reprobe": _act_reprobe,
+    "dev_inject": _act_dev_inject,
+    "summarize": _act_summarize,
+    "workspace_open": _act_workspace_open,
+    "workspace_remove": _act_workspace_remove,
+    "post_offline": _act_post_offline,
+    "post_minutes": _act_post_minutes,
+    "post_stop": _act_post_stop,
+    "pause": _act_pause,
+    "resume": _act_resume,
+    "set_source": _act_set_source,
+    "speaker_rename": _act_speaker_rename,
+}
+
+
+def _reconcile_action_registry() -> None:
+    """启动期对账：登记表与 `ACTION_NAMES` 两份名单必须恰好对上，对不上当场炸。
+
+    `ACTION_NAMES`（runtime 冻结的那一份，`detail.known` 与契约按它答）与分发表的
+    名单从前靠纪律同步：给 `ACTION_NAMES` 加名漏加分支时，请求穿过分发链落到函数末尾、
+    什么都不做却回 `ok: true`。现在登记表是分发的唯一依据，本模块被导入（＝应用装配、
+    服务起跑之前）时把两边数一遍：任何一边多一个名、少一个名，启动就此失败 ——
+    漂移活不过启动。
+    """
+    registered = set(_ACTION_HANDLERS)
+    frozen = set(ACTION_NAMES)
+    if registered == frozen:
+        return
+    raise RuntimeError(
+        "动作清单漂移，拒绝启动："
+        f"ACTION_NAMES 有而登记表没有：{sorted(frozen - registered)}；"
+        f"登记表有而 ACTION_NAMES 没有：{sorted(registered - frozen)}。"
+        "请对账 meeting/service/routes.py 的 `_ACTION_HANDLERS` 与 "
+        "meeting/service/runtime.py 的 `ACTION_NAMES`"
+    )
+
+
+_reconcile_action_registry()
 
 
 async def _api_actions(request: Request) -> Response:
-    """动作端点：信封 + 十六个动作名 + `code` 表（中间件已校验两个必需请求头）。"""
+    """动作端点：信封 + 十六个动作名 + `code` 表（中间件已校验两个必需请求头）。
+
+    分发走模块顶那张「动作名 → 处理器」登记表（`_ACTION_HANDLERS`）：表是分发的唯一
+    依据，并在本模块导入时与 `ACTION_NAMES` 对过账（`_reconcile_action_registry()`）。
+    查表查不到的名字在这里**显式失败** —— 从前那条「穿过分发链落到函数末尾、
+    什么都不做却回 `ok: true`」的假成功通道，在结构上不存在了。
+    """
     runtime = _runtime_of(request)
     if runtime is None:  # pragma: no cover - 应用未装配
         return JSONResponse({"error": "runtime 未装配"}, status_code=500)
@@ -258,93 +400,18 @@ async def _api_actions(request: Request) -> Response:
         )
 
     try:
-        if action == "start":
-            runtime.start_session(args.get("mode"), args.get("dir"))
-        elif action == "stop":
-            runtime.stop_session("user")
-        elif action == "mute_session":
-            runtime.mute_session()
-        elif action == "pause":
-            runtime.pause_session()
-        elif action == "resume":
-            runtime.resume_session()
-        elif action == "set_source":
-            runtime.set_source(args)
-        elif action == "reprobe":
-            runtime.reprobe()
-        elif action == "settings_update":
-            extra = runtime.settings_update(args)
-            return JSONResponse(
-                {
-                    "ok": True,
-                    "revision": runtime.revision,
-                    "applied": extra["applied"],
-                    "pending_restart": extra["pending_restart"],
-                }
+        handler = _ACTION_HANDLERS.get(action)
+        if handler is None:  # pragma: no cover - 导入期对账之后到不了（漂移挡在启动前）
+            raise ActionError(
+                "invalid_setting",
+                f"动作 {action!r} 在 ACTION_NAMES 里却没有登记处理器"
+                "（runtime 接受而 routes 未实现 = 两份清单漂移）："
+                "请对账 meeting/service/routes.py 的 `_ACTION_HANDLERS` 与 "
+                "meeting/service/runtime.py 的 `ACTION_NAMES`",
+                status=500,
+                detail={"action": action, "known": list(ACTION_NAMES)},
             )
-        elif action == "dev_inject":
-            runtime.dev_inject(args)
-        elif action == "summarize":
-            # 成功体在通用信封上多一个 `summary` 键（先例是 `settings_update` 的
-            # `applied` / `pending_restart`）；`revision` 是**当前**版本号 —— 总结是只读的，
-            # 这里不提交、不涨版本、不广播。
-            # `summarize()` 是一条协程：那一次模型调用在**工作线程**里跑
-            # （`runtime._summary_wait()`，复审 minor 6），等它的只有本请求这一条协程 ——
-            # 于是总结那几秒里 `/api/state` 与三个 SSE 通道照常应答。
-            return JSONResponse(
-                {
-                    "ok": True,
-                    "revision": runtime.revision,
-                    "summary": await runtime.summarize(args),
-                }
-            )
-        elif action == "workspace_open":
-            # 成功体在通用信封上多一个 `workspace` 键（先例是 `summarize` 的 `summary`）：
-            # 判别档位与去重回扣由服务给，界面不派生；失败档（目录不存在、非空未确认、
-            # 注册表写盘失败）走 ActionError 的 `code` 表。
-            return JSONResponse(
-                {
-                    "ok": True,
-                    "revision": runtime.revision,
-                    "workspace": runtime.workspace_open(args.get("dir"),
-                                                        confirm=bool(args.get("confirm"))),
-                }
-            )
-        elif action == "workspace_remove":
-            return JSONResponse(
-                {
-                    "ok": True,
-                    "revision": runtime.revision,
-                    "workspace": runtime.workspace_remove(args.get("dir")),
-                }
-            )
-        elif action in ("post_offline", "post_minutes", "post_stop"):
-            # 会后的两个按钮（R26）与停掉会后精细稿那一趟的动作（b1c6a58e，R28）：
-            # 起一条后台线程即算启动成功 / 立起取消旗标即算受理成功，成功体在通用信封上
-            # 多一个 `post` 键（先例是 `summarize` 的 `summary` / `workspace_open` 的
-            # `workspace`）——「起的是哪一场、停的是哪一场」，停没停成由盘上的状态文件
-            # 回答（`post_stop` 的受理回执多一格 `stopping: true`）。
-            started = (
-                runtime.post_offline(args)
-                if action == "post_offline"
-                else runtime.post_minutes(args)
-                if action == "post_minutes"
-                else runtime.post_stop(args)
-            )
-            return JSONResponse(
-                {"ok": True, "revision": runtime.revision, "post": started}
-            )
-        elif action == "speaker_rename":
-            # 说话人改名（R10 第四条 / R30）：只写这一场目录里的人名表（不拉任何离线/纪要、
-            # 不动快照），成功体在通用信封上多一个 `speaker` 键——写了哪一场、哪一个键、
-            # 现在叫什么；界面改完当场生效走的是重问单场状态那一跳。
-            return JSONResponse(
-                {
-                    "ok": True,
-                    "revision": runtime.revision,
-                    "speaker": runtime.speaker_rename(args),
-                }
-            )
+        extra = await handler(runtime, args)
     except ActionError as exc:
         return _error_response(exc)
     except Exception as exc:  # 未捕获异常带堆栈进 log（R16 的最低要求）
@@ -357,7 +424,10 @@ async def _api_actions(request: Request) -> Response:
             )
         )
 
-    return JSONResponse({"ok": True, "revision": runtime.revision})
+    body: dict[str, Any] = {"ok": True, "revision": runtime.revision}
+    if extra:
+        body.update(extra)
+    return JSONResponse(body)
 
 
 # ---------------------------------------------------------------------------

@@ -256,6 +256,24 @@ class OfflineProgressLedger:
         self.started_at: str | None = None
         self.finished_at: str | None = None
 
+    @classmethod
+    def for_session(cls, session_dir: Path | str) -> "OfflineProgressLedger":
+        """按场次目录立一份账：`session_id` 与路清单都**现问 `offline.runner`**。
+
+        `meeting/service/runtime.py` 的 `_run_post_offline()` 与 `meeting/cli.py::run_post()`
+        （`progress` 缺省分支）从前各抄一遍同一个三参构造（场次目录 + `runner.session_id_of()`
+        + `runner.declared_sources()`），现在只有这一份。`runner` 在**函数体内** import：
+        它反过来在模块顶层 import 本模块，顶层 import 会绕成环。
+        """
+        from meeting.offline import runner as offline_runner
+
+        directory = Path(session_dir)
+        return cls(
+            directory,
+            session_id=str(offline_runner.session_id_of(directory)),
+            sources=list(offline_runner.declared_sources(directory)),
+        )
+
     # -- 写 ---------------------------------------------------------------
 
     def start(self, *, started_at: str) -> None:

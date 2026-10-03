@@ -2708,7 +2708,7 @@ class ServiceRuntime:
             ) from exc
         return {
             "dir": entry["dir"],
-            "kind": "empty" if kind == "empty" else kind,
+            "kind": kind,
             "suspected": bool(info["suspected"]),
             "first_time": bool(entry["first_time"]),
         }
@@ -3229,11 +3229,7 @@ class ServiceRuntime:
         from meeting.offline import progress as progress_module
         from meeting.offline import runner as offline_runner
 
-        ledger = progress_module.OfflineProgressLedger(
-            target,
-            session_id=str(offline_runner.session_id_of(target)),
-            sources=list(offline_runner.declared_sources(target)),
-        )
+        ledger = progress_module.OfflineProgressLedger.for_session(target)
         job = self.post_job
         if isinstance(job, dict) and str(job.get("dir")) == str(target):
             job["progress"] = ledger
@@ -3451,23 +3447,7 @@ class ServiceRuntime:
         try:
             from meeting.minutes import status as status_module
 
-            path = status_module.status_path(target)
-            existing: dict[str, Any] = {}
-            if path.exists():
-                try:
-                    existing = status_module.read_status(path)
-                except status_module.StatusError:
-                    existing = {}
-            status_module.write_session_status(
-                target,
-                state="failed",
-                mode=str(existing.get("mode") or "none"),
-                branch=str(existing.get("branch") or "headless"),
-                started_at=str(existing.get("started_at") or now_iso()),
-                error=f"{type(exc).__name__}: {exc}",
-                artifacts=dict(existing.get("artifacts") or {}),
-                dsh=dict(existing.get("dsh") or {}),
-            )
+            status_module.mark_failed(target, f"{type(exc).__name__}: {exc}")
         except Exception:  # pragma: no cover - 退回这一步失败时不掩盖原来那个异常
             _log.exception("会后纪要这一版的 claim 退不回去（原异常照上面那条 log）")
 

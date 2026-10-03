@@ -29,8 +29,6 @@ from __future__ import annotations
 
 import logging
 import threading
-from datetime import datetime
-from pathlib import Path
 
 _log = logging.getLogger("meeting.backends.post")
 
@@ -101,51 +99,19 @@ class PostProcessHook:
     def _mark_failed(self, session_dir: str, exc: BaseException) -> None:
         """把状态文件补成 `failed`（**尽力而为**：连这一步都失败就只留一条 log）。
 
-        与 `meeting/cli.py` 的 `_mark_offline_failed()` 同一个口径（盘上那一版已经是终态时
-        照它自己那一版留着）：异常到这里之前，离线段自己**已经现场写过**一版 ——
-        `runner._write_failed_status()` 落 `failed`（`error` 里写着是加载失败还是跑失败），
-        一路跑成那种场面落 `partial`。盘上那一版是这两档时就沿用它的 `error` 与
-        `partial` / `silent` / `silent_spans` / `gate` 四格：那份账比这里手里的通用串准。
+        字段口径只有一份：`meeting/offline/artifacts.py` 的 `mark_failed_if_unset()`。
+        异常到这里之前，离线段自己**已经现场写过**一版 —— `runner._write_failed_status()`
+        落 `failed`（`error` 里写着是加载失败还是跑失败），一路跑成那种场面落 `partial`；
+        盘上停着那三档终态账（`failed` / `partial` / `interrupted`）时就沿用它自己的
+        `error` 与 `partial` / `silent` / `silent_spans` / `gate`：那份账比这里手里的
+        通用串准。`meeting/cli.py::run_post()` 上抛前那次补账走的是同一个函数。
         """
         try:
             from meeting.offline import artifacts
 
-            path = Path(session_dir) / artifacts.STATUS_NAME
-            existing = None
-            if path.exists():
-                try:
-                    existing = artifacts.read_status(path)
-                except artifacts.ArtifactContractError:
-                    existing = None
-            disk = existing or {}
-            settled = str(disk.get("state") or "") in (
-                STATE_FAILED,
-                STATE_PARTIAL,
-                STATE_INTERRUPTED,
-            )
-            artifacts.write_status(
-                path,
-                session_id=str(disk.get("session_id") or Path(session_dir).name),
-                state=str(disk.get("state")) if settled else STATE_FAILED,
-                started_at=str(disk.get("started_at") or _now_iso()),
-                sources=list(disk.get("sources") or []),
-                artifacts=dict(disk.get("artifacts") or {}),
-                finished_at=_now_iso(),
-                error=str(disk.get("error") or f"{type(exc).__name__}: {exc}")
-                if settled
-                else f"{type(exc).__name__}: {exc}",
-                partial=bool(disk.get("partial")) if settled else False,
-                silent=bool(disk.get("silent")) if settled else False,
-                silent_spans=list(disk.get("silent_spans") or []) if settled else None,
-                gate=dict(disk.get("gate") or {}) if settled else None,
-            )
+            artifacts.mark_failed_if_unset(session_dir, f"{type(exc).__name__}: {exc}")
         except Exception:  # pragma: no cover - 兜底那一步失败时不掩盖原异常
             _log.exception("会后离线状态文件补写失败（原异常照上面那条 log）")
-
-
-def _now_iso() -> str:
-    """现在的 ISO 时刻（与 `meeting/offline/runner.py` 的 `_now_iso()` 同形）。"""
-    return datetime.now().isoformat(timespec="seconds")
 
 
 __all__ = [
