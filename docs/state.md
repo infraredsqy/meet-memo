@@ -325,11 +325,13 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 `GET /api/heartbeat` 六字段：`service`（恒 `"meeting"`）/ `server_time` / `revision` / `top_state` / `recording_alive` / `seconds_since_last_tick`。它在**任何状态**下都 200。
 
 - `recording_alive` 的判据是**服务侧的采集帧时钟**：只认 `LevelFrame`（`SourceFacts` / `SourceLost` 不刷新这个钟），窗口 = `max(2.0s, 3 × frame_interval)`，两档算出来都是 **2.0 秒** —— 说白了就是「两秒没收到一帧事实 = 采集停了」。
+- **「还没有第一帧」单独一档**（de899128）：自本场 `start` 起算同一只窗口，窗口内一帧都没到时 `recording_alive` 报 `null`（未知）—— 首帧正常晚约 0.5s 才来，开场竞态不再被算成「已停」；超窗仍无首帧报 `false`（=停，「别把未知做成永不报」）。
 - `frame_interval` 由采集后端在 `bind()` 之后**以实例属性**报上来（协议默认 `0.5s`，dev 替身 `0.1s`）。读不到或取值不是正数就按 `0.5` 算，只记一条 warning，不阻塞 `start`。
 - `seconds_since_last_tick` 是距最近一帧事实的秒数；**一帧都没收到过就是 `null`**。
-- 取值分档：`recording` / `alert` 态给 `bool`；`idle` / `ended` 态给 `null`。
+- 取值分档：`recording` / `alert` 态给 `bool`（开场窗口内还没首帧的那一段给 `null`，见上）；`idle` / `ended` 态给 `null`。
 - 界面那个 10 秒心跳周期（`heartbeat.interval_seconds`）**绝不参与**这个窗口的计算 —— 它管的是「界面还看得见服务吗」。
 - 「判定权在服务侧」的硬判据：后端卡住不报任何东西时，`recording_alive` 由帧时钟算出来就是 `false`，HTTP 照常 200。
+- **界面侧的配套口径**：拿到 `recording_alive === false` 要**连续两次读数**才判「采集已停」（连续计数住在界面层一处，任何非 `false` 读数清零），开场那拍 `null` 由此被拦在横幅之外；两拍规则只在界面层，服务侧的窗口计算照旧不看心跳周期（`docs/contract.md` 第 5 章）。
 
 ## 5. 告警
 
@@ -407,7 +409,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 | `fault` | 干什么 | 拿它验什么 |
 |---|---|---|
 | `silence` | 这一路电平落到 −80 dBFS 以下并保持 | 走静默累计 → 静默阈值调小后能进 `alert`，恢复后回 `recording` |
-| `stall` | **两路的事实帧整体停发**（HTTP 照常应答） | `recording_alive` 变 `false` 而服务照常 200 |
+| `stall` | **两路的事实帧整体停发**（HTTP 照常应答） | `recording_alive` 变 `false` 而服务照常 200；开场一帧都还没见到的那一段先报 `null`（未知档），超窗仍无首帧才落 `false`（口径见第 4 章） |
 | `lost` | 直接来一条 `SourceLost`，窗口内这一路整段不发帧 | 流中断立刻起致命级；恢复走 `alert.recover_seconds` |
 
 - 对同一路再次注入（无论故障是否已恢复）**替换前一次注入**并按新的 `after_seconds` / `duration_seconds` 重新计时。
@@ -430,5 +432,5 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 - 会中与会后两套模型的选型、四个 `post.*` 键的取值依据与本机实测：`docs/asr-backends.md`
 - 界面怎么画这四态：`docs/ui-design.md`
 - 前端工程怎么跑、怎么构建：`web/README.md`
-- 契约的可机读基准（35 个 golden 样本与掩码规则）：`contract/README.md`
+- 契约的可机读基准（36 个 golden 样本与掩码规则）：`contract/README.md`
 - 索引：`docs/spec.md`

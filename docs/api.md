@@ -269,5 +269,5 @@ curl.exe -s -X POST http://127.0.0.1:8765/api/actions `
 - 怎么起服务、配置、日志、退出码、跑测试：`docs/service.md`
 - 后端协议与 dev 替身：`docs/backend-protocols.md`
 - 前端工程怎么跑、怎么构建：`web/README.md`
-- 契约的可机读基准（35 个 golden 样本与掩码规则）：`contract/README.md`
+- 契约的可机读基准（36 个 golden 样本与掩码规则）：`contract/README.md`
 - 索引：`docs/spec.md`

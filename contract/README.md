@@ -1,12 +1,12 @@
 # contract/ —— 双端契约的 golden 样本
 
-> 这个目录是**服务与界面之间那份契约的可机读基准**：`fixtures/` 下的 35 个 JSON 样本一律出自真实服务路径，`tests/test_contract_fixtures.py` 每次跑测试都重走一遍采集、与盘上样本逐字比对，服务侧形状一漂移就红。
+> 这个目录是**服务与界面之间那份契约的可机读基准**：`fixtures/` 下的 36 个 JSON 样本一律出自真实服务路径，`tests/test_contract_fixtures.py` 每次跑测试都重走一遍采集、与盘上样本逐字比对，服务侧形状一漂移就红。
 >
 > 契约正文在 `docs/contract.md`（端点口径、快照 schema、SSE 帧形状、动作信封与 `code`/`detail` 表、心跳语义、客户端义务、保留登记）。这个 README 只讲三件事：**样本从哪儿来、掩码怎么打、怎么再生成**。
 >
 > 代码落点：掩码与采集辅助在 `tests/_contract.py`；比对与再生成在 `tests/test_contract_fixtures.py`；再生成开关 `--regen-contract` 注册在 `tests/conftest.py` 的 `pytest_addoption`。
 
-## 1. 样本清单（35 个）
+## 1. 样本清单（36 个）
 
 | 目录 | 文件 | 采集路径 | 固定的是什么 |
 |---|---|---|---|
@@ -41,6 +41,7 @@
 | | `status-interrupted.json` | 进程内 TestClient（打断会后节点 `b1c6a58e`）：往临时场次目录里落那份逐块进度账（mic 两块里跑了一块）与一版 `interrupted` 状态文件，登记进工作台之后读 `GET /api/sessions/{id}` | 形状与 `status-after-run` 同体：`offline.state` 照盘答 **`interrupted`**（折档白名单里有它，不许折回 `running`）、`in_process` 如实 `false`；`sources` 两路各一格（mic `1/2`、loopback `0/null`——没开跑的那一路分母读不出如实 `null`）。路径与目录名掩 `<path>` / `<session-id>`，墙钟戳掩 `<iso>`，走秒量掩 `0` / `null` |
 | `heartbeat/` | `idle.json` | 进程内 TestClient（dev 替身） | 六字段、两字段 `null` |
 | | `recording.json` | 同上，等 `recording_alive is True` | 六字段、`recording_alive` 为 `true` |
+| | `no-first-frame.json` | 同上，`stall` 先挂上（进程内直挂替身）再 `start`，开场窗口内等 `top_state` 为 `recording` 而 `recording_alive` 为 `null` 的那一读 | 六字段、`top_state` 为 `recording` 而 `recording_alive` 与 `seconds_since_last_tick` 同为 `null` —— **还没有第一帧**的未知档（de899128），界面不再把它等同于「停止」 |
 
 **动作样本的形状**：每个 `actions/*.json` 是一份**请求三件套 + 应答**：
 

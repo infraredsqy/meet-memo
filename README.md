@@ -213,7 +213,8 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
      "args": {"source": "loopback", "fault": "silence|stall|lost", "after_seconds": 0}}
 
 - `silence`：这一路电平落到 −80 dBFS 以下并保持；
-- `stall`：两路事实帧整体停发（HTTP 照常应答，于是 `/api/heartbeat` 的 `recording_alive` 变 `false`）；
+- `stall`：两路事实帧整体停发（HTTP 照常应答，于是 `/api/heartbeat` 的 `recording_alive` 变 `false`；
+  开场一帧都还没见到时先报 `null`，过了开场窗口仍无帧才落 `false`）；
 - `lost`：直接来一条 `SourceLost`。
 
 采集后端不是 dev 时，这个动作回 `action_unavailable`（`404`）。
@@ -316,10 +317,10 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 自检：
 
     cd web
-    npm test           # vitest run，21 个文件 480 个用例
+    npm test           # vitest run，21 个文件 511 个用例
     npm run typecheck  # 两条 tsc --noEmit -p，各查各的 project
 
-`npm run build` 里已经含 `npm run typecheck`，所以构建过一次就不必再单独跑；只改类型不看产物时跑 `typecheck` 更快。契约正文在 `docs/contract.md`，可机读基准（35 个 golden 样本与掩码规则）在 `contract/`，前端工程的五个脚本（`dev` / `typecheck` / `build` / `preview` / `test`）与其余说明在 `web/README.md`。
+`npm run build` 里已经含 `npm run typecheck`，所以构建过一次就不必再单独跑；只改类型不看产物时跑 `typecheck` 更快。契约正文在 `docs/contract.md`，可机读基准（36 个 golden 样本与掩码规则）在 `contract/`，前端工程的五个脚本（`dev` / `typecheck` / `build` / `preview` / `test`）与其余说明在 `web/README.md`。
 
 ---
 
@@ -328,6 +329,9 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 - **界面心跳**（`heartbeat.interval_seconds`，可配 1–60 秒，默认 10 秒）管**失联横幅**：
   界面按这个周期问一次服务，问不着就挂横幅。
 - **服务侧采集帧心跳**（`max(2.0s, 3 × frame_interval)` = **2.0 秒**）管 **`recording_alive`**：
-  它看的是采集帧还在不在来，用来报出「HTTP 通着但录音停了」。
+  它看的是采集帧还在不在来，用来报出「HTTP 通着但录音停了」。刚按「开始录音」的那一小段
+  （开场窗口，自本场开始起算、取同一只窗口）第一帧还没到时先报 `null`（还不知道，不算停），
+  窗口过了仍一帧没有才如实报 `false`；界面上判「采集已停止」还要**连续两次**读到 `false`
+  才弹横幅，单次读数不弹 —— 刚开场的那一阵不会再误报。
 
 两者互不参与对方的计算：收尾预算也不拿这两个周期做任何计算。

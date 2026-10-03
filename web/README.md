@@ -4,7 +4,7 @@
 > **工作区首页**（空闲态与收尾落定后的那一屏：清单、目录选择器、会后两个按钮）与**会中主视图** ——
 > 用户开着它开会，不用盯着屏幕也知道一切正常，出事时第一眼看出是哪一路死了。
 >
-> 契约正文在 `docs/contract.md`，可机读基准在 `contract/fixtures/`（35 个 golden 样本）。
+> 契约正文在 `docs/contract.md`，可机读基准在 `contract/fixtures/`（36 个 golden 样本）。
 > **契约层逐字段照它们写** —— schema 改了、样本再跑起来红了，说明契约漂了。
 > 界面这一侧的权威是 `docs/ui-design.md`（章 2 会中信息架构、章 4 状态机、章 7 类名契约、章 8 十一条硬门槛）。
 
@@ -68,7 +68,7 @@ npm test             # vitest run（等价于 npx vitest run）
 | `src/styles/tokens.css` | **逐字节拷贝** `docs/ui/tokens.css`（除文件头那段注释）。设计 token 的唯一定义处是 `docs/ui/tokens.css`，这一份是它进构建的那一份 |
 | `src/styles/console.css` | **暗面 token 层**，也是主题开关所在：`:root` 给每个具名色一份暗面取值（`--t-*`），`[data-theme="light"]` 再给一套亮面覆盖。暗面的值单独写在这里，`tokens.css` 一个字符都不动 —— 那份文件自称设计 token 的唯一定义处，改它等于改设计稿 |
 | `src/styles/live.css` | 会中视图样式（**暗面一稿**，来路见下） |
-| `tests/` | vitest 用例（`npm test`，21 个文件 497 个用例）：契约层三份（拿 golden 样本过 schema、验 schema 咬得住、验动作信封与心跳三态；工作区四份样本的对齐用例在 `contract.test.ts` 的「工作区样本」那一组，`52b24392`；行键数与 `segments` 段读数的断言在 `670d72b5` 跟上；被打断档那份的对齐断言在 `b1c6a58e` 跟上）、失败分档一份（`app-failure.test.ts`）、**工作区首页四份**（`home.test.ts` 纯逻辑与端点取数，含会后两个按钮的可用性与那一格文案、停止入口 `postStopView` 的判据、续接判定与段读数、`gate.ts` 的分流判据；`home-mount.test.tsx` 首页挂载与分流、停止按钮与「新会议会打断」确认弹窗，`b1c6a58e`；`home-progress.test.tsx` 会后进度区的换值渲染与行四态，`52b24392`；`names.test.ts` 说话人名字弹窗的行读法 `namesRows` / `identityTitle` 与撞名提示 `duplicateNameHolders`，`91b6752e`；`progress.test.ts` 进度纯逻辑：四态联结、进度读数（含 `interrupted` 自成一相）、逐块行、忙/闲与要不要轮询）、**接口读法一份**（`api.test.ts`：动作信封、本场记录、设备清单、单场状态那条 GET 与它的自排轮询器）、**设置抽屉两份**（`live-settings.test.ts` 纯逻辑：抽屉行清单（ASR 五参数一个都不在）、心跳 1–60 判读、设备格会中闸、下拉摆法与缺省档归一；`settings-drawer.test.tsx` 挂载：四项都在、ASR 五参数一个都不出现、设备选完 `settings_update`+`reprobe`、越界当场拒，`311f84f5`）、会中视图逻辑**十份**（`live-*.test.ts` / `live-*.test.tsx`：`live-format` / `live-status` / `live-alarm` / `live-heartbeat` / `live-transcript` / `live-sound` / `live-summary` / `live-summary-controller` / `live-pause` / `live-pause-screen`，末尾两份是「本场已暂停」那条横带、暂停按钮字与逐路开关、顶栏 gpucell 那一格的忙/闲两档）+ 用例自己的真值快照构造器 `live-fixtures.ts` |
+| `tests/` | vitest 用例（`npm test`，21 个文件 511 个用例）：契约层三份（拿 golden 样本过 schema、验 schema 咬得住、验动作信封与心跳三态；工作区四份样本的对齐用例在 `contract.test.ts` 的「工作区样本」那一组，`52b24392`；行键数与 `segments` 段读数的断言在 `670d72b5` 跟上；被打断档那份的对齐断言在 `b1c6a58e` 跟上）、失败分档一份（`app-failure.test.ts`）、**工作区首页四份**（`home.test.ts` 纯逻辑与端点取数，含会后两个按钮的可用性与那一格文案、停止入口 `postStopView` 的判据、续接判定与段读数、`gate.ts` 的分流判据；`home-mount.test.tsx` 首页挂载与分流、停止按钮与「新会议会打断」确认弹窗，`b1c6a58e`；`home-progress.test.tsx` 会后进度区的换值渲染与行四态，`52b24392`；`names.test.ts` 说话人名字弹窗的行读法 `namesRows` / `identityTitle` 与撞名提示 `duplicateNameHolders`，`91b6752e`；`progress.test.ts` 进度纯逻辑：四态联结、进度读数（含 `interrupted` 自成一相）、逐块行、忙/闲与要不要轮询）、**接口读法一份**（`api.test.ts`：动作信封、本场记录、设备清单、单场状态那条 GET 与它的自排轮询器）、**设置抽屉两份**（`live-settings.test.ts` 纯逻辑：抽屉行清单（ASR 五参数一个都不在）、心跳 1–60 判读、设备格会中闸、下拉摆法与缺省档归一；`settings-drawer.test.tsx` 挂载：四项都在、ASR 五参数一个都不出现、设备选完 `settings_update`+`reprobe`、越界当场拒，`311f84f5`）、会中视图逻辑**十份**（`live-*.test.ts` / `live-*.test.tsx`：`live-format` / `live-status` / `live-alarm` / `live-heartbeat` / `live-transcript` / `live-sound` / `live-summary` / `live-summary-controller` / `live-pause` / `live-pause-screen`，末尾两份是「本场已暂停」那条横带、暂停按钮字与逐路开关、顶栏 gpucell 那一格的忙/闲两档）+ 用例自己的真值快照构造器 `live-fixtures.ts` |
 
 ### `src/live/` 里各管什么
 
@@ -78,7 +78,7 @@ npm test             # vitest run（等价于 npx vitest run）
 | `status.ts` | 四态胶囊（字 + 图形）、七档 `sources[*].health` → 徽标与各通道状态那一行的整句 |
 | `alarm.ts` | 致命横幅的三处文案、提示级细条（上限 3）、**发声判定**（`settings.alarm_sound` 与 `muted` 一起读） |
 | `pause.ts` | 暂停与「会中开关某一路」两处入口的取数与文案（`10770b41`，照 `alarm.ts` 的形状写：纯函数、逐档可验）：那颗按钮的字（`暂停` / `继续`）、告警区顶上那条「本场已暂停」横幅的两句话（只在 `recording` / `alert` 两态给）、通道头那颗开关的字与方向（按那一路的 `health` 读，`stopped` 就是已关掉）。状态一律从快照读 |
-| `heartbeat.ts` | 心跳四级（正常 / 迟到 / 失联 / 已恢复）+ 失联横幅正文 + 恢复短记录 + 「采集已停」那一档 |
+| `heartbeat.ts` | 心跳四级（正常 / 迟到 / 失联 / 已恢复）+ 失联横幅正文 + 恢复短记录 + 「采集已停」那一档（判停要**连续两次** `false`：`CAPTURE_STOP_CONFIRMATIONS`，`null` / `true` / 失联都把计数清零） |
 | `loss.ts` | 界面自己记的那一份「本场哪一路丢过」的观察（两个时刻都是服务给的，只在本页内存里） |
 | `transcript.ts` | 转写行累积（约 200 行窗口）、缺口、心跳中断的断口插位、「回到最新」的判据 |
 | `levels.ts` | 两路电平的取数（`levels` 帧优先、快照兜底、陈旧帧挡住）与包络逐根映射 |

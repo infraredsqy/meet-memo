@@ -676,8 +676,9 @@ R10 第四条 / R30：名字要能改、并且记住。这一只动作 + 4.9 的
 
 **`recording_alive` 的语义**：判据是**服务侧的采集帧时钟**。
 
-- `recording` / `alert` 态给 **bool**；`idle` / `ended` 态给 **`null`**（没有在录的场次，问「采集还活着吗」没有意义）。
+- `recording` / `alert` 态给 **bool**；`idle` / `ended` 态给 **`null`**（没有在录的场次，问「采集还活着吗」没有意义）。**开场那一拍除外**（de899128，见下）。
 - 判据：窗口 = `max(2.0s, 3 × frame_interval)`，**只认 `LevelFrame`**（`SourceFacts` / `SourceLost` **不刷新这个钟**）。协议默认 `frame_interval = 0.5s` 与 dev 替身的 `0.1s` 算出来都是 **2.0 秒** —— 说白了就是「**两秒没收到一帧事实 = 采集停了**」。
+- **「还没有第一帧」报 `null`（未知），超窗仍无首帧才报 `false`**（de899128）：自**本场 `start`** 起算上面那只窗口，首帧正常要比 start 晚约 0.5s 才来，窗口内的「一帧都没见过」按未知交出去，界面的 10s 心跳落进这段竞态不会再误判成「已停」；窗口走完仍一帧都没有，`recording_alive` 如实落 `false` —— 「别把未知做成永不报」，真的饿死仍然报得出来。这一档里 `seconds_since_last_tick` 照旧是 `null`。
 - **后端卡住不报任何东西时 `recording_alive` 会算成 `false`，而 HTTP 照常 200** —— 这正是「只看 HTTP 通不通会漏掉录音线程已卡死」的判据。
 - 采样后端 `frame_interval` 读不到或取值不是正数时按 `0.5` 算，只记一条 warning。
 
@@ -691,6 +692,8 @@ R10 第四条 / R30：名字要能改、并且记住。这一只动作 + 4.9 的
 | `max(2.0s, 3 × frame_interval)` = **2.0 秒** | **服务侧**的采集帧时钟窗口 | `recording_alive` 的判据 |
 
 **界面的 10 秒周期绝不参与 `recording_alive` 的计算。** 反过来，`recording_alive == false` 也不会让心跳请求失败 —— 它只是一份数据。
+
+**`recording_alive === false` 在界面上要连续两次读数才判「采集已停」**（两拍规则，de899128，只在界面层）：单次 `false` 可能是竞态窗口里的误读，连续计数由界面单一归并点记账（`web/src/live/heartbeat.ts` 的 `applyHeartbeatReading()`），任何非 `false` 读数（`true` / `null` / 失联）把计数清零；冻结判据与横幅判据都只读这一个数。连续计数**不参与服务侧任何计算**（上一段的口径不动），发声判据也不看它 —— 出声照旧只由失联档与快照上的致命级驱动。
 
 ### 客户端轮询口径（从 `docs/ui-design.md` 4.5 搬来的原口径）
 
@@ -713,7 +716,7 @@ R10 第四条 / R30：名字要能改、并且记住。这一只动作 + 4.9 的
 
 **服务重启后的自洽**：服务重启后界面重新打开时向服务取状态；服务侧**没有**正在进行的会话，界面上工作台首页列出注册表里的那些会并选中 `recent` 那一场（最近一场只从注册表读，`docs/design-intent.md` 第 4 条；未注册的目录一概不上列表）。**界面不自己记状态、不从浏览器本地存储里恢复任何东西**（第 6 章）。
 
-**这一档的 fixtures**：`contract/fixtures/heartbeat/idle.json`（两字段 `null`）、`contract/fixtures/heartbeat/recording.json`（`recording_alive` 为 `true`、`seconds_since_last_tick` 掩码 0）。
+**这一档的 fixtures**：`contract/fixtures/heartbeat/idle.json`（两字段 `null`）、`contract/fixtures/heartbeat/recording.json`（`recording_alive` 为 `true`、`seconds_since_last_tick` 掩码 0）、`contract/fixtures/heartbeat/no-first-frame.json`（**还没有第一帧**：`top_state` 为 `recording` 而两字段都是 `null` —— 未知档有它自己的样本，界面不再把它等同于「停止」，de899128）。
 
 ## 6. 客户端义务
 
@@ -724,7 +727,7 @@ R10 第四条 / R30：名字要能改、并且记住。这一只动作 + 4.9 的
 3. **SSE 重连后以快照重同步**：服务**不重放**断开期间的事件（没有 `Last-Event-ID` 机制），重连后拿到的第一帧必然是完整 `snapshot`，界面据此**整块替换**。收到 `resync: true` 那一帧同样整块替换。
 4. **动作带两个必需头**：`POST /api/actions` 必须带 `Content-Type: application/json` **且** `X-Meeting-Service: 1`，缺任一条服务回 403 且**不带失败信封**（它没走到端点）。界面的 403 处理要与第 4.2 节的失败块分开。
 5. **心跳按配置周期轮询**：默认 10 秒、可配 1–60 秒（`settings.heartbeat_interval_seconds`）。判定用应答里的 `server_time` 作基准；失联按 5 章的处置做（冻结 + 压灰 + 横幅）。
-6. **不自己造派生数据**：包络（`envelope`）与 `bar` 由服务算好推过来，界面**不许自己造**；告警的 `muted` 由服务判定，界面**不算任何抑制窗口**、只按布尔值决定响不响。
+6. **不自己造派生数据**：包络（`envelope`）与 `bar` 由服务算好推过来，界面**不许自己造**；告警的 `muted` 由服务判定，界面**不算任何抑制窗口**、只按布尔值决定响不响。`recording_alive === false` 的连续两次判停计数（第 5 章的两拍规则）是**对数据字段的确认计数**，与声音无关：响不响照旧只读 `settings.alarm_sound` 与 `alerts.*.muted` 两个布尔（de899128）。
 7. **按 `code` 分派失败画法、按 `detail` 有哪个键显示哪个键**：九个 `code` 固定、`detail` 的档位（尤其是 `capture_unavailable` 三档与 `invalid_setting` 四档）以第 4.4 节为准，**不按 `message` 做字符串匹配**。
 8. **决定响不响的时候，持久化开关与本条告警的 `muted` 一起读。** 这两个字段各管一件事，缺一条读法就会读错：
 
@@ -760,7 +763,7 @@ R10 第四条 / R30：名字要能改、并且记住。这一只动作 + 4.9 的
 
 ## 8. fixtures 与掩码（附录）
 
-契约的**可机读基准**是 `contract/fixtures/` 下的 35 个 golden 样本。它们一律**出自真实服务路径**，不是手写的。规则、出处与再生成办法写在 `contract/README.md`；这里给读者一份速查。
+契约的**可机读基准**是 `contract/fixtures/` 下的 36 个 golden 样本。它们一律**出自真实服务路径**，不是手写的。规则、出处与再生成办法写在 `contract/README.md`；这里给读者一份速查。
 
 | 目录 | 样本 | 对应本文件 |
 |---|---|---|
@@ -770,7 +773,7 @@ R10 第四条 / R30：名字要能改、并且记住。这一只动作 + 4.9 的
 | `summaries/` | `after-one`（按过一次之后的本场总结记录，**1**） | 第 4.7 节 |
 | `sessions/` | `empty`（空注册表） / `after-open`（登记三档目录之后的清单 + `recent`） / `status-after-run`（单场状态：两份块账 + 状态文件落好之后的那一读） / `status-interrupted`（单场状态的**被打断档**：盘上落 `interrupted` 的那一读，b1c6a58e）（**4**） | 第 4.8 / 4.9 节 |
 | `devices/` | `all`（两路各一份候选端点表；枚举走假件，名字与 `is_default` 是确定值）（**1**） | 第 4.10 节 |
-| `heartbeat/` | `idle` / `recording`（**2**） | 第 5 章 |
+| `heartbeat/` | `idle` / `recording` / `no-first-frame`（**还没有第一帧**的未知档：`top_state` 为 `recording` 而 `recording_alive` 与 `seconds_since_last_tick` 同为 `null`，de899128）（**3**） | 第 5 章 |
 
 **掩码（`tests/_contract.py` 的 `normalize()`）**：fixtures 由真实服务采集，采集里的墙钟、路径、端口、电平每次都不同，落盘前一律换成**自描述占位符**：
 
