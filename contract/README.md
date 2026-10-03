@@ -1,12 +1,12 @@
 # contract/ —— 双端契约的 golden 样本
 
-> 这个目录是**服务与界面之间那份契约的可机读基准**：`fixtures/` 下的 36 个 JSON 样本一律出自真实服务路径，`tests/test_contract_fixtures.py` 每次跑测试都重走一遍采集、与盘上样本逐字比对，服务侧形状一漂移就红。
+> 这个目录是**服务与界面之间那份契约的可机读基准**：`fixtures/` 下的 37 个 JSON 样本一律出自真实服务路径，`tests/test_contract_fixtures.py` 每次跑测试都重走一遍采集、与盘上样本逐字比对，服务侧形状一漂移就红。
 >
 > 契约正文在 `docs/contract.md`（端点口径、快照 schema、SSE 帧形状、动作信封与 `code`/`detail` 表、心跳语义、客户端义务、保留登记）。这个 README 只讲三件事：**样本从哪儿来、掩码怎么打、怎么再生成**。
 >
 > 代码落点：掩码与采集辅助在 `tests/_contract.py`；比对与再生成在 `tests/test_contract_fixtures.py`；再生成开关 `--regen-contract` 注册在 `tests/conftest.py` 的 `pytest_addoption`。
 
-## 1. 样本清单（36 个）
+## 1. 样本清单（37 个）
 
 | 目录 | 文件 | 采集路径 | 固定的是什么 |
 |---|---|---|---|
@@ -39,9 +39,10 @@
 | `sessions/` | `empty.json` / `after-open.json` | 进程内 TestClient（工作台收编节点 e2f6166b）：空注册表一份；再往临时根下造的三个目的目录（空 / 带 `session.json` / 只有音频归档名的疑似档）逐个走 `workspace_open` 之后读 `GET /api/sessions` | `{sessions, recent}`、每行十一键（`dir` / `session_id` / `dir_exists` / `kind` / `suspected` / `state` / `date` / `mode` / `has_offline` / `added_at` / `last_opened_at`）；路径与目录名掩成 `<path>` / `<session-id>` |
 | | `status-after-run.json` | 进程内 TestClient（会后进度读数节点 `a9affaa8`；`speakers` 一格由人名节点 `91b6752e` 加进来）：往临时场次目录里按真实形状落那份逐块进度账（两路各两块，一块静音、一块失败）与状态文件，登记进工作台之后读 `GET /api/sessions/{id}` | `dir` / `session_id` / `kind` / `state` / `date` / `mode` / `has_offline` / `post` / `offline` / `speakers` 十键；`offline` 里两路各一格（`source` / `done` / `total` / `remaining` / `current_chunk` / `counts` 四档计数）；`speakers` 是身份集（样本那一场只有 mic 一路有稿、没有人名表 → 路级身份一行，名字与次数读数如实 `null`）。块号、块数、四档计数是确定值，路径与场次目录名掩成 `<path>` / `<session-id>`，两个墙钟戳掩成 `<iso>`，走秒的量掩成 `0` / `null`。这一份采的是**跨进程那一档**（这一趟早已收工）：`offline.state` 照盘上那份如实答 `done`、`offline.in_process` 如实答 `false` |
 | | `status-interrupted.json` | 进程内 TestClient（打断会后节点 `b1c6a58e`）：往临时场次目录里落那份逐块进度账（mic 两块里跑了一块）与一版 `interrupted` 状态文件，登记进工作台之后读 `GET /api/sessions/{id}` | 形状与 `status-after-run` 同体：`offline.state` 照盘答 **`interrupted`**（折档白名单里有它，不许折回 `running`）、`in_process` 如实 `false`；`sources` 两路各一格（mic `1/2`、loopback `0/null`——没开跑的那一路分母读不出如实 `null`）。路径与目录名掩 `<path>` / `<session-id>`，墙钟戳掩 `<iso>`，走秒量掩 `0` / `null` |
-| `heartbeat/` | `idle.json` | 进程内 TestClient（dev 替身） | 六字段、两字段 `null` |
-| | `recording.json` | 同上，等 `recording_alive is True` | 六字段、`recording_alive` 为 `true` |
-| | `no-first-frame.json` | 同上，`stall` 先挂上（进程内直挂替身）再 `start`，开场窗口内等 `top_state` 为 `recording` 而 `recording_alive` 为 `null` 的那一读 | 六字段、`top_state` 为 `recording` 而 `recording_alive` 与 `seconds_since_last_tick` 同为 `null` —— **还没有第一帧**的未知档（de899128），界面不再把它等同于「停止」 |
+| `heartbeat/` | `idle.json` | 进程内 TestClient（dev 替身） | 七字段、两字段 `null`、空洞账零账 |
+| | `recording.json` | 同上，等 `recording_alive is True` | 七字段、`recording_alive` 为 `true` |
+| | `no-first-frame.json` | 同上，`stall` 先挂上（进程内直挂替身）再 `start`，开场窗口内等 `top_state` 为 `recording` 而 `recording_alive` 为 `null` 的那一读 | 七字段、`top_state` 为 `recording` 而 `recording_alive` 与 `seconds_since_last_tick` 同为 `null` —— **还没有第一帧**的未知档（de899128），界面不再把它等同于「停止」 |
+| | `capture-gap.json` | 同上，正常开一场等 `recording_alive is True`，进程内直调 `runtime.apply_fact()` 打进两条区间重叠的 `FrameGap` 事实（同一次冻结、两路刻度线各报一条的真实形状）再读心跳 | 七字段、`recording_alive` 仍为 `true` 而 `capture_gaps.total_count` 为 **1**（两条合并为一条）—— **帧空洞留痕**那一档（gil-stall-hole）：历史事实与当下读数各管一头。`at` 走 `<iso>`、秒数走走秒掩码落 0，`total_count` 是确定值 |
 
 **动作样本的形状**：每个 `actions/*.json` 是一份**请求三件套 + 应答**：
 
@@ -90,7 +91,7 @@
 | 场次目录名 | 键名在 `SESSION_ID_KEYS` = `{session_id}`（动作失败的 `detail`），**或**键名是 `id` 且父键是 `session`（靠键路径区分，见下） | `<session-id>` |
 | `url` | 键名是 `url`（字符串或数字都算） | `<url>` |
 | `port` | 键名是 `port` | `<port>` |
-| 走秒的量 | 键名在 `ZERO_KEYS` = `{elapsed_seconds, duration_seconds, seconds_since_last_tick, wall_seconds}`（含会中总结那次实测耗时与会后逐块的墙钟 `wall_seconds`） | `0` |
+| 走秒的量 | 键名在 `ZERO_KEYS` = `{elapsed_seconds, duration_seconds, seconds_since_last_tick, wall_seconds, total_seconds, seconds}`（含会中总结那次实测耗时、会后逐块的墙钟 `wall_seconds` 与帧空洞账的秒数） | `0` |
 | 电平 | 键名在 `LEVEL_KEYS` = `{level_dbfs, peak_dbfs, dbfs, peak, bar}` | `<dbfs>` |
 | 包络数组 | 键名是 `envelope` | **只保结构与长度**：长度不变、逐根换成 `<dbfs>` |
 | 自由文本内嵌路径 | 正则 `(?<![A-Za-z0-9])[A-Za-z]:[/\\][^\s，。；！？：、「」『』（）【】《》"']+`（lookbehind 挡掉 `http:` 这类 scheme） | 就地替换成 `<path>` |
@@ -124,7 +125,7 @@
 - `sources` 两项且次序是 `mic`、`loopback`；
 - 录音态两路 `envelope` 长度恰 `ENVELOPE_BAR_COUNT`（15）；
 - `levels` 帧每路 `ts is None`、`bar == envelope[-1]`；
-- `heartbeat` 六键齐、`service == "meeting"`、`revision` 是 int；
+- `heartbeat` 七键齐、`service == "meeting"`、`revision` 是 int；
 - 快照四态等于该样本该有的那一态；
 - **SSE 四帧的自报 `revision` 互相对得上**：`snapshot` / `state` 的帧级 `id:` 等于 `data.revision`，不带 `id:` 的 `levels` / `transcript` 的 `data.revision` 落在同一版上。读帧因此**不依赖到达次序**（`levels` 什么时候来由服务侧的广播节奏定），revision 的确定性由这条自洽性钉住。
 
