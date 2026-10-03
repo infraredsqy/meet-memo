@@ -59,9 +59,11 @@ HEARTBEAT_KEYS = {
     "recording_alive", "seconds_since_last_tick",
 }
 TRANSCRIPT_LINE_KEYS = {"ts", "source", "text", "kind"}
-#: 快照 `settings` 的键全集（`311f84f5` 加了 `summary_default_window`，共五键）
+#: 快照 `settings` 的键全集（`311f84f5` 加了 `summary_default_window`；
+#: 会中切模型节点加了 `summary_preset_names` / `summary_active_preset`，共七键）
 SETTINGS_KEYS = {
-    "alarm_sound", "heartbeat_interval_seconds", "summary_default_window", "asr", "devices",
+    "alarm_sound", "heartbeat_interval_seconds", "summary_default_window",
+    "summary_preset_names", "summary_active_preset", "asr", "devices",
 }
 
 #: 各态等待的显式超时（秒；单条用例 ≤ 5 秒看门之内的具名预算）

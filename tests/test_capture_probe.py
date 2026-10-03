@@ -439,6 +439,7 @@ def test_settings_devices_shape_and_update_round_trip(tmp_path: Path):
         settings = snapshot_of(client)["settings"]
         assert set(settings) == {
             "alarm_sound", "heartbeat_interval_seconds", "summary_default_window",
+            "summary_preset_names", "summary_active_preset",
             "asr", "devices",
         }
         # 没配时两个子键都是 null（空值形状与配置层的 NULLABLE_KEYS 一致）

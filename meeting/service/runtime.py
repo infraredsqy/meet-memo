@@ -676,12 +676,26 @@ class ServiceRuntime:
 
         `settings.devices` 的两个子键逐一取 `devices.mic` / `devices.loopback` 的生效值
         （`dca4539b` 定名；没配时为 `null`，与配置层 `NULLABLE_KEYS` 的空值形状一致）。
+
+        会中切模型的两格（本节点）：`summary_preset_names` 是预设的**名字清单**（只给名字，
+        预设内容与密钥不进快照）；`summary_active_preset` 是当前用哪一套的**生效值** ——
+        指针指向的名字不在清单里（没配、解析失败、名字已删）时，实际生效的是老四键
+        平铺那一档，这里照实报空串。
         """
+        preset_names = [
+            item["name"]
+            for item in config_module.summary_presets_of(self._value("summary.presets_json"))
+        ]
+        active_preset = str(self._value("summary.active_preset") or "").strip()
+        if active_preset and active_preset not in preset_names:
+            active_preset = ""
         return SettingsView(
             alarm_sound=bool(self._value("alarm.sound")),
             heartbeat_interval_seconds=int(self._value("heartbeat.interval_seconds")),
             # 快速总结的缺省档：四档取值（装载与写前校验都只放四档，这里原样带出）
             summary_default_window=str(self._value("summary.default_window")),
+            summary_preset_names=preset_names,
+            summary_active_preset=active_preset,
             # `settings.asr` 的五个子键与配置键 `asr.*` **逐字同名**（只去掉前缀），取生效值；
             # 嵌套写法只出现在状态 JSON 里，不进请求 / 应答 / config.json
             asr={name: self._value(f"asr.{name}") for name in config_module.ASR_SETTING_KEYS},
@@ -3588,10 +3602,15 @@ class ServiceRuntime:
 
         missing = tuple(settings.missing)
         if missing:
+            # 预设模式（缺的是 `summary.presets_json[名字].格`）与平铺模式各说各的指引：
+            # 让人去补的那份配置，与报出来的名字对得上。
+            if any(name.startswith("summary.presets_json[") for name in missing):
+                hint = "（把这套预设缺的那几格补上，或者先在设置里切到别的一套再来一次）"
+            else:
+                hint = "（配好 summary.base_url / summary.api_key / summary.model 之后再来一次）"
             raise ActionError(
                 "summary_failed",
-                f"模型端点没配齐，缺这些配置键：{'、'.join(missing)}"
-                "（配好 summary.base_url / summary.api_key / summary.model 之后再来一次）",
+                f"模型端点没配齐，缺这些配置键：{'、'.join(missing)}{hint}",
                 status=502,
                 detail={"missing": list(missing)},
             )

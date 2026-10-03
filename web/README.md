@@ -4,7 +4,7 @@
 > **工作区首页**（空闲态与收尾落定后的那一屏：清单、目录选择器、会后两个按钮）与**会中主视图** ——
 > 用户开着它开会，不用盯着屏幕也知道一切正常，出事时第一眼看出是哪一路死了。
 >
-> 契约正文在 `docs/contract.md`，可机读基准在 `contract/fixtures/`（34 个 golden 样本）。
+> 契约正文在 `docs/contract.md`，可机读基准在 `contract/fixtures/`（35 个 golden 样本）。
 > **契约层逐字段照它们写** —— schema 改了、样本再跑起来红了，说明契约漂了。
 > 界面这一侧的权威是 `docs/ui-design.md`（章 2 会中信息架构、章 4 状态机、章 7 类名契约、章 8 十一条硬门槛）。
 
@@ -123,10 +123,13 @@ npm test             # vitest run（等价于 npx vitest run）
 6. **收尾区** —— 已结束时的那条横幅（`正在落盘，先别关机` / `可以关机` / `收尾出事了`）与四项明细
 7. **实时转写** —— 草稿、`[HH:MM] 本地/远端 · 正文`、识别失败缺口、心跳中断断口、约 200 行窗口、不自动跳回底部 +「回到最新」
 
-**设置抽屉已落地**（`311f84f5`）：会中顶栏右上角的「设置」展开 `drawer` / `scrim`（类名契约
-章 7.10 的预留），四项设置就地写进 config —— 换设备（`GET /api/devices` 的清单 + 选完
+**设置抽屉已落地**（`311f84f5` 定形，会中切模型节点加了第五项设置）：会中顶栏右上角的「设置」展开 `drawer` / `scrim`（类名契约
+章 7.10 的预留），设置项就地写进 config —— 换设备（`GET /api/devices` 的清单 + 选完
 `reprobe`；会中那两格禁用）、告警提示音、心跳频率（1–60 秒，越界当场拒）、快速总结默认
-窗口（四档预选随 `settings.summary_default_window` 走）。**ASR 那五个参数一个都不进这扇窗**
+窗口（四档预选随 `settings.summary_default_window` 走）、快速总结模型（下拉列出「不选预设」
+与 `settings.summary_preset_names` 里的各套名字，当前选区随 `settings.summary_active_preset`；
+**会中可切**，换一套发 `settings_update` 写盘即生效，不必重启。清单在配置文件
+`summary.presets_json` 里配，密钥不进快照、不在这里回显）。**ASR 那五个参数一个都不进这扇窗**
 （设计意图第 14 条；`web/tests/settings-drawer.test.tsx` 拿渲染结果逐个查）。仍在保留登记里
 的：转写历史回看。
 

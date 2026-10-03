@@ -108,7 +108,7 @@ afterEach(() => {
 });
 
 describe('抽屉里摆了什么（负面验收：ASR 五参数不进这扇窗）', () => {
-  it('四项都在：设备两路、告警提示音、心跳频率、快速总结默认窗口', async () => {
+  it('五项都在：设备两路、告警提示音、心跳频率、快速总结默认窗口、快速总结模型', async () => {
     const renderer = await mountDrawer(snapshotOf('idle'));
     const drawer = findByTestId(renderer, 'settings-drawer');
     const text = textOf(drawer);
@@ -118,7 +118,9 @@ describe('抽屉里摆了什么（负面验收：ASR 五参数不进这扇窗）
       '告警提示音',
       '心跳频率',
       '快速总结默认窗口',
+      '快速总结模型',
       '15 分钟',
+      '不选预设（用平铺四键）',
     ]) {
       expect(text, phrase).toContain(phrase);
     }
@@ -264,5 +266,60 @@ describe('告警提示音与缺省档', () => {
       (full[0] as TestRenderer.ReactTestInstance).props.onClick();
     });
     expect(onSetting).toHaveBeenCalledWith('summary.default_window', 'full');
+  });
+});
+
+describe('会中切模型那一格（多套预设里换当前用哪一套，本节点）', () => {
+  it('选项按快照的名字清单摆，「不选预设」在第一档；当前那套预选正确', async () => {
+    const snap = snapshotOf('idle');
+    snap.settings.summary_preset_names = ['主力', '备用（必败）'];
+    snap.settings.summary_active_preset = '备用（必败）';
+    const renderer = await mountDrawer(snap);
+
+    const select = findByTestId(renderer, 'summary-active-preset');
+    expect(select.props.value).toBe('备用（必败）');
+    const options: { props: { value: string } }[] = select.props.children;
+    expect(options.map((option) => option.props.value)).toEqual(['', '主力', '备用（必败）']);
+  });
+
+  it('换一套交的是 summary.active_preset 带名字；选「不选预设」交空串', async () => {
+    const onSetting = vi.fn();
+    const snap = snapshotOf('idle');
+    snap.settings.summary_preset_names = ['主力', '备用（必败）'];
+    snap.settings.summary_active_preset = '主力';
+    const renderer = await mountDrawer(snap, { onSetting });
+
+    const select = findByTestId(renderer, 'summary-active-preset');
+    await act(async () => {
+      select.props.onChange({ target: { value: '备用（必败）' } });
+    });
+    expect(onSetting).toHaveBeenCalledWith('summary.active_preset', '备用（必败）');
+
+    await act(async () => {
+      select.props.onChange({ target: { value: '' } });
+    });
+    expect(onSetting).toHaveBeenLastCalledWith('summary.active_preset', '');
+  });
+
+  it('空清单只有「不选预设」一档；会中（recording）这一格照常可切（这正是它的用场）', async () => {
+    const onSetting = vi.fn();
+    const renderer = await mountDrawer(snapshotOf('recording'), { onSetting });
+
+    const select = findByTestId(renderer, 'summary-active-preset');
+    expect(select.props.disabled).not.toBe(true);
+    expect(select.props.value).toBe('');
+    const options: { props: { value: string } }[] = select.props.children;
+    expect(options).toHaveLength(1);
+    expect(options[0]?.props.value).toBe('');
+
+    // 清单到场之后照样能切：会中切预设不受「会中不换设备」那一格的限制
+    const snap = snapshotOf('recording');
+    snap.settings.summary_preset_names = ['主力'];
+    const withPreset = await mountDrawer(snap, { onSetting });
+    const presetSelect = findByTestId(withPreset, 'summary-active-preset');
+    await act(async () => {
+      presetSelect.props.onChange({ target: { value: '主力' } });
+    });
+    expect(onSetting).toHaveBeenCalledWith('summary.active_preset', '主力');
   });
 });

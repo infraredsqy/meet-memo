@@ -2,6 +2,7 @@ import {
   HEARTBEAT_INTERVAL_MAX_SECONDS,
   HEARTBEAT_INTERVAL_MIN_SECONDS,
   type DevicesResponse,
+  type Settings,
   type Snapshot,
   type SummaryWindowChoice,
 } from '../contract';
@@ -22,13 +23,15 @@ import { SUMMARY_WINDOWS } from './summary';
  * 3. **心跳 1–60 秒**，越界当场拒绝并说明原因（不发请求）。
  */
 
-/** 抽屉的全部行：设备两行 + 告警提示音 + 心跳频率 + 快速总结缺省档。**一个不多**。 */
+/** 抽屉的全部行：设备两行 + 告警提示音 + 心跳频率 + 快速总结缺省档 + 总结模型预设。
+ * **一个不多**。 */
 export const DRAWER_ROW_IDS = [
   'device-mic',
   'device-loopback',
   'alarm-sound',
   'heartbeat-interval',
   'summary-default-window',
+  'summary-active-preset',
 ] as const;
 
 export type DrawerRowId = (typeof DRAWER_ROW_IDS)[number];
@@ -113,6 +116,38 @@ export function normalizeDefaultWindow(value: string): SummaryWindowChoice {
   return (SUMMARY_DEFAULT_WINDOW_OPTIONS.some((item) => item.value === value)
     ? value
     : '15m') as SummaryWindowChoice;
+}
+
+// ---------------------------------------------------------------------------
+// 会中切模型（本节点）：预设切换那一格的纯逻辑
+// ---------------------------------------------------------------------------
+
+/** 「不选预设」那一档的标签（值 `''`：总结用平铺四键那一路，存量配置零迁移）。 */
+export const NO_PRESET_LABEL = '不选预设（用平铺四键）';
+
+/** 总结模型下拉的一项：值是**预设名字**（`summary.active_preset` 存的就是它）。 */
+export interface PresetOption {
+  /** 送进 `settings_update` 的值（空串 = 不选预设）。 */
+  value: string;
+  /** 下拉里那一行的字（预设的人读名字；不显示端点，更不显示密钥）。 */
+  label: string;
+}
+
+/** 快照里的名字清单 → 下拉项：「不选预设」恒在第一档，其后按服务的次序。 */
+export function presetOptionsOf(settings: Settings): PresetOption[] {
+  return [
+    { value: '', label: NO_PRESET_LABEL },
+    ...settings.summary_preset_names.map((name) => ({ value: name, label: name })),
+  ];
+}
+
+/**
+ * 当前用哪一套的**生效值**在不在清单里（服务只在清单里报名字；形态上兜一道 ——
+ * 指向的名字不在清单里时按「不选预设」读，与服务侧的回落口径一致）。
+ */
+export function normalizeActivePreset(settings: Settings): string {
+  const active = settings.summary_active_preset;
+  return settings.summary_preset_names.includes(active) ? active : '';
 }
 
 // ---------------------------------------------------------------------------

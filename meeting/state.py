@@ -369,15 +369,22 @@ class EndedState:
 
 @dataclass
 class SettingsView:
-    """快照 `settings`（顶层五键；`asr` 五子键；`devices` 两子键 `mic` / `loopback`）。
+    """快照 `settings`（顶层七键；`asr` 五子键；`devices` 两子键 `mic` / `loopback`）。
 
     `summary_default_window`（`311f84f5`）是快速总结的缺省档（四档取值），
     界面的默认预选随它走 —— 服务是唯一来源，前端不自造第二份。
+
+    `summary_preset_names` / `summary_active_preset`（会中切模型，本节点）是预设的
+    **名字清单**与**当前用哪一套的生效值**：只给名字 —— 预设里的 `base_url` / `api_key` /
+    `model` 是配置，密钥更是**不进快照、不在界面回显**；指针指向的名字不在清单里时
+    报空串（那一档实际生效的是老四键平铺，快照说的就是真会用哪套）。
     """
 
     alarm_sound: bool = True
     heartbeat_interval_seconds: int = 10
     summary_default_window: str = "15m"
+    summary_preset_names: list[str] = field(default_factory=list)
+    summary_active_preset: str = ""
     asr: dict[str, Any] = field(default_factory=dict)
     devices: dict[str, Any] = field(default_factory=dict)
 
@@ -386,6 +393,8 @@ class SettingsView:
             "alarm_sound": bool(self.alarm_sound),
             "heartbeat_interval_seconds": int(self.heartbeat_interval_seconds),
             "summary_default_window": str(self.summary_default_window),
+            "summary_preset_names": list(self.summary_preset_names),
+            "summary_active_preset": str(self.summary_active_preset),
             "asr": dict(self.asr),
             "devices": dict(self.devices),
         }

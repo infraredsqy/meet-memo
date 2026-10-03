@@ -4,12 +4,16 @@ import {
   DEVICE_LOCKED_HINT,
   DRAWER_ROW_IDS,
   HEARTBEAT_RANGE_HINT,
+  NO_PRESET_LABEL,
   SUMMARY_DEFAULT_WINDOW_OPTIONS,
   deviceChangeLocked,
   deviceOptionsOf,
+  normalizeActivePreset,
   normalizeDefaultWindow,
   parseHeartbeatInput,
+  presetOptionsOf,
 } from '../src/live/settings';
+import { makeSettings } from './live-fixtures';
 
 /**
  * 设置抽屉那份纯逻辑的用例（`311f84f5`）。
@@ -49,13 +53,14 @@ function devicesResponse(): DevicesResponse {
 }
 
 describe('抽屉的行清单（ASR 五参数一个都不进这扇窗）', () => {
-  it('全部行恰好五条：设备两行 + 告警提示音 + 心跳频率 + 快速总结缺省档', () => {
+  it('全部行恰好六条：设备两行 + 告警提示音 + 心跳频率 + 快速总结缺省档 + 总结模型预设', () => {
     expect([...DRAWER_ROW_IDS]).toEqual([
       'device-mic',
       'device-loopback',
       'alarm-sound',
       'heartbeat-interval',
       'summary-default-window',
+      'summary-active-preset',
     ]);
   });
 
@@ -173,3 +178,33 @@ describe('缺省档的归一', () => {
     ]);
   });
 });
+
+describe('总结模型预设那一格（会中切模型，本节点）', () => {
+  it('「不选预设」恒在第一档，其后按快照里名字的次序；选项里只有名字没有端点', () => {
+    const options = presetOptionsOf(
+      makeSettings({ summary_preset_names: ['主力', '备用（必败）'] }),
+    );
+    expect(options[0]).toEqual({ value: '', label: NO_PRESET_LABEL });
+    expect(options.map((item) => item.value)).toEqual(['', '主力', '备用（必败）']);
+    for (const option of options) {
+      expect(option.label).not.toContain('http');
+      expect(option.label).not.toContain('api_key');
+    }
+  });
+
+  it('当前生效值在清单里就原样预选；空串与清单外的名字都按「不选预设」读', () => {
+    const withPresets = makeSettings({
+      summary_preset_names: ['主力', '备用（必败）'],
+      summary_active_preset: '备用（必败）',
+    });
+    expect(normalizeActivePreset(withPresets)).toBe('备用（必败）');
+    expect(normalizeActivePreset(makeSettings())).toBe('');
+    // 服务侧对「指针指向的名字不在清单里」报空串；就算拿到旧形状也兜回同一档
+    expect(
+      normalizeActivePreset(
+        makeSettings({ summary_preset_names: ['主力'], summary_active_preset: '已删掉' }),
+      ),
+    ).toBe('');
+  });
+});
+

@@ -46,7 +46,7 @@ ACTION_POLL_TIMEOUT_SECONDS = 15.0
 #: 轮询间隔
 ACTION_POLL_INTERVAL_SECONDS = 0.05
 
-#: 三分表：可热读的十键（`asr.*` 五个 + `alarm.sound` + 设置抽屉那四项，`311f84f5`）
+#: 三分表：可热读的十二键（`asr.*` 五个 + `alarm.sound` + 设置抽屉那四项 + 会中切模型两键）
 APPLIED_KEYS = {
     "alarm.sound",
     "asr.max_segment_seconds",
@@ -58,10 +58,12 @@ APPLIED_KEYS = {
     "devices.loopback",
     "heartbeat.interval_seconds",
     "summary.default_window",
+    "summary.presets_json",
+    "summary.active_preset",
 }
-#: 三分表：其余 28 键（`web.*` / `log.*` / `alert.*`、五个后端选择键、会后离线那四个 `post.*`、
+#: 三分表：其余 30 键（`web.*` / `log.*` / `alert.*`、五个后端选择键、会后离线那四个 `post.*`、
 #: 会后纪要那五个 `minutes.*`，以及会中总结端点与预算那六个 `summary.*`）。
-#: 三分表总共 38 个键 = `DEFAULT_VALUES` 的键全集（「输出根」那一格已退场）。
+#: 三分表总共 40 个键 = `DEFAULT_VALUES` 的键全集（「输出根」那一格已退场）。
 PENDING_KEYS = {
     "web.port", "web.dist_dir", "log.level", "log.dir",
     "log.max_bytes", "log.backup_count", "alert.silence_dbfs", "alert.silence_seconds",
@@ -452,7 +454,7 @@ def test_session_mute_recalculates_instead_of_stamping_true(tmp_path):
 
 
 def test_settings_update_splits_applied_and_pending_restart(tmp_path):
-    """`applied` = 热读十键；`pending_restart` = 本次改的其余键。"""
+    """`applied` = 热读十二键；`pending_restart` = 本次改的其余键。"""
     with live(tmp_path) as (client, _runtime, _home, _out):
         response = post(
             client,
@@ -482,7 +484,7 @@ def test_settings_update_splits_applied_and_pending_restart(tmp_path):
 
 
 def test_settings_key_groups_cover_the_whole_table(tmp_path):
-    """两个数组的键名与配置层的三分表逐键一致（38 个键一个不多、一个不少）。"""
+    """两个数组的键名与配置层的三分表逐键一致（40 个键一个不多、一个不少）。"""
     with live(tmp_path) as (client, _runtime, _home, _out):
         response = post(
             client,
@@ -686,16 +688,23 @@ def test_settings_update_with_only_pending_keys_writes_without_committing(tmp_pa
 
 
 def test_settings_snapshot_shape_stays_frozen(tmp_path):
-    """快照 `settings`：五个子键齐、`asr` 五子键齐且取生效值、`devices` 两个子键。"""
+    """快照 `settings`：七个子键齐、`asr` 五子键齐且取生效值、`devices` 两个子键。
+
+    会中切模型的两格（本节点）：`summary_preset_names` 只给名字（预设内容与密钥
+    不进快照），`summary_active_preset` 是当前用哪一套的**生效值**（没配 = 空串）。
+    """
     with live(tmp_path) as (client, _runtime, _home, _out):
         settings = snapshot_of(client)["settings"]
         assert set(settings) == {
             "alarm_sound", "heartbeat_interval_seconds", "summary_default_window",
+            "summary_preset_names", "summary_active_preset",
             "asr", "devices",
         }
         assert settings["summary_default_window"] == config_module.default_for(
             "summary.default_window"
         )
+        assert settings["summary_preset_names"] == []
+        assert settings["summary_active_preset"] == ""
         assert set(settings["asr"]) == {
             "max_segment_seconds", "timeout_seconds", "max_new_tokens",
             "repeat_max_unit", "repeat_min_coverage",
@@ -707,6 +716,60 @@ def test_settings_snapshot_shape_stays_frozen(tmp_path):
             "loopback": config_module.default_for("devices.loopback"),
         }
         assert settings["devices"] == {"mic": None, "loopback": None}
+
+
+def test_settings_update_swaps_the_summary_preset_at_once(tmp_path):
+    """会中切模型：预设清单与当前指针都收热读档，写盘那一刻快照与运行期一起换。
+
+    四条判据（照 `alarm.sound` 那条的口径）：应答分类（进 `applied`）、快照两格
+    当场是新值（名字清单 + 生效指针）、`revision` 涨一格、写盘确实落了盘。
+    指向清单外名字的指针在写前校验就被拦下（`invalid_setting`）。
+    """
+    presets = json.dumps(
+        [
+            {"name": "主力", "base_url": "http://127.0.0.1:9/v1", "api_key": "k1", "model": "m1"},
+            {"name": "备用（必败）", "base_url": "http://127.0.0.1:1/v1", "api_key": "k2", "model": "m2"},
+        ],
+        ensure_ascii=False,
+    )
+    with live(tmp_path) as (client, _runtime, home, _out):
+        before_revision = int(snapshot_of(client)["revision"])
+
+        # ① 一次写清单 + 指名：两组都进 applied，快照当场可见
+        response = post(
+            client,
+            "settings_update",
+            {"summary.presets_json": presets, "summary.active_preset": "主力"},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert sorted(body["applied"]) == ["summary.active_preset", "summary.presets_json"]
+        assert body["pending_restart"] == []
+        after = snapshot_of(client)
+        assert after["settings"]["summary_preset_names"] == ["主力", "备用（必败）"]
+        assert after["settings"]["summary_active_preset"] == "主力"
+        assert int(after["revision"]) == before_revision + 1, "热读键生效提交一次"
+        written = json.loads(helpers.config_path_of(home).read_text(encoding="utf-8"))
+        assert written["summary.presets_json"] == presets
+        assert written["summary.active_preset"] == "主力"
+
+        # ② 会中照样切（这正是这条功能的用场）：切到另一套，当场生效
+        assert post(client, "start").status_code == 200
+        switch = post(client, "settings_update", {"summary.active_preset": "备用（必败）"})
+        assert switch.status_code == 200, switch.text
+        assert switch.json()["applied"] == ["summary.active_preset"]
+        recording = snapshot_of(client)
+        assert recording["settings"]["summary_active_preset"] == "备用（必败）"
+
+        # ③ 切回「不选预设」（空串 = 老四键平铺那一档）
+        assert post(client, "settings_update", {"summary.active_preset": ""}).status_code == 200
+        assert snapshot_of(client)["settings"]["summary_active_preset"] == ""
+
+        # ④ 指向清单外名字：写前校验拦下（不发 invalid 的盘）
+        refused = post(client, "settings_update", {"summary.active_preset": "没有的那套"})
+        assert refused.status_code == 400
+        assert refused.json()["code"] == "invalid_setting"
+        assert snapshot_of(client)["settings"]["summary_active_preset"] == ""
 
 
 # ---------------------------------------------------------------------------

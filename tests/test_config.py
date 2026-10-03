@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -107,6 +108,10 @@ def test_default_values_match_the_frozen_table(tmp_path, monkeypatch):
         "summary.deadline_seconds": 25.0,
         "summary.max_attempts": 3,
         "summary.default_window": "15m",
+        # 会中切模型的两键（本节点）：全部预设一个 JSON 串键 + 当前指针，都收热读档，
+        # 默认都是空串（= 没配预设，用平铺四键；存量 config.json 零迁移）
+        "summary.presets_json": "",
+        "summary.active_preset": "",
     }
     assert loaded.as_dict() == expected
     # 全部来源都是「默认」
@@ -290,8 +295,9 @@ def test_isolated_config_dir_and_app_client_share_one_home(
 
 
 def test_hot_keys_are_the_asr_five_plus_the_alarm_switch(tmp_path, monkeypatch):
-    """热读键 = `asr.*` 五个 + `alarm.sound` + 设置抽屉那四项（出声开关勾选那一刻生效；
-    设备写完 `reprobe` 按新值挑，心跳与总结缺省档写盘即可见 —— `311f84f5`）。"""
+    """热读键 = `asr.*` 五个 + `alarm.sound` + 设置抽屉那四项 + 会中切模型两键
+    （出声开关勾选那一刻生效；设备写完 `reprobe` 按新值挑，心跳与总结缺省档写盘即可见
+    —— `311f84f5`；换一套预设当场生效 —— 本节点）。"""
     home = tmp_path / "home"
     home.mkdir()
     loaded = _load_with_env(monkeypatch, home, {})
@@ -306,6 +312,8 @@ def test_hot_keys_are_the_asr_five_plus_the_alarm_switch(tmp_path, monkeypatch):
         "devices.loopback",
         "heartbeat.interval_seconds",
         "summary.default_window",
+        "summary.presets_json",
+        "summary.active_preset",
     ]
     # 快照 `settings.asr` 的子键仍只有那五个：`alarm.sound` 是另一格，不掺进 `asr` 里
     assert config_module.ASR_SETTING_KEYS == (
@@ -315,6 +323,100 @@ def test_hot_keys_are_the_asr_five_plus_the_alarm_switch(tmp_path, monkeypatch):
         "repeat_max_unit",
         "repeat_min_coverage",
     )
+    # 会中切模型的两键也不许混进快照那两份子键清单（它们进的是 `settings` 顶层那两格）
+    assert not any(
+        key.startswith("summary.") for key in config_module.ASR_SETTING_KEYS
+    )
+    assert not any(
+        key.startswith("summary.") for key in config_module.DEVICE_SETTING_KEYS
+    )
+
+
+def test_summary_preset_keys_defaults_validation_and_cross_rule(tmp_path, monkeypatch):
+    """会中切模型两键：默认空串、热读档、`presets_json` 的 JSON 数组校验、指针的键间规则。
+
+    `presets_json` 与 `extra_body_json` 同一个先例（一段 JSON 文本进单键）：空串 = 没配；
+    非空必须是 JSON 数组，每套一个对象，`name` 必填且不重名。指针指向的名字必须在
+    （本次一起改的或生效配置里的）清单里 —— 键间规则只拦 `settings_update` 的写前校验，
+    装载与读的一侧不拦（读的一侧回落平铺键，见 `tests/test_summary_settings.py`）。
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    loaded = _load_with_env(monkeypatch, home, {})
+
+    assert loaded.get("summary.presets_json") == ""
+    assert loaded.get("summary.active_preset") == ""
+    assert config_module.setting_group("summary.presets_json") == "applied"
+    assert config_module.setting_group("summary.active_preset") == "applied"
+
+    good = json.dumps(
+        [
+            {"name": "主力", "base_url": "http://127.0.0.1:9/v1", "api_key": "k", "model": "m"},
+            {"name": "备用（必败）", "base_url": "http://127.0.0.1:1/v1"},
+        ],
+        ensure_ascii=False,
+    )
+    # 合法值原样放行；空串 = 没配
+    assert config_module.validate_value("summary.presets_json", good) == good
+    assert config_module.validate_value("summary.presets_json", "  ") == ""
+
+    # 非法值逐档拦下（报错里能找到对应的那句人话）
+    for text, reason in (
+        ('{"a": 1}', "顶层不是数组"),
+        ('"abc"', "顶层不是数组"),
+        ("[1, 2]", "第 1 套预设不是对象"),
+        ("不是 json", "不是合法 JSON"),
+        ('[{"base_url": "x"}]', "缺一个非空白的 name"),
+        ('[{"name": "a"}, {"name": " a "}]', "重复"),
+        ('[{"name": "a", "base_url": 5}]', "不是字符串"),
+        ('[{"name": "a", "extra_body_json": "[1]"}]', "顶层不是对象"),
+        ('[{"name": "a", "unknown": 1}]', "认不出的格"),
+    ):
+        try:
+            config_module.validate_value("summary.presets_json", text)
+        except config_module.ConfigValueError as exc:
+            assert reason in str(exc), (text, str(exc))
+        else:  # pragma: no cover - 走不到这里
+            raise AssertionError(f"这个值该被拒掉：{text}")
+
+    # 指针：非字符串拦下；空串放行（= 不选预设）
+    try:
+        config_module.validate_value("summary.active_preset", 5)
+    except config_module.ConfigValueError as exc:
+        assert "收到的不是字符串" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("非字符串的指针该被拒掉")
+    assert config_module.validate_value("summary.active_preset", "  ") == ""
+
+    # 键间规则：指针指到清单里没有的名字 → `invalid_setting` 那一档
+    class _Current:
+        def get(self, key, default=None):
+            values = {"summary.presets_json": good}
+            if key in values:
+                return values[key]
+            return config_module.default_for(key)
+
+    try:
+        config_module.validate_setting_changes(
+            {"summary.active_preset": "不存在的"}, current=_Current()
+        )
+    except config_module.ConfigValueError as exc:
+        assert exc.key == "summary.active_preset"
+        assert "不存在的" in str(exc)
+        assert "主力" in str(exc)  # 报错里带上清单里现有哪些名字
+    else:  # pragma: no cover
+        raise AssertionError("指向清单外名字的指针该被键间规则拦下")
+
+    # 同一个请求里先写清单再指名：按**新清单**查（不必先写清单再单独切）
+    applied = config_module.validate_setting_changes(
+        {"summary.presets_json": good, "summary.active_preset": "备用（必败）"},
+        current=_Current(),
+    )
+    assert set(applied) == {"summary.presets_json", "summary.active_preset"}
+    # 空指针照常放行（= 不选预设，用平铺四键）
+    assert config_module.validate_setting_changes(
+        {"summary.active_preset": ""}, current=_Current()
+    ) == {"summary.active_preset": ""}
 
 
 def test_priority_environment_beats_json_beats_default(tmp_path, monkeypatch):

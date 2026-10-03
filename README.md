@@ -138,9 +138,12 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 刚才在讲什么 / 讲到哪儿了 / 丢掉了什么。范围由人挑四档（最近 5 / 15 / 30 分钟、整场，缺省 15 分钟），
 读的是**内存里那份实时临时稿**（不读盘、也不动快照），结果是一过性的：关掉即消失、不落文件。
 本场按过的、成功产出的那几次可以从 `GET /api/summaries` 取回来回看（记录只活在内存里，
-新的一场 `start` 清空）。模型端点由七个 `summary.*` 键配（缺省档 `summary.default_window`
-写完即生效，其余六键改完要重启），
-密钥那一格可以走环境变量 `MEETING_SUMMARY_API_KEY`；没配齐就当场说清缺哪几个键。
+新的一场 `start` 清空）。模型端点由九个 `summary.*` 键配：多套预设整装在 `summary.presets_json`
+（一段 JSON 数组串，每套 `name` + 端点四件套），`summary.active_preset` 指名当前用哪一套 ——
+设置抽屉的「快速总结模型」下拉**会中就能换**，写盘即生效不必重启；不配预设就走平铺四键
+（存量配置零迁移）。缺省档 `summary.default_window` 同样写完即生效，其余六键改完要重启。
+密钥那一格可以走环境变量 `MEETING_SUMMARY_API_KEY`（压的是平铺那一格；预设用它自己的密钥）；
+没配齐就当场说清缺哪几个键。
 这一层怎么切窗口、提示词与模型输出是什么形状、超时与重试的预算落在哪，见 `docs/summary.md`。
 
 ---
@@ -168,26 +171,30 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 
 **`asr.*` 那五个键每段重新读，`alarm.sound` 勾选那一刻就生效；设置抽屉那四项
 （`311f84f5`：两个设备键位、`heartbeat.interval_seconds`、`summary.default_window`）
-写盘那一刻快照就换新值 —— 这十个合起来是热读键**：
+与会中切模型两键（`summary.presets_json` / `summary.active_preset`）
+写盘那一刻快照就换新值 —— 这十二个合起来是热读键**：
 
     alarm.sound / heartbeat.interval_seconds / summary.default_window
     devices.mic / devices.loopback
+    summary.presets_json / summary.active_preset
     asr.max_segment_seconds / asr.timeout_seconds / asr.max_new_tokens /
     asr.repeat_max_unit / asr.repeat_min_coverage
 
 `alarm.sound`（本场出不出声的持久化开关）收在热读档，是为了让钩子上的「出声开关」勾选即生效：
 `settings_update` 写盘成功那一刻快照里的 `settings.alarm_sound` 就换过去了。
 设置抽屉那四项同理：设备写完 `reprobe` 按新值挑，心跳与缺省档的快照格当场换。
+预设两键同理：设置抽屉换一套模型当场生效，会中也能切（每次总结都是现读配置、现造客户端）。
 
 其余键（`web.*` / `log.*` / `alert.*` / `capture.*` / `transcriber.*` / `post.*` / `minutes.*`
 与其余六个 `summary.*`）**改完要重启**。两档的划分以
-`meeting/config.py` 的 `SETTING_KEY_GROUPS` 为准（热读 10 键 + 重启 28 键 = 键全集 38）。**没有 `output.root` 键**：一场会放哪由它的工作区目录给
+`meeting/config.py` 的 `SETTING_KEY_GROUPS` 为准（热读 12 键 + 重启 28 键 = 键全集 40）。**没有 `output.root` 键**：一场会放哪由它的工作区目录给
 （start 显式传 `args.dir`），配置清空也照样能开会。
 
 **环境变量一律在启动时求值**，改了不会热生效。本服务的环境变量一共四个：
 `MEETING_PORT` / `MEETING_LOG_DIR` / `MEETING_CAPTURE` /
 `MEETING_NO_BROWSER`；另有 `MEETING_SUMMARY_API_KEY` 单独映射会中总结那一格的密钥
-（它不改变哪几个键生效，只是给 `summary.api_key` 供一个不进配置文件的来源）。
+（它不改变哪几个键生效，只是给 `summary.api_key` 供一个不进配置文件的来源；预设模式走
+预设里那一格密钥，这一格不参与）。
 
 ---
 
@@ -312,7 +319,7 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
     npm test           # vitest run，21 个文件 480 个用例
     npm run typecheck  # 两条 tsc --noEmit -p，各查各的 project
 
-`npm run build` 里已经含 `npm run typecheck`，所以构建过一次就不必再单独跑；只改类型不看产物时跑 `typecheck` 更快。契约正文在 `docs/contract.md`，可机读基准（34 个 golden 样本与掩码规则）在 `contract/`，前端工程的五个脚本（`dev` / `typecheck` / `build` / `preview` / `test`）与其余说明在 `web/README.md`。
+`npm run build` 里已经含 `npm run typecheck`，所以构建过一次就不必再单独跑；只改类型不看产物时跑 `typecheck` 更快。契约正文在 `docs/contract.md`，可机读基准（35 个 golden 样本与掩码规则）在 `contract/`，前端工程的五个脚本（`dev` / `typecheck` / `build` / `preview` / `test`）与其余说明在 `web/README.md`。
 
 ---
 

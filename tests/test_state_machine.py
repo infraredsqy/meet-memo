@@ -190,6 +190,7 @@ def test_empty_snapshot_shape_is_the_frozen_one():
         assert item["envelope"] == []
     assert set(payload["settings"]) == {
         "alarm_sound", "heartbeat_interval_seconds", "summary_default_window",
+        "summary_preset_names", "summary_active_preset",
         "asr", "devices",
     }
     assert payload["settings"]["devices"] == {}

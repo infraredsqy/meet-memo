@@ -64,7 +64,8 @@ SOURCE_KEYS = {
 }
 TRANSCRIPT_KEYS = {"health", "last_line_at", "buffered_lines", "failed_segments"}
 SETTINGS_TOP_KEYS = {
-    "alarm_sound", "heartbeat_interval_seconds", "summary_default_window", "asr", "devices",
+    "alarm_sound", "heartbeat_interval_seconds", "summary_default_window",
+    "summary_preset_names", "summary_active_preset", "asr", "devices",
 }
 #: phase2 §2.3 第 3 条：`asr` 的五个子键（取当前生效值）、`devices` 的两个子键（`mic` / `loopback`，没配时 `null`）
 ASR_KEYS = {

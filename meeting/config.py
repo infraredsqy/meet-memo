@@ -101,6 +101,9 @@ SERVICE_LOG_FILE_NAME = "meeting.log"
 #: 与 `summary.default_window` 的消费方（前端轮询、每次 `summarize` 的取缺省档）都不持有
 #: 运行期旧值，写盘即生效。表本身只管「写后即时可见」，`reprobe` 仍只在没有场次在跑时可用
 #: （`docs/contract.md` 第 7 章：会中换设备不做）。
+#: 会中切模型的两个键（本节点）也收在这一档：消费方零持有 —— 每次总结都是现读配置、
+#: 现造客户端（`runtime.summarize()` → `SummarySettings.from_config()`），键进热读档
+#: 写盘那一刻就改内存生效值并重提快照，界面换一套预设当场生效，不必重启。
 HOT_KEYS: tuple[str, ...] = (
     "alarm.sound",
     "asr.max_segment_seconds",
@@ -112,6 +115,8 @@ HOT_KEYS: tuple[str, ...] = (
     "devices.loopback",
     "heartbeat.interval_seconds",
     "summary.default_window",
+    "summary.presets_json",
+    "summary.active_preset",
 )
 
 #: `asr.*` 五个默认值沿用 `docs/v1-lineage.md` 的 B1（V1 `mnotes_core/config.py` 实测值），
@@ -197,6 +202,18 @@ DEFAULT_VALUES: dict[str, Any] = {
     "summary.api_key": None,
     "summary.model": "deepseek-chat",
     "summary.extra_body_json": "",
+    # 会中切模型的两个键（本节点定名，与上面四件套同组）：
+    #   - `summary.presets_json`：**全部预设装在一个 JSON 字符串键里**（配置层是点号扁平
+    #     键名的单层映射、明确拒收 dict 值，为「若干套预设」放开那条硬约束不值得 ——
+    #     与 `summary.extra_body_json` 同一个先例）。空串 = 没配（回落老四键平铺）；
+    #     非空必须是一段 **JSON 数组的文本**，每套一个对象：`name`（人读的名字，非空白、
+    #     不重名，当前指针按它挑）必填，`base_url` / `api_key` / `model` / `extra_body_json`
+    #     可省（省了按空串 = 没配）。套数不设上限；**预设里的密钥不进快照、不在界面回显**。
+    #   - `summary.active_preset`：当前用哪一套（预设的 `name`）。空串 = 不选任何预设，
+    #     用老四键平铺那一档（存量 config.json 一个字不用改，零迁移）；指向的名字不在
+    #     清单里时，读的一侧回落平铺键，快照照实报空串。
+    "summary.presets_json": "",
+    "summary.active_preset": "",
     "summary.deadline_seconds": 25.0,
     "summary.max_attempts": 3,
     "summary.default_window": "15m",
@@ -340,10 +357,10 @@ ENV_NO_BROWSER = "MEETING_NO_BROWSER"
 #
 # **只有下面逐条列出的字面键名合法，不按前缀归组、也没有任何前缀白名单**；
 # 表外的任何键名一律 `invalid_setting`(400)。
-# 27 个名字逐一取自上面的键全集（phase1 定死的顶层键 + `asr.*` 五个子键 +
-# `dca4539b` 定名的 `devices.mic` / `devices.loopback` 两个设备键位 +
+# 名字逐一取自上面的键全集（`DEFAULT_VALUES` 的 40 个键：phase1 定死的顶层键 +
+# `asr.*` 五个子键 + `dca4539b` 定名的 `devices.mic` / `devices.loopback` 两个设备键位 +
 # `7c6952e5` 定名的 `post.engine` / `post.model` / `post.dtype` / `post.chunk_seconds`
-# 四个会后离线开关）。
+# 四个会后离线开关 + 本节点的会中切模型两键）。
 # 设备键位是**点号字面键名**（`devices.mic`），快照里才收成 `settings.devices.mic` 这种子键；
 # 按前缀归组或写成 `devices.{...}` 的嵌套形状都不合法（与 `asr.*` 同一套口径）。
 # ---------------------------------------------------------------------------
@@ -399,6 +416,43 @@ def is_setting_key(key: str) -> bool:
     return key in SETTING_KEY_GROUPS
 
 
+def summary_presets_of(text: Any) -> list[dict[str, str]]:
+    """`summary.presets_json` 的文本 → 归一化的预设清单（**宽进**：读的一侧用）。
+
+    每套归一成五格字符串：`name` / `base_url` / `api_key` / `model` / `extra_body_json`
+    （缺的格补空串；`name` 收 blank 的话剥掉空白）。文本空白、解析失败、顶层不是数组、
+    某套没有非空白的 `name`、`name` 重名 —— 这些都按「没配」收：**读的一侧不炸**，
+    写入那一侧的严格校验在 `validate_value()`（配置文件装载与 `settings_update` 都过那一关），
+    手写配置绕过校验时这里兜底。空清单 = 没有可用的预设。
+    """
+    if not isinstance(text, str) or not text.strip():
+        return []
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return []
+    if not isinstance(parsed, list):
+        return []
+    presets: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in parsed:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        clean = name.strip()
+        if clean in seen:  # 重名的那一套没法被指针单独挑中，丢掉后面那套
+            continue
+        seen.add(clean)
+        fields: dict[str, str] = {"name": clean}
+        for field_name in ("base_url", "api_key", "model", "extra_body_json"):
+            value = item.get(field_name, "")
+            fields[field_name] = value if isinstance(value, str) else ""
+        presets.append(fields)
+    return presets
+
+
 def validate_setting_changes(
     changes: dict[str, Any], *, current: "Config | None" = None
 ) -> dict[str, Any]:
@@ -444,6 +498,25 @@ def validate_setting_changes(
             f"必须大于 asr.max_segment_seconds（当前 {segment}）",
             "键间规则不成立（超时必须大于段长）",
         )
+
+    # 会中切模型的键间规则：`summary.active_preset` 指向的名字必须在预设清单里
+    # （本次一起改的 `summary.presets_json` 优先，没改到的取生效配置里的现值）。
+    # 键间规则只拦 `settings_update` 的写前校验，刻意不在装载时拦：config.json 手删一套预设后服务照常起；
+    presets_text = applied.get("summary.presets_json", effective("summary.presets_json"))
+    active = applied.get("summary.active_preset", effective("summary.active_preset"))
+    active_name = active.strip() if isinstance(active, str) else ""
+    if active_name:
+        names = [item["name"] for item in summary_presets_of(presets_text)]
+        if active_name not in names:
+            raise ConfigValueError(
+                "summary.active_preset",
+                active,
+                "空字符串（不选预设），或某套预设的 name",
+                (
+                    f"预设清单里没有叫 {active_name!r} 的那一套"
+                    + (f"（清单里有的：{'、'.join(names)}）" if names else "（预设清单是空的）")
+                ),
+            )
     return applied
 
 
@@ -559,6 +632,13 @@ def _legal_text(key: str) -> str:
     if key in FLOAT_LIMITS:
         low, high = FLOAT_LIMITS[key]
         return f"数字，{low}–{high}"
+    if key == "summary.presets_json":
+        return (
+            "空字符串，或一段 JSON 数组的文本：每套一个对象，"
+            'name 必填（非空白、不重名），base_url / api_key / model / extra_body_json 可省'
+        )
+    if key == "summary.active_preset":
+        return "空字符串（不选预设，用平铺四键），或某套预设的 name"
     if key == "summary.extra_body_json":
         return "空字符串，或一段 JSON 对象的文本（例如 {\"thinking\": {\"type\": \"disabled\"}}）"
     if key in STRING_LIMITS:
@@ -592,6 +672,88 @@ def validate_value(key: str, value: Any) -> Any:
         if not isinstance(value, bool):
             raise ConfigValueError(key, value, _legal_text(key), "收到的不是布尔值")
         return value
+
+    if key == "summary.presets_json":
+        # 会中切模型：**全部预设以一个 JSON 字符串键承载**（与 `summary.extra_body_json`
+        # 同一个先例 —— 配置层是点号扁平键名的单层映射、明确拒收 dict 值，为「若干套预设」
+        # 放开那条硬约束不值得）。空串 = 没配（回落老四键平铺）；非空时必须是一段
+        # **JSON 数组的文本**，每套一个对象，`name` 必填且不重名（当前指针按它挑），
+        # 其余四格可省、给了必须是字符串，`extra_body_json` 那一格再按对象文本校验一道。
+        # 写错的预设当场拦下 —— 让一套读不出来的预设走到总结那一层，
+        # 等于把一次总结交给一段语法错误的文本。
+        if not isinstance(value, str):
+            raise ConfigValueError(key, value, _legal_text(key), "收到的不是字符串")
+        if not value.strip():
+            return ""
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ConfigValueError(
+                key, value, _legal_text(key), f"这段文本不是合法 JSON：{exc.msg}"
+            ) from exc
+        if not isinstance(parsed, list):
+            raise ConfigValueError(
+                key, value, _legal_text(key), "这段 JSON 的顶层不是数组"
+            )
+        seen_names: set[str] = set()
+        for index, item in enumerate(parsed, start=1):
+            where = f"第 {index} 套预设"
+            if not isinstance(item, dict):
+                raise ConfigValueError(
+                    key, value, _legal_text(key),
+                    f"{where}不是对象（每套预设该是带 name 等五格的对象）",
+                )
+            name = item.get("name")
+            if not isinstance(name, str) or not name.strip():
+                raise ConfigValueError(
+                    key, value, _legal_text(key),
+                    f"{where}缺一个非空白的 name（界面上当前用哪一套按名字挑）",
+                )
+            clean = name.strip()
+            if clean in seen_names:
+                raise ConfigValueError(
+                    key, value, _legal_text(key),
+                    f"{where}的 name 与前面某套重复（{clean!r}）：重名的话指针没法按名字挑",
+                )
+            seen_names.add(clean)
+            for field_name in ("base_url", "api_key", "model", "extra_body_json"):
+                field_value = item.get(field_name, "")
+                if field_value is None:
+                    continue  # 显式 null 与省略同解（= 没配）
+                if not isinstance(field_value, str):
+                    raise ConfigValueError(
+                        key, value, _legal_text(key),
+                        f"{where}（{clean}）的 {field_name} 不是字符串",
+                    )
+                if field_name == "extra_body_json" and field_value.strip():
+                    try:
+                        extra = json.loads(field_value)
+                    except json.JSONDecodeError as exc:
+                        raise ConfigValueError(
+                            key, value, _legal_text(key),
+                            f"{where}（{clean}）的 extra_body_json 不是合法 JSON：{exc.msg}",
+                        ) from exc
+                    if not isinstance(extra, dict):
+                        raise ConfigValueError(
+                            key, value, _legal_text(key),
+                            f"{where}（{clean}）的 extra_body_json 顶层不是对象",
+                        )
+            unknown = set(item) - {"name", "base_url", "api_key", "model", "extra_body_json"}
+            if unknown:
+                raise ConfigValueError(
+                    key, value, _legal_text(key),
+                    f"{where}（{clean}）带认不出的格：{'、'.join(sorted(str(u) for u in unknown))}"
+                    "（每套只认 name / base_url / api_key / model / extra_body_json 这五格）",
+                )
+        return value
+
+    if key == "summary.active_preset":
+        # 当前指针：空串 = 不选任何预设（用老四键平铺，存量配置零迁移）；非空必须是
+        # 某套预设的 name。「名字在不在清单里」是键间规则，归 `validate_setting_changes`
+        # （只拦 `settings_update` 的写前校验，刻意不在装载时拦：手删一套预设后服务照常起，指向的预设不在时读的一侧回落平铺键）。
+        if not isinstance(value, str):
+            raise ConfigValueError(key, value, _legal_text(key), "收到的不是字符串")
+        return value.strip()
 
     if key == "summary.extra_body_json":
         # 厂商特有字段（V1 preset 的 `extra_body`）以**一个 JSON 字符串键**承载：
@@ -735,9 +897,10 @@ class Config:
     def hot_keys(self) -> list[str]:
         """返回热读键（供 log 里「哪些键是热读的」那一行）。
 
-        眼下十个：`alarm.sound`、`asr.*` 那五个，加上设置抽屉那四项
+        眼下十二个：`alarm.sound`、`asr.*` 那五个，设置抽屉那四项
         （`devices.mic` / `devices.loopback` / `heartbeat.interval_seconds` /
-        `summary.default_window`；`HOT_KEYS` 那张表就是清单本身）。
+        `summary.default_window`），加会中切模型两键
+        （`summary.presets_json` / `summary.active_preset`；`HOT_KEYS` 那张表就是清单本身）。
         """
         return list(HOT_KEYS)
 
@@ -877,7 +1040,8 @@ def as_dict() -> dict[str, Any]:
 
 
 def hot_keys() -> list[str]:
-    """热读键十个：`alarm.sound`、`asr.*` 那五个与设置抽屉那四项（清单就是 `HOT_KEYS`）。"""
+    """热读键十二个：`alarm.sound`、`asr.*` 那五个、设置抽屉那四项，加会中切模型两键
+    （清单就是 `HOT_KEYS`）。"""
     return list(HOT_KEYS)
 
 
@@ -916,6 +1080,7 @@ __all__ = [
     "set_current",
     "setting_group",
     "split_setting_changes",
+    "summary_presets_of",
     "validate_setting_changes",
     "validate_value",
     "write_config_values",

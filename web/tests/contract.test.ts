@@ -149,12 +149,17 @@ describe('快照样本', () => {
     expect(snap.sources[0]?.level_dbfs).toBe('<dbfs>');
     expect(snap.settings.heartbeat_interval_seconds).toBe(10);
     expect(snap.settings.summary_default_window).toBe('15m');
+    expect(snap.settings.summary_preset_names).toEqual([]);
+    expect(snap.settings.summary_active_preset).toBe('');
     expect(snap.settings.devices).toEqual({ mic: null, loopback: null });
     // 心跳周期的唯一来源就是这一个键；缺省档的来源也是快照这一格（311f84f5）。
+    // 会中切模型的两格（本节点）：只有名字与当前指针，端点与密钥不进快照。
     expect(Object.keys(snap.settings)).toEqual([
       'alarm_sound',
       'heartbeat_interval_seconds',
       'summary_default_window',
+      'summary_preset_names',
+      'summary_active_preset',
       'asr',
       'devices',
     ]);

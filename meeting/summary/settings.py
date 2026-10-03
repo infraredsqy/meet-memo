@@ -16,6 +16,14 @@
 `docs/v1-lineage.md` 的「模型端点与 preset 配置」那一条走：语义照搬 V1 的 preset，
 落到 V2 是四个**点号扁平键名**（`summary.*`），`extra_body` 那一段以**一个 JSON 字符串键**
 承载（V2 配置层装载时明确拒收 dict 值，为这一个键放开那条硬约束不划算）。
+
+**会中切模型（多套预设）**：端点四件套也可以整套装在 `summary.presets_json`（一个 JSON
+数组串，每套带 `name` 与四件套），`summary.active_preset` 指名当前用哪一套 —— 两个键都收在
+热读档，`settings_update` 写盘那一刻生效，界面换一套当场走新的（消费方零持有：每次总结都是
+现读配置现造客户端）。`from_config()` 的取值次序：指针指到清单里**有名有姓**的那一套 →
+用它那四格；其余一切（没配、清单解析失败、指针空、指向的名字不在清单里）→ **回落老四键
+平铺**，存量 config.json 一个字不用改。实际用的是哪一套记在 `from_preset`（空串 = 平铺键），
+`missing` 因此也能把「这套预设缺哪一格」说到点上。
 """
 
 from __future__ import annotations
@@ -48,6 +56,11 @@ EXTRA_BODY_KEY = "summary.extra_body_json"
 DEADLINE_KEY = "summary.deadline_seconds"
 MAX_ATTEMPTS_KEY = "summary.max_attempts"
 DEFAULT_WINDOW_KEY = "summary.default_window"
+
+#: 会中切模型的两个键（本节点；键的登记与校验归 `meeting/config.py`，这里只是读者）：
+#: `PRESETS_KEY` 一段 JSON 数组串装全部预设，`ACTIVE_PRESET_KEY` 指名当前用哪一套。
+PRESETS_KEY = "summary.presets_json"
+ACTIVE_PRESET_KEY = "summary.active_preset"
 
 #: 七个键按这一序读、`missing` 也按这一序报（人读起来是「端点 → 预算 → 缺省档」）
 SETTING_KEYS: tuple[str, ...] = (
@@ -147,6 +160,10 @@ class SummarySettings:
 
     冻结：一次总结跑起来之后，它用的就是构造那一刻的这份快照 —— 中途改配置不影响
     在飞的这一次（与 V1 `_call_api()` 快照四个字段同一个立场）。
+
+    `from_preset` 记这次端点四件套**实际来自哪一套预设**（`summary.presets_json` 里的
+    `name`）；空串 = 用的是老四键平铺那一档。它只用来把 `missing` 报到点上
+    （预设模式报 `summary.presets_json[名字].格`），不参与请求。
     """
 
     base_url: str = ""
@@ -156,6 +173,7 @@ class SummarySettings:
     deadline_seconds: float = 25.0
     max_attempts: int = 3
     default_window: str = DEFAULT_WINDOW
+    from_preset: str = ""
 
     @property
     def missing(self) -> tuple[str, ...]:
@@ -166,14 +184,23 @@ class SummarySettings:
 
         判据是 `strip()` 之后还有没有内容：只有空白的那几个字段与「没配」同解 ——
         `from_config()` 已经把空白归一过一遍，这里再兜一道手搓实例的调用方。
+
+        预设模式（`from_preset` 非空）报的是**那套预设里缺的格**：
+        `summary.presets_json[名字].api_key` 这样的形状 —— 让人去改的那份配置
+        （预设里那一格）与报出来的名字对得上。
         """
+        prefix = f"{PRESETS_KEY}[{self.from_preset}]." if self.from_preset else ""
+
+        def name_of(flat_key: str, field_name: str) -> str:
+            return f"{prefix}{field_name}" if self.from_preset else flat_key
+
         gaps: list[str] = []
         if not self.base_url.strip():
-            gaps.append(BASE_URL_KEY)
+            gaps.append(name_of(BASE_URL_KEY, "base_url"))
         if not self.api_key.strip():
-            gaps.append(API_KEY_KEY)
+            gaps.append(name_of(API_KEY_KEY, "api_key"))
         if not self.model.strip():
-            gaps.append(MODEL_KEY)
+            gaps.append(name_of(MODEL_KEY, "model"))
         return tuple(gaps)
 
     @property
@@ -187,12 +214,30 @@ class SummarySettings:
 
         `config` 可以是 `meeting.backends.base.ReadOnlyConfig`、`meeting.config.Config`、
         一份裸 dict，或者 `None`（走缺省值表）。
+
+        端点四件套的取值次序（会中切模型）：`summary.active_preset` 指到预设清单里
+        **有名有姓**的那一套 → 用它那四格（`extra_body_json` 同样按一段 JSON 对象文本
+        归一）；其余一切（两个键没配、清单解析失败、指针空、指向的名字不在清单里）→
+        **回落老四键平铺**。预算三件套与缺省档始终走平铺键 —— 它们不在预设里。
         """
+        presets = config_module.summary_presets_of(_lookup(config, PRESETS_KEY))
+        wanted = _as_text(_lookup(config, ACTIVE_PRESET_KEY))
+        preset = next((p for p in presets if p["name"] == wanted), None) if wanted else None
+        if preset is not None:
+            base_url = _as_text(preset["base_url"])
+            api_key = _as_text(preset["api_key"])
+            model = _as_text(preset["model"])
+            extra_body = parse_extra_body(preset["extra_body_json"])
+        else:
+            base_url = _as_text(_lookup(config, BASE_URL_KEY))
+            api_key = _as_text(_lookup(config, API_KEY_KEY))
+            model = _as_text(_lookup(config, MODEL_KEY))
+            extra_body = parse_extra_body(_lookup(config, EXTRA_BODY_KEY))
         return cls(
-            base_url=_as_text(_lookup(config, BASE_URL_KEY)),
-            api_key=_as_text(_lookup(config, API_KEY_KEY)),
-            model=_as_text(_lookup(config, MODEL_KEY)),
-            extra_body=parse_extra_body(_lookup(config, EXTRA_BODY_KEY)),
+            base_url=base_url,
+            api_key=api_key,
+            model=model,
+            extra_body=extra_body,
             deadline_seconds=_as_float(
                 _lookup(config, DEADLINE_KEY), float(_default(DEADLINE_KEY) or 25.0)
             ),
@@ -200,10 +245,12 @@ class SummarySettings:
                 _lookup(config, MAX_ATTEMPTS_KEY), int(_default(MAX_ATTEMPTS_KEY) or 3)
             ),
             default_window=normalize_window(_lookup(config, DEFAULT_WINDOW_KEY)),
+            from_preset=preset["name"] if preset is not None else "",
         )
 
 
 __all__ = [
+    "ACTIVE_PRESET_KEY",
     "API_KEY_KEY",
     "BASE_URL_KEY",
     "DEADLINE_KEY",
@@ -212,6 +259,7 @@ __all__ = [
     "EXTRA_BODY_KEY",
     "MAX_ATTEMPTS_KEY",
     "MODEL_KEY",
+    "PRESETS_KEY",
     "SETTING_KEYS",
     "SummarySettings",
     "WINDOW_CHOICES",

@@ -7,8 +7,10 @@ import {
   checkedOf,
   deviceChangeLocked,
   deviceOptionsOf,
+  normalizeActivePreset,
   normalizeDefaultWindow,
   parseHeartbeatInput,
+  presetOptionsOf,
   stringValueOf,
 } from '../live/settings';
 
@@ -16,18 +18,21 @@ import {
  * 设置抽屉（`docs/ui-design.md` §7.10 的 `drawer` / `drawer--open` / `scrim`；
  * R32：一个设置按钮 → 网页内小窗 → 写进 config，节点 `311f84f5`）。
  *
- * **抽屉里只有四项**（`DRAWER_ROW_IDS`，设计意图第 15 条「放」的那一半减去下游节点的
- * 会中切模型）：换设备（两路各一个下拉，选完重新探测）、告警提示音、服务器心跳频率
- * （1–60 秒）、快速总结默认窗口（四档）。**ASR 那五个参数一个都不进这扇窗**
- * （设计意图第 14 条；`DRAWER_ROW_IDS` 那份清单就是抽屉的全部行，一个不多）。
+ * **抽屉里只有五项**（`DRAWER_ROW_IDS`，设计意图第 15 条「放」的那一半）：换设备
+ * （两路各一个下拉，选完重新探测）、告警提示音、服务器心跳频率（1–60 秒）、快速总结
+ * 默认窗口（四档）、会中切模型（多套预设里换当前用哪一套，本节点）。
+ * **ASR 那五个参数一个都不进这扇窗**（设计意图第 14 条；`DRAWER_ROW_IDS` 那份清单
+ * 就是抽屉的全部行，一个不多）。
  *
- * 每一项的改动**当场写进 config**（`settings_update`；这四项全收在服务的热读档，
+ * 每一项的改动**当场写进 config**（`settings_update`；这五项全收在服务的热读档，
  * 写完无需重启），换设备那一格紧跟着打一次 `reprobe`，探测结果由快照两路如实渲染。
  * 心跳输入越界当场拒绝并写明原因（不发请求）；会中两路设备格禁用
  * （`docs/contract.md` 第 7 章：会中换设备不做）。
  *
  * **权威状态在服务的快照上**：勾选框与下拉的当前值都从 `snapshot.settings` 读，
  * 这里不持第二份配置源；设备清单只在抽屉打开（本组件挂载）时取一次。
+ * 预设那一格只切**当前用哪一套**（名字清单由快照给）—— 预设内容（端点四件套）在
+ * 配置文件 `summary.presets_json` 里配，密钥**不进快照、不在这里回显**。
  */
 
 export interface SettingsDrawerProps {
@@ -289,6 +294,28 @@ export function SettingsDrawer({
               </button>
             ))}
           </div>
+        </Field>
+
+        {/* 五、会中切模型（多套预设）：只换当前用哪一套，写盘即生效不用重启。
+            预设内容在配置文件里配（summary.presets_json）；密钥不进快照、不在这里回显。 */}
+        <Field
+          label="快速总结模型"
+          htmlFor="settings-summary-preset"
+          hint="预设清单在配置文件里配（summary.presets_json）；这里换当场用哪一套，选完即生效。"
+        >
+          <select
+            id="settings-summary-preset"
+            className="field__input"
+            data-testid="summary-active-preset"
+            value={normalizeActivePreset(settings)}
+            onChange={(event) => onSetting('summary.active_preset', stringValueOf(event))}
+          >
+            {presetOptionsOf(settings).map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
         </Field>
       </aside>
     </>

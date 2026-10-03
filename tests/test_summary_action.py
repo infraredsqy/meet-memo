@@ -40,6 +40,7 @@ import pytest
 
 from meeting.backends.base import ReadOnlyConfig, TranscriptLine
 from meeting.service.runtime import ACTION_CODES, ACTION_NAMES
+from meeting.summary.client import HttpResponse
 from tests import _helpers as helpers
 
 #: 慢档标记：本文件与 `tests/test_api_actions.py` 同档（起真应用 + 真 lifespan）。
@@ -892,3 +893,111 @@ def test_the_summaries_endpoint_keeps_the_middleware_guards(tmp_path):
         response = client.get("/api/summaries")
         assert response.status_code == 200
         assert response.headers["cache-control"] == "no-store"
+
+
+# ---------------------------------------------------------------------------
+# 会中切模型：预设当场切换，坏的那一套给出可读失败原因（本节点）
+# ---------------------------------------------------------------------------
+
+
+#: 两套预设：主力走一个没人在听的回环端口，备用（必败）走 `127.0.0.1:1`（连接必败的
+#: 假端点；`conftest` 的出口网守放行回环，这两条都不会碰到任何真实付费端点）
+PRESETS_JSON = json.dumps(
+    [
+        {"name": "主力", "base_url": "http://127.0.0.1:9/v1", "api_key": "k-main", "model": "m-main"},
+        {
+            "name": "备用（必败）",
+            "base_url": "http://127.0.0.1:1/v1",
+            "api_key": "k-backup",
+            "model": "m-backup",
+        },
+    ],
+    ensure_ascii=False,
+)
+
+
+#: 主力那套会收到的成功应答体（`content` 是**JSON 字符串**，真端点同形：
+#: 内容本身是那段 {"bullets": [...]} 文本；模块级预生成，替身里不做 json 调用 ——
+#: 替身的 `json=` 参数会把模块名盖住）
+GOOD_RESPONSE_BODY = json.dumps({"choices": [{"message": {"content": GOOD_BULLETS}}]})
+
+
+class _TransportRecorder:
+    """传输层替身：记下每次真实打到的 URL 与 Authorization 头，按 URL 给应答。
+
+    注入点与 `tests/test_summary_client.py` 同一个（`meeting.summary.client._http_post`，
+    `ModelClient` 构造那一刻按模块属性取它），因此**生产路径现造的那个客户端**也走它 ——
+    动作层用哪套端点、带哪把密钥，记录里看得见。回环地址，一条真网络请求都不发。
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    def url_of(self, index: int) -> str:
+        return self.calls[index][0]
+
+    def __call__(self, url, json=None, headers=None, timeout=None):  # noqa: A002 - 与 requests.post 同形
+        self.calls.append((str(url), str((headers or {}).get("Authorization", ""))))
+        if ":1/" in str(url):
+            # 演服务商没额度那一档：非 2xx + `error.message` 原文（V1 的立场：用户要看原文）
+            return HttpResponse(
+                status_code=402,
+                body='{"error": {"message": "备用端点没额度了（假应答原文）"}}',
+            )
+        return HttpResponse(status_code=200, body=GOOD_RESPONSE_BODY)
+
+
+def test_switching_presets_takes_effect_at_once_and_reports_readable_failure(
+    tmp_path, monkeypatch
+):
+    """完成判定第 1 条的读数：切到坏的那一套 → 可读失败原因；切回好的 → 成功。
+
+    预设清单与当前指针都经 `settings_update` 写（热读档），**同一个 runtime、不重启**：
+    每次总结都是现读配置、现造客户端（`runtime.summarize()` → `SummarySettings.from_config()`），
+    指针一换下一次就用新端点。传输层注入替身（回环假应答），失败原因的原文走既有
+    `summary_failed` 信封，契约零变更。
+    """
+    from meeting.summary import client as summary_client_module
+
+    with live(tmp_path) as (client, runtime, transcriber, stub):
+        # 预设清单 + 指到备用（必败）那套：两次写盘，全部当场生效
+        assert post(client, "settings_update", {"summary.presets_json": PRESETS_JSON}).status_code == 200
+        assert post(client, "settings_update", {"summary.active_preset": "备用（必败）"}).status_code == 200
+        snapshot = snapshot_of(client)
+        assert snapshot["settings"]["summary_active_preset"] == "备用（必败）"
+        assert snapshot["settings"]["summary_preset_names"] == ["主力", "备用（必败）"]
+
+        # 摘掉注入的假客户端，走「现造 ModelClient」的生产路径；传输层换成替身
+        runtime.summary_client = None
+        recorder = _TransportRecorder()
+        monkeypatch.setattr(summary_client_module, "_http_post", recorder)
+
+        start_recording(client)
+        feed(runtime, transcriber, lines_for(6, span_seconds=120))
+
+        # ① 坏的那一套：502 + 可读的失败原因（error.message 原文在 message 里）
+        bad = post(client, "summarize", {"window": "15m"})
+        assert bad.status_code == 502, bad.text
+        payload = bad.json()
+        assert payload["code"] == "summary_failed"
+        assert "备用端点没额度了（假应答原文）" in payload["message"]
+        assert set(payload["detail"]) == {"elapsed_seconds", "attempts"}
+        # 请求真的打到了备用那套的端点、带的是备用那把密钥（预设四件套整体生效）
+        assert recorder.url_of(0) == "http://127.0.0.1:1/v1/chat/completions"
+        assert recorder.calls[0][1] == "Bearer k-backup"
+
+        # ② 切回主力：同一场、同一个 runtime，下一次总结就走新端点并成功
+        switch = post(client, "settings_update", {"summary.active_preset": "主力"})
+        assert switch.status_code == 200, switch.text
+        assert snapshot_of(client)["settings"]["summary_active_preset"] == "主力"
+
+        good = post(client, "summarize", {"window": "15m"})
+        assert good.status_code == 200, good.text
+        body = good.json()
+        assert set(body["summary"]) == SUMMARY_KEYS
+        assert body["summary"]["lines"] == 6
+        assert recorder.url_of(1) == "http://127.0.0.1:9/v1/chat/completions"
+        assert recorder.calls[1][1] == "Bearer k-main"
+
+        # ③ 注入的记账假件全程没被用到（这一幕走的一直是生产路径 + 传输替身）
+        assert stub.calls == 0

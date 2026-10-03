@@ -885,7 +885,7 @@ export function LiveView(): ReactNode {
         </div>
       </header>
 
-      {/* 设置抽屉（R32）：四项设置就地写进 config；ASR 那五个参数不进这扇窗（章 14） */}
+      {/* 设置抽屉（R32）：五项设置就地写进 config；ASR 那五个参数不进这扇窗（章 14） */}
       {settingsOpen && (
         <SettingsDrawer
           snapshot={snapshot}

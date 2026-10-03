@@ -15,15 +15,19 @@
 
 from __future__ import annotations
 
+import json
+
 from meeting.backends.base import ReadOnlyConfig
 from meeting import config as config_module
 from meeting.summary import settings as settings_module
 from meeting.summary.settings import (
+    ACTIVE_PRESET_KEY,
     API_KEY_KEY,
     BASE_URL_KEY,
     DEFAULT_WINDOW,
     DEFAULT_WINDOW_KEY,
     MODEL_KEY,
+    PRESETS_KEY,
     SETTING_KEYS,
     SummarySettings,
     normalize_window,
@@ -290,3 +294,115 @@ def test_settings_module_reexports_the_seven_key_names() -> None:
     assert settings_module.DEADLINE_KEY == "summary.deadline_seconds"
     assert settings_module.MAX_ATTEMPTS_KEY == "summary.max_attempts"
     assert settings_module.DEFAULT_WINDOW_KEY == "summary.default_window"
+
+
+# ---------------------------------------------------------------------------
+# 会中切模型：预设解析、指针取值、回落平铺（本节点）
+# ---------------------------------------------------------------------------
+
+#: 两套预设（一套带 extra_body）+ 一套缺密钥的，人读的名字用中文
+PRESETS_TEXT = json.dumps(
+    [
+        {"name": "主力", "base_url": "http://127.0.0.1:9/v1", "api_key": "k1", "model": "m1"},
+        {
+            "name": "带extra",
+            "base_url": "http://127.0.0.1:8/v1",
+            "api_key": "k2",
+            "model": "m2",
+            "extra_body_json": '{"thinking": {"type": "disabled"}}',
+        },
+        {"name": "缺密钥", "base_url": "http://127.0.0.1:7/v1", "model": "m3"},
+    ],
+    ensure_ascii=False,
+)
+
+
+def test_the_two_preset_keys_are_registered_and_hot() -> None:
+    """两个新键在配置层有登记且归热读档（写盘那一刻生效），键名常量与字面一致。"""
+    assert PRESETS_KEY == "summary.presets_json"
+    assert ACTIVE_PRESET_KEY == "summary.active_preset"
+    for key in (PRESETS_KEY, ACTIVE_PRESET_KEY):
+        assert key in config_module.DEFAULT_VALUES, key
+        assert config_module.SETTING_KEY_GROUPS[key] == "applied", key
+    # 默认值都是空串 = 没配预设（回落平铺键）
+    assert config_module.default_for(PRESETS_KEY) == ""
+    assert config_module.default_for(ACTIVE_PRESET_KEY) == ""
+
+
+def test_pointer_names_a_preset_and_its_four_fields_win() -> None:
+    """指针指到的那一套：四件套整体换成它的（平铺键在在场也让位），预算仍走平铺。"""
+    values = {
+        **FULL_VALUES,
+        PRESETS_KEY: PRESETS_TEXT,
+        ACTIVE_PRESET_KEY: "主力",
+    }
+    settings = SummarySettings.from_config(values)
+
+    assert settings.base_url == "http://127.0.0.1:9/v1"
+    assert settings.api_key == "k1"
+    assert settings.model == "m1"
+    assert settings.extra_body is None
+    assert settings.from_preset == "主力"
+    # 预算三件套与缺省档不在预设里：照旧走平铺键
+    assert settings.deadline_seconds == 12.5
+    assert settings.max_attempts == 2
+    assert settings.default_window == "30m"
+    assert settings.missing == ()
+    assert settings.ready is True
+
+
+def test_preset_extra_body_is_parsed_like_the_flat_one() -> None:
+    """预设里那一格 `extra_body_json` 与平铺键同一套归一（JSON 对象文本 → dict）。"""
+    settings = SummarySettings.from_config(
+        {PRESETS_KEY: PRESETS_TEXT, ACTIVE_PRESET_KEY: "带extra"}
+    )
+    assert settings.extra_body == {"thinking": {"type": "disabled"}}
+    assert settings.base_url == "http://127.0.0.1:8/v1"
+
+
+def test_empty_pointer_falls_back_to_the_flat_keys() -> None:
+    """指针空（默认）= 不选预设：用的就是老四键平铺，存量配置零迁移。"""
+    settings = SummarySettings.from_config(
+        {**FULL_VALUES, PRESETS_KEY: PRESETS_TEXT}
+    )
+    assert settings.base_url == FULL_VALUES[BASE_URL_KEY]
+    assert settings.api_key == FULL_VALUES[API_KEY_KEY]
+    assert settings.model == FULL_VALUES[MODEL_KEY]
+    assert settings.from_preset == ""
+    assert settings.missing == ()
+
+
+def test_stale_or_unreadable_presets_fall_back_to_the_flat_keys() -> None:
+    """指针指向的名字不在清单里、或清单本身读不出来：都回落平铺键，不让总结带崩。"""
+    stale = SummarySettings.from_config(
+        {**FULL_VALUES, PRESETS_KEY: PRESETS_TEXT, ACTIVE_PRESET_KEY: "已删掉的那套"}
+    )
+    assert stale.base_url == FULL_VALUES[BASE_URL_KEY]
+    assert stale.from_preset == ""
+
+    garbage = SummarySettings.from_config(
+        {**FULL_VALUES, PRESETS_KEY: "{不是 json", ACTIVE_PRESET_KEY: "主力"}
+    )
+    assert garbage.base_url == FULL_VALUES[BASE_URL_KEY]
+    assert garbage.from_preset == ""
+
+
+def test_missing_reports_the_gap_inside_the_selected_preset() -> None:
+    """预设模式缺哪格报哪格：`summary.presets_json[名字].格`，让人去补的配置对得上名字。"""
+    settings = SummarySettings.from_config(
+        {PRESETS_KEY: PRESETS_TEXT, ACTIVE_PRESET_KEY: "缺密钥"}
+    )
+    assert settings.base_url == "http://127.0.0.1:7/v1"
+    assert settings.api_key == ""
+    assert settings.missing == ("summary.presets_json[缺密钥].api_key",)
+    assert settings.ready is False
+
+
+def test_an_old_style_config_without_preset_keys_still_reads() -> None:
+    """**老写法仍然能用**：配置里压根没有预设两键（存量 config.json 的形状）照常读平铺四键。"""
+    settings = SummarySettings.from_config(dict(FULL_VALUES))
+    assert settings.base_url == FULL_VALUES[BASE_URL_KEY]
+    assert settings.api_key == FULL_VALUES[API_KEY_KEY]
+    assert settings.model == FULL_VALUES[MODEL_KEY]
+    assert settings.extra_body == {"thinking": {"type": "disabled"}}
+    assert settings.from_preset == ""
