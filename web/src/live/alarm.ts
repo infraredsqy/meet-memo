@@ -14,7 +14,7 @@
  */
 
 import type { Alert, Alerts, Settings } from '../contract';
-import { formatLostMinutes, formatWallClock } from './format';
+import { formatLostMinutes, formatWallClock, sourceDisplayName } from './format';
 
 /** 提示级细条的条数上限。服务侧已经合并并限到 3，这里是照契约兜一道底。 */
 export const HINT_LIMIT = 3;
@@ -39,7 +39,7 @@ export interface HintView {
 /** 致命级告警的六字段 → 横幅要的四处。`null` 表示现在没有致命级告警。 */
 export function fatalBanner(alert: Alert | null): FatalBannerView | null {
   if (alert === null) return null;
-  const name = alert.source === 'mic' ? '本地' : alert.source === 'loopback' ? '远端' : alert.source;
+  const name = sourceDisplayName(alert.source);
   return {
     where: `${name}这一路信号丢失`,
     since: `从 ${formatWallClock(alert.since)} 起`,

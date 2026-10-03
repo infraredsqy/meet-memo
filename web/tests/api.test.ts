@@ -23,8 +23,8 @@ import {
   judgeHeartbeat,
   lateHeartbeatText,
   postAction,
-  recoveredHeartbeatText,
 } from '../src/api';
+import { recoveredNoteText } from '../src/live/heartbeat';
 import { readFixture } from './fixtures';
 import { heartbeatSchema } from '../src/contract';
 
@@ -591,7 +591,7 @@ describe('心跳三态判定', () => {
 
   it('两行提示文案照契约的措辞', () => {
     expect(lateHeartbeatText(8)).toBe('心跳迟到 · 8 秒没收到应答');
-    expect(recoveredHeartbeatText(42)).toBe('已恢复，中断 42 秒');
+    expect(recoveredNoteText(42)).toBe('已恢复，中断 42 秒');
   });
 });
 

@@ -5,6 +5,7 @@ import type {
   SessionStatus,
 } from '../contract';
 import { statusLabel } from './model';
+import { sourceDisplayName } from '../live/format';
 
 /**
  * 会后进度界面的**纯逻辑**（`docs/requirements.md` R27 / R31，设计意图第 12 条）。
@@ -31,11 +32,6 @@ import { statusLabel } from './model';
 
 /** `GET /api/sessions` 顶层第三格的类型（`PostJobCell`）归契约层；这里引用不重定义。 */
 export type { PostJobCell };
-
-/** 路的显示名（`本地` / `远端`）：与会中转写、告警同一套叫法。 */
-export function sourceLabel(source: string): string {
-  return source === 'mic' ? '本地' : source === 'loopback' ? '远端' : source;
-}
 
 // ---------------------------------------------------------------------------
 // 1. 列表行四态（纯显示层重映射 + post_job 联结）
@@ -174,7 +170,7 @@ export function progressView(status: SessionStatus): ProgressView {
 
   const roads: OfflineRoadView[] = offline.sources.map((road) => ({
     source: road.source,
-    label: sourceLabel(road.source),
+    label: sourceDisplayName(road.source),
     done: road.done,
     total: road.total,
     remaining: road.remaining,
@@ -263,7 +259,7 @@ export function initialChunkRows(status: SessionStatus): ChunkRow[] {
       rows.push({
         key: `${road.source}-${index}`,
         source: road.source,
-        label: sourceLabel(road.source),
+        label: sourceDisplayName(road.source),
         chunk: index,
         total: road.total,
         verdict: 'observed',
@@ -312,7 +308,7 @@ export function advanceChunkRows(
       appended.push({
         key: `${road.source}-${chunk}`,
         source: road.source,
-        label: sourceLabel(road.source),
+        label: sourceDisplayName(road.source),
         chunk,
         total: road.total,
         verdict,

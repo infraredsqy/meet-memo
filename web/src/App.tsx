@@ -78,10 +78,6 @@ import { HomeGate } from './home/HomeGate';
  * 两者都是服务给的原文，界面不派生（契约章 6 第 1 条）。
  */
 
-/** 手工核对用的网址：界面不自取快照，权威来自 SSE 推送，这一条只在排障时打。 */
-export const STATE_PROBE_URL = '/api/state';
-
-
 /** 错误边界：主视图崩了就画一页说明，别留白屏。 */
 class ShellErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   constructor(props: { children: ReactNode }) {
@@ -397,7 +393,6 @@ export function LiveView(): ReactNode {
   const alarmRef = useRef(initialAlarmSound());
   const soundRef = useRef(createAlarmSound(browserAudioContextFactory()));
   const transcriptRef = useRef<HTMLDivElement | null>(null);
-  const lastRowIdRef = useRef<number>(0);
 
   const heartbeatSeconds = snapshot?.settings.heartbeat_interval_seconds ?? null;
 
@@ -414,7 +409,6 @@ export function LiveView(): ReactNode {
       onSnapshot: applySnapshot,
       onLevels: (data) => setLevels({ revision: data.revision, data }),
       onTranscript: (data) => {
-        lastRowIdRef.current += 1;
         const row = transcriptRow(data, new Date().toISOString());
         setRows((current) => appendRow(current, row));
       },
@@ -502,7 +496,6 @@ export function LiveView(): ReactNode {
     if (snapshot.top_state === 'idle' && snapshot.session === null) {
       setLevels(null);
       setRows([]);
-      lastRowIdRef.current = 0;
       summary.close();
     }
   }, [snapshot, summary]);

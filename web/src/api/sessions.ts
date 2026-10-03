@@ -6,7 +6,6 @@ import {
   type DirKind,
   type DirsResponse,
   type SessionsResponse,
-  type SessionRow,
   type SessionStatus,
 } from '../contract/index';
 import { clampHeartbeatInterval } from './heartbeat';
@@ -127,12 +126,6 @@ export function probeDecision(kind: DirKind): ProbeDecision {
   if (kind === 'empty') return 'empty';
   if (kind === 'meeting') return 'meeting';
   return 'need-confirm';
-}
-
-/** 这一行的入口动作文案名字。（服务给的 `session_id` 是目录名或兜底名，直接用。） */
-export function rowTitle(row: SessionRow): string {
-  const stem = row.session_id ?? row.dir;
-  return stem;
 }
 
 // ---------------------------------------------------------------------------

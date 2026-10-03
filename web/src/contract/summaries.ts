@@ -35,7 +35,7 @@ export const summaryEntrySchema = z
 /**
  * 端点应答体：`{session_id, entries}`。
  *
- * `session_id` 是**场次目录名**（裸 `YYMMDD` / `YYMMDD-N`）或 `null` —— 与快照里
+ * `session_id` 是**场次目录名**（人给的工作区目录名，形状任意）或 `null` —— 与快照里
  * `session.id` 同一档，因此复用 `sessionIdSchema`（那条 `.strict()` 的面板口径见
  * `docs/contract.md` 第 2 章）。
  */

@@ -11,6 +11,15 @@
 /** 读数的减号用 U+2212（`−35.2 dBFS`），与设计稿刻度尺上的 `−20` / `−40` / `−60` 同一个字。 */
 export const MINUS = '\u2212';
 
+/**
+ * 路的显示名（`本地` / `远端`）：告警横幅、转写行、会后进度三处同一套叫法，
+ * 唯一出处在这里（与会中状态格读契约给的 `source.label` 是两回事，那一格界面不造名）。
+ * 契约里路只有 `mic` / `loopback` 两个取值；契约之外的串原样退回，不编名字。
+ */
+export function sourceDisplayName(source: string): string {
+  return source === 'mic' ? '本地' : source === 'loopback' ? '远端' : source;
+}
+
 /** 电平表的刻度区间：低于 −60 dBFS 视为这一路在静默（设计章 4.4）。 */
 export const DBFS_FLOOR = -60;
 export const DBFS_CEIL = 0;
@@ -96,15 +105,6 @@ export function formatWallClockSeconds(iso: string | null | undefined): string {
   const m = /T(\d{2}):(\d{2}):(\d{2})/.exec(iso);
   if (m !== null) return `${m[1]}:${m[2]}:${m[3]}`;
   return '—';
-}
-
-/** ISO 时间戳 → 本地日期时间的输入框取值（会后的元信息行用得到；设置抽屉的设备格是下拉）。 */
-export function formatDateInput(iso: string | null | undefined): string {
-  if (iso === null || iso === undefined || iso === '') return '';
-  const ms = Date.parse(iso);
-  if (Number.isNaN(ms)) return '';
-  const at = new Date(ms);
-  return `${at.getFullYear()}-${two(at.getMonth() + 1)}-${two(at.getDate())}T${two(at.getHours())}:${two(at.getMinutes())}`;
 }
 
 /** `已丢 13 分钟` 里的那个数：分钟向下取整，不足一分钟按 1 分钟说（别写「已丢 0 分钟」）。 */

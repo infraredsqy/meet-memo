@@ -16,7 +16,7 @@
  */
 
 import type { SourceId, TranscriptData } from '../contract';
-import { formatWallClock } from './format';
+import { formatWallClock, sourceDisplayName } from './format';
 
 /** 窗口里保留的行数（设计章 2.3：「窗口内保留最近约 200 行」）。 */
 export const TRANSCRIPT_WINDOW = 200;
@@ -53,7 +53,7 @@ export function transcriptRow(data: TranscriptData, atIso: string): TranscriptRo
   return {
     at: atIso,
     source: data.line.source,
-    route: data.line.source === 'mic' ? '本地' : '远端',
+    route: sourceDisplayName(data.line.source),
     text: data.line.text,
     gap: data.line.kind === 'gap',
     interlude: false,

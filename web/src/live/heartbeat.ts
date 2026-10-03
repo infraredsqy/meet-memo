@@ -15,7 +15,7 @@
 
 import type { HeartbeatStatus } from '../api/heartbeat';
 import { lateHeartbeatText } from '../api/heartbeat';
-import type { Heartbeat, Snapshot, TopState } from '../contract';
+import type { Heartbeat, TopState } from '../contract';
 import { formatElapsed, formatWallClock, formatWallClockSeconds } from './format';
 
 /** 四级：正常时不显示任何东西；已恢复是失联回来之后留 30 秒的短记录。 */
@@ -310,9 +310,3 @@ export function transcriptGap(frozenAt: string | null, recoveredAtIso: string): 
 /** 心跳失联时那一档的整句说明（判据本身：为什么不看「HTTP 通不通」）。 */
 export const HEARTBEAT_GUIDANCE =
   '失联这一条看的是应答里的录音存活字段：服务进程还活着、网页也打得开，但录音线程已经卡死，所以不能只看「HTTP 通不通」。';
-
-/** 快照上的两路是否都还在采 —— 给「两路都在采」这类汇总用。 */
-export function snapshotAllCapturing(snapshot: Snapshot | null): boolean {
-  if (snapshot === null) return false;
-  return snapshot.sources.every((s) => s.health === 'capturing' || s.health === 'restored');
-}

@@ -73,11 +73,6 @@ export function lateHeartbeatText(lagSeconds: number): string {
   return `心跳迟到 · ${Math.round(lagSeconds)} 秒没收到应答`;
 }
 
-/** `已恢复，中断 42 秒` —— 失联之后回来的那条短记录。 */
-export function recoveredHeartbeatText(gapSeconds: number): string {
-  return `已恢复，中断 ${Math.round(gapSeconds)} 秒`;
-}
-
 export interface HeartbeatClientOptions {
   /** 覆盖 fetch（测试注入用）。 */
   fetchImpl?: typeof fetch;

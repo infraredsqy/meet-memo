@@ -136,7 +136,7 @@ export const serviceSchema = strict({
 
 /** `session` 七子键。`null` 表示现在没有场次。 */
 export const sessionSchema = strict({
-  /** 场次目录名（`YYMMDD` / `YYMMDD-N` 形状）。掩码 `<session-id>`。 */
+  /** 场次目录名（人给的工作区目录名，形状任意 —— 见 `sessionIdSchema`）。掩码 `<session-id>`。 */
   id: sessionIdSchema,
   /** 场次目录路径（绝对路径）。掩码 `<path>`。 */
   dir: pathStringSchema,

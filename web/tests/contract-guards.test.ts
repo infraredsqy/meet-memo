@@ -439,14 +439,16 @@ describe('detail 键集合与 4.4 表逐条相等（M1，样本层精确）', ()
     }
   });
 
-  it('draining 两档：样本落在 4.4 写的那一档上，重复按「直接出纪要」那一档的键也在表里', () => {
+  it('draining 五档：样本落在 4.4 写的那一档上，重复按「直接出纪要」那一档的键也在表里', () => {
     const { detail } = failureOf('fail-draining');
     const variants = ACTION_DETAIL_VARIANTS['draining'] ?? [];
     const keys = Object.keys(detail).sort();
     const matched = variants.some((variant) => variant.slice().sort().join(',') === keys.join(','));
-    expect(matched, `draining 样本的键 ${keys.join(',')} 不在 4.4 的两档里`).toBe(true);
+    expect(matched, `draining 样本的键 ${keys.join(',')} 不在 4.4 的五档里`).toBe(true);
 
-    // 两档的键并集就是 4.4 表里列出来的那七个：多一个键就落不进任何一档。
+    // 五档的键并集就是 4.4 表里列出来的那九个（另三档 —— {kind, dir, started_at} /
+    // {top_state, session_id, dir} / 空对象 —— 由 tests/test_post_actions.py 实测，
+    // 键集合照样要在表里）：多一个键就落不进任何一档。
     const union = new Set(variants.flat());
     expect([...union].sort()).toEqual([
       'dir',
@@ -455,7 +457,9 @@ describe('detail 键集合与 4.4 表逐条相等（M1，样本层精确）', ()
       'log_path',
       'reason',
       'session_id',
+      'started_at',
       'status_path',
+      'top_state',
     ]);
   });
 
