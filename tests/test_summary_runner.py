@@ -22,7 +22,6 @@ import pytest
 
 from meeting.summary.client import SummaryError
 from meeting.summary.runner import (
-    DEFAULT_MAX_ATTEMPTS,
     WINDOW_CHOICES,
     WINDOW_LABELS_BY_CHOICE,
     run_summary,

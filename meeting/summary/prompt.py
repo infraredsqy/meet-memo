@@ -36,9 +36,6 @@ SYSTEM_RULES: tuple[str, ...] = (
     "窗口里没有的内容一律不写。一个要点都没有时交回 {\"bullets\": []}"
 )
 
-#: 标签清单的展示串（提示词里那条「只用这三个标签」用的就是它）
-LABEL_LIST_TEXT = " / ".join(SECTION_LABELS[name] for name in ("what", "where", "lost"))
-
 #: 窗口那一段的标题行（`整场` 与带窗口的两档各一句，读窗口的人一眼看出范围）
 FULL_WINDOW_TITLE = "【本场转写（整场）】"
 WINDOWED_WINDOW_TITLE_TEMPLATE = "【最近 {window_label}的转写】"
@@ -139,7 +136,6 @@ def build_retry_messages(
 
 __all__ = [
     "FULL_WINDOW_TITLE",
-    "LABEL_LIST_TEXT",
     "SYSTEM_RULES",
     "WINDOWED_WINDOW_TITLE_TEMPLATE",
     "build_messages",

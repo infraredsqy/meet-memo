@@ -1,6 +1,6 @@
-"""会中总结的配置：端点四件套 + 预算三件套，从只读配置视图读出来。
+"""会中总结的配置：端点四件套 + 预算三件套 + 缺省窗口，从只读配置视图读出来。
 
-七个键的键名与默认值登记在 `meeting/config.py` 的四张表里（默认值 / 取值域 / 环境变量映射 /
+九个键（含会中切模型的预设两键）的键名与默认值登记在 `meeting/config.py` 的四张表里（默认值 / 取值域 / 环境变量映射 /
 三分表）；本模块**只读**它们，并做三件事：
 
   1. **归一化**：`extra_body_json` 那段 JSON 文本翻成 dict（空串 ↔ `None`，两处同解）；
@@ -34,7 +34,7 @@ from typing import Any
 
 from meeting import config as config_module
 
-#: 四档窗口取值（与 `meeting/summary/runner.py` 的 `WINDOW_CHOICES` 同一套）
+#: 四档窗口取值（`meeting/summary/runner.py` 从本模块 import 它：表只此一份）
 WINDOW_CHOICES: tuple[str, ...] = ("5m", "15m", "30m", "full")
 
 #: 四档窗口的秒数（`full` 是 `None`：整场取缓冲里的全部）
@@ -210,7 +210,7 @@ class SummarySettings:
 
     @classmethod
     def from_config(cls, config: Any = None) -> "SummarySettings":
-        """从一份只读配置视图读七个键，归一化成一份设置。
+        """从一份只读配置视图读九个键（含会中切模型的预设两键），归一化成一份设置。
 
         `config` 可以是 `meeting.backends.base.ReadOnlyConfig`、`meeting.config.Config`、
         一份裸 dict，或者 `None`（走缺省值表）。

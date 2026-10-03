@@ -41,20 +41,20 @@ from meeting.summary.parse import (
     split_sections,
 )
 from meeting.summary.prompt import build_messages, build_retry_messages
-from meeting.summary.settings import DEFAULT_WINDOW, SummarySettings, window_seconds_of
+from meeting.summary.settings import (
+    DEFAULT_WINDOW,
+    WINDOW_CHOICES,
+    SummarySettings,
+    window_seconds_of,
+)
 from meeting.summary.window import BufferedLine, WINDOW_LABELS, render_window, select_window
-
-#: 四档窗口（与设计章 2.3 的四个按钮逐字对应）
-WINDOW_CHOICES: tuple[str, ...] = ("5m", "15m", "30m", "full")
-
-#: 缺省尝试次数上限（与 `summary.max_attempts` 的默认值同值）
-DEFAULT_MAX_ATTEMPTS = 3
 
 #: 剩余预算小于这个数（秒）就不再发下一次请求：比它更短的超时没机会拿到应答
 MIN_ATTEMPT_SECONDS = 0.05
 
-#: 窗口档位 → 人话标签（与 `meeting/summary/window.py` 的 `WINDOW_LABELS` 同一份表）
-WINDOW_LABELS_BY_CHOICE: dict[str, str] = dict(WINDOW_LABELS)
+#: 窗口档位 → 人话标签（**引用本体**：`meeting/summary/window.py` 的 `WINDOW_LABELS`，
+#: 不再拷贝 —— 表只此一份，新档位加进那里两边同时生效）
+WINDOW_LABELS_BY_CHOICE = WINDOW_LABELS
 
 
 @dataclass(frozen=True)
@@ -255,7 +255,6 @@ def sections_for(outcome: SummaryOutcome) -> dict[str, list[str]]:
 
 
 __all__ = [
-    "DEFAULT_MAX_ATTEMPTS",
     "MIN_ATTEMPT_SECONDS",
     "WINDOW_CHOICES",
     "WINDOW_LABELS_BY_CHOICE",

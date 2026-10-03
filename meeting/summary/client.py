@@ -43,8 +43,8 @@ CHAT_COMPLETIONS_PATH = "/chat/completions"
 #: 采样温度（照 V1，逐字同值）
 TEMPERATURE = 0.3
 
-#: 一次请求的兜底超时（秒）：正常路径上由 `run_summary()` 按剩余预算现算，
-#: 直接调 `complete()` 而不给超时才落到这里
+#: 一次请求的兜底超时（秒）：只作 `HttpRequest.timeout` 这个 dataclass 字段的默认值
+#: ——生产路径上 `run_summary()` 按「剩余预算」现算并显式传超时
 DEFAULT_TIMEOUT_SECONDS = 25.0
 
 #: `SummaryError.reason` 的取值域（phase2 照它分辨怎么跟人说）
