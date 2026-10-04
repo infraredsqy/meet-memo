@@ -406,16 +406,16 @@ describe('账重置检出（review-2 m2：重跑一场逐块行要整段重播�
 // 4. 全局忙/闲与要不要轮询
 // ---------------------------------------------------------------------------
 
-describe('全局「显卡忙不忙」（R31）', () => {
+describe('全局「忙不忙」（R31）', () => {
   it('闲：没有模型开着 —— 空心框 + 字', () => {
     const view = gpuBusyView(null, false);
-    expect(view).toEqual({ busy: false, label: '显卡闲', note: '没有模型开着', mark: 'glyph--idle' });
+    expect(view).toEqual({ busy: false, label: '空闲', note: '没有模型开着', mark: 'glyph--idle' });
   });
 
   it('忙：会后那趟在跑（说清跑的是哪一趟）；正在录也是忙', () => {
     expect(gpuBusyView(job(), false)).toEqual({
       busy: true,
-      label: '显卡忙',
+      label: '忙碌',
       note: '会后那趟在跑（会后精细稿）',
       mark: 'glyph--rec',
     });

@@ -365,7 +365,7 @@ export function chunkLedgerReset(before: SessionStatus, next: SessionStatus): bo
 
 export interface GpuBusyView {
   busy: boolean;
-  /** 那一格的字：「显卡忙」/「显卡闲」。 */
+  /** 那一格的字：「忙碌」/「空闲」。 */
   label: string;
   /** 旁边一句为什么（哪只模型开着）。 */
   note: string;
@@ -387,7 +387,7 @@ const POST_KIND_LABELS: Readonly<Record<string, string>> = {
 export function gpuBusyView(postJob: PostJobCell | null, recording: boolean): GpuBusyView {
   const busy = recording || postJob !== null;
   if (!busy) {
-    return { busy: false, label: '显卡闲', note: '没有模型开着', mark: 'glyph--idle' };
+    return { busy: false, label: '空闲', note: '没有模型开着', mark: 'glyph--idle' };
   }
   const what: string[] = [];
   if (recording) what.push('会中模型开着');
@@ -397,7 +397,7 @@ export function gpuBusyView(postJob: PostJobCell | null, recording: boolean): Gp
   }
   return {
     busy: true,
-    label: '显卡忙',
+    label: '忙碌',
     note: what.join('；'),
     mark: 'glyph--rec',
   };

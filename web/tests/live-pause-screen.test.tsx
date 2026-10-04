@@ -192,7 +192,7 @@ describe('全局一格的会后一半（review-1 m2）：post 在飞读的是 GE
     return makeSnapshot({ top_state: 'ended', session: null });
   }
 
-  it('post 在飞时全局格答「显卡忙」，不再显假「闲」', async () => {
+  it('post 在飞时全局格答「忙碌」，不再显假「空闲」', async () => {
     fetchSessionsMock.mockResolvedValue({
       sessions: [],
       recent: null,
@@ -210,7 +210,7 @@ describe('全局一格的会后一半（review-1 m2）：post 在飞读的是 GE
     );
   });
 
-  it('没有会后的活儿：同一格照旧「显卡闲」', async () => {
+  it('没有会后的活儿：同一格照旧「空闲」', async () => {
     fetchSessionsMock.mockResolvedValue({ sessions: [], recent: null, post_job: null });
     const renderer = await mountLive(drainingSnapshot());
 

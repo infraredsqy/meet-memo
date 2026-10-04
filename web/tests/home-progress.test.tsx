@@ -352,7 +352,7 @@ describe('行四态与全局一格：可识别、不塌', () => {
     expect(marks[3]).toContain('glyph glyph--dashed');
   });
 
-  it('全局一格：会后那趟在飞时「显卡忙」，一只 gpucell 顶起整格', async () => {
+  it('全局一格：会后那趟在飞时「忙碌」，一只 gpucell 顶起整格', async () => {
     fetchSessionsMock.mockResolvedValue({
       sessions: [row()],
       recent: DIR,
@@ -365,7 +365,7 @@ describe('行四态与全局一格：可识别、不塌', () => {
     expect(cell().props.title).toBe('会后那趟在跑（纪要）');
   });
 
-  it('全局一格：没有会后的活儿时「显卡闲」', async () => {
+  it('全局一格：没有会后的活儿时「空闲」', async () => {
     fetchSessionsMock.mockResolvedValue({ sessions: [row()], recent: DIR, post_job: null });
     const renderer = await mountHome();
     const cell = () => renderer.root.find((node) => `${node.props.className ?? ''}`.startsWith('gpucell'));
@@ -400,7 +400,7 @@ describe('行四态与全局一格：可识别、不塌', () => {
 // 联结档收敛与错误跳（review-1 C1 / m1）
 // ---------------------------------------------------------------------------
 
-/** 顶栏那格「显卡忙不忙」（唯一一只 gpucell）。 */
+/** 顶栏那格「忙不忙」（唯一一只 gpucell）。 */
 function gpuCellOf(renderer: TestRenderer.ReactTestRenderer): TestRenderer.ReactTestInstance {
   return renderer.root.find((node) => `${node.props.className ?? ''}`.startsWith('gpucell'));
 }
