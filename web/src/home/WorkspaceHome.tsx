@@ -718,7 +718,14 @@ export function WorkspaceHome({
             </div>
           )}
           {sessions !== null && sessions.sessions.length > 0 && (
-            <div className="list wslist" role="listbox" aria-label="这些会">
+            <>
+              {/* 清单头顶这一行只说两件事：这一列是什么、共几场。左列原先光秃秃地
+                  起一行，得先认出「这是一份清单」才看得懂下面那一行。 */}
+              <div className="wslist__head">
+                <span>我这些会</span>
+                <span className="num">{sessions.sessions.length}</span>
+              </div>
+              <div className="list wslist" role="listbox" aria-label="这些会">
               {sessions.sessions.map((row) => {
                 const cell = rowStatusView(row, postJob);
                 return (
@@ -764,7 +771,8 @@ export function WorkspaceHome({
                 </div>
                 );
               })}
-            </div>
+              </div>
+            </>
           )}
         </aside>
 

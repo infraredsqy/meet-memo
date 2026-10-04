@@ -1731,10 +1731,13 @@ input[type="checkbox"] {
   color: var(--t-ink);
 }
 
-/* 2. 首页主体：左清单 + 右侧那一场 */
+/* 2. 首页主体：左清单 + 右侧那一场。
+   右列带 22rem 下限：详情里要摆一整条路径、几行读数与两个按钮，比这更窄就只剩折行。
+   `align-items: start` 让详情按内容高，不再被拉成与清单等高的一只空盒子。 */
 .home {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1.6fr) minmax(22rem, 1fr);
+  align-items: start;
   gap: var(--space-6);
   padding: var(--space-6) 0 var(--space-9);
 }
@@ -1748,27 +1751,56 @@ input[type="checkbox"] {
   padding-top: var(--space-2);
 }
 
-/* 3. 清单与一行 */
+/* 3. 清单与一行。一行是**两行块**：场名 / 状态 / 移除占头一行，路径另起一行铺满。
+   路径曾经与场名挤同一行、还要分走 2fr —— 那条路一长就把整行撑出可视区，
+   现在它自己一行，超长只在行尾收成省略号。 */
 .wslist {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
 }
 
+/* 清单头顶那一行：这一列是什么 + 共几场 */
+.wslist__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 0 var(--space-1) var(--space-2);
+  border-bottom: var(--size-divider) solid var(--t-rule-hair);
+  color: var(--t-ink-faint);
+  font-size: var(--size-micro);
+  letter-spacing: var(--track-caps);
+}
+
+.wslist__head .num {
+  color: var(--t-ink-quiet);
+}
+
 .wslist__row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) auto auto;
-  align-items: baseline;
-  gap: var(--space-3);
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-areas:
+    'name state acts'
+    'path path path';
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
   padding: var(--space-3) var(--space-4);
   border: var(--size-divider) solid var(--t-rule-hair);
   background: var(--t-surface);
   cursor: pointer;
 }
 
+.wslist__row:hover {
+  border-color: var(--t-rule);
+}
+
 .wslist__row--on {
   border-color: var(--t-rule-strong);
   background: var(--t-raised);
+  /* 选中那一场在左沿插一条 4px 实线（左尺上最粗的那道刻度）：不占位置、不改行高，
+     两列之间「清单里哪一场 = 右边这一格」由这条线说出来 */
+  box-shadow: inset var(--size-rule) 0 0 var(--t-signal);
 }
 
 .wslist__row:focus-visible {
@@ -1777,6 +1809,8 @@ input[type="checkbox"] {
 }
 
 .wslist__name {
+  grid-area: name;
+  min-width: 0;
   font-family: var(--t-font-sign);
   font-size: var(--size-base);
   font-weight: var(--weight-medium);
@@ -1787,6 +1821,8 @@ input[type="checkbox"] {
 }
 
 .wslist__path {
+  grid-area: path;
+  min-width: 0;
   font-family: var(--t-font-mono);
   font-size: var(--size-caption);
   color: var(--t-ink-quiet);
@@ -1796,6 +1832,7 @@ input[type="checkbox"] {
 }
 
 .wslist__state {
+  grid-area: state;
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
@@ -1809,7 +1846,8 @@ input[type="checkbox"] {
 }
 
 .wslist__remove {
-  flex: none;
+  grid-area: acts;
+  justify-self: end;
 }
 
 /* 4. 空态：logo + 那两句 */
@@ -1841,20 +1879,55 @@ input[type="checkbox"] {
   line-height: var(--line-normal);
 }
 
-/* 5. 右侧那一场 */
+/* 5. 右侧那一场。`min-width: 0` 是这一块的关键：网格项默认 `min-width: auto`，
+   会被「最长的一行内容」顶住 —— 详情里的路径是 Windows 绝对路径，一整条不断行，
+   于是这一格永远撑到 700px 往外，把整页顶出可视区。下面 `.wspane .kv` 那几条
+   把读数行改成「标签槽 + 值栏」，路径落在值栏里换行，这一格才收得住。 */
 .wspane {
   display: grid;
   gap: var(--space-2);
+  min-width: 0;
   padding: var(--space-5);
   border: var(--size-divider) solid var(--t-rule-hair);
   background: var(--t-surface);
 }
 
+/* 读数行：标签占固定一条槽、值另起一栏。值那一栏允许在任意字符处折断
+   （路径、时刻串、比分的等宽串都没有词边界可断）。
+   `margin: 0` 收掉 `<p>` 自带的那 1em：这几行的疏密归上面那一格 gap 管，
+   不再各带一份默认外边距 —— 先前那一版每两行之间因此隔着 13px 的空白。 */
+.wspane .kv {
+  display: grid;
+  grid-template-columns: 3.5em minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--space-3);
+  margin: 0;
+  white-space: normal;
+}
+
+.wspane .kv__k {
+  cursor: default;
+  font-size: var(--size-caption);
+  letter-spacing: var(--track-label);
+  color: var(--t-ink-faint);
+}
+
+.wspane .kv__v {
+  min-width: 0;
+  font-size: var(--size-small);
+  overflow-wrap: anywhere;
+}
+
 .wspane__title {
+  /* 场名自成一块头：下面压一条线，把「这是哪一场」与底下那几行读数分开 */
+  padding-bottom: var(--space-3);
+  border-bottom: var(--size-divider) solid var(--t-rule-hair);
   font-family: var(--t-font-sign);
   font-size: var(--size-lead);
   font-weight: var(--weight-semibold);
+  letter-spacing: var(--track-tight);
   color: var(--t-ink);
+  overflow-wrap: anywhere;
 }
 
 .wspane__why {
@@ -1882,6 +1955,11 @@ input[type="checkbox"] {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-3);
+}
+
+/* 两只动作钮各占一半：等宽的一对，按下去的是哪一只一眼看得清（窄了就各占一行） */
+.wspane__postacts .btn {
+  flex: 1 1 8rem;
 }
 
 .wspane__postline {
@@ -2208,35 +2286,11 @@ input[type="checkbox"] {
   line-height: var(--line-snug);
 }
 
-/* 8. 窄屏不塌：左右两列收成一列（720 以下），弹窗整屏 */
-@media (max-width: 720px) {
+/* 8. 窄屏不塌：左右两列收成一列（840 以下 —— 再窄，右列那条 22rem 的下限就要
+   从清单嘴里抢宽度了），弹窗整屏 */
+@media (max-width: 840px) {
   .home {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .wslist__row {
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas:
-      'name state'
-      'path state'
-      'acts acts';
-  }
-
-  .wslist__name {
-    grid-area: name;
-  }
-
-  .wslist__path {
-    grid-area: path;
-  }
-
-  .wslist__state {
-    grid-area: state;
-  }
-
-  .wslist__remove {
-    grid-area: acts;
-    justify-self: end;
   }
 
   .dlg__layer {
