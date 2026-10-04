@@ -1040,7 +1040,8 @@ def json_dump(path: Path | str, data: dict[str, Any]) -> Path:
 #
 #   `FakeCaptureBackend.finalize()` 跑完之后（`FINALIZE_MARKER_ENV` 给了路径时）把偏移秒数
 #   写进那个文件 → 子进程里被注入的 `clockoffset` 模块（见 `write_clock_offset_shim()`）
-#   把 `meeting.service.runtime` 那一处 `time` 名字换成自己的替身 → 此后工作线程里的
+#   把 `meeting.service.runtime` 与拆分进各 mixin 模块（`runtime_facts` / `runtime_sessions` /
+#   `runtime_summary` / `runtime_drain`）的那几处 `time` 名字换成自己的替身 → 此后工作线程里的
 #   `_remaining_budget()` 读到的单调钟整体前移 → 那一条 deadline 真的过期。
 #
 # **它不动被测逻辑**：预算仍由 `compute_drain_budget()` 算、越界仍由 `_drain_wait()` 的
@@ -1057,7 +1058,12 @@ CLOCK_SHIM_MODULE_NAME = "clockoffset"
 CLOCK_SHIM_DIR_NAME = "clock-shim"
 
 _CLOCK_SHIM_SOURCE = '''\
-"""用例注入的时钟替身：把 `meeting.service.runtime` 读的那只单调钟按标记文件前移。
+"""用例注入的时钟替身：把 runtime 与各拆分模块读的那只单调钟按标记文件前移。
+
+`ServiceRuntime` 的方法体按职责住在 `meeting.service.runtime_facts` /
+`runtime_sessions` / `runtime_summary` / `runtime_drain`（聚合壳
+`meeting.service.runtime` 自己也读）里，**每个模块都有自己的 `import time`
+全局名**，因此要逐模块换；漏一个模块，拨钟在那个模块的路径上就不生效。
 
 只在 `CLOCK_OFFSET_MARKER`（import 时从环境变量读一次）指向的文件出现之后才生效，
 文件内容是「前移多少秒」。标记没给 / 还没出现 / 内容读不出数字时，一切照旧（偏移 0）。
@@ -1071,7 +1077,7 @@ import time as _std_time
 
 CLOCK_OFFSET_MARKER = os.environ.get("MEETING_TEST_DRAIN_FINALIZE_MARKER", "")
 
-#: 本模块是否已经把替身装进 `meeting.service.runtime` 了
+#: 本模块是否已经把替身装进 runtime 与各拆分模块了
 INSTALLED = False
 
 
@@ -1100,20 +1106,31 @@ class _MonotonicProxy:
 
 
 def install():
-    """把 `meeting.service.runtime` 与事件循环两处的 `time` 名字都换成上面那只替身（幂等）。
+    """把 runtime 与各拆分模块读的 `time` 名字都换成上面那只替身（幂等）。
 
-    **两处都要换**：收尾那一步的等待上限由运行时的秒表量（`meeting.service.runtime.time`），
+    **逐模块都要换**：runtime.py 是聚合壳，各 mixin 模块都有自己那份 `import time`
+    全局名，谁读谁就得换（见模块 docstring）。
     而 `asyncio.wait_for` 到点靠的是**事件循环自己的计时器**（Windows 的 Proactor 事件循环
     走 `asyncio.base_events.time.monotonic`）。只换前者的话，上限虽然算出「已经过期」，
     实际等待却仍由那只没被拨动的钟推着走完 —— 越界于是不发生。
     """
     global INSTALLED
     import asyncio.base_events
-    from meeting.service import runtime
+    from meeting.service import (
+        runtime,
+        runtime_drain,
+        runtime_facts,
+        runtime_sessions,
+        runtime_summary,
+    )
 
     if INSTALLED:
         return False
     runtime.time = _MonotonicProxy(runtime.time)
+    runtime_facts.time = _MonotonicProxy(runtime_facts.time)
+    runtime_sessions.time = _MonotonicProxy(runtime_sessions.time)
+    runtime_summary.time = _MonotonicProxy(runtime_summary.time)
+    runtime_drain.time = _MonotonicProxy(runtime_drain.time)
     asyncio.base_events.time = _MonotonicProxy(asyncio.base_events.time)
     INSTALLED = True
     return True

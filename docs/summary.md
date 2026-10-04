@@ -2,7 +2,7 @@
 
 > 这份文档写会中总结那一层**已经落地**的那一块（`1987cb20`）：按一下之后从哪读、窗口怎么切、提示词与模型输出是什么形状、端点怎么配、超时与重试的预算落在哪、动作与记录端点各回什么。它是 R7 那一条「十到十五秒出结果」的现状。
 >
-> 内核在 `meeting/summary/`（`window.py` / `prompt.py` / `client.py` / `parse.py` / `settings.py` / `runner.py`）；服务接线在 `meeting/service/runtime.py` 的 `summarize()` 与 `summaries_dict()`。契约正文（逐档 `detail` 与成功体全文）在 `docs/contract.md` 第 4.7 节，HTTP 面的速查在 `docs/api.md` 第 3 章。
+> 内核在 `meeting/summary/`（`window.py` / `prompt.py` / `client.py` / `parse.py` / `settings.py` / `runner.py`）；服务接线在 `meeting/service/runtime_summary.py` 的 `summarize()` 与 `summaries_dict()`（`ServiceRuntime` 的方法体按职责拆在各 `runtime_*.py` mixin 模块里，`runtime.py` 是聚合壳）。契约正文（逐档 `detail` 与成功体全文）在 `docs/contract.md` 第 4.7 节，HTTP 面的速查在 `docs/api.md` 第 3 章。
 >
 > 别跟会后纪要那一层混：那一层在 `docs/minutes.md`，由「直接出纪要」按钮或 `meeting post` 拉起。
 
@@ -119,7 +119,7 @@ V1 的「3 次 × 硬编码 60 秒超时」（最坏 180 秒）**没搬**——�
 
 ## 7. 服务这一层：动作与记录端点
 
-动作 `summarize`（`meeting/service/runtime.py` 的 `summarize()`）的**判定次序是固定的**：判态 → 校验 `window` → 看转写健康 → 看模型端点配置 → 才动手。前面几档没过时**一个模型请求都不发出去、一条记录都不写**。
+动作 `summarize`（`meeting/service/runtime_summary.py` 的 `summarize()`）的**判定次序是固定的**：判态 → 校验 `window` → 看转写健康 → 看模型端点配置 → 才动手。前面几档没过时**一个模型请求都不发出去、一条记录都不写**。
 
 **请求**：
 

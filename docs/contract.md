@@ -4,7 +4,7 @@
 >
 > 读者是接这套服务写界面（或写验收脚本）的人。它与 `docs/api.md`（HTTP 面速查）、`docs/state.md`（状态与推送的现状叙述）讲的是同一件事，但**口径不同**：那两份是叙述，这份是**可机读的基准** —— 每一条都在 `contract/fixtures/` 里有一个 golden 样本，`tests/test_contract_fixtures.py` 每次跑测试都重走一遍真实服务路径逐字比对，服务侧形状一漂移就红。**与叙述性文档冲突时，以代码实际行为为准**，并把权威落在这本册子里。
 >
-> 代码落点：路由只在 `meeting/service/routes.py` 注册一次；快照的唯一产出形态是 `meeting/state.py` 的 `Snapshot.to_dict()`；SSE 帧由 `meeting/service/hub.py` 编码；动作与 `code`/`detail` 在 `meeting/service/runtime.py`；三道本地防线在 `meeting/service/app.py` 的 `_LocalGuardsMiddleware`；golden 样本与掩码在 `contract/fixtures/` 与 `tests/_contract.py`。
+> 代码落点：路由只在 `meeting/service/routes.py` 注册一次；快照的唯一产出形态是 `meeting/state.py` 的 `Snapshot.to_dict()`；SSE 帧由 `meeting/service/hub.py` 编码；动作与 `code`/`detail` 在 `meeting/service/runtime.py`（`ServiceRuntime` 的方法体按职责拆在各 `runtime_*.py` mixin 模块里，`runtime.py` 只留构造、状态权威核心与 re-export）；三道本地防线在 `meeting/service/app.py` 的 `_LocalGuardsMiddleware`；golden 样本与掩码在 `contract/fixtures/` 与 `tests/_contract.py`。
 >
 > **这本册子的编号**：要求落在第 1–7 章（总则、快照 schema、SSE、动作、心跳、客户端义务、保留登记）；后面接了三章 —— 第 8 章讲 fixtures 与掩码、第 9 章讲复核手法、第 10 章回指索引。**第 8、9 两章是附录**（读契约正文用不上），第 10 章与其余分册的「相关文档」同形。**第 7 章登记表里还剩下的那几条一律没有实现**，界面按「能力还没进来」处理；会中总结那两样（`summarize` 动作、`GET /api/summaries`）已经落地，正文在第 4 章，登记表里只留一句「不做」与去处；**单场状态 `GET /api/sessions/{id}` 也已落地**（会后进度读数节点 `a9affaa8`），正文在第 4.9 节、登记表里不再列它。
 
@@ -848,7 +848,7 @@ python -m pytest tests/test_contract_fixtures.py --regen-contract -q
 
 1. **抽一个快照 fixtures 与 `Snapshot.to_dict()` 逐字段对照**：`meeting/state.py` 的 `to_dict()` 是唯一产出形态，顶层九键、`settings` 七键、`session` 七子键、`sources` 九键、`DrainStep` 四键都能逐行对上。`ended` / `session` 两个 `null` 档都能在 `idle` 样本里看一次。
 2. **故意改坏一个键名跑比对测试，确认会红**（验完还原）：例如把 `contract/fixtures/snapshot/recording.json` 里的 `"top_state"` 改成 `"topState"`，`python -m pytest tests/test_contract_fixtures.py -q` 应当报出「与实时采集不一致」。
-3. **任选两条 `detail` 与 `meeting/service/runtime.py` 的实际路径对照**：`already_recording` 三键在 `_already_recording_error()`、`draining` 四键在 `_draining_error()` / `_draining_error_for_dir()`（后者从盘上那一版读 `failed_steps`）。
+3. **任选两条 `detail` 与 `meeting/service/runtime_drain.py` 的实际路径对照**：`already_recording` 三键在 `_already_recording_error()`、`draining` 四键在 `_draining_error()` / `_draining_error_for_dir()`（后者从盘上那一版读 `failed_steps`）。
 4. **确认保留登记章里没有任何端点被顺手实现**：`python -c "from meeting.service.routes import all_routes; print([r.path for r in all_routes()])"` 应当只打出十条路径（九条 `/api/*` + `/debug`：`/api/state` / `/api/events` / `/api/heartbeat` / `/api/actions` / `/api/summaries` / `/api/sessions` / `/api/sessions/{dir:path}` / `/api/dirs` / `/api/devices` / `/debug`）；`ACTION_NAMES` 应当有十六个名字（`start` / `stop` / `mute_session` / `settings_update` / `reprobe` / `dev_inject` / `summarize` / `workspace_open` / `workspace_remove` / `post_offline` / `post_minutes` / `post_stop` / `pause` / `resume` / `set_source` / `speaker_rename`），会中总结那一个的正文在第 4.7 节、工作台那三个在第 4.8 节、会后两个按钮与停掉那一趟在第 4.3 节、单场状态那一只在第 4.9 节、设备清单那一只在第 4.10 节、暂停与逐路开关那三个在第 4.3 节、说话人改名那一只在第 4.11 节。
 
 ## 10. 相关文档

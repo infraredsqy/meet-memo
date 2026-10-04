@@ -4,7 +4,7 @@
 >
 > 读者是接这套 API 的人：前端、验收脚本、命令行复核。四态状态机、快照字段、`session.json`、SSE 帧形状、告警判定写在 `docs/state.md`；怎么起服务写在 `docs/service.md`。
 >
-> 代码落点：路由只在 `meeting/service/routes.py` 注册一次；动作的实现与 `code` 表在 `meeting/service/runtime.py`。
+> 代码落点：路由只在 `meeting/service/routes.py` 注册一次；动作的实现与 `code` 表在 `meeting/service/runtime.py`（`ServiceRuntime` 的方法体按职责拆在各 `runtime_*.py` mixin 模块里，`runtime.py` 只留构造、状态权威核心与 re-export，下同）。
 
 ## 章节目录
 

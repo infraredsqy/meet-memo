@@ -918,8 +918,10 @@ def test_drain_budget_follows_a_large_backlog(service_process, meeting_env):
 # （§3.3），真等满 30 秒就必然越过红线。这一条因此把这一趟的**时钟往前拨**（可控手段）：
 # `post` 那一步的假钩子写下偏移标记，子进程里被注入的时钟替身
 # （`tests/_drain_fakes.py` 的 `write_clock_offset_shim()`）随即把 `meeting.service.runtime`
-# 与事件循环（`asyncio.base_events`）两处读的单调钟一起前移 —— 两处**必须一起拨**：上限由
-# 运行时那只秒表量，而 `wait_for` 到点靠事件循环自己的计时器，只拨一处的话越界不会发生。
+# 与拆分进各 mixin 模块（`runtime_facts` / `runtime_sessions` / `runtime_summary` /
+# `runtime_drain`）读的 `time` 名字、连同事件循环（`asyncio.base_events`）一起前移 ——
+# 谁读谁就得拨：上限由运行时那只秒表量，而 `wait_for` 到点靠事件循环自己的计时器，
+# 漏拨的模块那一路越界不会发生。
 # 这一趟的 deadline 因此真的过期，末尾 `post` 那一步的调用被 `_drain_wait()` 判成越界。
 # **预算函数、`_drain_wait()` 的判据、`error` 的原文都一个字没动**：越界仍由 `asyncio.wait_for`
 # 与它自己的秒表判出来，`error` 里那两个数（budget 与实测耗时）也都由它给出。
@@ -1131,7 +1133,13 @@ def test_drain_steps_share_one_deadline_with_shrinking_remaining_budget(tmp_path
         calls["budget"] += 1
         return DRAIN_SHARED_BUDGET_SECONDS
 
-    monkeypatch.setattr(runtime_module, "compute_drain_budget", tiny_budget)
+    # 补丁打在 **`_run_drain_steps()` 所在模块**的那个全局名上：`compute_drain_budget`
+    # 的定义与唯一调用点拆分后都住在 `meeting.service.runtime_drain`，改
+    # `meeting.state` 上的名字或只改聚合壳 `meeting.service.runtime` 的 re-export 绑定，
+    # `_run_drain_steps()` 都看不见（「补丁打在哪一个命名空间」的问题）。
+    from meeting.service import runtime_drain as runtime_drain_module
+
+    monkeypatch.setattr(runtime_drain_module, "compute_drain_budget", tiny_budget)
 
     # 记下每一步**实际经 `_drain_wait()` 开跑**那一刻的剩余预算与截止时刻，以及这一步
     # 真跑完之后的剩余预算 —— 这一条的全部判据都从这里读。
@@ -1900,7 +1908,7 @@ def test_later_steps_keep_a_worker_after_an_earlier_step_is_abandoned(tmp_path, 
     )
     monkeypatch.setattr(runtime, "_resolve_backends", lambda: None)
     monkeypatch.setattr(
-        "meeting.service.runtime.compute_drain_budget",
+        "meeting.service.runtime_drain.compute_drain_budget",
         lambda backlog, segment_timeout: DRAIN_ABANDONED_TOTAL_BUDGET_SECONDS,
     )
 
@@ -2227,14 +2235,15 @@ def test_cancelled_drain_routes_through_the_frozen_accounting(tmp_path, monkeypa
     assert interrupted_before["ended_at"] is None, interrupted_before
 
     # **记下 `finish_drain_step` / `_finish_drain` 收到的那些关键字**（相2 的记账出口）。
-    # 补丁打在 **`meeting.service.runtime` 的模块级名字**上：`runtime.py` 是
-    # `from meeting.state import finish_drain_step` 这样取进来的，`_settle_step()` 读的是
-    # **它自己模块的那个全局名** —— 改 `meeting.state` 上的同名属性不会被它看见（这一步是
-    # 「补丁打在哪一个命名空间」的问题，不是记账没发生）。
-    from meeting.service import runtime as runtime_module
+    # 补丁打在 **`_settle_step()` 所在模块 `meeting.service.runtime_drain` 的模块级名字**上：
+    # 拆分后 `runtime_drain.py` 是 `from meeting.state import finish_drain_step` 这样取
+    # 进来的，`_settle_step()` 读的是**它自己模块的那个全局名** —— 改 `meeting.state` 上的
+    # 同名属性、或只改聚合壳 `meeting.service.runtime` 的 re-export 绑定，都不会被它看见
+    # （这一步的功夫全下在「补丁打在哪一个命名空间」：全局名挂对了，记账出口才会被记到）。
+    from meeting.service import runtime_drain as runtime_drain_module
 
     seen: dict[str, Any] = {"finish_drain_step": [], "finish_drain": []}
-    real_finish_step = runtime_module.finish_drain_step
+    real_finish_step = runtime_drain_module.finish_drain_step
 
     def spy_finish_step(step_id, status, detail=None, error=None, **kwargs):
         seen["finish_drain_step"].append(
@@ -2247,7 +2256,7 @@ def test_cancelled_drain_routes_through_the_frozen_accounting(tmp_path, monkeypa
         )
         return real_finish_step(step_id, status, detail, error, **kwargs)
 
-    monkeypatch.setattr(runtime_module, "finish_drain_step", spy_finish_step)
+    monkeypatch.setattr(runtime_drain_module, "finish_drain_step", spy_finish_step)
     real_finish_drain = runtime._finish_drain
 
     def spy_finish_drain(*, cancelled: bool = False):

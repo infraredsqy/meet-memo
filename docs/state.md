@@ -4,7 +4,7 @@
 >
 > 读者是想接这份数据的下游开发者（前端、验收脚本、会后流程）。
 >
-> 代码落点：状态机与全部取值域在 `meeting/state.py`，场次目录与 `session.json` 在 `meeting/session.py`，告警判定在 `meeting/alerts.py`，推送在 `meeting/service/hub.py`，这一切的持有者是 `meeting/service/runtime.py` 的 `ServiceRuntime`；会后那一层在 `meeting/offline/`（`artifacts.py` 管产物的写盘与字段契约、`runner.py` 管主流程），拉起它的钩子是 `meeting/backends/post.py`。HTTP 面见 `docs/api.md`；**可机读的那份对外形状**（逐键 schema、帧形状、`code`/`detail` 表）见 `docs/contract.md` —— 这份文档与它冲突时以代码实际行为为准，权威落在契约那一本。
+> 代码落点：状态机与全部取值域在 `meeting/state.py`，场次目录与 `session.json` 在 `meeting/session.py`，告警判定在 `meeting/alerts.py`，推送在 `meeting/service/hub.py`，这一切的持有者是 `meeting/service/runtime.py` 的 `ServiceRuntime`（类体按职责拆在各 `runtime_*.py` mixin 模块里，`runtime.py` 只留构造、状态权威核心与 re-export，下同）；会后那一层在 `meeting/offline/`（`artifacts.py` 管产物的写盘与字段契约、`runner.py` 管主流程），拉起它的钩子是 `meeting/backends/post.py`。HTTP 面见 `docs/api.md`；**可机读的那份对外形状**（逐键 schema、帧形状、`code`/`detail` 表）见 `docs/contract.md` —— 这份文档与它冲突时以代码实际行为为准，权威落在契约那一本。
 
 ## 章节目录
 
@@ -53,7 +53,7 @@
 - 判「缺席」只看后端的解析结果（`meeting/backends/registry.py`），不看调用时抛了什么异常。
 - **今天调这两个方法的只有两处**：收尾链第 4 步，与暂停 / 继续那一对动作。强制打断（第二次 `Ctrl+C`，或已停在 `ended·draining` 再按）与关停走的是另外两条路，**都不调** `release_gpu()` —— 前者把收尾 task 取消掉（第 4 步若还没开跑就轮不到），后者只调 `TranscriberBackend.stop()`；这两格归管收尾 / 关停的节点，来由见 `docs/asr-backends.md` 第 6 章。
 
-**第 1、2 步的闸门**（`meeting/service/runtime.py` 的 `_drain_flush()` / `_drain_transcode()`）：两步都只看**采集侧**——解析结论**与** `capture_capabilities["finalize"]` / `capture_capabilities["transcode"]`，后者由 `registry.capabilities_of()` 按「实现在不在场」回答：真采集后端（`meeting.backends.capture:CaptureBackend`）两项都是 `True`，`null` / `dev` 两个替身都是 `False`。因此**真采集那一场**这两步记 `done`、产物是场次目录里的两份 `.mp3`；替身那一场照旧 `skipped`。transcode 是采集后端的能力，转写后端在不在场与这道闸门无关（转写缺席不影响第 2 步记账，解析结论与 `run_ok` 也记在采集侧）。
+**第 1、2 步的闸门**（`meeting/service/runtime_drain.py` 的 `_drain_flush()` / `_drain_transcode()`）：两步都只看**采集侧**——解析结论**与** `capture_capabilities["finalize"]` / `capture_capabilities["transcode"]`，后者由 `registry.capabilities_of()` 按「实现在不在场」回答：真采集后端（`meeting.backends.capture:CaptureBackend`）两项都是 `True`，`null` / `dev` 两个替身都是 `False`。因此**真采集那一场**这两步记 `done`、产物是场次目录里的两份 `.mp3`；替身那一场照旧 `skipped`。transcode 是采集后端的能力，转写后端在不在场与这道闸门无关（转写缺席不影响第 2 步记账，解析结论与 `run_ok` 也记在采集侧）。
 
 **终态判定只在一处**（`finish_drain()`）：
 
@@ -85,7 +85,7 @@
 budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 秒
 ```
 
-`backlog` ← `TranscriberBackend.backlog_depth()`，`segment_timeout` ← `TranscriberBackend.segment_timeout()`；转写后端缺席时取 `0` / `20.0` 秒。每一步的调用都包在**剩余预算**里（`asyncio.wait_for(<该步调用>, <剩余预算>)`），所以一趟收尾的等待总量以那条 deadline 为界，**不随步数翻倍**。这三个数硬编码在 `meeting/service/runtime.py`，**不开配置键**。
+`backlog` ← `TranscriberBackend.backlog_depth()`，`segment_timeout` ← `TranscriberBackend.segment_timeout()`；转写后端缺席时取 `0` / `20.0` 秒。每一步的调用都包在**剩余预算**里（`asyncio.wait_for(<该步调用>, <剩余预算>)`），所以一趟收尾的等待总量以那条 deadline 为界，**不随步数翻倍**。这三个数硬编码在 `meeting/service/runtime_drain.py`，**不开配置键**。
 
 - **唯一的例外是 `log` 步**：它的 flush 与摘除至少拿到 5 秒（`max(<剩余预算>, 5)`，不受剩余预算约束）。`log` 是四步里唯一在任何构建里都有实现、要做 IO 的一步；让前面的缺席步把 deadline 用光，本该「正常收尾」的一档就会被拖成收尾失败档。
 - **超预算的那一步落 `failed`**，`error` 写明「超出收尾预算（budget=Ns，实测耗时 Ms）」—— 到点就扔下积压段走的写法在代码里不存在。
@@ -138,7 +138,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 - **这两个子键说的是「用户配的意图」，`sources[*].device_name` 说的是「探测实际落到的那个设备」**（`dca4539b` 的契约陈述，同一段也写在 `docs/contract.md` 第 2 章与 `docs/service.md` 第 8 章）：配了却没命中任何端点时**不报错、也不改写快照里的名字**，按「精确名 → `CABLE Input`（不含 `16ch`）→ 系统默认输出」这条回退顺序走，主 log 一行 `WARNING`（V1 就是这个行为，见 `meeting/capture/devices.py` 的 `loopback_candidates()`）。想知道这一场到底在录哪个设备，看 `sources[*].device_name`。
 - 这里读到的是**运行期生效值**。`pending_restart` 那一档的键改了要重启才在快照里可见；热读键写盘那一刻就换过来 —— `alarm.sound`、`asr.*` 五个，设置抽屉那四项（两个设备键位、`heartbeat.interval_seconds`、`summary.default_window`，`311f84f5`），加上会中切模型两键（`summary.presets_json` / `summary.active_preset`），详见 `docs/service.md` 第 4 章的键态两分。
 
-`transcript` 的语义（四格都由转写后端刷新，判定权收在 `meeting/service/runtime.py` 的 `_refresh_transcript_snapshot()` 一处）：
+`transcript` 的语义（四格都由转写后端刷新，判定权收在 `meeting/service/runtime_facts.py` 的 `_refresh_transcript_snapshot()` 一处）：
 
 - `health ∈ normal / behind / stopped`，三种取值**直接来自转写后端**（`TranscriberBackend.health()`）。真实现（`meeting.backends.transcribe:TranscriberBackend`）在**没起过场次时报 `stopped`** —— 空闲态快照里那一格当场就是这个值；一场里 worker 停摆、模型加载或识别出事也是 `stopped`，积压压过 20 段（`BACKLOG_BEHIND_THRESHOLD`）是 `behind`。转写后端**缺席**（显式 `null` 或解析失败回退）那一档的缺省实现恒报 `normal`。
 - `last_line_at` 是服务侧收到最近那一行转写的墙钟（ISO；这一场还没出过行就是 `null`）。

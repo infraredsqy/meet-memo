@@ -15,7 +15,7 @@
 | `frame_interval` | **类属性**（秒）：这个后端每帧事实的间隔。协议默认 `0.5`，dev 替身写 `0.1`。runtime 在 `bind()` 之后读实例上的这个属性算存活窗口；读不到或取值不是正数就按 `DEFAULT_FRAME_INTERVAL_SECONDS = 0.5` 算 |
 | `bind(emit, *, config)` | `probe()` 之前调一次。`emit` 是**事实出口**，`config` 是只读配置视图 |
 | `probe() -> list[SourceProbe]` | 枚举并试开设备，**两路各一条**（`mic` / `loopback`） |
-| `start(mode, session_dir)` | 按开场前定下的 `mode` 起采集，开始往 `session_dir` 里的归档写。**单路起不来不抛错**：只给那一路发一条 `SourceLost`（`reason` 写人话），另一路照跑；**本场该采的路全部起不来**才抛 `CaptureUnavailable`（`mode=mic` 时只有 mic 起不来才算全败）。抛错之前自己拉起来的线程要自己收干净（`meeting/service/runtime.py` 的 `_abort_session()` 那条路不调 `stop()`） |
+| `start(mode, session_dir)` | 按开场前定下的 `mode` 起采集，开始往 `session_dir` 里的归档写。**单路起不来不抛错**：只给那一路发一条 `SourceLost`（`reason` 写人话），另一路照跑；**本场该采的路全部起不来**才抛 `CaptureUnavailable`（`mode=mic` 时只有 mic 起不来才算全败）。抛错之前自己拉起来的线程要自己收干净（`meeting/service/runtime_sessions.py` 的 `_abort_session()` 那条路不调 `stop()`） |
 | `finalize()` | 收尾第 1 步：停流 + join + 关文件 + `fsync`。**幂等** |
 | `transcode()` | 收尾第 2 步：把归档转成 MP3。**可抛错**（该步据此记 `failed`，原始归档原样留下） |
 | `stop()` | 停采集（进程关停时调）。**幂等**，没落过盘就先 `finalize()` |
