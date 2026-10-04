@@ -153,7 +153,11 @@ async def _api_events(request: Request) -> Response:
 # ---------------------------------------------------------------------------
 
 
-async def _api_sessions(request: Request) -> Response:
+# 这三个处理器都是**同步 def**（不走协程）：它们各自整段只是调 runtime 的那只纯读
+# 读取器（`sessions_dict()` / `session_status_dict()` / `dirs_listing()` 每行 stat +
+# 读 session.json + 注册表读，都不是异步的）——写成 async 会让这些盘上读数在事件循环
+# 线程上跑；Starlette 对同步处理器自动丢线程池执行，行为与原本一致。
+def _api_sessions(request: Request) -> Response:
     """工作区注册表：`{sessions, recent}`（**200**，任何状态下都给）。
 
     与 `GET /api/summaries` 同一档纯读：不提交、不涨 `revision`、不广播；
@@ -167,7 +171,7 @@ async def _api_sessions(request: Request) -> Response:
     return JSONResponse(runtime.sessions_dict())
 
 
-async def _api_session_status(request: Request) -> Response:
+def _api_session_status(request: Request) -> Response:
     """单场状态：`GET /api/sessions/{id}`，`{id}` 是**这一场的目录路径**（URL 编码的绝对路径）。
 
     会后视图那一片进度区就读它：这一场此刻跑到哪一档、会后离线跑过几块、共几块、
@@ -187,7 +191,7 @@ async def _api_session_status(request: Request) -> Response:
         return _error_response(exc)
 
 
-async def _api_dirs(request: Request) -> Response:
+def _api_dirs(request: Request) -> Response:
     """目录选择器的现场：`{home, cwd, up, dirs}`（**200**；`?dir=` 省略时从主目录起步）。
 
     纯读：只判每层子目录的名目（三档），不写任何东西。「软件自己会不建目录」这条

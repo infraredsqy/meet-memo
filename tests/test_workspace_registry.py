@@ -404,3 +404,20 @@ def test_api_list_does_not_bump_revision(api):
     assert client.get("/api/sessions").status_code == 200
     assert client.get("/api/dirs").status_code == 200
     assert client.get("/api/state").json()["revision"] == before
+
+
+def test_session_read_handlers_are_plain_functions():
+    """`_api_sessions` / `_api_session_status` / `_api_dirs` 是**普通 def**（非协程函数）。
+
+    这三只处理器各自整段只是同步读（runtime 那三只读取器没有一条 await）：
+    留着 async 会把这些盘上读数按在事件循环线程上跑；改普通 def 之后 Starlette
+    把它们自动丢线程池执行，行为照旧。真异步的那些（`_api_actions` 会
+    `await request.body()` 等）不在此列，照旧是协程函数。
+    """
+    import inspect
+
+    from meeting.service import routes
+
+    for name in ("_api_sessions", "_api_session_status", "_api_dirs"):
+        handler = getattr(routes, name)
+        assert inspect.iscoroutinefunction(handler) is False, f"{name} 应是同步 def"

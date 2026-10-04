@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from meeting import config as config_module
-from meeting.service.runtime_shared import ActionError
+from meeting.service.runtime_shared import ActionError, PostJob, _job_matches
 from meeting.speaker_names import (
     SpeakerNamesError,
     identity_rows as speaker_identity_rows,
@@ -19,28 +19,25 @@ from meeting.workspace import canonical_dir, classify_workspace_dir, has_offline
 _log = logging.getLogger("meeting.service.runtime")
 
 
-def _post_job_progress(job: Any, directory: str) -> Any:
+def _post_job_progress(job: PostJob | None, directory: str) -> Any:
     """会后那条线程手里的逐块进度账（**是这一场、是离线那一趟**时才有）。
 
     三样都对上才交回它：这一趟的路是 `offline`、跑的是这一场、账已经立起来。否则
-    `None` —— 调用方据此退回读盘那条路。
+    `None` —— 调用方据此退回读盘那条路。前两样（是 dict、`dir` 相等）走
+    `_job_matches()` 这一处公共判据；`kind` 档位判据留在这里。
     """
-    if not isinstance(job, dict):
-        return None
-    if str(job.get("dir")) != str(directory):
-        return None
-    if str(job.get("kind")) != "offline":
+    if not _job_matches(job, directory) or str(job.get("kind")) != "offline":
         return None
     return job.get("progress")
 
 
-def _post_job_view(job: Any, directory: str) -> dict[str, Any] | None:
+def _post_job_view(job: PostJob | None, directory: str) -> dict[str, Any] | None:
     """`GET /api/sessions/{id}` 的 `post` 那一格：上一趟/这一趟是哪一趟、在不在飞。
 
     `running` 由调用方按 `post_job_state()` 那一套判据盖上来（这里只看线程活没活着，
-    不另发明一套判据）。
+    不另发明一套判据）。isinstance + dir 相等走 `_job_matches()` 这一处公共判据。
     """
-    if not isinstance(job, dict) or str(job.get("dir")) != str(directory):
+    if not _job_matches(job, directory):
         return None
     return {
         "running": False,
@@ -421,11 +418,12 @@ class RuntimeCatalogMixin:
         三样都对上才算「在跑」：这一趟的路是 `offline`、跑的是这一场、线程还活着。
         **跑完那一刻这条线程就死了** —— 与 `post_job_state()` 同一套判据（那一格跑完之后
         也不把 job 抹掉，靠 `thread.is_alive()` 分「在飞」与「跑完了」）。不另发明一套。
+        **在飞判据是这一处自己的形状**（与 `post_stop()` 那一处逐字同形：`thread`
+        缺席就算「不在飞」；`post_job_state()` 对 `thread` 缺席答「在飞」，三处并不同形，
+        复审 #2 的裁定因此只抽 isinstance + dir 相等这一段公共判据）。
         """
         job = self.post_job
-        if not isinstance(job, dict):
-            return False
-        if str(job.get("dir")) != str(directory) or str(job.get("kind")) != "offline":
+        if not _job_matches(job, directory) or str(job.get("kind")) != "offline":
             return False
         thread = job.get("thread")
         return thread is not None and thread.is_alive()

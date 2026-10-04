@@ -10,8 +10,8 @@ import threading
 import weakref
 from concurrent.futures import ThreadPoolExecutor as _ThreadPoolExecutor
 from concurrent.futures.thread import _worker as _threadpool_worker
-from typing import Any
-
+from typing import Any, TypedDict
+from typing import TypeGuard
 #: 收尾四步的同步调用池里的工作线程条数（审查问题 m7）。
 #:
 #: 四步在**编排**上严格串行，而线程占用上会叠：某一步被按剩余预算判超时之后，它的等待被
@@ -175,3 +175,38 @@ class ActionError(Exception):
         self.status = int(status)
         self.detail = dict(detail or {})
         super().__init__(message)
+
+
+# ---------------------------------------------------------------------------
+# 会后一趟的现场读数（`ServiceRuntime.post_job` 这一格的形状）
+# ---------------------------------------------------------------------------
+
+
+class PostJob(TypedDict):
+    """会后两趟活（`post_offline` / `post_minutes`）在飞时的现场（**内存事实**：
+
+    不写快照、不落盘 —— 跨进程的那一格在 `meeting/service/postjobs.py`）。七个键：
+    `thread` / `cancel` 由起线程那一步给（`_start_post_job()`）；`progress` 由离线
+    那趟自己塞（`OfflineProgressLedger`，本叶子模块不 import 会后那一包，标 `Any`）；
+    `cancel` 是 offline 档的 `Event`（纪要那趟 `None`）。标 `Any` 的格子照现状的
+    访问姿势放宽（`thread` 判 `.is_alive()`、`cancel` 过 `isinstance` 一道闸）。
+    """
+
+    kind: str
+    dir: str
+    thread: Any
+    started_at: str
+    finished_at: str | None
+    progress: Any
+    cancel: threading.Event | None
+
+
+def _job_matches(job: PostJob | None, directory: str) -> TypeGuard[PostJob]:
+    """会后那趟的现场还记不记**这一场**：是 dict、`dir` 字符串化后等于 `directory`。
+
+    `_post_job_progress()` / `_post_job_view()` / `_offline_job_running()` 三处逐字
+    同形的公共判据（isinstance + dir 相等）收在这一处；各处余下的判据——
+    `kind` 档位、`thread.is_alive()` 在飞——**留在各自那处**（三处的完整判据不同形，
+    复审 #2 的裁定：只抽公共部分，行为逐字不变）。
+    """
+    return isinstance(job, dict) and str(job.get("dir")) == str(directory)

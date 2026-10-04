@@ -516,12 +516,13 @@ class AlertJudge:
             existing.muted = self.mute_session
             return existing
         self._hint_started_at[key] = now
-        alert = Alert(
-            level=level,
+        # 新起的那条走 `build_hint()`（提示级组装的唯一一处；六字段与上面逐项一致：
+        # level="hint" / source / since=now_iso() / duration_seconds=0.0 / message /
+        # muted —— 复审 #4 的裁定：不再绕开它另写一遍 `Alert(...)` 字面量）
+        alert = build_hint(
             source=source,
-            since=now_iso(),
-            duration_seconds=0.0,
             message=message,
+            duration_seconds=0.0,
             muted=self.mute_session,
         )
         self._hints[key] = alert
@@ -552,10 +553,6 @@ class AlertJudge:
         """
         self._hints.clear()
         self._hint_started_at.clear()
-
-    def reset_hints(self) -> None:
-        """清空提示级（新一场开场 / 服务启动时用；**不改**致命级与两条计数）。"""
-        self.clear_hints()
 
     def hints(self) -> list[Alert]:
         """当前提示级列表：`since` 最早的三条（超出上限的键已在合并时回收）。

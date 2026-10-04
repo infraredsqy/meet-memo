@@ -6,14 +6,14 @@ import logging
 import threading
 from typing import Any
 
-from meeting.service.runtime_shared import ActionError
+from meeting.service.runtime_shared import ActionError, PostJob
 from meeting.state import now_iso
 from meeting.workspace import canonical_dir, classify_workspace_dir
 
 _log = logging.getLogger("meeting.service.runtime")
 
 
-def _mark_post_job_finished(job: dict[str, Any] | None, finished_at: str) -> None:
+def _mark_post_job_finished(job: PostJob | None, finished_at: str) -> None:
     """把会后那一趟的现场读数标成"已收工"（**不把那一格抹掉**）。
 
     判"有没有在飞"的那一问由 `ServiceRuntime.post_job_state()` 按 `thread.is_alive()`

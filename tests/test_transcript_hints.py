@@ -83,7 +83,7 @@ def snapshot_of(client) -> dict:
     return client.get("/api/state").json()
 
 
-def live(tmp_path: Path, backend: StubTranscriber, *, reset_hints: bool = True):
+def live(tmp_path: Path, backend: StubTranscriber) -> tuple[Path, dict]:
     """进程内已启动的运行时，转写后端换成替身，并把它收成一份确定的起点。
 
     **起点本来就是干净的**：这份文件把转写后端配成 `dev` 替身（见下面的 `values`），
@@ -114,7 +114,7 @@ def settle(runtime, backend: StubTranscriber) -> None:
     """
     runtime.transcriber_backend = backend
     runtime._refresh_transcript_snapshot()  # noqa: SLF001 - 把 health 刷成 stub 的真值
-    runtime.judge.reset_hints()
+    runtime.judge.clear_hints()
     runtime.snapshot.alerts.hints = []
     runtime._hint_keys = ()  # noqa: SLF001 - 与上面那一格一起归零
 

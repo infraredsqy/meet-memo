@@ -131,6 +131,11 @@ class DevCaptureBackend:
         self.finalize_calls = 0
         self.transcode_calls = 0
         self.emitted_frames = 0
+        #: 每路一份的合成电平增量缓存（`source → (rng, 相位, 已生成的值)`）：
+        #: `level_sequence()` 的取数位用 —— `_run()` 每拍只取末位，过去每次都从种子
+        #: 重建整条序列（单帧 O(tick)、整场累计 O(tick²)）；现在没超过缓存就回前缀、
+        #: 超过才从缓存续生，摊还 O(1)。每路独立、只在合成线程推进（照现状）。
+        self._level_cache: dict[str, tuple[random.Random, float, list[float]]] = {}
         #: 帧空洞自查账（gil-stall-hole）：与真引擎同一套（`FrameGapDetector`，窗口同
         #: `recording_alive` 那把尺）。dev 的发帧线程只有一条（两路合发），按「这一拍
         #: 有没有帧出去」记一次账；`stall` / 两路 `lost` 停发的那段在恢复后第一拍算出
@@ -264,17 +269,33 @@ class DevCaptureBackend:
     # -- 合成电平 ---------------------------------------------------------
 
     def level_sequence(self, source: str, count: int) -> list[float]:
-        """按种子算出 `count` 帧的电平序列（**确定性**：同种子同帧序逐帧相同）。"""
-        rng = random.Random(f"{self.seed}:{source}")
-        values: list[float] = []
-        phase = 0.0
-        for index in range(int(count)):
-            wave = (math.sin(index * 0.31 + phase) + 1.0) / 2.0
-            value = DEV_LEVEL_MIN_DBFS + wave * (DEV_LEVEL_MAX_DBFS - DEV_LEVEL_MIN_DBFS)
-            value += rng.uniform(-1.5, 1.5)
-            values.append(max(DEV_LEVEL_MIN_DBFS, min(DEV_LEVEL_MAX_DBFS, value)))
-            phase += 0.07
-        return values
+        """按种子算出 `count` 帧的电平序列（**确定性**：同种子同帧序逐帧相同）。
+
+        取数走每路一份的**增量缓存**（`source → (rng, phase, values)`）：`count` 没超过
+        已生成的长度就直接回前缀，超过时从缓存里的 rng 与相位**续生**补齐 —— 既有 rng
+        是逐帧顺序生成，续生与从种子重算逐值相等，于是返回值与从前「每次整条重建」
+        逐帧相同（`level_sequence(src, N) == level_sequence(src, M)[:N]`，M>N）。
+        `_run()` 过去每拍重建整条序列只取末位、累计 O(tick²)，现在摊还 O(1)。
+        锁是既有的那把（合并故障注入的记账）：只串行化每路的续生这一步，两路互不牵连。
+        """
+        with self._lock:
+            cached = self._level_cache.get(source)
+            if cached is None:
+                rng = random.Random(f"{self.seed}:{source}")
+                phase = 0.0
+                values: list[float] = []
+            else:
+                rng, phase, values = cached
+            wanted = int(count)
+            for index in range(len(values), wanted):
+                wave = (math.sin(index * 0.31 + phase) + 1.0) / 2.0
+                value = DEV_LEVEL_MIN_DBFS + wave * (DEV_LEVEL_MAX_DBFS - DEV_LEVEL_MIN_DBFS)
+                value += rng.uniform(-1.5, 1.5)
+                values.append(max(DEV_LEVEL_MIN_DBFS, min(DEV_LEVEL_MAX_DBFS, value)))
+                phase += 0.07
+            self._level_cache[source] = (rng, phase, values)
+            # 负数与从前同答：`range(int(count))` 对负数一步不走、返回空表
+            return values[:wanted] if wanted >= 0 else []
 
     def collect_frames(self, count: int, *, timeout: float = 10.0) -> list[Any]:
         """起一路采集并收集 `count` 条事实（给纯单测用，不起服务）。"""

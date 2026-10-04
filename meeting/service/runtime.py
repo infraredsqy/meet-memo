@@ -150,7 +150,9 @@ from meeting.service.runtime_shared import (
     SESSION_MODES,
     DRAIN_EXECUTOR_MAX_WORKERS,
     ActionError,
+    PostJob,
     _DaemonThreadPoolExecutor,
+    _job_matches,
 )
 from meeting.service.runtime_summary import (
     SUMMARY_EXECUTOR_MAX_WORKERS,
@@ -300,12 +302,13 @@ class ServiceRuntime(
         # -- 会后的两趟活（人按才起，`d63b0f4a` 的两个按钮）--------------------
         #
         # `self.post_job` 记**这一趟会后活跑到哪一档**（`None` = 没有在跑的）：
-        #   {"kind": "offline"|"minutes", "dir": …, "thread": <Thread>, "started_at": …}
+        #   七键形状冻结在 `PostJob`（runtime_shared；`{"kind", "dir", "thread",
+        #   "started_at", "finished_at", "progress", "cancel"}`）
         # 它**不写快照、不落盘**：这一格是服务进程自己的现场（界面问「有没有会后精细稿」
         # 走 `GET /api/sessions` 的 `has_offline`，那一条读盘，与本字段无关）。
         # 「一趟没跑完就按第二个按钮」当场拒（409 `draining`）：一张显卡上不该同时开两份模型
         # （`docs/design-intent.md` 第 21 条）。
-        self.post_job: dict[str, Any] | None = None
+        self.post_job: PostJob | None = None
 
     # -- 状态 JSON 产出（唯一产出者） -------------------------------------
 

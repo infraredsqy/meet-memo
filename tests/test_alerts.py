@@ -26,10 +26,14 @@ import pytest
 from meeting.alerts import (
     BACKLOG_HINT_MESSAGES,
     BACKLOG_HINT_THRESHOLD,
+    BACKLOG_SOURCE,
     HEALTH_HINT_MESSAGES,
     HINT_LIMIT,
+    TRANSCRIPT_SOURCE,
     AlertJudge,
     AlertThresholds,
+    _backlog_message,
+    _health_message,
     build_hint,
     muted_at,
 )
@@ -368,6 +372,32 @@ def test_transcript_health_drop_produces_one_hint():
     stopped = j.on_transcript_health("stopped")
     assert stopped is not None
     assert len(j.hints()) == 2, "掉到 stopped 是另一条提示（message 不同）"
+
+
+def test_on_transcript_and_backlog_hints_carry_build_hints_fields():
+    """判定器入口新起的那条与 `build_hint()` **同字段**（复审 #4 的对账）。
+
+    `on_transcript_health()` / `on_backlog_depth()` 都并入 `_merge_hint()`，新起那条
+    的组装从那里走 `build_hint()`：字段集到此只有一处写法。`since` 是秒精度的墙钟
+    串、两回调用可能隔一个秒界，那格不逐字符比（其余五格逐项锚死）。
+    """
+    j = judge()
+
+    produced = j.on_transcript_health("behind")
+    assert produced is not None
+    expected = build_hint(source=TRANSCRIPT_SOURCE, message=_health_message("behind"))
+    for name in ("level", "source", "duration_seconds", "message", "muted"):
+        assert getattr(produced, name) == getattr(expected, name), name
+    assert produced.since
+
+    backlog = j.on_backlog_depth(BACKLOG_HINT_THRESHOLD)
+    assert backlog is not None
+    expected_backlog = build_hint(
+        source=BACKLOG_SOURCE, message=_backlog_message()
+    )
+    for name in ("level", "source", "duration_seconds", "message", "muted"):
+        assert getattr(backlog, name) == getattr(expected_backlog, name), name
+    assert backlog.since
 
 
 def test_backlog_depth_threshold_produces_one_hint():
