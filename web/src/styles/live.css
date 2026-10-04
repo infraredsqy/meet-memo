@@ -1606,6 +1606,8 @@ input[type="checkbox"] {
 
   .topbar__main,
   .topbar__right {
+    /* 按钮上的字不断行（`.btn` 那一条），窄屏就让这一排自己折行 */
+    flex-wrap: wrap;
     justify-content: flex-start;
   }
 
