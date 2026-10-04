@@ -871,7 +871,7 @@ def test_segment_log_reports_the_queue_wait_as_it_grows(session_dir: Path):
 
     `docs/specs.md:143-149` 的字段里，`wait` 是唯一一条「流水线落后」的可观测前兆
     （V1 `mnotes_core/pipeline.py:140` 的 `waited = time.time() - captured_at`）。
-    它要成立的前提是**两支钟同源**：盖章点写的是墙钟（`tail_archive()` 的
+    它要成立的前提是**两支钟同源**：盖章点写的是墙钟（`_tail_one_segment()` 的
     `on_chunk(data, time.time())`），取段那一刻也必须读墙钟 —— 混进单调钟之后
     `max(0.0, …)` 会把读数恒定夹成 `0.0`，这条前兆在 log 里就永远显示不出落后。
 
@@ -1216,3 +1216,17 @@ def test_segmenter_caps_a_single_segment_at_the_configured_length(session_dir: P
     # **一段都不许丢**：只允许少掉末尾那截不满一帧的零头（30ms 以下，识别也用不上）
     assert len(audio) - total < FRAME_BYTES, f"丢了整整一帧以上：{len(audio)} -> {total}"
     assert total == len(audio) - 320, "切段只该少掉末尾那个不满帧的零头"
+
+
+def test_pcm_shape_constants_match_the_archive_side():
+    """归档 PCM 的形状只认 `meeting/capture/archive.py` 这一个口径来源。
+
+    pipeline 顶层不再抄第二份常量，三个名字直接从 archive import 进来 —— 这里钉住
+    「同一实体」这条：哪天有人又把本地声明抄回去（值随后漂移），这条立刻红。
+    """
+    from meeting.asr import pipeline
+    import meeting.capture.archive as archive
+
+    assert pipeline.SAMPLE_RATE is archive.SAMPLE_RATE
+    assert pipeline.SAMPLE_WIDTH is archive.SAMPLE_WIDTH
+    assert pipeline.CHANNELS is archive.CHANNELS

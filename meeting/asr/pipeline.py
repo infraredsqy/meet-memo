@@ -66,6 +66,9 @@ from typing import Any, Callable, Protocol, runtime_checkable
 from meeting import config as config_module
 from meeting.asr import glm as glm_module
 from meeting.backends.base import SOURCE_IDS, TranscriptLine
+# 归档 PCM 的形状只认**一个口径来源**：`meeting/capture/archive.py`（同款先例见
+# `capture/engine.py` 顶部）——这里不再抄第二份，防两处各自漂移。
+from meeting.capture.archive import CHANNELS, SAMPLE_RATE, SAMPLE_WIDTH
 from meeting.session import archive_name, next_segment_number
 
 _log = logging.getLogger("meeting.asr.pipeline")
@@ -73,11 +76,6 @@ _log = logging.getLogger("meeting.asr.pipeline")
 # ---------------------------------------------------------------------------
 # 形状与常量
 # ---------------------------------------------------------------------------
-
-#: 归档 PCM 的形状（16k / 单声道 / int16 小端裸 PCM，与 `meeting/capture/archive.py` 一致）
-SAMPLE_RATE = 16000
-SAMPLE_WIDTH = 2
-CHANNELS = 1
 
 #: 一帧多少毫秒（`webrtcvad` 只认 10 / 20 / 30）
 FRAME_MILLISECONDS = 30
@@ -354,50 +352,6 @@ def _default_vad() -> Any:
 # ---------------------------------------------------------------------------
 
 
-def tail_archive(
-    path: str,
-    *,
-    stop: threading.Event,
-    on_chunk: Callable[[bytes, float], None],
-    chunk_bytes: int = DEFAULT_READ_CHUNK_BYTES,
-    idle_seconds: float = DEFAULT_TAIL_IDLE_SECONDS,
-    archive_poll_seconds: float = DEFAULT_ARCHIVE_POLL_SECONDS,
-    first_seen: Callable[[str, int], None] | None = None,
-) -> None:
-    """按游标尾读一个归档 PCM：读到的每一块都连**读到的时刻**一起交给 `on_chunk`。
-
-    - 归档文件还没出现时按 `archive_poll_seconds` 等它（采集侧先开文件、转写随后起步）；
-    - `first_seen(path, offset)` 只在文件第一次被打开时调一次（记账：这一路从哪个偏移起读）；
-    - `flag` 用 `"r+b"` 打开（文件不存在就报错，于是"归档还没出现"这件事不会被隐式建文件
-      掩盖掉；`"a+b"` 会**建出**一个空文件，那等于转写侧替采集侧把文件建了）；
-    - 文件被删 / 打不开时原样抛给调用方（读线程据此记一条 warning 并把自己标成不健康）。
-    """
-    handle = None
-    try:
-        while not stop.is_set():
-            if handle is None:
-                if not os.path.exists(path):
-                    if stop.wait(archive_poll_seconds):
-                        return
-                    continue
-                handle = open(path, "r+b")
-                if first_seen is not None:
-                    first_seen(path, int(handle.tell()))
-            data = handle.read(chunk_bytes)
-            if data:
-                # **盖章点**：这一刻的墙钟随这一块里切出来的段一起入队
-                on_chunk(data, time.time())
-                continue
-            if stop.wait(idle_seconds):
-                return
-    finally:
-        if handle is not None:
-            try:
-                handle.close()
-            except OSError:  # pragma: no cover - 关不掉不影响收队
-                pass
-
-
 def tail_archive_segments(
     segment_path: Callable[[int], str | None],
     *,
@@ -415,14 +369,14 @@ def tail_archive_segments(
       一场从这里直接接到**本段**——旧段的字节一个都不重读，临时稿里旧正文不会被
       抄第二遍；单文件场景与新场照旧从 1 起步；
     - `segment_path(index)` 交回第 `index` 段的路径；交回 `None` 表示**不会再有下一段**
-      （单文件场景借此保持 `tail_archive()` 的老行为：读到 EOF 就守着这一个文件）；
+      （单文件场景借此保持读到 EOF 就守着这**一个文件**的老行为）；
     - 当前段还没出现时按 `archive_poll_seconds` 等它；读到 EOF 后，**下一序号的段文件
       已经出现**就接过去，否则守着当前段继续等新字节；
-    - 每一块的盖章口径与 `tail_archive()` 同一条：`on_chunk(data, time.time())`，读到那一刻
+    - 每一块的盖章口径在 `_tail_one_segment()`：`on_chunk(data, time.time())`，读到那一刻
       的墙钟。跨段不换章：续接留下的时间洞在这里只是「EOF 等了很久」，
       断口语义归开场那条记号行（`start()` 里的续接两件事），本层不另外表达；
     - 其余口径（`"r+b"` 不隐式建文件、文件被删原样上抛、`first_seen` 每段一次）与
-      `tail_archive()` 一致。
+      生产读路径一致。
     """
     index = max(1, int(start_index))
     while not stop.is_set():
@@ -736,7 +690,7 @@ class TranscriptionPipeline:
 
         audio = np.frombuffer(pcm, dtype=np.int16)
         audio_seconds = len(audio) / SAMPLE_RATE
-        # **同一支钟**：`captured_at` 是 `tail_archive()` 的 `on_chunk(data, time.time())`
+        # **同一支钟**：`captured_at` 是 `_tail_one_segment()` 的 `on_chunk(data, time.time())`
         # （墙钟，:355），这里取「worker 把它取出来那一刻」也必须用墙钟 —— 混进
         # `time.monotonic()`（与本机墙钟差着十几亿秒）的话 `max(0.0, …)` 会把读数
         # 恒定夹成 `0.0`，而 `wait=` 正是本单元唯一一条「流水线落后」的可观测前兆
@@ -1162,7 +1116,6 @@ __all__ = [
     "WORKER_IDLE_SECONDS",
     "close_transcripts_when_drained",
     "compute_drain_budget",
-    "tail_archive",
     "tail_archive_segments",
     "validate_transcript_health",
 ]

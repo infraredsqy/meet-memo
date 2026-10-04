@@ -104,7 +104,7 @@ class _SinkProxy:
 class TranscriberBackend:
     """真转写后端：游标尾读归档 PCM → VAD 切段 → 单 worker 顺序识别 → 落盘 + 行出口。
 
-    两路各一条读线程（`meeting/asr/pipeline.py` 的 `tail_archive()`），一个 worker 顺序消费
+    两路各一条读线程（`meeting/asr/pipeline.py` 的 `tail_archive_segments()`），一个 worker 顺序消费
     两路的段 —— 采集与模型因此解耦到「模型停摆不影响落盘」（`docs/v1-lineage.md` 的 R2 / R3）。
     """
 
