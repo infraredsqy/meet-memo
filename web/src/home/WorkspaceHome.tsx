@@ -25,7 +25,7 @@ import {
 } from '../api/sessions';
 import { clampHeartbeatInterval } from '../api/heartbeat';
 import { HEARTBEAT_INTERVAL_DEFAULT_SECONDS } from '../contract';
-import { decisionFor, emptyStateLines, initialSelection, segmentsView, startButtonLabel, startWhy } from './model';
+import { decisionFor, emptyStateLines, initialSelection, rowDurationLabel, segmentsView, startButtonLabel, startWhy } from './model';
 import {
   advanceChunkRows,
   chunkLedgerReset,
@@ -105,7 +105,7 @@ function DirPicker({
     <div className="dlg__layer" role="presentation">
       <div className="dlg dlg--picker" role="dialog" aria-modal="true" aria-label="选择已有目录">
         <div className="dlg__title">选择已有目录（起点主目录）</div>
-        <p className="hint">起点是用户主目录；选择器只用来挑、软件不建目录。</p>
+        <p className="hint">起点为用户主目录；选择器仅用于选择，不会创建目录。</p>
         <div className="picker__list" role="listbox" aria-label="这一层的子目录">
           {browse === null && <p className="empty">正在取目录…</p>}
           {browse !== null && browse.dirs.length === 0 && (
@@ -192,7 +192,7 @@ function SpeakerNamesDialog({
   const confirmRow = (row: NamesRowView): void => {
     const name = (drafts[row.key] ?? '').trim();
     if (!name) {
-      setNote('先给这一行写一个名字；不想起就关掉这一窗（跳过 = 不起名）。');
+      setNote('请先为该行填写名字。');
       return;
     }
     setPending(row.key);
@@ -201,7 +201,7 @@ function SpeakerNamesDialog({
         // 撞名提示挪进成功分支（review-1 m3）：动作结果落地之前不冒「已提交」。
         setNote(
           duplicateNameHolders(rows, row.key, name).length > 0
-            ? '编号是分开的，可以重名；已照你写的名字提交。'
+            ? '编号相互独立，允许重名；已按输入提交。'
             : null,
         );
         setPending(null);
@@ -220,10 +220,10 @@ function SpeakerNamesDialog({
       <div className="dlg" role="dialog" aria-modal="true" aria-label="说话人名字">
         <div className="dlg__title">说话人名字</div>
         <p className="hint">
-          名字跟着这一场的目录走，下一次出纪要时附录里那一格照这里确认过的名字写；编号带路，两路的「1 号」各是各的。
+          名字随该工作区目录保存，生成纪要时附录按这里确认的名字填写；编号按路区分，两路的「1 号」相互独立。
         </p>
         {rows.length === 0 && (
-          <p className="empty">这一场盘上还没有可起名的身份（录过的场次才有本地 / 远端或编号）。</p>
+          <p className="empty">该工作区暂无待命名的身份（录音过的工作区才有本地、远端或编号）。</p>
         )}
         {rows.map((row) => (
           <div className="picker__row" key={row.key}>
@@ -277,8 +277,11 @@ type PickPath = { dir: string; kind: 'empty' | 'meeting' | 'unknown' | 'missing'
 /** 两个按钮的动作名 → 界面上的名字（与 `docs/requirements.md` R26 的叫法逐字对齐）。 */
 const POST_LABELS: Readonly<Record<string, string>> = {
   [POST_OFFLINE_ACTION]: '生成会后精细稿',
-  [POST_MINUTES_ACTION]: '直接出纪要',
+  [POST_MINUTES_ACTION]: '生成纪要',
 };
+
+/** 面板头上那只动作钮的悬停小注（可按时的说明；按不动时换成那句原因）。 */
+const RECORD_HINT = '在这一场工作区里开始一段新录音；已有段落会保留，续接在它们之后';
 
 /**
  * 待确认的三只弹窗：收编非空目录 / 从列表移除 / 「新会议会打断正在跑的会后」。
@@ -652,7 +655,7 @@ export function WorkspaceHome({
   /** 停止入口（R28 / b1c6a58e）：这一场的 offline 在飞时出现在进度区头行。 */
   const stop = postStopView(postJob, selected?.dir ?? null);
 
-  /** 一场都没有：主体让给那张空态，场次尺与右栏都收起来（`live.css` 的 `.home--empty`）。 */
+  /** 一场都没有：右栏让给那张空态（左栏照旧留着「添加工作区」）。 */
   const isEmpty = sessions !== null && sessions.sessions.length === 0;
 
   const openFromPicker = (item: { dir: string; kind: PickPath['kind'] }): void => {
@@ -667,13 +670,13 @@ export function WorkspaceHome({
 
   return (
     <main className="shell page--home" data-top-state="idle">
-      <header className="topbar">
-        <div className="topbar__left">
-          <span className="title-md">会议工作台</span>
-        </div>
-        <div className="topbar__main">
+      <section className="home">
+        {/* 左栏：这一台机器上有哪些工作区。应用名、添加工作区、清单、忙闲一格
+            都住在这儿 —— 顶栏那条横带不再需要，工作台整页就是这两栏。 */}
+        <aside className="home__list" aria-label="工作区">
+          <div className="title-sm">会议工作台</div>
           <button
-            className="btn btn--primary btn--start"
+            className="btn btn--ghost home__new"
             type="button"
             disabled={busy}
             onClick={() => {
@@ -681,54 +684,21 @@ export function WorkspaceHome({
               browseInto(null);
             }}
           >
-            新会议
+            添加工作区
           </button>
-          <button
-            className="btn"
-            type="button"
-            disabled={busy || selected === null || whyForSelected !== null}
-            onClick={startSelected}
-          >
-            {selected === null ? '开始录音' : startButtonLabel(selected)}
-          </button>
-        </div>
-        <div className="topbar__right">
-          {/* 全局只留这一格「显卡忙不忙」（R31）：读法与判据在 `home/progress.ts` 的
-              `gpuBusyView()`。全站没有全局进度条 —— 进度跟着各自的工作区走。 */}
-          <span
-            className={`gpucell ${gpu.busy ? 'gpucell--busy' : ''}`}
-            title={gpu.note}
-            data-busy={gpu.busy ? 'true' : 'false'}
-          >
-            <span className={`glyph ${gpu.mark}`} aria-hidden="true" />
-            {gpu.label}
-          </span>
-        </div>
-      </header>
 
-      <section className={`home ${isEmpty ? 'home--empty' : ''}`}>
-        <aside className="home__list" aria-label="工作区列表">
-          {sessions === null && failure === null && <p className="hint">正在取列表…</p>}
-          {sessions !== null && sessions.sessions.length === 0 && (
-            <div className="ws-empty">
-              <div className="ws-empty__logo" aria-hidden="true">
-                ◇
-              </div>
-              <div className="ws-empty__title">{lines.title}</div>
-              <div className="ws-empty__body">{lines.body}</div>
-            </div>
-          )}
+          {sessions === null && failure === null && <p className="hint">正在读取列表…</p>}
           {sessions !== null && sessions.sessions.length > 0 && (
             <>
-              {/* 清单头顶这一行只说两件事：这一列是什么、共几场。左列原先光秃秃地
-                  起一行，得先认出「这是一份清单」才看得懂下面那一行。 */}
+              {/* 清单头顶这一行只说两件事：这一列是什么、共几个 */}
               <div className="wslist__head">
-                <span>我这些会</span>
+                <span>工作区</span>
                 <span className="num">{sessions.sessions.length}</span>
               </div>
-              <div className="list wslist" role="listbox" aria-label="这些会">
+              <div className="list wslist" role="listbox" aria-label="工作区列表">
               {sessions.sessions.map((row) => {
                 const cell = rowStatusView(row, postJob);
+                const dur = rowDurationLabel(row);
                 return (
                 <div
                   key={row.dir}
@@ -743,6 +713,8 @@ export function WorkspaceHome({
                 >
                   <span className="wslist__name">{row.session_id ?? row.dir}</span>
                   <span className="wslist__path num">{row.dir}</span>
+                  {/* 盘上录到的总时长：清单里一眼看出这一场多长 */}
+                  {dur !== null && <span className="wslist__dur num">{dur}</span>}
                   {/* 行四态（R27）：字 + 图形两条通道并存，颜色只是冗余的那一半。
                       判据在 `home/progress.ts` 的 `rowStatusView()`。 */}
                   <span
@@ -760,7 +732,7 @@ export function WorkspaceHome({
                   <button
                     className="btn btn--small btn--ghost wslist__remove"
                     type="button"
-                    title="只从列表移除，文件一个字节不动；以后可用「新会议」收回"
+                    title="仅从列表移除，不修改磁盘文件；可通过「添加工作区」重新加入"
                     disabled={busy}
                     onClick={(event) => {
                       event.stopPropagation();
@@ -775,15 +747,53 @@ export function WorkspaceHome({
               </div>
             </>
           )}
+
+          {/* 忙闲一格住在这一列的末尾（R31）：读法与判据在 `home/progress.ts`
+              的 `gpuBusyView()`。全站没有全局进度条 —— 进度跟着各自的工作区走。 */}
+          <div className="home__foot">
+            <span
+              className={`gpucell ${gpu.busy ? 'gpucell--busy' : ''}`}
+              title={gpu.note}
+              data-busy={gpu.busy ? 'true' : 'false'}
+            >
+              <span className={`glyph ${gpu.mark}`} aria-hidden="true" />
+              {gpu.label}
+            </span>
+          </div>
         </aside>
 
         <div className="home__aside">
-          {selected === null ? (
-            // 一场都没有时不说「左边挑一场」：左边是空的，那句话这时候是错的
-            isEmpty ? null : <p className="hint">左边挑一场，或按「新会议」。</p>
+          {isEmpty ? (
+            <div className="ws-empty">
+              <div className="ws-empty__logo" aria-hidden="true">
+                ◇
+              </div>
+              <div className="ws-empty__title">{lines.title}</div>
+              <div className="ws-empty__body">{lines.body}</div>
+            </div>
+          ) : selected === null ? (
+            <p className="hint">尚未选择工作区。</p>
           ) : (
             <div className="wspane">
-              <div className="wspane__title">{selected.session_id ?? selected.dir}</div>
+              {/* 面板头：这一场是谁 + 拿它录一段。动作钮长在面板里面 ——
+                  它作用的正是左边选中那一行（`startWhy()` 给按不动时那句原因）。 */}
+              <div className="wspane__head">
+                <div className="wspane__title">{selected.session_id ?? selected.dir}</div>
+                <div className="wspane__headacts">
+                  <button
+                    className="btn btn--primary btn--start"
+                    type="button"
+                    disabled={busy || whyForSelected !== null}
+                    title={whyForSelected ?? RECORD_HINT}
+                    onClick={startSelected}
+                  >
+                    {startButtonLabel(selected)}
+                  </button>
+                  {whyForSelected !== null && (
+                    <p className="wspane__why">{whyForSelected}</p>
+                  )}
+                </div>
+              </div>
               {/* 工作区分两栏（宽屏并排、窄屏上下摞，见 `live.css` §7.10 第 8 条）：
                   这一栏说「这一场是谁」，下一栏说「拿它做什么」。 */}
               <div className="wspane__read">
@@ -835,19 +845,18 @@ export function WorkspaceHome({
                   </>
                 );
               })()}
-              {whyForSelected !== null && <p className="wspane__why">{whyForSelected}</p>}
-              </div>
 
-              <div className="wspane__work">
+              {/* 会后那两个按钮跟读数住同一栏：宽屏上左栏是「这一场是谁 + 拿它做什么」，
+                  右栏是「会后跑得怎么样」——按下与看着并排，眼睛不用来回找 */}
               {post !== null && (
                 <div className="wspane__post" aria-label="会后">
                   <div className="wspane__posttitle">会后</div>
                   <div className="wspane__postacts">
                     <button
-                      className="btn btn--primary"
+                      className="btn"
                       type="button"
                       disabled={busy || !post.canPostOffline}
-                      title="走离线模型把整段录音重跑一遍，出带说话人编号的那一份稿；慢，占显卡"
+                      title="用离线模型重新转写整段录音，产出带说话人编号的会后精细稿；耗时较长，占用显卡"
                       onClick={() => postSelected(POST_OFFLINE_ACTION)}
                     >
                       生成会后精细稿
@@ -856,10 +865,10 @@ export function WorkspaceHome({
                       className="btn"
                       type="button"
                       disabled={busy || !post.canPostMinutes}
-                      title="把这一场手上有的稿子交给 DSH 出纪要；缺会后稿就按现有档位来"
+                      title="把该工作区现有的稿子交给 DSH 生成纪要；缺少会后精细稿时按现有档位处理"
                       onClick={() => postSelected(POST_MINUTES_ACTION)}
                     >
-                      直接出纪要
+                      生成纪要
                     </button>
                   </div>
                   {post.offlineNotice !== null && (
@@ -868,7 +877,7 @@ export function WorkspaceHome({
                   {post.why !== null && <p className="wspane__why">{post.why}</p>}
                   {postNote !== null && <p className="wspane__postline">{postNote}</p>}
                   {/* 说话人名字（R10 第四条）：会后区的一行入口，点开小弹窗当场改名。
-                      这一场还在录 / 收尾没落定 / 目录不在原地时与两个按钮同判按不动。 */}
+                      这一场还在录 / 收尾没落定 / 目录不存在时与两个按钮同判按不动。 */}
                   <p className="wspane__postline">
                     <button
                       className="btn btn--small btn--ghost"
@@ -876,7 +885,7 @@ export function WorkspaceHome({
                       disabled={busy || post.why !== null}
                       title={
                         post.why ??
-                        '给这一场的说话人起名；名字跟着这一场的目录走，下一次出纪要自动带上'
+                        '为该工作区的说话人命名；名字随该工作区目录保存，生成纪要时自动带上'
                       }
                       onClick={() => setNamesOpen(true)}
                     >
@@ -885,7 +894,9 @@ export function WorkspaceHome({
                   </p>
                 </div>
               )}
+              </div>
 
+              <div className="wspane__work">
               {/* 会后进度区（R27）：可展开收缩；展开是逐块行往下刷 + 每路一条的进度条。
                   读数是 `GET /api/sessions/{id}` 那只纯读端点的原文，轮询只在有活动时开。
                   「停着一版 running」按 `in_process` 分层如实画，不替盘上的话下结论。 */}
@@ -904,13 +915,13 @@ export function WorkspaceHome({
                       </span>
                     )}
                     {/* 停止入口（R28 / b1c6a58e）：只在这一场的 offline 在飞时出现。
-                        受理即回——当前块收尾之后停，盘上状态写成「被打断」。 */}
+                        受理即回——当前块收尾之后停，盘上状态记为「已中断」。 */}
                     {stop.visible && (
                       <button
                         className="btn btn--small btn--ghost wsprog__stop"
                         type="button"
                         disabled={busy}
-                        title="停在当前块收尾之后；已跑过的块留在逐块账里，重新按按钮可从头再跑"
+                        title="在当前分块结束后停止；已完成的块保留在逐块记录中，可重新运行"
                         onClick={stopPost}
                       >
                         停止
@@ -958,7 +969,7 @@ export function WorkspaceHome({
                           <div className="wsprog__rows" role="list" aria-label="逐块记录">
                             {chunkRows.length === 0 && (
                               <p className="wsprog__row wsprog__row--empty">
-                                还没有块跑完的记录。
+                                暂无逐块记录。
                               </p>
                             )}
                             {chunkRows.map((item) => (
@@ -967,15 +978,15 @@ export function WorkspaceHome({
                               </p>
                             ))}
                           </div>
-                          {/* 这四档读数只是给人看的账，不作判据（设计意图第 6、7 条 ——
-                              那句话是给维护者的，不摆到界面上） */}
+                          {/* 四档合计与已运行秒数：给人看的读数（设计意图第 6、7 条那句话
+                              是给维护者的口径，不摆到界面上） */}
                           <p className="hint">
                             {prog.elapsedSeconds === null
                               ? ''
-                              : `已跑 ${Math.round(prog.elapsedSeconds)} 秒 · `}
+                              : `已运行 ${Math.round(prog.elapsedSeconds)} 秒 · `}
                             {prog.counts.transcribed + prog.counts.silent + prog.counts.failed + prog.counts.unjudged} 块 ·
-                            跑成 {prog.counts.transcribed} · 静音 {prog.counts.silent} · 失败 {prog.counts.failed} ·
-                            未判 {prog.counts.unjudged}
+                            成功 {prog.counts.transcribed} · 静音 {prog.counts.silent} · 失败 {prog.counts.failed} ·
+                            未判定 {prog.counts.unjudged}
                           </p>
                         </>
                       )}
@@ -1025,9 +1036,9 @@ export function WorkspaceHome({
 
       {confirm !== null && confirm.what === 'unknown' && (
         <ConfirmDialog
-          title="把非空目录当工作区？"
-          text="这个目录不是空的、里面也没有会议材料。确认的话，它会被登记进左边的清单（目录里的文件原样不动）。"
-          confirmLabel="确认收编"
+          title="将该目录添加为工作区？"
+          text="该目录非空，且不含会议材料。确认后将登记到左侧列表，目录内文件保持不变。"
+          confirmLabel="确认添加"
           busy={busy}
           onConfirm={() => {
             const dir = confirm.dir;
@@ -1054,8 +1065,8 @@ export function WorkspaceHome({
 
       {confirm !== null && confirm.what === 'remove' && (
         <ConfirmDialog
-          title="从列表移除这一场？"
-          text="只把它从左边的清单里拿掉；工作区目录与里面所有文件一个字节不动。之后随时可用「新会议」把它收回来。"
+          title="从列表移除该工作区？"
+          text="仅从左侧列表移除，工作区目录及其中的文件保持不变；之后可通过「添加工作区」重新加入。"
           confirmLabel="从列表移除"
           busy={busy}
           onConfirm={() => {
@@ -1079,9 +1090,9 @@ export function WorkspaceHome({
 
       {confirm !== null && confirm.what === 'post-interrupt' && (
         <ConfirmDialog
-          title="启动新会议会打断正在跑的会后，是否继续？"
-          text="上一场的「生成会后精细稿」还在跑。继续的话先停掉它——已跑完的块留在逐块账里，盘上状态写成「被打断」，以后可以重新按按钮从头再跑——然后登记你挑的这个目录。取消就什么都不发生。"
-          confirmLabel="打断并继续"
+          title="正在运行的会后任务将被中断，是否继续？"
+          text="「生成会后精细稿」正在运行。继续将先停止该任务（已完成的块保留在逐块记录中，可重新运行），然后登记所选目录；取消则不执行任何操作。"
+          confirmLabel="中断并继续"
           busy={busy}
           onConfirm={() => {
             const { dir, viaConfirm } = confirm;

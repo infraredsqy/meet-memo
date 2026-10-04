@@ -135,7 +135,7 @@ async function mountHome(): Promise<TestRenderer.ReactTestRenderer> {
 
 function optionsOf(renderer: TestRenderer.ReactTestRenderer): TestRenderer.ReactTestInstance[] {
   return renderer.root.findAll(
-    (node) => node.props.role === 'option' && node.parent?.props['aria-label'] === '这些会',
+    (node) => node.props.role === 'option' && node.parent?.props['aria-label'] === '工作区列表',
   );
 }
 
@@ -174,7 +174,7 @@ describe('挂载即取列表（review-2 C1/m2）', () => {
     ).toBe(true);
   });
 
-  it('空注册表：出的是空态（logo + 新会议指引），不再是卡死的「正在取列表…」', async () => {
+  it('空注册表：出的是空态（logo + 添加工作区指引），不再是卡死的「正在取列表…」', async () => {
     fetchSessionsMock.mockResolvedValue(list());
     const renderer = await mountHome();
 
@@ -248,7 +248,7 @@ async function click(
 }
 
 describe('会后那两个按钮（review-1 m7）', () => {
-  it('点「生成会后精细稿」发出 post_offline、点「直接出纪要」发出 post_minutes，都带上选中那一行的 dir', async () => {
+  it('点「生成会后精细稿」发出 post_offline、点「生成纪要」发出 post_minutes，都带上选中那一行的 dir', async () => {
     fetchSessionsMock.mockResolvedValue(
       list({ sessions: [row({ dir: 'C:\\会议\\这一场', session_id: '这一场' })], recent: 'C:\\会议\\这一场' }),
     );
@@ -258,7 +258,7 @@ describe('会后那两个按钮（review-1 m7）', () => {
     await click(renderer, buttonByText(renderer, '生成会后精细稿'));
     expect(postActionMock).toHaveBeenLastCalledWith('post_offline', { dir: 'C:\\会议\\这一场' });
 
-    await click(renderer, buttonByText(renderer, '直接出纪要'));
+    await click(renderer, buttonByText(renderer, '生成纪要'));
     expect(postActionMock).toHaveBeenLastCalledWith('post_minutes', { dir: 'C:\\会议\\这一场' });
     // 起成功之后那一块如实写回执（不宣称跑完了）
     expect(postLines(renderer).join('\n')).toContain('这一趟已起');
@@ -272,7 +272,7 @@ describe('会后那两个按钮（review-1 m7）', () => {
     );
     const renderer = await mountHome();
 
-    expect(postLines(renderer).join('\n')).toContain('这一场有会后精细稿');
+    expect(postLines(renderer).join('\n')).toContain('会后精细稿：有');
 
     // 选中另一行（没有会后稿那一行）之后，那一格跟着换成另一句
     const rows = optionsOf(renderer);
@@ -284,7 +284,7 @@ describe('会后那两个按钮（review-1 m7）', () => {
     await act(async () => {
       other?.props.onClick();
     });
-    expect(postLines(renderer).join('\n')).toContain('这一场还没有会后精细稿');
+    expect(postLines(renderer).join('\n')).toContain('会后精细稿：无');
   });
 
   it('按钮被拒（409 draining）时失败块出列，回执那一行不留假成功', async () => {
@@ -296,7 +296,7 @@ describe('会后那两个按钮（review-1 m7）', () => {
     );
     const renderer = await mountHome();
 
-    await click(renderer, buttonByText(renderer, '直接出纪要'));
+    await click(renderer, buttonByText(renderer, '生成纪要'));
 
     const failures = renderer.root.findAll((node) => node.props.className === 'fail');
     expect(failures).toHaveLength(1);
@@ -313,21 +313,21 @@ describe('会后那两个按钮（review-1 m7）', () => {
     const renderer = await mountHome();
 
     expect(buttonByText(renderer, '生成会后精细稿').props.disabled).toBe(true);
-    expect(buttonByText(renderer, '直接出纪要').props.disabled).toBe(true);
+    expect(buttonByText(renderer, '生成纪要').props.disabled).toBe(true);
     const whys = renderer.root
       .findAll((node) => node.props.className === 'wspane__why')
       .map((node) => `${node.props.children}`);
-    expect(whys.join('\n')).toContain('目录已不在原地');
-    // 原因句只有一处（`wspane__why`）：会后那一格不复述，也不把「路径已不在」搬过来
-    expect(postLines(renderer).join('\n')).not.toContain('路径已不在');
+    expect(whys.join('\n')).toContain('目录不存在');
+    // 原因句只有一处（`wspane__why`）：会后那一格不复述，也不把「目录不存在」搬过来
+    expect(postLines(renderer).join('\n')).not.toContain('目录不存在');
     expect(postLines(renderer).join('\n')).not.toContain('跑不了会后');
     const stateCells = renderer.root
       .findAll((node) => `${node.props.className}`.includes('wslist__state'))
       .map((node) => textOf(node));
-    expect(stateCells.join('\n'), '那一行还是按路径那一格说「路径已不在」').toContain('路径已不在');
+    expect(stateCells.join('\n'), '那一行还是按路径那一格说「目录不存在」').toContain('目录不存在');
   });
 
-  it('还在录那一档：两个按钮都按不动，那一格把「还在录」与「盘上会后稿：有」并列说（review-2 C1/m2）', async () => {
+  it('还在录那一档：两个按钮都按不动，那一格把「还在录」与「磁盘上的会后精细稿：有」并列说（review-2 C1/m2）', async () => {
     fetchSessionsMock.mockResolvedValue(
       list({
         sessions: [row({ dir: 'C:\\会议\\在录', state: 'recording', has_offline: true })],
@@ -337,20 +337,20 @@ describe('会后那两个按钮（review-1 m7）', () => {
     const renderer = await mountHome();
 
     expect(buttonByText(renderer, '生成会后精细稿').props.disabled).toBe(true);
-    expect(buttonByText(renderer, '直接出纪要').props.disabled).toBe(true);
+    expect(buttonByText(renderer, '生成纪要').props.disabled).toBe(true);
     const whys = renderer.root
       .findAll((node) => node.props.className === 'wspane__why')
       .map((node) => `${node.props.children}`);
-    expect(whys.join('\n')).toContain('这一场还在录 / 还在收尾');
+    expect(whys.join('\n')).toContain('该工作区正在录音或收尾中');
     const lines = postLines(renderer).join('\n');
     // 两件事都在：这一场还没落定 + 盘上此刻那一份的读数（不许哪一句盖住另一句）
-    expect(lines).toContain('这一场还在录 / 还在收尾');
-    expect(lines).toContain('盘上会后稿：有');
-    // 也不许单方面断言「这一场有会后精细稿」（那是落定之后那一档的话）
-    expect(lines).not.toContain('这一场有会后精细稿');
+    expect(lines).toContain('该工作区正在录音或收尾中');
+    expect(lines).toContain('磁盘上的会后精细稿：有');
+    // 也不许换成落定之后那一句（那一行列的是收尾落定之后的话）
+    expect(lines.split('\n')).not.toContain('会后精细稿：有');
   });
 
-  it('还在收尾那一档：两个按钮都按不动，那一格照实说「盘上会后稿：没有」（review-2 C1/m2）', async () => {
+  it('还在收尾那一档：两个按钮都按不动，那一格照实说「磁盘上的会后精细稿：没有」（review-2 C1/m2）', async () => {
     fetchSessionsMock.mockResolvedValue(
       list({
         sessions: [row({ dir: 'C:\\会议\\在收尾', state: 'draining', has_offline: false })],
@@ -360,11 +360,11 @@ describe('会后那两个按钮（review-1 m7）', () => {
     const renderer = await mountHome();
 
     expect(buttonByText(renderer, '生成会后精细稿').props.disabled).toBe(true);
-    expect(buttonByText(renderer, '直接出纪要').props.disabled).toBe(true);
+    expect(buttonByText(renderer, '生成纪要').props.disabled).toBe(true);
     const lines = postLines(renderer).join('\n');
-    expect(lines).toContain('这一场还在录 / 还在收尾');
-    expect(lines).toContain('盘上会后稿：没有');
-    expect(lines).not.toContain('这一场还没有会后精细稿');
+    expect(lines).toContain('该工作区正在录音或收尾中');
+    expect(lines).toContain('磁盘上的会后精细稿：无');
+    expect(lines.split('\n')).not.toContain('会后精细稿：无');
   });
 });
 
@@ -456,7 +456,7 @@ describe('说话人名字（R10 第四条 / R30）', () => {
       (node) => node.props.role === 'dialog' && node.props['aria-label'] === '说话人名字',
     );
     expect(textOf(dialogs[0] as TestRenderer.ReactTestInstance)).toContain(
-      '编号是分开的，可以重名',
+      '编号相互独立，允许重名',
     );
     expect(postActionMock).toHaveBeenLastCalledWith('speaker_rename', {
       dir,
@@ -503,7 +503,7 @@ describe('说话人名字（R10 第四条 / R30）', () => {
     );
     const dialogText = textOf(dialogs[0] as TestRenderer.ReactTestInstance);
     expect(dialogText).not.toContain('已照你写的名字提交');
-    expect(dialogText).not.toContain('编号是分开的');
+    expect(dialogText).not.toContain('允许重名');
     // 失败块如实出列：code 与服务那句拒写的话都在（不冒成功）
     const failures = renderer.root.findAll((node) => node.props.className === 'fail');
     expect(failures).toHaveLength(1);
@@ -531,10 +531,10 @@ describe('说话人名字（R10 第四条 / R30）', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 停掉会后与「新会议会打断」确认（R28 / b1c6a58e）
+// 停掉会后与「添加工作区会打断」确认（R28 / b1c6a58e）
 // ---------------------------------------------------------------------------
 
-const stopDir = 'C:\\会议\\正在跑会后';
+const stopDir = 'C:\\会议\\正在运行会后';
 
 /** 一份「这一场的 offline 正在飞」的列表应答（顶层第三格 + 盘上 done 的行）。 */
 function flyingList(
@@ -581,7 +581,7 @@ const nonEmptyDirs: DirsResponse = {
   dirs: [{ name: '旧文件夹', dir: 'C:\\杂物\\旧文件夹', kind: 'unknown', suspected: false }],
 };
 
-describe('停掉会后与「新会议会打断」确认（R28 / b1c6a58e）', () => {
+describe('停掉会后与「添加工作区会打断」确认（R28 / b1c6a58e）', () => {
   it('这一场的 offline 在飞：进度区头行有「停止」，点了发出 post_stop 并如实写受理那一行', async () => {
     fetchSessionsMock.mockResolvedValue(flyingList());
     postActionMock.mockResolvedValue({
@@ -615,24 +615,24 @@ describe('停掉会后与「新会议会打断」确认（R28 / b1c6a58e）', ()
     ).toHaveLength(0);
   });
 
-  it('会后在跑时按「新会议」挑目录：先弹「打断」确认；确认 = 先 post_stop 再 workspace_open', async () => {
+  it('会后在跑时按「添加工作区」挑目录：先弹「打断」确认；确认 = 先 post_stop 再 workspace_open', async () => {
     fetchSessionsMock.mockResolvedValue(flyingList());
     browseDirsMock.mockResolvedValue(emptyDirs);
     postActionMock.mockResolvedValue({ kind: 'ok', ok: true, revision: 9 });
     const renderer = await mountHome();
 
-    await click(renderer, buttonByText(renderer, '新会议'));
+    await click(renderer, buttonByText(renderer, '添加工作区'));
     await act(async () => {
       pickerRowButton(renderer, '新场').props.onClick();
     });
 
     const dialogs = renderer.root.findAll((node) => node.props.role === 'dialog');
     const dialogText = dialogs.map((node) => textOf(node as TestRenderer.ReactTestInstance)).join('\n');
-    expect(dialogText).toContain('启动新会议会打断正在跑的会后');
+    expect(dialogText).toContain('正在运行的会后任务将被中断，是否继续？');
     // 确认之前什么都不发（不确认就不打断）
     expect(postActionMock).not.toHaveBeenCalled();
 
-    await click(renderer, buttonByText(renderer, '打断并继续'));
+    await click(renderer, buttonByText(renderer, '中断并继续'));
 
     const calls = postActionMock.mock.calls.map(([name]) => name);
     expect(calls).toContain('post_stop');
@@ -646,7 +646,7 @@ describe('停掉会后与「新会议会打断」确认（R28 / b1c6a58e）', ()
     browseDirsMock.mockResolvedValue(emptyDirs);
     const renderer = await mountHome();
 
-    await click(renderer, buttonByText(renderer, '新会议'));
+    await click(renderer, buttonByText(renderer, '添加工作区'));
     await act(async () => {
       pickerRowButton(renderer, '新场').props.onClick();
     });
@@ -655,13 +655,13 @@ describe('停掉会后与「新会议会打断」确认（R28 / b1c6a58e）', ()
     expect(postActionMock).not.toHaveBeenCalled();
   });
 
-  it('会后没在跑：按「新会议」挑目录直接登记（不打扰）', async () => {
+  it('会后没在跑：按「添加工作区」挑目录直接登记（不打扰）', async () => {
     fetchSessionsMock.mockResolvedValue(list({ sessions: [row({ dir: stopDir })], recent: stopDir }));
     browseDirsMock.mockResolvedValue(emptyDirs);
     postActionMock.mockResolvedValue({ kind: 'ok', ok: true, revision: 10 });
     const renderer = await mountHome();
 
-    await click(renderer, buttonByText(renderer, '新会议'));
+    await click(renderer, buttonByText(renderer, '添加工作区'));
     await act(async () => {
       pickerRowButton(renderer, '新场').props.onClick();
     });
@@ -670,7 +670,7 @@ describe('停掉会后与「新会议会打断」确认（R28 / b1c6a58e）', ()
     expect(postActionMock.mock.calls.map(([name]) => name)).not.toContain('post_stop');
   });
 
-  it('在飞的是 minutes：按「新会议」挑目录无确认、零 stop、直接登记（review-1 m1）', async () => {
+  it('在飞的是 minutes：按「添加工作区」挑目录无确认、零 stop、直接登记（review-1 m1）', async () => {
     fetchSessionsMock.mockResolvedValue(
       flyingList({ kind: 'minutes', dir: stopDir, started_at: '2026-09-21T22:10:00+08:00' }),
     );
@@ -678,12 +678,12 @@ describe('停掉会后与「新会议会打断」确认（R28 / b1c6a58e）', ()
     postActionMock.mockResolvedValue({ kind: 'ok', ok: true, revision: 11 });
     const renderer = await mountHome();
 
-    await click(renderer, buttonByText(renderer, '新会议'));
+    await click(renderer, buttonByText(renderer, '添加工作区'));
     await act(async () => {
       pickerRowButton(renderer, '新场').props.onClick();
     });
 
-    // 没有东西会被打断：不弹任何确认（minutes 在飞不摆打断那只）
+    // 没有东西会已中断：不弹任何确认（minutes 在飞不摆打断那只）
     expect(renderer.root.findAll((node) => node.props.role === 'dialog')).toHaveLength(0);
     expect(postActionMock).toHaveBeenLastCalledWith('workspace_open', { dir: 'C:\\会议\\新场' });
     expect(postActionMock.mock.calls.map(([name]) => name)).not.toContain('post_stop');
@@ -697,7 +697,7 @@ describe('停掉会后与「新会议会打断」确认（R28 / b1c6a58e）', ()
     postActionMock.mockResolvedValue({ kind: 'ok', ok: true, revision: 12 });
     const renderer = await mountHome();
 
-    await click(renderer, buttonByText(renderer, '新会议'));
+    await click(renderer, buttonByText(renderer, '添加工作区'));
     await act(async () => {
       pickerRowButton(renderer, '旧文件夹').props.onClick();
     });
@@ -705,10 +705,10 @@ describe('停掉会后与「新会议会打断」确认（R28 / b1c6a58e）', ()
     // 先按 R20 问收编；打断那一问要等收编过了、且 offline 在飞才轮到
     const dialogs = renderer.root.findAll((node) => node.props.role === 'dialog');
     expect(dialogs).toHaveLength(1);
-    expect(textOf(dialogs[0] as TestRenderer.ReactTestInstance)).toContain('把非空目录当工作区');
-    await click(renderer, buttonByText(renderer, '确认收编'));
+    expect(textOf(dialogs[0] as TestRenderer.ReactTestInstance)).toContain('将该目录添加为工作区？');
+    await click(renderer, buttonByText(renderer, '确认添加'));
 
-    // 收编过了直接登记：不再有第二问（minutes 在飞没有东西会被打断）
+    // 收编过了直接登记：不再有第二问（minutes 在飞没有东西会已中断）
     expect(renderer.root.findAll((node) => node.props.role === 'dialog')).toHaveLength(0);
     expect(postActionMock).toHaveBeenLastCalledWith('workspace_open', {
       dir: 'C:\\杂物\\旧文件夹',
@@ -723,7 +723,7 @@ describe('停掉会后与「新会议会打断」确认（R28 / b1c6a58e）', ()
     postActionMock.mockResolvedValue({ kind: 'ok', ok: true, revision: 13 });
     const renderer = await mountHome();
 
-    await click(renderer, buttonByText(renderer, '新会议'));
+    await click(renderer, buttonByText(renderer, '添加工作区'));
     await act(async () => {
       pickerRowButton(renderer, '旧文件夹').props.onClick();
     });
@@ -731,20 +731,20 @@ describe('停掉会后与「新会议会打断」确认（R28 / b1c6a58e）', ()
     // 第一问：收编（R20）；此刻零发送
     const dialogs = renderer.root.findAll((node) => node.props.role === 'dialog');
     expect(dialogs).toHaveLength(1);
-    expect(textOf(dialogs[0] as TestRenderer.ReactTestInstance)).toContain('把非空目录当工作区');
+    expect(textOf(dialogs[0] as TestRenderer.ReactTestInstance)).toContain('将该目录添加为工作区？');
     expect(postActionMock).not.toHaveBeenCalled();
 
-    await click(renderer, buttonByText(renderer, '确认收编'));
+    await click(renderer, buttonByText(renderer, '确认添加'));
 
     // 第二问：打断（次序断言）；此刻仍然零发送
     const after = renderer.root.findAll((node) => node.props.role === 'dialog');
     expect(after).toHaveLength(1);
     expect(textOf(after[0] as TestRenderer.ReactTestInstance)).toContain(
-      '启动新会议会打断正在跑的会后',
+      '正在运行的会后任务将被中断，是否继续？',
     );
     expect(postActionMock).not.toHaveBeenCalled();
 
-    await click(renderer, buttonByText(renderer, '打断并继续'));
+    await click(renderer, buttonByText(renderer, '中断并继续'));
 
     const calls = postActionMock.mock.calls.map(([name]) => name);
     expect(calls.indexOf('post_stop')).toBeLessThan(calls.indexOf('workspace_open'));
@@ -759,7 +759,7 @@ describe('停掉会后与「新会议会打断」确认（R28 / b1c6a58e）', ()
     browseDirsMock.mockResolvedValue(nonEmptyDirs);
     const renderer = await mountHome();
 
-    await click(renderer, buttonByText(renderer, '新会议'));
+    await click(renderer, buttonByText(renderer, '添加工作区'));
     await act(async () => {
       pickerRowButton(renderer, '旧文件夹').props.onClick();
     });
@@ -773,11 +773,11 @@ describe('停掉会后与「新会议会打断」确认（R28 / b1c6a58e）', ()
     browseDirsMock.mockResolvedValue(nonEmptyDirs);
     const renderer = await mountHome();
 
-    await click(renderer, buttonByText(renderer, '新会议'));
+    await click(renderer, buttonByText(renderer, '添加工作区'));
     await act(async () => {
       pickerRowButton(renderer, '旧文件夹').props.onClick();
     });
-    await click(renderer, buttonByText(renderer, '确认收编'));
+    await click(renderer, buttonByText(renderer, '确认添加'));
     await click(renderer, buttonByText(renderer, '取消'));
 
     expect(postActionMock).not.toHaveBeenCalled();

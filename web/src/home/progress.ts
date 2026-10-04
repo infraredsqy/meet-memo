@@ -62,11 +62,11 @@ export interface RowStatusView {
  *
  * 判据按次序：
  *
- * - 目录不在原地 → 「路径已不在」（既有口径，最优先 —— 目录都没了，联结无从谈起）；
- * - `post_job.dir === row.dir` → 「会后跑着」（联结命中；跑的是哪一趟写在全局那格）；
- * - 盘上 `state`：`recording` → 正在录、`draining` → 收尾中；
- * - `done` / `failed` → **waiting 语义**（05a48b6a 立的账：收尾落定、会后归两个按钮、
- *   都不按就什么都不跑）——「等你动手」；失败那档在文字里把「收尾失败」说破；
+ * - 目录不在原地 → 「目录不存在」（最优先 —— 目录都没了，联结无从谈起）；
+ * - `post_job.dir === row.dir` → 「会后任务运行中」（联结命中；跑的是哪一趟写在全局那格）；
+ * - 盘上 `state`：`recording` → 录音中、`draining` → 收尾中；
+ * - `done` / `failed` → **待处理语义**（05a48b6a 立的账：收尾落定、会后归两个按钮，
+ *   都不按就什么都不跑）——「待处理」；失败那档在文字里把「收尾失败」说破；
  * - 其余（还没开过会的目录）→ 空闲族，文案以 `model.ts` `statusLabel()` 为唯一出处。
  */
 export function rowStatusView(row: SessionRow, postJob: PostJobCell | null): RowStatusView {
@@ -74,17 +74,17 @@ export function rowStatusView(row: SessionRow, postJob: PostJobCell | null): Row
     return { tone: 'gone', label: statusLabel(row), mark: 'glyph--dashed', dim: true };
   }
   if (postJob !== null && postJob.dir === row.dir) {
-    return { tone: 'post-running', label: '会后跑着', mark: null, dim: false };
+    return { tone: 'post-running', label: '会后任务运行中', mark: null, dim: false };
   }
   switch (row.state) {
     case 'recording':
-      return { tone: 'recording', label: '正在录', mark: 'glyph--rec', dim: false };
+      return { tone: 'recording', label: '录音中', mark: 'glyph--rec', dim: false };
     case 'draining':
       return { tone: 'draining', label: '收尾中', mark: 'glyph--draining', dim: false };
     case 'done':
-      return { tone: 'waiting', label: '等你动手', mark: 'glyph--dashed', dim: false };
+      return { tone: 'waiting', label: '待处理', mark: 'glyph--dashed', dim: false };
     case 'failed':
-      return { tone: 'waiting', label: '收尾失败 · 等你动手', mark: 'glyph--cross', dim: false };
+      return { tone: 'waiting', label: '收尾失败 · 待处理', mark: 'glyph--cross', dim: false };
     default:
       break;
   }
@@ -156,14 +156,14 @@ export function phaseMark(phase: OfflinePhase): string | null {
 /**
  * 终态那一档的人话。
  *
- * 这四档不能合成一句「跑完了」：盘上 `failed` / `partial` 是**没跑成**的两种场面，
+ * 这四档不能合成一句「已完成」：盘上 `failed` / `partial` 是**没跑成**的两种场面，
  * 笼统一句会把它们说反（先前那一版只能把盘上的词挂在括号里打补丁）。
  */
 const FINISHED_PHASE: Readonly<Record<string, string>> = {
-  done: '跑完了',
-  partial: '只跑成一路',
-  failed: '跑失败了',
-  ledger: '有逐块账，还没结论',
+  done: '已完成',
+  partial: '部分完成',
+  failed: '失败',
+  ledger: '有逐块记录，尚未出结论',
 };
 
 /** `offline` 那份 → 进度区的读数。判据逐条写在 `phaseLabel` 里，组件不解读。 */
@@ -206,15 +206,15 @@ export function progressView(status: SessionStatus): ProgressView {
   const phaseLabel =
     phase === 'in-flight'
       ? onTheRoad !== null && onTheRoad.currentChunk !== null
-        ? `正在跑：${onTheRoad.label} 第 ${onTheRoad.currentChunk}/${onTheRoad.total ?? '?'} 块`
-        : '正在跑'
+        ? `正在运行：${onTheRoad.label} 第 ${onTheRoad.currentChunk}/${onTheRoad.total ?? '?'} 块`
+        : '正在运行'
       : phase === 'stale-running'
-        ? '盘上停着一版「在跑」，此刻没有任何东西在跑'
+        ? '磁盘记录为运行中，当前没有进程在运行'
         : phase === 'interrupted'
-          ? '被打断'
+          ? '已中断'
           : phase === 'never-run'
-            ? '这一场还没跑过会后'
-            : FINISHED_PHASE[offline.state] ?? `盘上记作 ${offline.state}`;
+            ? '尚未运行'
+            : FINISHED_PHASE[offline.state] ?? `磁盘记录：${offline.state}`;
 
   return {
     phase,
@@ -247,11 +247,11 @@ export interface ChunkRow {
 }
 
 const VERDICT_LABELS: Readonly<Record<ChunkVerdict, string>> = {
-  transcribed: '跑成',
+  transcribed: '成功',
   silent: '静音',
   failed: '失败',
-  unjudged: '未判',
-  observed: '已跑过',
+  unjudged: '未判定',
+  observed: '已处理',
 };
 
 /** 逐块行上那句人话（一处定义，组件不拼句子）。 */

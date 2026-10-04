@@ -45,8 +45,8 @@ export function postButtonsView(row: SessionRow): PostButtonsView {
     return {
       canPostOffline: false,
       canPostMinutes: false,
-      why: '目录已不在原地，跑不了会后',
-      // 「路径已不在」是**路径那一格**的说法（`statusLabel()`、`wslist__state`）；摆到这一格上
+      why: '目录不存在，无法运行会后任务',
+      // 「目录不存在」是**路径那一格**的说法（`statusLabel()`、`wslist__state`）；摆到这一格上
       // 会被读成在回答会后稿的事。上面那句 `why` 已经把「跑不了」说完了，这一格不再复述。
       offlineNotice: null,
     };
@@ -55,7 +55,7 @@ export function postButtonsView(row: SessionRow): PostButtonsView {
     return {
       canPostOffline: false,
       canPostMinutes: false,
-      why: '这一场还在录 / 还在收尾',
+      why: '该工作区正在录音或收尾中',
       offlineNotice: unsettledOfflineNotice(row),
     };
   }
@@ -69,11 +69,11 @@ export function postButtonsView(row: SessionRow): PostButtonsView {
 
 /** 「出纪要」按钮上那一格：这一场有没有会后精细稿（R29 / `has_offline`）。 */
 export function offlineNoticeOf(row: SessionRow): string {
-  return row.has_offline ? '这一场有会后精细稿' : '这一场还没有会后精细稿';
+  return row.has_offline ? '会后精细稿：有' : '会后精细稿：无';
 }
 
 /**
- * 「这一场还在录 / 还在收尾」那一档的那一格：**两件事并列说，各说各的**（review-2 C1）。
+ * 「该工作区正在录音或收尾中」那一档的那一格：**两件事并列说，各说各的**（review-2 C1）。
  *
  * 「这一场还没落定」与「盘上此刻有没有那份会后稿」是两件各自为真的事：盘上那一份只能按
  * 名目读（`has_offline` 只看文件名 —— `meeting/workspace.py`），同一个目录被重开一场新会时
@@ -81,8 +81,8 @@ export function offlineNoticeOf(row: SessionRow): string {
  * 按不动就把「盘上有没有」收起来，也不拿「盘上有」盖住「这一场还没落定」。
  */
 export function unsettledOfflineNotice(row: SessionRow): string {
-  const onDisk = row.has_offline ? '有' : '没有';
-  return `这一场还在录 / 还在收尾；盘上会后稿：${onDisk}`;
+  const onDisk = row.has_offline ? '有' : '无';
+  return `该工作区正在录音或收尾中；磁盘上的会后精细稿：${onDisk}`;
 }
 
 // ---------------------------------------------------------------------------

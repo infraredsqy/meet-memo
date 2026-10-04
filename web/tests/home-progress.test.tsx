@@ -202,12 +202,12 @@ describe('会后进度区：换值渲染不塌', () => {
     const renderer = await mountHome();
     await feed(); // 用例自己再喂一跳（同一份替身读数）
 
-    expect(textsOf(renderer, 'wsprog__phase').join(' ')).toContain('正在跑：本地 第 2/10 块');
+    expect(textsOf(renderer, 'wsprog__phase').join(' ')).toContain('正在运行：本地 第 2/10 块');
     const frac = textsOf(renderer, 'wsprog__frac').join(' ');
     expect(frac).toContain('1/10');
     expect(frac).toContain('0/10');
-    // 第一跳已跑过的一块补成 observed 行（事实如实：档位读不着不编）
-    expect(textsOf(renderer, 'wsprog__row').join(' ')).toContain('本地 第 1/10 块 · 已跑过');
+    // 第一跳已处理的一块补成 observed 行（事实如实：档位读不着不编）
+    expect(textsOf(renderer, 'wsprog__row').join(' ')).toContain('本地 第 1/10 块 · 已处理');
     // 进度条那格真的把 --p 写上了（组件只摆，长短归样式）
     const fills = renderer.root.findAll((node) => node.props.className === 'wsprog__fill');
     expect(fills).toHaveLength(2);
@@ -244,13 +244,13 @@ describe('会后进度区：换值渲染不塌', () => {
     );
     await feed();
 
-    expect(textsOf(renderer, 'wsprog__phase').join(' ')).toContain('正在跑：本地 第 10/10 块');
+    expect(textsOf(renderer, 'wsprog__phase').join(' ')).toContain('正在运行：本地 第 10/10 块');
     const rows = textsOf(renderer, 'wsprog__row').join('\n');
-    // 差值归档：上一跳已有 1 成，这一跳差值 = 成 7 + 败 1 → 第 2–8 块跑成、第 9 块失败
-    expect(rows).toContain('本地 第 8/10 块 · 跑成');
+    // 差值归档：上一跳已有 1 成，这一跳差值 = 成 7 + 败 1 → 第 2–8 块成功、第 9 块失败
+    expect(rows).toContain('本地 第 8/10 块 · 成功');
     expect(rows).toContain('本地 第 9/10 块 · 失败');
-    expect(rows).toContain('远端 第 1/10 块 · 跑成');
-    expect(rows).toContain('远端 第 2/10 块 · 跑成');
+    expect(rows).toContain('远端 第 1/10 块 · 成功');
+    expect(rows).toContain('远端 第 2/10 块 · 成功');
   });
 
   it('停着一版 running：in_process=false 时阶段行换成「没有任何东西在跑」，不冒充在飞', async () => {
@@ -268,7 +268,7 @@ describe('会后进度区：换值渲染不塌', () => {
     );
     const renderer = await mountHome();
 
-    expect(textsOf(renderer, 'wsprog__phase').join(' ')).toContain('盘上停着一版「在跑」，此刻没有任何东西在跑');
+    expect(textsOf(renderer, 'wsprog__phase').join(' ')).toContain('磁盘记录为运行中，当前没有进程在运行');
     // 阶段格的形状通道画的是红叉（出事了那一档的形状），转圈留给真在跑的那一档
     const phase = renderer.root.find(
       (node) => `${node.props.className ?? ''}`.split(' ').includes('wsprog__phase'),
@@ -337,10 +337,10 @@ describe('行四态与全局一格：可识别、不塌', () => {
 
     const find = (tone: string) => joined.filter((item) => item.cls.includes(`--${tone}`));
     expect(find('idle')[0]?.text).toBe('空白工作区');
-    expect(find('recording')[0]?.text).toBe('正在录');
-    expect(find('post-running')[0]?.text).toBe('会后跑着');
-    expect(find('waiting')[0]?.text).toBe('等你动手');
-    // 图形通道逐行都在：空闲空心框、在录实心圆、会后跑着转圈、等动手虚线圈
+    expect(find('recording')[0]?.text).toBe('录音中');
+    expect(find('post-running')[0]?.text).toBe('会后任务运行中');
+    expect(find('waiting')[0]?.text).toBe('待处理');
+    // 图形通道逐行都在：空闲空心框、在录实心圆、会后任务运行中转圈、等动手虚线圈
     const marks = cells.map((node) =>
       (node.children as unknown[])
         .filter((child) => child !== null && typeof child === 'object')
@@ -422,7 +422,7 @@ describe('联结档收敛（review-1 C1）：跑完那一跳之后界面要跟�
     );
     const renderer = await mountHome();
     expect(pollerOf().start).toHaveBeenCalledWith(DIR);
-    expect(rowStatesOf(renderer)).toContain('会后跑着');
+    expect(rowStatesOf(renderer)).toContain('会后任务运行中');
     expect(gpuCellOf(renderer).props['data-busy']).toBe('true');
 
     // 跑完：读数翻终态、服务把 post_job 翻 null —— 这一次翻账要全跟上（旧行为全部卡死）
@@ -438,8 +438,8 @@ describe('联结档收敛（review-1 C1）：跑完那一跳之后界面要跟�
 
     expect(pollerOf().stop).toHaveBeenCalled();
     expect(fetchSessionsMock).toHaveBeenCalledTimes(2);
-    expect(rowStatesOf(renderer)).not.toContain('会后跑着');
-    expect(rowStatesOf(renderer)).toContain('等你动手');
+    expect(rowStatesOf(renderer)).not.toContain('会后任务运行中');
+    expect(rowStatesOf(renderer)).toContain('待处理');
     expect(gpuCellOf(renderer).props['data-busy']).toBe('false');
     await act(async () => {
       renderer.unmount();
@@ -460,7 +460,7 @@ describe('联结档收敛（review-1 C1）：跑完那一跳之后界面要跟�
       });
       const renderer = await mountHome();
       expect(fetchSessionsMock).toHaveBeenCalledTimes(1); // 只有挂载那一次
-      expect(rowStatesOf(renderer)).toContain('会后跑着');
+      expect(rowStatesOf(renderer)).toContain('会后任务运行中');
       expect(gpuCellOf(renderer).props['data-busy']).toBe('true');
 
       // 跑完：服务翻 null；下一拍心跳重取，A 行翻回、全局格翻闲
@@ -469,7 +469,7 @@ describe('联结档收敛（review-1 C1）：跑完那一跳之后界面要跟�
         await vi.advanceTimersByTimeAsync(10_000);
       });
       expect(fetchSessionsMock).toHaveBeenCalledTimes(2);
-      expect(rowStatesOf(renderer)).not.toContain('会后跑着');
+      expect(rowStatesOf(renderer)).not.toContain('会后任务运行中');
       expect(gpuCellOf(renderer).props['data-busy']).toBe('false');
 
       // post_job 清 null → 心跳停：再走两拍也不再取
@@ -572,8 +572,8 @@ describe('按钮起跑档（review-2 C1）：post_job 出现在选中行上之�
     );
     const renderer = await mountHome();
     expect(pollerOf().start).not.toHaveBeenCalled();
-    // 旧趟的逐块行在手（挂载那一跳把已跑过的补成 observed 行）
-    expect(textsOf(renderer, 'wsprog__row').join(' ')).toContain('本地 第 10/10 块 · 已跑过');
+    // 旧趟的逐块行在手（挂载那一跳把已处理的补成 observed 行）
+    expect(textsOf(renderer, 'wsprog__row').join(' ')).toContain('本地 第 10/10 块 · 已处理');
 
     // 按「生成会后精细稿」：node 下真实 postAction 当场拒（fetch 相对路径），失败块出列、
     // 收尾 reloadAfterAction() 照走 —— post_job 从第二份列表应答进来
@@ -604,10 +604,10 @@ describe('按钮起跑档（review-2 C1）：post_job 出现在选中行上之�
 
     // 补跳把在飞读数喂进来 → watch 翻真 → start 被喊（一个周期都没用上）
     expect(pollerOf().start).toHaveBeenCalledWith(DIR);
-    expect(textsOf(renderer, 'wsprog__phase').join(' ')).toContain('正在跑：本地 第 1/10 块');
+    expect(textsOf(renderer, 'wsprog__phase').join(' ')).toContain('正在运行：本地 第 1/10 块');
     // 旧趟的行整段换掉（m2：账重置重播），新账一块没跑完 → 空态那句
-    expect(textsOf(renderer, 'wsprog__row').join(' ')).not.toContain('已跑过');
-    expect(textsOf(renderer, 'wsprog__row').join(' ')).toContain('还没有块跑完的记录');
+    expect(textsOf(renderer, 'wsprog__row').join(' ')).not.toContain('已处理');
+    expect(textsOf(renderer, 'wsprog__row').join(' ')).toContain('暂无逐块记录');
     const fills = renderer.root.findAll((node) => node.props.className === 'wsprog__fill');
     expect(String(fills[0]?.props.style?.['--p'])).toBe('0%');
 
@@ -626,7 +626,7 @@ describe('按钮起跑档（review-2 C1）：post_job 出现在选中行上之�
       }),
     );
     await feed();
-    expect(textsOf(renderer, 'wsprog__row').join(' ')).toContain('本地 第 1/10 块 · 跑成');
+    expect(textsOf(renderer, 'wsprog__row').join(' ')).toContain('本地 第 1/10 块 · 成功');
 
     // 终局：读到终态 → 照 review-1 C1 的既有收敛 —— 停表 + 列表重取 + 行/格翻回
     fetchSessionStatusMock.mockImplementation(async () =>
@@ -652,7 +652,7 @@ describe('按钮起跑档（review-2 C1）：post_job 出现在选中行上之�
     // 列表取了三次：挂载、按按钮的收尾重取、跑完翻账那一次
     expect(fetchSessionsMock).toHaveBeenCalledTimes(3);
     expect(gpuCellOf(renderer).props['data-busy']).toBe('false');
-    expect(textsOf(renderer, 'wsprog__row').join(' ')).toContain('本地 第 10/10 块 · 跑成');
+    expect(textsOf(renderer, 'wsprog__row').join(' ')).toContain('本地 第 10/10 块 · 成功');
   });
 });
 
@@ -678,7 +678,7 @@ describe('重跑一场的逐块行（review-2 m2）：账重置那一跳整段�
       }),
     );
     const renderer = await mountHome();
-    expect(textsOf(renderer, 'wsprog__row').join(' ')).toContain('本地 第 10/10 块 · 已跑过');
+    expect(textsOf(renderer, 'wsprog__row').join(' ')).toContain('本地 第 10/10 块 · 已处理');
 
     // 重跑第一跳：新 started_at、done 从 0 重数
     fetchSessionStatusMock.mockImplementation(async () =>
@@ -697,7 +697,7 @@ describe('重跑一场的逐块行（review-2 m2）：账重置那一跳整段�
     // 旧行整段换掉（不是「第 11/10 块」接着旧账编）；新账还没跑完一块 → 空态那句
     const rowsAfterReset = textsOf(renderer, 'wsprog__row').join(' ');
     expect(rowsAfterReset).not.toContain('第 10/10 块');
-    expect(rowsAfterReset).toContain('还没有块跑完的记录');
+    expect(rowsAfterReset).toContain('暂无逐块记录');
 
     // 第二跳照常差值追加（同一趟内 done 1）
     fetchSessionStatusMock.mockImplementation(async () =>
@@ -714,7 +714,7 @@ describe('重跑一场的逐块行（review-2 m2）：账重置那一跳整段�
       }),
     );
     await feed();
-    expect(textsOf(renderer, 'wsprog__row').join(' ')).toContain('本地 第 1/10 块 · 跑成');
+    expect(textsOf(renderer, 'wsprog__row').join(' ')).toContain('本地 第 1/10 块 · 成功');
   });
 });
 
@@ -813,7 +813,7 @@ describe('补跳遇瞬态失败的自愈（review-3 m1）：失败后最多一�
     expect(fetchSessionsMock).toHaveBeenCalledTimes(3); // 挂载、按按钮收尾、心跳这一拍
     expect(tickCalls()).toBe(ticksBefore + 2);
     expect(pollerOf().start).toHaveBeenCalledWith(DIR);
-    expect(textsOf(renderer, 'wsprog__phase').join(' ')).toContain('正在跑：本地 第 1/10 块');
+    expect(textsOf(renderer, 'wsprog__phase').join(' ')).toContain('正在运行：本地 第 1/10 块');
     expect(textsOf(renderer, 'wsprog__row--bad')).toHaveLength(0);
 
     // watch 已翻真：再走一拍也不重复问（守卫关上，轮询接管）

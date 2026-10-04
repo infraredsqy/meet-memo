@@ -63,7 +63,7 @@
 - `stop()` 关读线程、把 VAD 手上的尾段送进队列，再在**收尾预算**内把队列里剩下的段尽量做完（预算按积压量自适应，公式见 `docs/state.md` 第 1 章）；
 - `health()` 三取值：已经 `stop()` 过、worker 没起来 / 已经停了、模型加载或识别出事 → `stopped`；积压段数压过 `BACKLOG_BEHIND_THRESHOLD`（20 段）→ `behind`；读线程出事、这一段再也不会长出新段也报 `behind`；其余情况 `normal`。**没起过场次时报 `stopped`** —— 快照空闲态那一格就是从它读来的真值；
 - `backlog_depth()` 是段队列里还没处理的段数（队列**无界**，不做 busy-drop），`segment_timeout()` 是配置里的 `asr.timeout_seconds`（默认 `20.0`）；
-- `release_gpu()` 由收尾第 4 步调一次（那一步只做「让会中模型退出显存」这一件事，之后那一格停在 `waiting`；会后离线链与纪要层都由「生成会后精细稿」/「直接出纪要」按钮或 `meeting post` 另行拉起），耗时算在 `post` 这一步的记账里。语义四条：**没加载过就 no-op**（一条日志都不写）、**幂等**、等在飞推理有 **5 秒上界**（后端自己的在飞计数 + `Condition`，事件驱动；到点照旧丢引用并记一条 warning）、**丢引用之后**才尽力清一次缓存。它抛错不拖垮整场 —— 调用方如实记一条 log，`post` 那一格照常落 `waiting`。**配对那一半是 `acquire_gpu()`**（`10770b41`）：由动作 `pause` / `resume` 经服务层提交，走**同一条拉起路径**（`_transcriber_or_create()`，同一个 factory、同一把 `_model_lock`）。语义四条：**已经在手就安静 no-op**（不重造第二份权重）、释放之后经同一个 factory 造一份新的并复位释放标记（下一轮释放照样管得着）、**造不出来只记一条 warning** 且这次动作照常（R1 的立场：转写坏了不挡录音）、不碰 `_stopped` 与 `health()`。**权重真正的加载仍在继续之后的第一段转写时**（`GlmAsrTranscriber` 自己那条加载路径）—— 「继续」这一刻拿回来的是识别器。这一处交接的来由与本机数字见 `docs/asr-backends.md`。
+- `release_gpu()` 由收尾第 4 步调一次（那一步只做「让会中模型退出显存」这一件事，之后那一格停在 `waiting`；会后离线链与纪要层都由「生成会后精细稿」/「生成纪要」按钮或 `meeting post` 另行拉起），耗时算在 `post` 这一步的记账里。语义四条：**没加载过就 no-op**（一条日志都不写）、**幂等**、等在飞推理有 **5 秒上界**（后端自己的在飞计数 + `Condition`，事件驱动；到点照旧丢引用并记一条 warning）、**丢引用之后**才尽力清一次缓存。它抛错不拖垮整场 —— 调用方如实记一条 log，`post` 那一格照常落 `waiting`。**配对那一半是 `acquire_gpu()`**（`10770b41`）：由动作 `pause` / `resume` 经服务层提交，走**同一条拉起路径**（`_transcriber_or_create()`，同一个 factory、同一把 `_model_lock`）。语义四条：**已经在手就安静 no-op**（不重造第二份权重）、释放之后经同一个 factory 造一份新的并复位释放标记（下一轮释放照样管得着）、**造不出来只记一条 warning** 且这次动作照常（R1 的立场：转写坏了不挡录音）、不碰 `_stopped` 与 `health()`。**权重真正的加载仍在继续之后的第一段转写时**（`GlmAsrTranscriber` 自己那条加载路径）—— 「继续」这一刻拿回来的是识别器。这一处交接的来由与本机数字见 `docs/asr-backends.md`。
 
 每一段落一份产物：`session_dir/meeting_transcript_<source>.md`，一行 `[HH:MM] 正文`（分钟级时间戳取**采集时刻**，追加写、逐行 flush）。识别失败的段落照落一行，正文是**占位符**（`[[识别失败: 超时 20s]]` 这一形状：双层方括号、裸文本、不带时间戳、不含 `**`）；真后端产出的 `kind` 一律是 `line`，失败段落也是 `line`，靠正文认出来。文件位置、行格式与占位符的几档见 `docs/state.md` 第 3 章，SSE 侧那一行见 `docs/contract.md` 第 3.3 节。
 
@@ -130,7 +130,7 @@
 |---|---|
 | `auto`（默认） | 按上面的约定路径找 |
 | `null` | 采集这一档用 `null` 替身；两个钩子没有替身可用，这一档就是**缺席** |
-| `dev` | 用开发替身，**按 key 分流**：`capture.backend` 落 `meeting.backends.dev:DevCaptureBackend`、`transcriber.backend` 落 `meeting.backends.dev:DevTranscriberBackend`。这条分流只认采集与转写两个键：`post.hook = dev` 或 `minutes.hook = dev` 都会落到采集替身上，那个对象没有 `launch()`，离线那一趟的尾巴如实记失败；两个钩子键没有「可关的自动链」，各自答「对应那个按钮由哪个实现接」：`post.hook = null` → 「生成会后精细稿」按钮 404（`meeting post` 的离线段不受它管），`minutes.hook = null` → 「直接出纪要」按钮 404、`meeting post` 补纪要那一路安静跳过 |
+| `dev` | 用开发替身，**按 key 分流**：`capture.backend` 落 `meeting.backends.dev:DevCaptureBackend`、`transcriber.backend` 落 `meeting.backends.dev:DevTranscriberBackend`。这条分流只认采集与转写两个键：`post.hook = dev` 或 `minutes.hook = dev` 都会落到采集替身上，那个对象没有 `launch()`，离线那一趟的尾巴如实记失败；两个钩子键没有「可关的自动链」，各自答「对应那个按钮由哪个实现接」：`post.hook = null` → 「生成会后精细稿」按钮 404（`meeting post` 的离线段不受它管），`minutes.hook = null` → 「生成纪要」按钮 404、`meeting post` 补纪要那一路安静跳过 |
 | `module:Class` | 显式指定 |
 
 `minutes.hook` 那一格多一层：**配置里写 JSON 的 `null` 也在缺席档**（不是「回退 `auto`」），它在 `resolve_minutes_hook()` 里提前返回，落 `has_implementation = false`、`selector = "null"`。写字符串 `"null"` 或不写这个键，走的仍是上面那张表。
@@ -167,7 +167,7 @@
 
 ### 会后纪要那一层的五个开关
 
-`minutes.hook` 管这一层在不在（`auto` 落 `meeting.backends.minutes:MinutesHook`，`null` 是缺席：「直接出纪要」按钮当场 404 `action_unavailable`，`meeting post` 补纪要那一路安静跳过），另外四个键管它跑起来什么样，都在启动时读一次（非热读，改了要重启）：
+`minutes.hook` 管这一层在不在（`auto` 落 `meeting.backends.minutes:MinutesHook`，`null` 是缺席：「生成纪要」按钮当场 404 `action_unavailable`，`meeting post` 补纪要那一路安静跳过），另外四个键管它跑起来什么样，都在启动时读一次（非热读，改了要重启）：
 
 | 键 | 默认值 | 谁在读、怎么读 |
 |---|---|---|

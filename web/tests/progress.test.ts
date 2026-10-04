@@ -109,33 +109,33 @@ describe('列表行四态（R27，字与图形并存）', () => {
     expect(rowStatusView(row({ kind: 'meeting' }), null)?.label).toBe('会议目录');
     expect(rowStatusView(row({ kind: 'unknown' }), null)?.label).toBe('普通目录');
     expect(rowStatusView(row({ kind: 'meeting', suspected: true }), null)?.label).toBe(
-      '疑似会议目录 · 缺元信息',
+      '疑似会议目录（缺少元数据）',
     );
   });
 
-  it('正在录：state=recording，实心红灯 + 字，两条通道都在', () => {
+  it('录音中：state=recording，实心红灯 + 字，两条通道都在', () => {
     const view = rowStatusView(row({ state: 'recording' }), null);
     expect(view.tone).toBe('recording');
-    expect(view.label).toBe('正在录');
+    expect(view.label).toBe('录音中');
     expect(view.mark).toBe('glyph--rec');
   });
 
   it('等着人动手：done / failed 都是 waiting 语义，失败把「收尾失败」说在字里', () => {
     const done = rowStatusView(row({ state: 'done', kind: 'meeting' }), null);
     expect(done.tone).toBe('waiting');
-    expect(done.label).toBe('等你动手');
+    expect(done.label).toBe('待处理');
     expect(done.mark).toBe('glyph--dashed');
 
     const failed = rowStatusView(row({ state: 'failed', kind: 'meeting' }), null);
     expect(failed.tone).toBe('waiting');
-    expect(failed.label).toBe('收尾失败 · 等你动手');
+    expect(failed.label).toBe('收尾失败 · 待处理');
     expect(failed.mark).toBe('glyph--cross');
   });
 
-  it('会后跑着：post_job.dir 与这一行联结命中（done 的那一行也被它盖过）', () => {
+  it('会后任务运行中：post_job.dir 与这一行联结命中（done 的那一行也被它盖过）', () => {
     const view = rowStatusView(row({ state: 'done', kind: 'meeting' }), job());
     expect(view.tone).toBe('post-running');
-    expect(view.label).toBe('会后跑着');
+    expect(view.label).toBe('会后任务运行中');
     expect(view.mark).toBeNull(); // 画 spinner（转的），不是静态形状
   });
 
@@ -145,18 +145,18 @@ describe('列表行四态（R27，字与图形并存）', () => {
       job({ dir: 'C:\\会议\\另一场' }),
     );
     expect(view.tone).toBe('waiting');
-    expect(view.label).toBe('等你动手');
+    expect(view.label).toBe('待处理');
   });
 
-  it('路径已不在：灰档 + 虚线圈，联结与四态都让位', () => {
+  it('目录不存在：灰档 + 虚线圈，联结与四态都让位', () => {
     const gone = rowStatusView(row({ dir_exists: false }), job());
     expect(gone.tone).toBe('gone');
-    expect(gone.label).toBe('路径已不在');
+    expect(gone.label).toBe('目录不存在');
     expect(gone.mark).toBe('glyph--dashed');
     expect(gone.dim).toBe(true);
   });
 
-  it('收尾中如实保留（正在录与落定之间的一瞬，不折进任何一态）', () => {
+  it('收尾中如实保留（录音中与落定之间的一瞬，不折进任何一态）', () => {
     const view = rowStatusView(row({ state: 'draining', kind: 'meeting' }), null);
     expect(view.tone).toBe('draining');
     expect(view.label).toBe('收尾中');
@@ -168,7 +168,7 @@ describe('列表行四态（R27，字与图形并存）', () => {
 // ---------------------------------------------------------------------------
 
 describe('进度读数（offline 那份 → 每路一条）', () => {
-  it('第 1/10 块：真在跑（in_process），阶段行写「正在跑：本地 第 1/10 块」', () => {
+  it('第 1/10 块：真在跑（in_process），阶段行写「正在运行：本地 第 1/10 块」', () => {
     const view = progressView(status({}, {
       state: 'running',
       in_process: true,
@@ -182,7 +182,7 @@ describe('进度读数（offline 那份 → 每路一条）', () => {
       ],
     }));
     expect(view.phase).toBe('in-flight');
-    expect(view.phaseLabel).toBe('正在跑：本地 第 2/10 块');
+    expect(view.phaseLabel).toBe('正在运行：本地 第 2/10 块');
     expect(view.inProcess).toBe(true);
     expect(view.roads[0]?.percent).toBe(10);
     expect(view.roads[1]?.percent).toBe(0);
@@ -200,7 +200,7 @@ describe('进度读数（offline 那份 → 每路一条）', () => {
         road({ source: 'loopback', done: 10, total: 10, remaining: 0 }),
       ],
     }));
-    expect(view.phaseLabel).toBe('正在跑：本地 第 10/10 块');
+    expect(view.phaseLabel).toBe('正在运行：本地 第 10/10 块');
     expect(view.roads[0]?.percent).toBe(90);
     expect(view.roads[1]?.percent).toBe(100);
   });
@@ -218,12 +218,12 @@ describe('进度读数（offline 那份 → 每路一条）', () => {
       ],
     }));
     expect(view.phase).toBe('stale-running');
-    expect(view.phaseLabel).toBe('盘上停着一版「在跑」，此刻没有任何东西在跑');
+    expect(view.phaseLabel).toBe('磁盘记录为运行中，当前没有进程在运行');
     expect(view.onDiskState).toBe('running');
     expect(view.inProcess).toBe(false);
   });
 
-  it('被打断（b1c6a58e）：自成一相，明说「停了、可以重跑」，不许掉进「跑完了」', () => {
+  it('已中断（b1c6a58e）：自成一相，明说「停了、可以重跑」，不许掉进「跑完了」', () => {
     const view = progressView(status({}, {
       state: 'interrupted',
       in_process: false,
@@ -235,7 +235,7 @@ describe('进度读数（offline 那份 → 每路一条）', () => {
       ],
     }));
     expect(view.phase).toBe('interrupted');
-    expect(view.phaseLabel).toBe('被打断');
+    expect(view.phaseLabel).toBe('已中断');
     expect(view.onDiskState).toBe('interrupted');
     expect(view.inProcess).toBe(false);
   });
@@ -243,15 +243,15 @@ describe('进度读数（offline 那份 → 每路一条）', () => {
   it('终态照盘上那份答（partial 不折成 done）；没跑过是另一档', () => {
     const partial = progressView(status({}, { state: 'partial', in_process: false }));
     expect(partial.phase).toBe('finished');
-    // 一路整条没交回：不许写成「跑完了」
-    expect(partial.phaseLabel).toBe('只跑成一路');
+    // 一路整条没交回：不许写成「已完成」
+    expect(partial.phaseLabel).toBe('部分完成');
     const failed = progressView(status({}, { state: 'failed', in_process: false }));
-    expect(failed.phaseLabel).toBe('跑失败了');
+    expect(failed.phaseLabel).toBe('失败');
     const done = progressView(status({}, { state: 'done', in_process: false }));
-    expect(done.phaseLabel).toBe('跑完了');
+    expect(done.phaseLabel).toBe('已完成');
     const never = progressView(status({}, { state: 'idle' }));
     expect(never.phase).toBe('never-run');
-    expect(never.phaseLabel).toBe('这一场还没跑过会后');
+    expect(never.phaseLabel).toBe('尚未运行');
   });
 
   it('分母按路各算各的：一路切了 10 块、一路计划未知（total=null）就不猜百分比', () => {
@@ -275,7 +275,7 @@ describe('进度读数（offline 那份 → 每路一条）', () => {
 // ---------------------------------------------------------------------------
 
 describe('逐块行（每跑完一块落一行）', () => {
-  it('第一次读：把已跑过的补成 observed 行（此前的不编档位）', () => {
+  it('第一次读：把已处理的补成 observed 行（此前的不编档位）', () => {
     const rows = initialChunkRows(status({}, {
       sources: [
         road({ done: 2, total: 3,
@@ -286,7 +286,7 @@ describe('逐块行（每跑完一块落一行）', () => {
     }));
     expect(rows.map((item) => item.key)).toEqual(['mic-1', 'mic-2', 'loopback-1']);
     expect(rows.every((item) => item.verdict === 'observed')).toBe(true);
-    expect(chunkRowLabel(rows[0] as (typeof rows)[number])).toBe('本地 第 1/3 块 · 已跑过');
+    expect(chunkRowLabel(rows[0] as (typeof rows)[number])).toBe('本地 第 1/3 块 · 已处理');
   });
 
   it('两次读数之间新跑完的块：四档归属靠计数差值，逐块落行', () => {
@@ -412,7 +412,7 @@ describe('全局「忙不忙」（R31）', () => {
     expect(view).toEqual({ busy: false, label: '空闲', note: '没有模型开着', mark: 'glyph--idle' });
   });
 
-  it('忙：会后那趟在跑（说清跑的是哪一趟）；正在录也是忙', () => {
+  it('忙：会后那趟在跑（说清跑的是哪一趟）；录音中也是忙', () => {
     expect(gpuBusyView(job(), false)).toEqual({
       busy: true,
       label: '忙碌',
@@ -443,7 +443,7 @@ describe('要不要轮询（有活动才问）', () => {
     const selected = row({ state: 'done', kind: 'meeting' });
     expect(shouldWatch(selected, job(), status({}, { state: 'done', in_process: false }))).toBe(false);
     expect(shouldWatch(selected, job(), status({}, { state: 'idle' }))).toBe(false);
-    // 被打断也是终态（b1c6a58e）：重按按钮才再跑，轮询照样收尾
+    // 已中断也是终态（b1c6a58e）：重按按钮才再跑，轮询照样收尾
     expect(shouldWatch(selected, job(), status({}, { state: 'interrupted', in_process: false }))).toBe(false);
   });
 
@@ -458,7 +458,7 @@ describe('要不要轮询（有活动才问）', () => {
 });
 
 describe('阶段图形标记（形状通道）', () => {
-  it('真在跑是转的（spinner → null）、停着一版与被打断是红叉、终态打勾、没跑过空心框', () => {
+  it('真在跑是转的（spinner → null）、停着一版与已中断是红叉、终态打勾、没跑过空心框', () => {
     expect(phaseMark('in-flight')).toBeNull();
     expect(phaseMark('stale-running')).toBe('glyph--cross');
     expect(phaseMark('interrupted')).toBe('glyph--cross');

@@ -500,16 +500,19 @@ body {
   cursor: not-allowed;
 }
 
+/* 主按钮：大面积填充走 `--t-signal-solid`（压暗那一档），字用反白色。
+   最亮那一档留给小面积的灯、脊线与读数 —— 一整块 200px 宽的实心青铺在那儿
+   就是这一屏最刺眼的东西（见 console.css 第 4 节） */
 .btn--primary {
-  border-color: var(--t-signal);
-  background: var(--t-signal);
+  border-color: var(--t-signal-solid);
+  background: var(--t-signal-solid);
   color: var(--t-ink-inverse);
   font-weight: var(--weight-semibold);
 }
 
 .btn--primary:hover:not(:disabled) {
-  background: var(--t-signal-bright);
-  border-color: var(--t-signal-bright);
+  background: var(--t-signal);
+  border-color: var(--t-signal);
 }
 
 .btn--primary:disabled {
@@ -1715,59 +1718,107 @@ input[type="checkbox"] {
    取色与字体全部 var() 自 console.css / tokens.css，不引入任何新颜色。
    ========================================================================= */
 
-/* 1. 页骨架：上下两段，首页窄于会中（左清单 + 右边那一格） */
+/* 1. 页骨架：整页两栏的**应用外壳**（照 DSH 那种模式来的）。
+   工作台是一个要开着用几小时的界面，所以左边一列常驻（挑工作区 + 添加 + 忙闲），
+   右边整块是选中的那个工作区；两栏各自滚动。
+   `.shell` 那条 1440 的上限、居中留白与四周内边距在这一屏全部放开：左边贴到窗口
+   左沿、右边贴到右沿，两栏自己的内边距各自管。会中那一屏走另一套（读表、看转写），
+   仍按 `.shell` 的居中宽度排。 */
 .page--home {
-  min-height: 100vh;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
-  padding: 0 var(--size-gutter);
+  overflow: hidden;
 }
 
-.topbar--home .topbar__main {
-  gap: var(--space-3);
-}
-
+/* 1.1 左栏顶上那块铭牌：这一台是「会议工作台」。
+   和右栏那一场的场名同档字号（`--size-title`）——两栏各有一个头，读起来对得上；
+   底下压一条 2px 信号青短线，宽度只跟字走，像机箱面板上那道刻度。 */
 .title-sm {
+  align-self: flex-start;
+  padding-bottom: var(--space-2);
+  border-bottom: 2px solid var(--t-signal);
   font-family: var(--t-font-sign);
-  font-size: var(--size-lead);
+  font-size: var(--size-title);
   font-weight: var(--weight-semibold);
   letter-spacing: var(--track-tight);
   color: var(--t-ink);
 }
 
-/* 2. 首页主体：左边一条窄的场次尺（挑哪一场），右边整块留给这一场的**工作区**。
-   比例照「工作区是正文、清单是索引」定 —— 尺子固定 17rem（够放场名 + 状态 + 路径），
-   剩下的全给工作区：那一边摆路径、读数、两个动作钮与会后进度。
-   `align-items: start` 让工作区按内容高，不再被拉成与清单等高的一只空盒子。 */
+/* 2. 首页主体：左边一条 17rem 的工作区列，右边整块留给选中的那个工作区。 */
 .home {
   display: grid;
   grid-template-columns: 17rem minmax(0, 1fr);
-  align-items: start;
-  gap: var(--space-6);
-  padding: var(--space-6) 0 var(--space-9);
+  min-height: 0;
+  flex: 1;
 }
 
-/* 一场都没有：尺子上没有可挑的东西，整页让给那张空态（居中一句引导）。
-   右栏这时候只剩一句「左边挑一场」，那是错的 —— 组件在空注册表下不渲染它，
-   于是那一格是空的，`:empty` 把它整格收掉；失败块仍走这一格，照样看得见。 */
-.home--empty {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.home--empty .home__aside:empty {
-  display: none;
-}
-
+/* 一场都没有：右栏让给那张空态，左栏照旧（添加工作区那一行还在） */
 .home__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
   min-width: 0;
+  min-height: 0;
+  padding: var(--space-5) var(--space-4);
+  border-right: var(--size-divider) solid var(--t-rule-hair);
+  background: var(--t-sunk);
+  overflow-y: auto;
 }
 
 .home__aside {
   min-width: 0;
-  padding-top: var(--space-2);
+  min-height: 0;
+  padding: var(--space-6) var(--space-7);
+  overflow-y: auto;
 }
 
-/* 3. 清单与一行。一行是**两行块**：场名 / 状态 / 移除占头一行，路径另起一行铺满。
+/* 添加工作区：跟清单同一列里的一行动作，读起来是「导航里的一项」，
+   不是顶栏上那颗抢眼的实心按钮（`btn--ghost` 由组件挂） */
+.home__new {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 0 var(--space-3);
+  border-color: var(--t-rule-hair);
+  background: var(--t-surface);
+  color: var(--t-ink-mid);
+  font-family: var(--t-font-sign);
+  letter-spacing: var(--track-label);
+}
+
+.home__new:hover:not(:disabled) {
+  background: var(--t-raised);
+  border-color: var(--t-rule);
+  color: var(--t-ink);
+}
+
+/* 加号走伪元素：按钮自己的正文只有「添加工作区」四个字，
+   读屏与取文本的地方都拿到干净的一句 */
+.home__new::before {
+  content: '＋';
+  color: var(--t-signal);
+  font-family: var(--t-font-mono);
+  line-height: var(--line-solid);
+}
+
+/* 底下的忙闲一格：跟清单分开，钉在这一列的末尾 */
+.home__foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: auto;
+  padding-top: var(--space-4);
+  border-top: var(--size-divider) solid var(--t-rule-hair);
+}
+
+/* 3. 清单与一行。一行是**两行块**：场名 / 状态 / 移除占头一行，路径与时长另起一行。
    路径曾经与场名挤同一行、还要分走 2fr —— 那条路一长就把整行撑出可视区，
    现在它自己一行，超长只在行尾收成省略号。 */
 .wslist {
@@ -1776,7 +1827,7 @@ input[type="checkbox"] {
   gap: var(--space-2);
 }
 
-/* 清单头顶那一行：这一列是什么 + 共几场 */
+/* 清单头顶那一行：这一列是什么 + 共几个工作区 */
 .wslist__head {
   display: flex;
   align-items: baseline;
@@ -1798,7 +1849,7 @@ input[type="checkbox"] {
   grid-template-columns: minmax(0, 1fr) auto auto;
   grid-template-areas:
     'name state acts'
-    'path path path';
+    'path path len';
   align-items: center;
   gap: var(--space-1) var(--space-3);
   padding: var(--space-3) var(--space-4);
@@ -1815,13 +1866,23 @@ input[type="checkbox"] {
   border-color: var(--t-rule-strong);
   background: var(--t-raised);
   /* 选中那一场在左沿插一条 4px 实线（左尺上最粗的那道刻度）：不占位置、不改行高，
-     两列之间「清单里哪一场 = 右边这一格」由这条线说出来 */
+      两列之间「清单里哪一场 = 右边这一格」由这条线说出来 */
   box-shadow: inset var(--size-rule) 0 0 var(--t-signal);
 }
 
 .wslist__row:focus-visible {
   outline: var(--size-focus) solid var(--t-focus);
   outline-offset: var(--size-focus-offset);
+}
+
+/* 盘上录到的总时长（各段之和）：清单里第二行右端那一格，
+   与 DSH 侧栏每行末尾那条时长同一个位置 */
+.wslist__dur {
+  grid-area: len;
+  justify-self: end;
+  color: var(--t-ink-quiet);
+  font-size: var(--size-micro);
+  white-space: nowrap;
 }
 
 .wslist__name {
@@ -1866,13 +1927,16 @@ input[type="checkbox"] {
   justify-self: end;
 }
 
-/* 4. 空态：logo + 那两句 */
+/* 4. 空态：logo + 那两句。整块落在右栏正中（左栏照旧留着「添加工作区」） */
 .ws-empty {
   display: grid;
   gap: var(--space-3);
+  align-content: center;
+  justify-items: center;
+  min-height: 100%;
   padding: var(--space-12) var(--space-6);
+  max-width: 34rem;
   margin: 0 auto;
-  max-width: 40rem;
   text-align: center;
 }
 
@@ -1907,6 +1971,28 @@ input[type="checkbox"] {
   padding: var(--space-5);
   border: var(--size-divider) solid var(--t-rule-hair);
   background: var(--t-surface);
+}
+
+/* 面板头：这一场是谁 + 拿它录一段。动作钮长在这一块**里面** ——
+   它作用的正是左边选中那一行，跟这一格摆在一起才说得通（早先挂在顶栏上，
+   离它作用的对象隔了一整屏）。 */
+.wspane__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-5);
+  min-width: 0;
+  padding-bottom: var(--space-4);
+  border-bottom: var(--size-divider) solid var(--t-rule-hair);
+}
+
+.wspane__headacts {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-2);
+  flex: none;
+  max-width: 60%;
 }
 
 /* 工作区分两栏：左边这一场是谁（读数），右边拿它做什么（会后与会后进度）。
@@ -1948,20 +2034,22 @@ input[type="checkbox"] {
 }
 
 .wspane__title {
-  /* 场名自成一块头：下面压一条线，把「这是哪一场」与底下那几行读数分开 */
-  padding-bottom: var(--space-3);
-  border-bottom: var(--size-divider) solid var(--t-rule-hair);
+  min-width: 0;
   font-family: var(--t-font-sign);
-  font-size: var(--size-lead);
+  font-size: var(--size-title);
   font-weight: var(--weight-semibold);
   letter-spacing: var(--track-tight);
   color: var(--t-ink);
   overflow-wrap: anywhere;
 }
 
+/* 按不动时那句原因：跟着动作钮，不跟读数走 */
 .wspane__why {
+  margin: 0;
   color: var(--t-ink-faint);
-  font-size: var(--size-small);
+  font-size: var(--size-caption);
+  line-height: var(--line-snug);
+  text-align: right;
 }
 
 /* 6. 会后那两块（R26：两个按钮都不按，这一场就什么都不跑） */
@@ -2076,8 +2164,8 @@ input[type="checkbox"] {
   position: absolute;
   inset: 0 auto 0 0;
   width: var(--p, 0%);
-  background: var(--t-signal);
-  box-shadow: var(--t-glow-bar);
+  /* 大面积填充走压暗那一档，也不打光：读数条只报进度，光留给电平那一格 */
+  background: var(--t-signal-solid);
   transition: width var(--duration-quick) var(--ease-standard);
 }
 
@@ -2315,16 +2403,16 @@ input[type="checkbox"] {
   line-height: var(--line-snug);
 }
 
-/* 8. 宽屏：工作区内部并排成两栏 —— 左栏是这一场是谁（读数），右栏是拿它做什么
-   （会后那两个按钮与会后进度）。每栏落到 24rem 上下，路径与说明句的长度正好；
+/* 8. 宽屏：工作区内部并排成两栏 —— 左栏「这一场是谁 + 拿它做什么」（读数与会后那
+   两个按钮），右栏「会后跑得怎么样」（进度）。按下与看着并排，两栏高矮也相当；
    不并排的话，1440 上这一格有 1000px 宽、每一行都拖成一条。 */
 @media (min-width: 1180px) {
   .wspane {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     column-gap: var(--space-7);
   }
 
-  .wspane__title {
+  .wspane__head {
     grid-column: 1 / -1;
   }
 
@@ -2336,7 +2424,7 @@ input[type="checkbox"] {
     grid-column: 2;
   }
 
-  /* 并排之后，工作那一栏顶上的第一块上面没有东西可与它分界，那条线收掉 */
+  /* 并排之后，右栏顶上那一块上面没有东西可与它分界，那条线收掉 */
   .wspane__work > :first-child {
     margin-top: 0;
     padding-top: 0;
@@ -2344,11 +2432,28 @@ input[type="checkbox"] {
   }
 }
 
-/* 9. 窄屏不塌：场次尺与工作区收成一列（840 以下 —— 一条 17rem 的尺子再往下
-   就要从工作区嘴里抢宽度了），弹窗整屏 */
+/* 9. 窄屏不塌：工作区列压到工作区上面，整页回到文档流（外壳那两条各自滚动的
+   分栏只在够宽时才成立），弹窗整屏 */
 @media (max-width: 840px) {
+  .page--home {
+    height: auto;
+    overflow: visible;
+  }
+
   .home {
-    grid-template-columns: minmax(0, 1fr);
+    display: flex;
+    flex-direction: column;
+  }
+
+  .home__list {
+    overflow-y: visible;
+    border-right: none;
+    border-bottom: var(--size-divider) solid var(--t-rule-hair);
+  }
+
+  .home__aside {
+    overflow-y: visible;
+    padding: var(--space-5) var(--size-gutter-narrow) var(--space-10);
   }
 
   .dlg__layer {

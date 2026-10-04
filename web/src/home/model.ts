@@ -22,20 +22,31 @@ export function initialSelection(sessions: SessionRow[], recent: string | null):
   return sessions[0]?.dir ?? null;
 }
 
-/** 「开始 / 接着录」在这一行上能不能按；按不动时给一句为什么（`null` = 可按）。 */
+/** 「开始 / 继续录音」在这一行上能不能按；按不动时给一句为什么（`null` = 可按）。 */
 export function startWhy(row: SessionRow): string | null {
-  if (!row.dir_exists) return '目录已不在原地，录不了';
+  if (!row.dir_exists) return '目录不存在，无法录音';
   return null;
 }
 
 /**
- * 顶栏那只动作钮在这一行上的名字：录过的接着录，没录过的开始录。
+ * 那只动作钮在这一行上的名字：盘上还没有段的叫「开始录音」，已经录过的叫「继续录音」。
  *
- * 盘上有 `session.json` 的目录对着它按 start 就是续接（同一场会再录一段，
- * 服务把段账合并着写盘），按钮的名字跟着这件事走——入口直说，不绕词。
+ * 对着一个录过的目录按 start 就是同一场会再录一段（服务把段账合并着写盘）。名字跟着
+ * 这件事走，用的是录音这件事自己的说法 —— 「继续录音」直说接着往下录。
  */
 export function startButtonLabel(row: SessionRow): string {
-  return row.state !== null ? '接着录' : '开始录音';
+  return row.state !== null ? '继续录音' : '开始录音';
+}
+
+/**
+ * 清单行末尾那一格时长：盘上各段读数的和（只数写完的段 —— 权威时长就是它们的和，
+ * 设计意图第 7 条）。一段都没有时交回 `null`，那一格就不占位置。
+ */
+export function rowDurationLabel(row: SessionRow): string | null {
+  const done = row.segments.filter((segment) => segment.duration_seconds !== null);
+  if (done.length === 0) return null;
+  const total = done.reduce((sum, segment) => sum + (segment.duration_seconds ?? 0), 0);
+  return secondsLabel(total);
 }
 
 /** 一段的人话：段号、起止时刻、在录时长。 */
@@ -84,10 +95,10 @@ export function segmentsView(row: SessionRow): SessionSegmentsView | null {
 
 /** 行状态那一格的人话（契约字段 → 文案，一处定义）。 */
 export function statusLabel(row: SessionRow): string {
-  if (!row.dir_exists) return '路径已不在';
+  if (!row.dir_exists) return '目录不存在';
   switch (row.state) {
     case 'recording':
-      return '正在录';
+      return '录音中';
     case 'draining':
       return '收尾中';
     case 'done':
@@ -98,16 +109,16 @@ export function statusLabel(row: SessionRow): string {
       break;
   }
   if (row.kind === 'empty') return '空白工作区';
-  if (row.suspected) return '疑似会议目录 · 缺元信息';
+  if (row.suspected) return '疑似会议目录（缺少元数据）';
   if (row.kind === 'meeting') return '会议目录';
   return '普通目录';
 }
 
-/** 空到只剩 logo + 「新会议」的那张空态。 */
+/** 注册表空着时右栏那张空态：一句状态 + 一句怎么开始。 */
 export function emptyStateLines(): { title: string; body: string } {
   return {
-    title: '还没有任何一场会',
-    body: '按「新会议」挑一个已有的目录——空目录当一场新会，有会议材料的当场收编。',
+    title: '当前工作区为空',
+    body: '通过「添加工作区」选择目录：空目录将建立新工作区，含会议材料的目录将被收录。',
   };
 }
 

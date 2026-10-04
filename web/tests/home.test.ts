@@ -57,12 +57,12 @@ describe('打开这一页时选哪一行', () => {
 });
 
 describe('行状态一眼可读', () => {
-  it('目录被移走/删掉的那一行如实写「路径已不在」', () => {
-    expect(statusLabel(row({ dir_exists: false }))).toBe('路径已不在');
+  it('目录被移走/删掉的那一行如实写「目录不存在」', () => {
+    expect(statusLabel(row({ dir_exists: false }))).toBe('目录不存在');
   });
 
   it('盘上 session.json 的四档 state 各有话', () => {
-    expect(statusLabel(row({ state: 'recording' }))).toBe('正在录');
+    expect(statusLabel(row({ state: 'recording' }))).toBe('录音中');
     expect(statusLabel(row({ state: 'draining' }))).toBe('收尾中');
     expect(statusLabel(row({ state: 'done' }))).toBe('已完成');
     expect(statusLabel(row({ state: 'failed' }))).toBe('收尾失败');
@@ -70,24 +70,24 @@ describe('行状态一眼可读', () => {
 
   it('没有记录的三档：空白工作区 / 疑似会议目录（兜底不当杂物）/ 会议目录 / 普通目录', () => {
     expect(statusLabel(row({ kind: 'empty' }))).toBe('空白工作区');
-    expect(statusLabel(row({ kind: 'meeting', suspected: true }))).toBe('疑似会议目录 · 缺元信息');
+    expect(statusLabel(row({ kind: 'meeting', suspected: true }))).toBe('疑似会议目录（缺少元数据）');
     expect(statusLabel(row({ kind: 'meeting' }))).toBe('会议目录');
     expect(statusLabel(row({ kind: 'unknown' }))).toBe('普通目录');
   });
 });
 
-describe('「开始 / 接着录」在这一行上能不能按', () => {
+describe('「开始 / 继续录音」在这一行上能不能按', () => {
   it('空白工作区可按；录过的目录照样可按——对着它按就是续接（第 9 条翻案）', () => {
     expect(startWhy(row({ kind: 'empty', state: null }))).toBeNull();
     expect(startWhy(row({ kind: 'meeting', state: 'done' }))).toBeNull();
     expect(startWhy(row({ kind: 'meeting', state: 'failed' }))).toBeNull();
-    expect(startWhy(row({ dir_exists: false }))).toBe('目录已不在原地，录不了');
+    expect(startWhy(row({ dir_exists: false }))).toBe('目录不存在，无法录音');
   });
 
-  it('动作钮的名字跟着行走：录过的叫「接着录」，没录过的叫「开始录音」', () => {
+  it('动作钮的名字跟着行走：录过的叫「继续录音」，没录过的叫「开始录音」', () => {
     expect(startButtonLabel(row({ kind: 'empty', state: null }))).toBe('开始录音');
-    expect(startButtonLabel(row({ kind: 'meeting', state: 'done' }))).toBe('接着录');
-    expect(startButtonLabel(row({ kind: 'meeting', state: 'recording' }))).toBe('接着录');
+    expect(startButtonLabel(row({ kind: 'meeting', state: 'done' }))).toBe('继续录音');
+    expect(startButtonLabel(row({ kind: 'meeting', state: 'recording' }))).toBe('继续录音');
   });
 });
 
@@ -159,20 +159,19 @@ describe('会后那两个按钮（R26 / R29）', () => {
       for (const has_offline of [true, false]) {
         const view = postButtonsView(row({ kind: 'meeting', state, has_offline }));
         expect(view.offlineNotice).not.toBeNull();
-        expect(view.offlineNotice).toContain('这一场还在录 / 还在收尾');
-        expect(view.offlineNotice).toContain(`盘上会后稿：${has_offline ? '有' : '没有'}`);
-        // 落定之后那一档的两句话在这一档一个都不许出现
-        expect(view.offlineNotice).not.toContain('这一场有会后精细稿');
-        expect(view.offlineNotice).not.toContain('这一场还没有会后精细稿');
+        expect(view.offlineNotice).toContain('该工作区正在录音或收尾中');
+        expect(view.offlineNotice).toContain(`磁盘上的会后精细稿：${has_offline ? '有' : '无'}`);
+        // 这一档的那一句**就是**这一格的全部：不许换成落定之后那一句
+        expect(view.offlineNotice).not.toBe(offlineNoticeOf(row({ has_offline })));
       }
     }
   });
 
-  it('目录已不在原地：两个都按不动，原因句只有一处（不冒充会后稿读数）', () => {
+  it('目录不存在：两个都按不动，原因句只有一处（不冒充会后稿读数）', () => {
     const view = postButtonsView(row({ dir_exists: false }));
     expect(view.canPostOffline).toBe(false);
-    expect(view.why).toBe('目录已不在原地，跑不了会后');
-    // 上面那句已经把「跑不了」说完了：会后那一格不再复述，也不把「路径已不在」搬过来
+    expect(view.why).toBe('目录不存在，无法运行会后任务');
+    // 上面那句已经把「跑不了」说完了：会后那一格不再复述，也不把「目录不存在」搬过来
     expect(view.offlineNotice).toBeNull();
   });
 
@@ -180,9 +179,9 @@ describe('会后那两个按钮（R26 / R29）', () => {
     expect(postButtonsView(row({ state: 'failed' })).canPostMinutes).toBe(true);
   });
 
-  it('「出纪要」按钮上那一格按 has_offline 如实写（R29）', () => {
-    expect(offlineNoticeOf(row({ has_offline: true }))).toContain('有会后精细稿');
-    expect(offlineNoticeOf(row({ has_offline: false }))).toContain('还没有会后精细稿');
+  it('「生成纪要」按钮上那一格按 has_offline 如实写（R29）', () => {
+    expect(offlineNoticeOf(row({ has_offline: true }))).toBe('会后精细稿：有');
+    expect(offlineNoticeOf(row({ has_offline: false }))).toBe('会后精细稿：无');
   });
 });
 
@@ -292,7 +291,7 @@ describe('闸的分流（R26：结束录音之后回到工作台）', () => {
     expect(showsWorkspaceHome(snap)).toBe(false);
   });
 
-  it('正在录 / 告警 → 留在会中那一屏', () => {
+  it('录音中 / 告警 → 留在会中那一屏', () => {
     for (const top of ['recording', 'alert'] as const) {
       expect(showsWorkspaceHome(snapshot({ top_state: top }))).toBe(false);
     }
