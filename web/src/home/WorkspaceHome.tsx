@@ -653,6 +653,9 @@ export function WorkspaceHome({
   /** 停止入口（R28 / b1c6a58e）：这一场的 offline 在飞时出现在进度区头行。 */
   const stop = postStopView(postJob, selected?.dir ?? null);
 
+  /** 一场都没有：主体让给那张空态，场次尺与右栏都收起来（`live.css` 的 `.home--empty`）。 */
+  const isEmpty = sessions !== null && sessions.sessions.length === 0;
+
   const openFromPicker = (item: { dir: string; kind: PickPath['kind'] }): void => {
     setPicker(false);
     if (item.kind === 'missing') {
@@ -705,7 +708,7 @@ export function WorkspaceHome({
         </div>
       </header>
 
-      <section className="home">
+      <section className={`home ${isEmpty ? 'home--empty' : ''}`}>
         <aside className="home__list" aria-label="工作区列表">
           {sessions === null && failure === null && <p className="hint">正在取列表…</p>}
           {sessions !== null && sessions.sessions.length === 0 && (
@@ -778,10 +781,14 @@ export function WorkspaceHome({
 
         <div className="home__aside">
           {selected === null ? (
-            <p className="hint">左边挑一场，或按「新会议」。</p>
+            // 一场都没有时不说「左边挑一场」：左边是空的，那句话这时候是错的
+            isEmpty ? null : <p className="hint">左边挑一场，或按「新会议」。</p>
           ) : (
             <div className="wspane">
               <div className="wspane__title">{selected.session_id ?? selected.dir}</div>
+              {/* 工作区分两栏（宽屏并排、窄屏上下摞，见 `live.css` §7.10 第 8 条）：
+                  这一栏说「这一场是谁」，下一栏说「拿它做什么」。 */}
+              <div className="wspane__read">
               <p className="kv">
                 <span className="kv__k">目录</span>
                 <span className="kv__v num">{selected.dir}</span>
@@ -831,7 +838,9 @@ export function WorkspaceHome({
                 );
               })()}
               {whyForSelected !== null && <p className="wspane__why">{whyForSelected}</p>}
+              </div>
 
+              <div className="wspane__work">
               {post !== null && (
                 <div className="wspane__post" aria-label="会后">
                   <div className="wspane__posttitle">会后</div>
@@ -974,6 +983,7 @@ export function WorkspaceHome({
                   )}
                 </div>
               )}
+              </div>
             </div>
           )}
           {failure !== null && (

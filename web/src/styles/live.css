@@ -474,6 +474,8 @@ body {
   font-size: var(--size-small);
   font-weight: var(--weight-medium);
   letter-spacing: var(--track-label);
+  /* 按钮上的字不断行：窄屏上「收起」曾被压成竖着的两行 */
+  white-space: nowrap;
   cursor: pointer;
   transition:
     background-color var(--duration-quick) var(--ease-standard),
@@ -1731,15 +1733,27 @@ input[type="checkbox"] {
   color: var(--t-ink);
 }
 
-/* 2. 首页主体：左清单 + 右侧那一场。
-   右列带 22rem 下限：详情里要摆一整条路径、几行读数与两个按钮，比这更窄就只剩折行。
-   `align-items: start` 让详情按内容高，不再被拉成与清单等高的一只空盒子。 */
+/* 2. 首页主体：左边一条窄的场次尺（挑哪一场），右边整块留给这一场的**工作区**。
+   比例照「工作区是正文、清单是索引」定 —— 尺子固定 17rem（够放场名 + 状态 + 路径），
+   剩下的全给工作区：那一边摆路径、读数、两个动作钮与会后进度。
+   `align-items: start` 让工作区按内容高，不再被拉成与清单等高的一只空盒子。 */
 .home {
   display: grid;
-  grid-template-columns: minmax(0, 1.6fr) minmax(22rem, 1fr);
+  grid-template-columns: 17rem minmax(0, 1fr);
   align-items: start;
   gap: var(--space-6);
   padding: var(--space-6) 0 var(--space-9);
+}
+
+/* 一场都没有：尺子上没有可挑的东西，整页让给那张空态（居中一句引导）。
+   右栏这时候只剩一句「左边挑一场」，那是错的 —— 组件在空注册表下不渲染它，
+   于是那一格是空的，`:empty` 把它整格收掉；失败块仍走这一格，照样看得见。 */
+.home--empty {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.home--empty .home__aside:empty {
+  display: none;
 }
 
 .home__list {
@@ -1885,11 +1899,24 @@ input[type="checkbox"] {
    把读数行改成「标签槽 + 值栏」，路径落在值栏里换行，这一格才收得住。 */
 .wspane {
   display: grid;
-  gap: var(--space-2);
+  gap: var(--space-3);
+  align-items: start;
   min-width: 0;
   padding: var(--space-5);
   border: var(--size-divider) solid var(--t-rule-hair);
   background: var(--t-surface);
+}
+
+/* 工作区分两栏：左边这一场是谁（读数），右边拿它做什么（会后与会后进度）。
+   单栏时两块上下摞着，宽了才并排 —— 并排那一条在文件末尾的宽度查询里。 */
+.wspane__read {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.wspane__work {
+  min-width: 0;
 }
 
 /* 读数行：标签占固定一条槽、值另起一栏。值那一栏允许在任意字符处折断
@@ -2286,8 +2313,37 @@ input[type="checkbox"] {
   line-height: var(--line-snug);
 }
 
-/* 8. 窄屏不塌：左右两列收成一列（840 以下 —— 再窄，右列那条 22rem 的下限就要
-   从清单嘴里抢宽度了），弹窗整屏 */
+/* 8. 宽屏：工作区内部并排成两栏 —— 左栏是这一场是谁（读数），右栏是拿它做什么
+   （会后那两个按钮与会后进度）。每栏落到 24rem 上下，路径与说明句的长度正好；
+   不并排的话，1440 上这一格有 1000px 宽、每一行都拖成一条。 */
+@media (min-width: 1180px) {
+  .wspane {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+    column-gap: var(--space-7);
+  }
+
+  .wspane__title {
+    grid-column: 1 / -1;
+  }
+
+  .wspane__read {
+    grid-column: 1;
+  }
+
+  .wspane__work {
+    grid-column: 2;
+  }
+
+  /* 并排之后，工作那一栏顶上的第一块上面没有东西可与它分界，那条线收掉 */
+  .wspane__work > :first-child {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+  }
+}
+
+/* 9. 窄屏不塌：场次尺与工作区收成一列（840 以下 —— 一条 17rem 的尺子再往下
+   就要从工作区嘴里抢宽度了），弹窗整屏 */
 @media (max-width: 840px) {
   .home {
     grid-template-columns: minmax(0, 1fr);
