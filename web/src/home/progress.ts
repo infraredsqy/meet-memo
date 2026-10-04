@@ -153,6 +153,19 @@ export function phaseMark(phase: OfflinePhase): string | null {
   }
 }
 
+/**
+ * 终态那一档的人话。
+ *
+ * 这四档不能合成一句「跑完了」：盘上 `failed` / `partial` 是**没跑成**的两种场面，
+ * 笼统一句会把它们说反（先前那一版只能把盘上的词挂在括号里打补丁）。
+ */
+const FINISHED_PHASE: Readonly<Record<string, string>> = {
+  done: '跑完了',
+  partial: '只跑成一路',
+  failed: '跑失败了',
+  ledger: '有逐块账，还没结论',
+};
+
 /** `offline` 那份 → 进度区的读数。判据逐条写在 `phaseLabel` 里，组件不解读。 */
 export function progressView(status: SessionStatus): ProgressView {
   const offline = status.offline;
@@ -198,10 +211,10 @@ export function progressView(status: SessionStatus): ProgressView {
       : phase === 'stale-running'
         ? '盘上停着一版「在跑」，此刻没有任何东西在跑'
         : phase === 'interrupted'
-          ? '被打断：这一趟停了，已跑的部分留在逐块账里，重新按按钮可从头再跑'
+          ? '被打断'
           : phase === 'never-run'
             ? '这一场还没跑过会后'
-            : `跑完了（盘上记作 ${offline.state}）`;
+            : FINISHED_PHASE[offline.state] ?? `盘上记作 ${offline.state}`;
 
   return {
     phase,
@@ -235,10 +248,10 @@ export interface ChunkRow {
 
 const VERDICT_LABELS: Readonly<Record<ChunkVerdict, string>> = {
   transcribed: '跑成',
-  silent: '静音 · 跳过引擎',
+  silent: '静音',
   failed: '失败',
-  unjudged: '跑过 · 门未判',
-  observed: '已跑过一块',
+  unjudged: '未判',
+  observed: '已跑过',
 };
 
 /** 逐块行上那句人话（一处定义，组件不拼句子）。 */

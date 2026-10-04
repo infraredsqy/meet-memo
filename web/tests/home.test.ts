@@ -8,7 +8,7 @@ import {
 } from '../src/home/model';
 import { confirmWorkspaceOpen } from '../src/home/confirmWorkspaceOpen';
 import { drainSettled, showsWorkspaceHome } from '../src/home/gate';
-import { offlineNoticeOf, postButtonsView, postIdleNote, postStopView } from '../src/home/post';
+import { offlineNoticeOf, postButtonsView, postStopView } from '../src/home/post';
 import { failureFrom } from '../src/failure';
 import { probeDecision } from '../src/api/sessions';
 import type { PostJobCell, SessionRow, Snapshot } from '../src/contract';
@@ -81,7 +81,7 @@ describe('「开始 / 接着录」在这一行上能不能按', () => {
     expect(startWhy(row({ kind: 'empty', state: null }))).toBeNull();
     expect(startWhy(row({ kind: 'meeting', state: 'done' }))).toBeNull();
     expect(startWhy(row({ kind: 'meeting', state: 'failed' }))).toBeNull();
-    expect(startWhy(row({ dir_exists: false }))).toBe('目录已不在原地，只显示，录不了');
+    expect(startWhy(row({ dir_exists: false }))).toBe('目录已不在原地，录不了');
   });
 
   it('动作钮的名字跟着行走：录过的叫「接着录」，没录过的叫「开始录音」', () => {
@@ -158,6 +158,7 @@ describe('会后那两个按钮（R26 / R29）', () => {
     for (const state of ['recording', 'draining'] as const) {
       for (const has_offline of [true, false]) {
         const view = postButtonsView(row({ kind: 'meeting', state, has_offline }));
+        expect(view.offlineNotice).not.toBeNull();
         expect(view.offlineNotice).toContain('这一场还在录 / 还在收尾');
         expect(view.offlineNotice).toContain(`盘上会后稿：${has_offline ? '有' : '没有'}`);
         // 落定之后那一档的两句话在这一档一个都不许出现
@@ -167,12 +168,12 @@ describe('会后那两个按钮（R26 / R29）', () => {
     }
   });
 
-  it('目录已不在原地：两个都按不动，那一格说这一场跑不了会后（不冒充会后稿读数）', () => {
+  it('目录已不在原地：两个都按不动，原因句只有一处（不冒充会后稿读数）', () => {
     const view = postButtonsView(row({ dir_exists: false }));
     expect(view.canPostOffline).toBe(false);
-    expect(view.offlineNotice).toBe('这一场跑不了会后：目录不在原地');
-    // 「路径已不在」归路径那一格（`statusLabel()`）
-    expect(view.offlineNotice).not.toBe('路径已不在');
+    expect(view.why).toBe('目录已不在原地，跑不了会后');
+    // 上面那句已经把「跑不了」说完了：会后那一格不再复述，也不把「路径已不在」搬过来
+    expect(view.offlineNotice).toBeNull();
   });
 
   it('收尾失败（failed）那一场照样能按：会后跑不跑与收尾那一步的成败无关', () => {
@@ -182,10 +183,6 @@ describe('会后那两个按钮（R26 / R29）', () => {
   it('「出纪要」按钮上那一格按 has_offline 如实写（R29）', () => {
     expect(offlineNoticeOf(row({ has_offline: true }))).toContain('有会后精细稿');
     expect(offlineNoticeOf(row({ has_offline: false }))).toContain('还没有会后精细稿');
-  });
-
-  it('底下那行小字说明两个都不按的后果', () => {
-    expect(postIdleNote()).toContain('都不按');
   });
 });
 

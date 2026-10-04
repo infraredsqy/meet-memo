@@ -22,8 +22,8 @@ export interface PostButtonsView {
   canPostMinutes: boolean;
   /** 按不动时给一句为什么（`null` = 两个都能按）。 */
   why: string | null;
-  /** 「出纪要」按钮上那一格：这一场有没有会后精细稿（R29）。 */
-  offlineNotice: string;
+  /** 「出纪要」按钮上那一格：这一场有没有会后精细稿（R29）；没得说时是 `null`。 */
+  offlineNotice: string | null;
 }
 
 /**
@@ -45,17 +45,17 @@ export function postButtonsView(row: SessionRow): PostButtonsView {
     return {
       canPostOffline: false,
       canPostMinutes: false,
-      why: '目录已不在原地，只显示，跑不了会后',
+      why: '目录已不在原地，跑不了会后',
       // 「路径已不在」是**路径那一格**的说法（`statusLabel()`、`wslist__state`）；摆到这一格上
-      // 会被读成在回答会后稿的事，这里如实说这一场跑不了会后。
-      offlineNotice: '这一场跑不了会后：目录不在原地',
+      // 会被读成在回答会后稿的事。上面那句 `why` 已经把「跑不了」说完了，这一格不再复述。
+      offlineNotice: null,
     };
   }
   if (row.state === 'recording' || row.state === 'draining') {
     return {
       canPostOffline: false,
       canPostMinutes: false,
-      why: '这一场还在录 / 还在收尾，等它落定再按',
+      why: '这一场还在录 / 还在收尾',
       offlineNotice: unsettledOfflineNotice(row),
     };
   }
@@ -69,9 +69,7 @@ export function postButtonsView(row: SessionRow): PostButtonsView {
 
 /** 「出纪要」按钮上那一格：这一场有没有会后精细稿（R29 / `has_offline`）。 */
 export function offlineNoticeOf(row: SessionRow): string {
-  return row.has_offline
-    ? '这一场有会后精细稿：两份一起交给 DSH'
-    : '这一场还没有会后精细稿：只拿会中稿交给 DSH';
+  return row.has_offline ? '这一场有会后精细稿' : '这一场还没有会后精细稿';
 }
 
 /**
@@ -84,12 +82,7 @@ export function offlineNoticeOf(row: SessionRow): string {
  */
 export function unsettledOfflineNotice(row: SessionRow): string {
   const onDisk = row.has_offline ? '有' : '没有';
-  return `这一场还在录 / 还在收尾；盘上会后稿：${onDisk}，收尾落定后再定`;
-}
-
-/** 两个按钮下面那行小声说明：都不按就什么都不发生。 */
-export function postIdleNote(): string {
-  return '都不按，这一场就什么都不跑。';
+  return `这一场还在录 / 还在收尾；盘上会后稿：${onDisk}`;
 }
 
 // ---------------------------------------------------------------------------

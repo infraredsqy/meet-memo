@@ -318,9 +318,9 @@ describe('会后那两个按钮（review-1 m7）', () => {
       .findAll((node) => node.props.className === 'wspane__why')
       .map((node) => `${node.props.children}`);
     expect(whys.join('\n')).toContain('目录已不在原地');
-    // 「路径已不在」是**路径那一格**（`wslist__state`）的说法，不摆到会后那一格上（review-2 m1）
+    // 原因句只有一处（`wspane__why`）：会后那一格不复述，也不把「路径已不在」搬过来
     expect(postLines(renderer).join('\n')).not.toContain('路径已不在');
-    expect(postLines(renderer).join('\n')).toContain('这一场跑不了会后：目录不在原地');
+    expect(postLines(renderer).join('\n')).not.toContain('跑不了会后');
     const stateCells = renderer.root
       .findAll((node) => `${node.props.className}`.includes('wslist__state'))
       .map((node) => textOf(node));
@@ -341,7 +341,7 @@ describe('会后那两个按钮（review-1 m7）', () => {
     const whys = renderer.root
       .findAll((node) => node.props.className === 'wspane__why')
       .map((node) => `${node.props.children}`);
-    expect(whys.join('\n')).toContain('这一场还在录 / 还在收尾，等它落定再按');
+    expect(whys.join('\n')).toContain('这一场还在录 / 还在收尾');
     const lines = postLines(renderer).join('\n');
     // 两件事都在：这一场还没落定 + 盘上此刻那一份的读数（不许哪一句盖住另一句）
     expect(lines).toContain('这一场还在录 / 还在收尾');

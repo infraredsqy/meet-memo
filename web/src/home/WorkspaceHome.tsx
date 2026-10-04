@@ -43,7 +43,6 @@ import {
   POST_OFFLINE_ACTION,
   POST_STOP_ACTION,
   postButtonsView,
-  postIdleNote,
   postStopView,
 } from './post';
 import { SPEAKER_RENAME_ACTION, duplicateNameHolders, namesRows, type NamesRowView } from './names';
@@ -551,7 +550,7 @@ export function WorkspaceHome({
       .then(
         () =>
           setPostNote(
-            '停止已受理：这一趟会在当前块收尾之后停下（盘上状态写成「被打断」）。',
+            '停止已受理：当前块收尾之后停下。',
           ),
         (error) => setFailure(failureFrom(error)),
       )
@@ -591,7 +590,7 @@ export function WorkspaceHome({
     setBusy(true);
     void postAction(action, { dir: selection })
       .then(
-        () => setPostNote(`${POST_LABELS[action]}：这一趟已起（跑成什么样由这一场盘上的状态回答）。`),
+        () => setPostNote(`${POST_LABELS[action]}：这一趟已起。`),
         (error) => {
           setFailure(failureFrom(error));
           setPostNote(null);
@@ -704,7 +703,6 @@ export function WorkspaceHome({
             <span className={`glyph ${gpu.mark}`} aria-hidden="true" />
             {gpu.label}
           </span>
-          <span className="hint">清单住在服务端 · 界面只读</span>
         </div>
       </header>
 
@@ -864,7 +862,9 @@ export function WorkspaceHome({
                       直接出纪要
                     </button>
                   </div>
-                  <p className="wspane__postline">{post.offlineNotice}</p>
+                  {post.offlineNotice !== null && (
+                    <p className="wspane__postline">{post.offlineNotice}</p>
+                  )}
                   {post.why !== null && <p className="wspane__why">{post.why}</p>}
                   {postNote !== null && <p className="wspane__postline">{postNote}</p>}
                   {/* 说话人名字（R10 第四条）：会后区的一行入口，点开小弹窗当场改名。
@@ -883,7 +883,6 @@ export function WorkspaceHome({
                       说话人名字…
                     </button>
                   </p>
-                  <p className="hint">{postIdleNote()}</p>
                 </div>
               )}
 
@@ -959,7 +958,7 @@ export function WorkspaceHome({
                           <div className="wsprog__rows" role="list" aria-label="逐块记录">
                             {chunkRows.length === 0 && (
                               <p className="wsprog__row wsprog__row--empty">
-                                还没有块跑完的记录（从这一页打开起开始记）。
+                                还没有块跑完的记录。
                               </p>
                             )}
                             {chunkRows.map((item) => (
@@ -968,14 +967,15 @@ export function WorkspaceHome({
                               </p>
                             ))}
                           </div>
+                          {/* 这四档读数只是给人看的账，不作判据（设计意图第 6、7 条 ——
+                              那句话是给维护者的，不摆到界面上） */}
                           <p className="hint">
-                            已跑 {prog.counts.transcribed + prog.counts.silent + prog.counts.failed + prog.counts.unjudged} 块 ·
-                            跑成 {prog.counts.transcribed} · 静音 {prog.counts.silent} · 失败 {prog.counts.failed} ·
-                            未判 {prog.counts.unjudged}
                             {prog.elapsedSeconds === null
                               ? ''
-                              : ` · 已跑 ${Math.round(prog.elapsedSeconds)} 秒`}
-                            ；块数是给人看的读数，不作判据（设计意图第 6、7 条）。
+                              : `已跑 ${Math.round(prog.elapsedSeconds)} 秒 · `}
+                            {prog.counts.transcribed + prog.counts.silent + prog.counts.failed + prog.counts.unjudged} 块 ·
+                            跑成 {prog.counts.transcribed} · 静音 {prog.counts.silent} · 失败 {prog.counts.failed} ·
+                            未判 {prog.counts.unjudged}
                           </p>
                         </>
                       )}

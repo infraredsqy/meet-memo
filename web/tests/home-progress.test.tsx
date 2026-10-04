@@ -207,7 +207,7 @@ describe('会后进度区：换值渲染不塌', () => {
     expect(frac).toContain('1/10');
     expect(frac).toContain('0/10');
     // 第一跳已跑过的一块补成 observed 行（事实如实：档位读不着不编）
-    expect(textsOf(renderer, 'wsprog__row').join(' ')).toContain('本地 第 1/10 块 · 已跑过一块');
+    expect(textsOf(renderer, 'wsprog__row').join(' ')).toContain('本地 第 1/10 块 · 已跑过');
     // 进度条那格真的把 --p 写上了（组件只摆，长短归样式）
     const fills = renderer.root.findAll((node) => node.props.className === 'wsprog__fill');
     expect(fills).toHaveLength(2);
@@ -573,7 +573,7 @@ describe('按钮起跑档（review-2 C1）：post_job 出现在选中行上之�
     const renderer = await mountHome();
     expect(pollerOf().start).not.toHaveBeenCalled();
     // 旧趟的逐块行在手（挂载那一跳把已跑过的补成 observed 行）
-    expect(textsOf(renderer, 'wsprog__row').join(' ')).toContain('本地 第 10/10 块 · 已跑过一块');
+    expect(textsOf(renderer, 'wsprog__row').join(' ')).toContain('本地 第 10/10 块 · 已跑过');
 
     // 按「生成会后精细稿」：node 下真实 postAction 当场拒（fetch 相对路径），失败块出列、
     // 收尾 reloadAfterAction() 照走 —— post_job 从第二份列表应答进来
@@ -606,7 +606,7 @@ describe('按钮起跑档（review-2 C1）：post_job 出现在选中行上之�
     expect(pollerOf().start).toHaveBeenCalledWith(DIR);
     expect(textsOf(renderer, 'wsprog__phase').join(' ')).toContain('正在跑：本地 第 1/10 块');
     // 旧趟的行整段换掉（m2：账重置重播），新账一块没跑完 → 空态那句
-    expect(textsOf(renderer, 'wsprog__row').join(' ')).not.toContain('已跑过一块');
+    expect(textsOf(renderer, 'wsprog__row').join(' ')).not.toContain('已跑过');
     expect(textsOf(renderer, 'wsprog__row').join(' ')).toContain('还没有块跑完的记录');
     const fills = renderer.root.findAll((node) => node.props.className === 'wsprog__fill');
     expect(String(fills[0]?.props.style?.['--p'])).toBe('0%');
@@ -678,7 +678,7 @@ describe('重跑一场的逐块行（review-2 m2）：账重置那一跳整段�
       }),
     );
     const renderer = await mountHome();
-    expect(textsOf(renderer, 'wsprog__row').join(' ')).toContain('本地 第 10/10 块 · 已跑过一块');
+    expect(textsOf(renderer, 'wsprog__row').join(' ')).toContain('本地 第 10/10 块 · 已跑过');
 
     // 重跑第一跳：新 started_at、done 从 0 重数
     fetchSessionStatusMock.mockImplementation(async () =>

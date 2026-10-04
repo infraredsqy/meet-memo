@@ -24,7 +24,7 @@ export function initialSelection(sessions: SessionRow[], recent: string | null):
 
 /** 「开始 / 接着录」在这一行上能不能按；按不动时给一句为什么（`null` = 可按）。 */
 export function startWhy(row: SessionRow): string | null {
-  if (!row.dir_exists) return '目录已不在原地，只显示，录不了';
+  if (!row.dir_exists) return '目录已不在原地，录不了';
   return null;
 }
 

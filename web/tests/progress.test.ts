@@ -235,9 +235,7 @@ describe('进度读数（offline 那份 → 每路一条）', () => {
       ],
     }));
     expect(view.phase).toBe('interrupted');
-    expect(view.phaseLabel).toBe(
-      '被打断：这一趟停了，已跑的部分留在逐块账里，重新按按钮可从头再跑',
-    );
+    expect(view.phaseLabel).toBe('被打断');
     expect(view.onDiskState).toBe('interrupted');
     expect(view.inProcess).toBe(false);
   });
@@ -245,7 +243,12 @@ describe('进度读数（offline 那份 → 每路一条）', () => {
   it('终态照盘上那份答（partial 不折成 done）；没跑过是另一档', () => {
     const partial = progressView(status({}, { state: 'partial', in_process: false }));
     expect(partial.phase).toBe('finished');
-    expect(partial.phaseLabel).toBe('跑完了（盘上记作 partial）');
+    // 一路整条没交回：不许写成「跑完了」
+    expect(partial.phaseLabel).toBe('只跑成一路');
+    const failed = progressView(status({}, { state: 'failed', in_process: false }));
+    expect(failed.phaseLabel).toBe('跑失败了');
+    const done = progressView(status({}, { state: 'done', in_process: false }));
+    expect(done.phaseLabel).toBe('跑完了');
     const never = progressView(status({}, { state: 'idle' }));
     expect(never.phase).toBe('never-run');
     expect(never.phaseLabel).toBe('这一场还没跑过会后');
@@ -283,7 +286,7 @@ describe('逐块行（每跑完一块落一行）', () => {
     }));
     expect(rows.map((item) => item.key)).toEqual(['mic-1', 'mic-2', 'loopback-1']);
     expect(rows.every((item) => item.verdict === 'observed')).toBe(true);
-    expect(chunkRowLabel(rows[0] as (typeof rows)[number])).toBe('本地 第 1/3 块 · 已跑过一块');
+    expect(chunkRowLabel(rows[0] as (typeof rows)[number])).toBe('本地 第 1/3 块 · 已跑过');
   });
 
   it('两次读数之间新跑完的块：四档归属靠计数差值，逐块落行', () => {
