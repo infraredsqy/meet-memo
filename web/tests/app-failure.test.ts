@@ -2,6 +2,7 @@ import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest';
 import { createElement } from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
 import { failureFrom } from '../src/failure';
+import { FailureBlock } from '../src/failure-ui';
 import { ActionFailedError, ActionForbiddenError, ActionProtocolError } from '../src/api';
 
 /**
@@ -177,5 +178,160 @@ describe('SSE onError 的失败块（渲染层转手）', () => {
     await act(async () => renderer.unmount());
     vi.mocked(createHeartbeatClient).mockReset();
     vi.mocked(fetchSessions).mockReset();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 收尾失败的失败块不双画（web-drain-failure-double-lines）
+// ---------------------------------------------------------------------------
+
+/**
+ * 收尾失败那一档的重复行（web-drain-failure-double-lines）：会中路径 `drainFailure`
+ * （live/drain.ts）的 detail 已把「收尾第 N 步失败：…」逐字摊进去，App 又把
+ * `drainFailedSteps` 传成 extraLines —— 失败块就把这几行又画一遍。这里钉住：
+ * 每一行在失败块里**恰出现一次**（去重口径 = 字符串精确相等，行序保持）。
+ */
+describe('收尾失败的失败块（drain 那一档不双画）', () => {
+  it('会中收尾失败：「收尾第 N 步失败」的每一行在失败块里恰出现一次', async () => {
+    const { LiveView } = await import('../src/App');
+    const { createHeartbeatClient } = await import('../src/api');
+    const { fetchSessions } = await import('../src/api/sessions');
+    const { makeSnapshot } = await import('./live-fixtures');
+
+    vi.mocked(createHeartbeatClient).mockImplementation(
+      () =>
+        ({
+          setIntervalFromSnapshot: () => undefined,
+          intervalSeconds: () => 10,
+          tick: async () => ({ kind: 'error', error: new Error('不轮询'), status: '失联' }),
+          start: () => undefined,
+          stop: () => undefined,
+          running: () => false,
+        }) as unknown as import('../src/api').HeartbeatClient,
+    );
+    (globalThis as unknown as { window: unknown }).window = {
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    };
+    (globalThis as unknown as { document: unknown }).document = { body: {} };
+    vi.mocked(fetchSessions).mockResolvedValue({
+      sessions: [],
+      recent: null,
+      post_job: null,
+    });
+
+    const failedSteps = [
+      { id: 'transcode' as const, status: 'done' as const, detail: '', error: null },
+      { id: 'log' as const, status: 'failed' as const, detail: 'log 落盘', error: '日志路径不可写' },
+      { id: 'post' as const, status: 'failed' as const, detail: 'post 跑挂', error: '钩子抛错' },
+    ];
+    // 与 drainFailedSteps 的成行口径（live/drain.ts）逐字一致的那几行。
+    const stepLines = ['收尾第 log 步失败：日志路径不可写', '收尾第 post 步失败：钩子抛错'];
+    const snapshot = makeSnapshot({
+      top_state: 'ended',
+      ended: { phase: 'draining', steps: failedSteps, error: null },
+    });
+    // 源侧转手（`App` 顶层持连接）：用例给一份订阅即交 handlers + 快照的假源。
+    const source = {
+      use(handlers: import('../src/api').EventsClientHandlers): () => void {
+        handlers.onSnapshot?.(snapshot, { resync: false, dropped: 0 });
+        return () => undefined;
+      },
+    };
+    let renderer!: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        createElement(LiveView, { snapshot, events: source as never }),
+      );
+    });
+
+    // 这一场没有动作失败（failure === null）：画出来的失败块只有收尾那一档。
+    const fails = renderer.root.findAll(
+      (node) => `${node.props.className ?? ''}` === 'fail',
+    );
+    expect(fails).toHaveLength(1);
+    const walk = (current: TestRenderer.ReactTestInstance): string => {
+      const parts: string[] = [];
+      for (const child of current.children) {
+        if (typeof child === 'string') {
+          parts.push(child);
+          continue;
+        }
+        parts.push(walk(child));
+      }
+      return parts.join(' ');
+    };
+    const text = walk(fails[0] as TestRenderer.ReactTestInstance);
+    expect(text).toContain('收尾没走完');
+    // 每一行用文本计数断言：修复前 detail 与 extraLines 双清单会各画一遍（= 2）。
+    for (const line of stepLines) {
+      expect(text.split(line).length - 1).toBe(1);
+    }
+
+    await act(async () => renderer.unmount());
+  });
+
+  it('FailureBlock 直给：与 detail 相同的 extra 行去重，独有行仍渲染且行序保持', () => {
+    const walk = (current: TestRenderer.ReactTestInstance): string => {
+      const parts: string[] = [];
+      for (const child of current.children) {
+        if (typeof child === 'string') parts.push(child);
+        else parts.push(walk(child));
+      }
+      return parts.join(' ');
+    };
+
+    // drain 档：detail 含一行 + 一行收尾总述；extra 复述一行 + 添一行独有行。
+    const drain = TestRenderer.create(
+      createElement(FailureBlock, {
+        failure: {
+          kind: 'drain',
+          message: '收尾没走完',
+          detail: ['收尾失败：磁盘满了', '收尾第 post 步失败：钩子抛错'],
+          fields: {},
+        },
+        logPath: null,
+        extraLines: ['收尾第 post 步失败：钩子抛错', 'log：C:\\out\\260921\\drain.log'],
+      }),
+    );
+    const failNode = drain.root.findAll(
+      (node) => `${node.props.className ?? ''}` === 'fail',
+    )[0] as TestRenderer.ReactTestInstance;
+    const drainText = walk(failNode);
+    // 复述的不重复、独有行照常渲染：去重只按精确相等，不过滤任何别的行。
+    expect(drainText.split('收尾第 post 步失败：钩子抛错').length - 1).toBe(1);
+    expect(drainText).toContain('收尾失败：磁盘满了');
+    expect(drainText).toContain('log：C:\\out\\260921\\drain.log');
+    // 行序保持：独有 extra 行排在 detail 行之后。
+    expect(drainText.indexOf('收尾第 post 步失败：钩子抛错')).toBeGreaterThan(
+      drainText.indexOf('收尾失败：磁盘满了'),
+    );
+    expect(drainText.indexOf('log：C:\\out\\260921\\drain.log')).toBeGreaterThan(
+      drainText.indexOf('收尾失败：磁盘满了'),
+    );
+
+    // envelope 档用同一套 FailureBlock：同口径去重，不偏袒哪一档。
+    const envelope = TestRenderer.create(
+      createElement(FailureBlock, {
+        failure: {
+          kind: 'envelope',
+          code: 'invalid_setting',
+          message: '配置不对',
+          detail: ['failed_steps.post：钩子抛错'],
+          fields: {},
+        },
+        logPath: null,
+        extraLines: ['failed_steps.post：钩子抛错', '收尾第 post 步失败：钩子抛错'],
+      }),
+    );
+    const envelopeNode = envelope.root.findAll(
+      (node) => `${node.props.className ?? ''}` === 'fail',
+    )[0] as TestRenderer.ReactTestInstance;
+    const envelopeText = walk(envelopeNode);
+    expect(envelopeText.split('failed_steps.post：钩子抛错').length - 1).toBe(1);
+    expect(envelopeText).toContain('收尾第 post 步失败：钩子抛错');
+
+    drain.unmount();
+    envelope.unmount();
   });
 });

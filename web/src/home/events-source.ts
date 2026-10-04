@@ -23,7 +23,7 @@ export interface EventsSource {
 }
 
 export function createEventsSource(
-  /** 判屏用：`HomeGate` 的 gate state 从这里走（同一份快照。 */
+  /** 判屏用：`HomeGate` 的 gate state 从这里走（同一份快照）。 */
   setSnapshot: (snapshot: Snapshot) => void,
 ): { source: EventsSource; clientHandlers: EventsClientHandlers } {
   type Registered = EventsClientHandlers | null;

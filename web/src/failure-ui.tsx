@@ -20,6 +20,15 @@ export function FailureBlock({
   /** forbidden 档的说明行开关，默认 true（见上）。 */
   forbiddenNote?: boolean;
 }): ReactNode {
+  /**
+   * extraLines 先对 detail 去重（web-drain-failure-double-lines）：会中收尾那一档
+   * `drainFailure`（live/drain.ts）的 detail 已按逐字等价线摊进了收尾失败那几行，
+   * App 又把 `drainFailedSteps` 传成 extraLines —— 同一行就被画两遍。这里只做
+   * 字符串行**精确相等**的去重：已在 detail 里的 extra 行不再渲染，行序保持；
+   * drain.ts 的 detail 构成与调用方传参都不动。
+   */
+  const detailSet = new Set('detail' in failure ? failure.detail : []);
+  const extraUnique = extraLines.filter((line) => !detailSet.has(line));
   if (failure.kind === 'forbidden') {
     return (
       <div className="fail">
@@ -56,9 +65,9 @@ export function FailureBlock({
             ))}
           </ul>
         )}
-        {extraLines.length > 0 && (
+        {extraUnique.length > 0 && (
           <ul className="fail__next">
-            {extraLines.map((line) => (
+            {extraUnique.map((line) => (
               <li key={line}>{line}</li>
             ))}
           </ul>
@@ -84,9 +93,9 @@ export function FailureBlock({
           ))}
         </ul>
       )}
-      {extraLines.length > 0 && (
+      {extraUnique.length > 0 && (
         <ul className="fail__next">
-          {extraLines.map((line) => (
+          {extraUnique.map((line) => (
             <li key={line}>{line}</li>
           ))}
         </ul>
