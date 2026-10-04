@@ -308,25 +308,42 @@ def discover_inputs(session_dir: str | Path) -> tuple[InputSpec, ...]:
     return tuple(found)
 
 
-def source_kind(spec: InputSpec | Mapping[str, object]) -> str:
-    """这一条输入自己有哪几条稿：`both` / `live_only` / `offline_only`。
+def classify(live: bool, offline: bool) -> str:
+    """这一路手上有哪几条稿的**唯一**映射（原来三处各存一份，现在都折到这里）。
 
-    **按输入的语义字段判**（`InputSpec.offline` / `InputSpec.live` 在不在）：文件名里有没有
-    `offline` 这个子串不是判据（`phase2` 第 0 节 M2 的定案）。两种输入形状都收，与
-    `_transcript_of()` 同一套：`InputSpec` 直接读字段，`inputs.json` 的逐条映射按
-    `live` / `offline` 两格在不在判。
+    两条都在 → `both`、只有会中稿 → `live_only`、只有会后稿 → `offline_only`；两份都不在
+    是**不存在的组合** → `ValueError`。三处调用方（`chunk.source_kind()` /
+    `inputs.SourceEntry.kind` / `prompt.kind_for()`）把各自的输入折算成这两个布尔后调它，
+    不存在的组合按各自的原行为处理（抛自己那层的错误，或像 `SourceEntry` 那样保持原答案）。
     """
-    if isinstance(spec, InputSpec):
-        live, offline = spec.live, spec.offline
-    else:
-        live, offline = spec.get("live"), spec.get("offline")
     if live and offline:
         return "both"
     if live:
         return "live_only"
     if offline:
         return "offline_only"
-    raise ChunkError(f"输入清单里有一条说不出 source 的记录：{spec!r}")
+    raise ValueError(
+        f"live / offline 两份稿都不在：没有可判的稿型（live={live!r}, offline={offline!r}）"
+    )
+
+
+def source_kind(spec: InputSpec | Mapping[str, object]) -> str:
+    """这一条输入自己有哪几条稿：`both` / `live_only` / `offline_only`。
+
+    **按输入的语义字段判**（`InputSpec.offline` / `InputSpec.live` 在不在）：文件名里有没有
+    `offline` 这个子串不是判据（`phase2` 第 0 节 M2 的定案）。两种输入形状都收，与
+    `_transcript_of()` 同一套：`InputSpec` 直接读字段，`inputs.json` 的逐条映射按
+    `live` / `offline` 两格在不在判。映射本体在 `classify()`（三处共用那一份）；
+    两份都不在时照原话抛 `ChunkError`。
+    """
+    if isinstance(spec, InputSpec):
+        live, offline = spec.live, spec.offline
+    else:
+        live, offline = spec.get("live"), spec.get("offline")
+    try:
+        return classify(bool(live), bool(offline))
+    except ValueError as exc:
+        raise ChunkError(f"输入清单里有一条说不出 source 的记录：{spec!r}") from exc
 
 
 def mode_for(inputs: Sequence[InputSpec]) -> str | None:
@@ -493,6 +510,7 @@ __all__ = [
     "build_index_text",
     "chunk_session",
     "chunk_source",
+    "classify",
     "discover_inputs",
     "main",
     "mode_for",

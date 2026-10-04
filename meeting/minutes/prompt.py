@@ -54,6 +54,7 @@ from meeting.minutes.chunk import (
     MODES,
     WORKING_DIR,
     InputSpec,
+    classify,
     discover_inputs,
     mode_for,
 )
@@ -127,16 +128,17 @@ def shape_of(kind: str) -> str:
 def kind_for(kinds: Sequence[str]) -> str:
     """这一路**手上有哪几份稿** → `both` / `live_only` / `offline_only`。
 
-    只按「哪几份在」判，不排先后、不说哪一份更好（R11：两份平级）。
+    只按「哪几份在」判，不排先后、不说哪一份更好（R11：两份平级）。映射本体在
+    `chunk.classify()`（三处共用那一份）；集合里混进 `live` / `offline` 之外的词、
+    或者一份稿都没有，都照原话抛 `PromptTemplateError`。
     """
     present = set(kinds)
-    if present == {"live", "offline"}:
-        return "both"
-    if present == {"live"}:
-        return "live_only"
-    if present == {"offline"}:
-        return "offline_only"
-    raise PromptTemplateError(f"这一路的稿别说不出（收到 {sorted(present)}）")
+    if present - set(KINDS):
+        raise PromptTemplateError(f"这一路的稿别说不出（收到 {sorted(present)}）")
+    try:
+        return classify("live" in present, "offline" in present)
+    except ValueError as exc:
+        raise PromptTemplateError(f"这一路的稿别说不出（收到 {sorted(present)}）") from exc
 
 
 def _note_sentence(source: str, kinds: Sequence[str]) -> str:

@@ -37,6 +37,7 @@ from meeting.minutes.chunk import (
     MODES,
     WORKING_DIR,
     InputSpec,
+    classify,
     discover_inputs,
     mode_for,
     read_transcript_text,
@@ -88,10 +89,15 @@ class SourceEntry:
 
     @property
     def kind(self) -> str:
-        """这一路自己有哪几条稿（`both` / `live_only` / `offline_only`）。"""
-        if self.live and self.offline:
-            return "both"
-        return "live_only" if self.live else "offline_only"
+        """这一路自己有哪几条稿（`both` / `live_only` / `offline_only`）。
+
+        映射本体在 `chunk.classify()`（三处共用那一份）。两份都不在的条目照旧答
+        `offline_only`：本层从不构造这样的条目（`entries_for_session()` 只收盘上真有的稿），
+        这里的空态答案沿用从前那一版的原行为，一个字不变。
+        """
+        if not self.live and not self.offline:
+            return "offline_only"
+        return classify(bool(self.live), bool(self.offline))
 
     def as_dict(self) -> dict[str, Any]:
         """逐条的形状：**不在的那一条整个不写**（`null` 与「没这一份」是两件事，不写更清楚）。"""

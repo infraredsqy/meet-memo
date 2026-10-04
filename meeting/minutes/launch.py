@@ -48,18 +48,16 @@ from typing import Any
 
 from meeting.minutes.inputs import write_text_atomic
 from meeting.minutes.status import (
+    ARTIFACT_FINAL as FINAL_NAME,
     ARTIFACT_LOG,
     BRANCH_AUTO,
     BRANCH_HEADLESS,
     BRANCH_WEB,
+    RUN_PROMPT_NAME,
+    WORKING_DIR,
     DeliveryForbidden,
     ISOLATION_MESSAGE,
 )
-
-#: 纪要的落点（场次目录根）与生成它的那份提示词（工作目录下）
-FINAL_NAME = "meeting_final.md"
-RUN_PROMPT_NAME = "run_prompt.md"
-WORKING_DIR = "working"
 
 #: 说话人附录那两段固定标题（spec 定死；启动器的产物校验按它们判）
 APPENDIX_HEADING = "## 说话人附录"

@@ -102,10 +102,17 @@ BRANCH_HEADLESS = "headless"
 BRANCH_WEB = "web"
 BRANCHES: tuple[str, ...] = (BRANCH_AUTO, BRANCH_HEADLESS, BRANCH_WEB)
 
-#: 状态文件里 `artifacts` 的三格（相对场次目录的路径）
+#: 交付物文件名的规范常量（`launch.py` / `dsh_web.py` 从这里 import，名字不再各存一份）：
+#: 工作目录与工作目录下那两个文件、以及一份纪要自己的 log 文件名
+WORKING_DIR = "working"
+RUN_PROMPT_NAME = "run_prompt.md"
+MINUTES_RUN_LOG_NAME = "minutes-run.log"
+
+#: 状态文件里 `artifacts` 的三格（相对场次目录的路径）——从上面的裸名派生，
+#: 取值与从前逐字节相同（`ARTIFACT_FINAL` 在场次目录根，不带前缀）
 ARTIFACT_FINAL = "meeting_final.md"
-ARTIFACT_INPUTS = "working/inputs.json"
-ARTIFACT_LOG = "working/minutes-run.log"
+ARTIFACT_INPUTS = f"{WORKING_DIR}/inputs.json"
+ARTIFACT_LOG = f"{WORKING_DIR}/{MINUTES_RUN_LOG_NAME}"
 
 
 class StatusError(ValueError):
@@ -421,6 +428,7 @@ __all__ = [
     "LOCK_ATTEMPTS",
     "LOCK_NAME",
     "LOCK_WAIT_SECONDS",
+    "MINUTES_RUN_LOG_NAME",
     "MODE_UNKNOWN",
     "SCHEMA_VERSION",
     "STATES",
@@ -438,7 +446,9 @@ __all__ = [
     "now_iso",
     "parse_status_document",
     "read_status",
+    "RUN_PROMPT_NAME",
     "status_path",
     "write_session_status",
     "write_status",
+    "WORKING_DIR",
 ]

@@ -63,7 +63,13 @@ from pathlib import Path
 from typing import Any
 
 from meeting.minutes.inputs import write_text_atomic
-from meeting.minutes.status import DeliveryForbidden, ISOLATION_MESSAGE
+from meeting.minutes.status import (
+    MINUTES_RUN_LOG_NAME,
+    RUN_PROMPT_NAME,
+    WORKING_DIR,
+    DeliveryForbidden,
+    ISOLATION_MESSAGE,
+)
 
 _log = logging.getLogger("meeting.minutes.dsh_web")
 
@@ -484,7 +490,7 @@ def handoff(
 
     if write_log:
         write_text_atomic(
-            directory / _WORKING_DIR / _RUN_PROMPT_NAME, prompt_text
+            directory / WORKING_DIR / RUN_PROMPT_NAME, prompt_text
         )
 
     # 一、工作区（幂等：同一目录返回已有工作区）
@@ -633,13 +639,7 @@ def _write_log(
         lines.append(f"## {step}")
         lines.append(record.get(key, "（没走到这一步）"))
         lines.append("")
-    write_text_atomic(directory / _WORKING_DIR / _ARTIFACT_LOG, "\n".join(lines))
-
-
-#: 与 `launch.py` 同名的三格（`working/` 下的落点与状态文件里声明的路径逐字相同）
-_WORKING_DIR = "working"
-_RUN_PROMPT_NAME = "run_prompt.md"
-_ARTIFACT_LOG = "minutes-run.log"
+    write_text_atomic(directory / WORKING_DIR / MINUTES_RUN_LOG_NAME, "\n".join(lines))
 
 
 __all__ = [

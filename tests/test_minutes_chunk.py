@@ -23,6 +23,7 @@ from meeting.minutes.chunk import (
     InputSpec,
     chunk_session,
     chunk_source,
+    classify,
     discover_inputs,
     main,
     mode_for,
@@ -334,6 +335,15 @@ def test_mode_for_walks_the_three_degradation_levels(tmp_path: Path) -> None:
     assert mode_for(discover_inputs(live)) == "live_only"
     assert mode_for(discover_inputs(offline)) == "offline_only"
     assert mode_for(()) is None
+
+
+def test_classify_maps_the_four_combinations() -> None:
+    """`classify()` 是三处共用的那份稿型映射：四组合 = 三个输出 + 一抛错。"""
+    assert classify(True, True) == "both"
+    assert classify(True, False) == "live_only"
+    assert classify(False, True) == "offline_only"
+    with pytest.raises(ValueError, match="两份稿都不在"):
+        classify(False, False)
 
 
 def test_input_spec_counts_lines_per_kind(tmp_path: Path) -> None:
