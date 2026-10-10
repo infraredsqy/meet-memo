@@ -1,6 +1,6 @@
 # meeting · HTTP 面
 
-> 这份文档写服务对外的那几条线：十一条端点（九条 `/api/*` + 静态首页 `GET /` + `/debug`）、动作的信封、动作表与 `code` 表、以及本地防线。
+> 这份文档写服务对外的那几条线：十五条端点（十三条 `/api/*` + 静态首页 `GET /` + `/debug`）、动作的信封、动作表与 `code` 表、以及本地防线。
 >
 > 读者是接这套 API 的人：前端、验收脚本、命令行复核。四态状态机、快照字段、`session.json`、SSE 帧形状、告警判定写在 `docs/state.md`；怎么起服务写在 `docs/service.md`。
 >
@@ -10,14 +10,14 @@
 
 | 章 | 标题 |
 |---|---|
-| 1 | 十一条端点 |
+| 1 | 十五条端点 |
 | 2 | 请求信封与应答形状 |
 | 3 | 动作表与 `code` 表 |
 | 4 | `settings_update`：写哪些键、什么时候生效 |
 | 5 | 端口与本地最低防线 |
 | 6 | 复核时怎么打 |
 
-## 1. 十一条端点
+## 1. 十五条端点
 
 | 端点 | 给什么 |
 |---|---|
@@ -32,6 +32,12 @@
 | `GET /api/dirs` | 目录选择器的一个现场：一层子目录的名目判读（起点用户主目录，`?dir=` 换层），`200`。**纯读**，只挑已有目录、不建目录 |
 | `GET /api/devices` | 两路各自的候选设备端点表（`{mic: [...], loopback: [...]}`，每项六格），`200`，任何状态下都给。**纯读、只枚举、不开任何设备**（`probe()` 会短暂试开，清单不走它）；设置抽屉的两个设备下拉读它 |
 | `POST /api/actions` | 动作端点，见第 2–4 章 |
+| `GET /api/sessions/{id}/materials` | 会议资料的清单：`{dir, materials_dir, items:[{name, size_bytes, added_at}]}`，`200`。**目录就是清单**（没有 JSON 账本）；`meeting_materials/` 还不在时 `items` 是空数组、**目录也不建**（首次上传才由服务创建）。**纯读**。资料层整体见第 3 章末尾那一节 |
+| `POST /api/sessions/{id}/materials?name=<文件名>` | 上传：请求体就是文件的原样字节，**流式写盘**（不转码、不压缩、不限类型、大小不设服务端硬顶）；`name` 必给、不可信（服务侧清洗防路径穿越），重名自动加序号后缀。成功体 = 通用信封 + `material: {name, size_bytes, added_at}`。二进制正文装不进 JSON 动作信封，这是与 `POST /api/actions` 并列的写端点（头哨见第 5 章） |
+| `GET /api/sessions/{id}/materials/{name}` | 取原文件：原始字节 + 按扩展名判的 `Content-Type`（认不出给 `application/octet-stream`），从盘上流式读出 |
+| `DELETE /api/sessions/{id}/materials/{name}` | 删除：只删那一个文件。成功体 = 通用信封 + `material: {name}` |
+
+`{id}` 一律是**这一场的目录路径**（URL 编码的绝对路径），与 `GET /api/sessions/{id}` 同一个写法。
 
 `/api/*` 的应答一律带 `Cache-Control: no-store`，并且**不发 `Access-Control-Allow-Origin`**（不开 CORS，前端与本服务同源）。
 
@@ -200,6 +206,20 @@
 
 **`GET /api/sessions/{id}`** —— 单场状态（会后视图的进度区）：`{id}` 是这一场的目录路径（URL 编码的绝对路径），应答体见 `docs/contract.md` 4.9。会后离线那条链每跑完一块就往场次目录里那份 `meeting_offline_progress.jsonl` 上补一行（这一块的文字 + 这一块的落点），这只端点把「第几块 / 共几块、正在跑哪一路、已经跑了多久」按路各交一份回来；`speakers` 一格带这一场盘上的身份集（限定键 / 路 / 人话标签 / 现名或 `null` / 可得的次数读数，4.11）。**纯读**：不涨 `revision`、不广播。
 
+### 会议资料的四条端点（资料节点 285bf58c）
+
+场次目录下固定的子目录 **`meeting_materials/`** 是一场会放资料的地方（资料是给纪要 AI 的 context）：目录名与服务端和纪要提示词两侧共享，**不设配置键、不可改名**；**首次上传时由服务创建**。四条端点都挂在 `/api/sessions/{id}/materials` 之下（`{id}` 同样是 URL 编码的目录路径），实现与清洗规则在 `meeting/service/runtime_materials.py`，契约正文在 `docs/contract.md` 4.12。
+
+- **只认两种目标目录**：服务的**当前活跃场次**、工作区注册表（`workspaces.json`）里**登记过的场次**；其余一律拒收。拒收口径与 `GET /api/sessions/{id}` 同一套寻址：目录已不在原地 → **404 `session_dir_missing`**（`detail = {dir, kind: "missing"}`）；目录在但两样都不是 → **404 `invalid_setting`**（`detail = {dir, kind}`）。活跃场次放在最前：录制中照收——哪怕那一行刚被 `workspace_remove` 摘出清单（只摘名单、文件不动），资料跟着场次走、不跟着清单行走。
+- **上传**（`POST …/materials?name=<文件名>`）：请求体就是文件的原样字节，**流式写盘**——收到多少写多少、不整段进内存，写在工作线程上（事件循环照转，心跳与三个 SSE 通道不被一次大上传按住）。**不转码、不压缩、不限类型、大小不设服务端硬顶**（「超过 100M 要不要确认」是界面的事）；请求的 `Content-Type` 只是发送方的说法，服务不读它也不校验它。`name` **必给**（缺 / 空白 → 400 `invalid_setting`，`detail.key = "name"`）、**不可信**：服务侧清洗防路径穿越（只留最后一段路径、Windows 非法字符与控制字符换 `_`、掐结尾点与空格、保留设备名前置 `_`、超长截断保留扩展名），重名自动加序号后缀、保留用户看到的名字（`报告.pdf` → `报告 (2).pdf`）。**不保留原文件的时间戳**：落盘那一刻的 mtime 就是「贴上时刻」。中途失败（盘上出岔 → 500 `persist_failed`；客户端断开）把半截文件收走，不留残骸。成功体 = `{"ok": true, "revision": N, "material": {name, size_bytes, added_at}}`。
+- **清单**（`GET …/materials`）：`{"dir": "<path>", "materials_dir": "<path>", "items": [{name, size_bytes, added_at}]}`，按名字排序（casefold）。**没有旁注清单文件**：目录就是清单，每条三格——名字、大小、贴上时刻（= 文件修改时间），不另设 JSON 账本、无备注元数据。`meeting_materials/` 还不在时 `items` 是空数组、**目录也不建**。
+- **取原文件**（`GET …/materials/{name}`）：原始字节从盘上流式读出，`Content-Type` 按扩展名判（标准库 `mimetypes`，认不出给 `application/octet-stream`）——它只是给界面的提示，服务不校验内容。
+- **删除**（`DELETE …/materials/{name}`）：**只删那一个文件**（场次目录与资料目录里别的文件一个字节不动）。成功体 = `{"ok": true, "revision": N, "material": {name}}`。
+- **取不到 / 删不到**：名字清不出现存的文件（含**重复删除**）→ **404 `material_missing`**（`detail = {name}`）——这是资料这一片自己的 `code`（不是动作信封那九个之一，先例是 `session_dir_missing`）；盘上出岔（建不了目录 / 写不进去 / 清单读不出来 / 删不掉）→ **500 `persist_failed`**（`detail = {error}`）。
+- **寻址与名字都先过清洗**：`{name}` 在取 / 删两测再过一遍与上传同一套清洗，URL 里手写的穿越段剥成裸文件名，解析结果永远落在 `meeting_materials/` 这一层，`session.json` 等场次文件够不着。
+- **独立于四态快照**：四条端点都是纯读写文件——不提交、不涨 `revision`、不广播；成功信封里的 `revision` 只是当前版本号（先例是 `summarize`）。
+- golden 样本：`contract/fixtures/materials/`（四份），语义与失败档由 `tests/test_materials.py` 实测。
+
 ## 4. `settings_update`：写哪些键、什么时候生效
 
 请求的 `args` 就是**「配置点号键名 → 值」的扁平映射**，只有这一层、不按键前缀分组：
@@ -234,7 +254,7 @@
 - 端口被占**不猜、不静默换端口**，两种情形都以退出码 `2` 结束：占用者是 meeting 服务（`GET /api/heartbeat` 应答里有 `"service": "meeting"`）→ 说「已经有一个 meeting 服务在跑」；占用者是别的程序 → 写明端口被谁占着、怎么改。
 - 三道最低防线，挡的是「本机浏览器里的恶意页面往 `127.0.0.1:8765` 发请求」：
   1. **Host 校验**：`Host` 不是 `127.0.0.1[:port]` / `localhost[:port]` 就 `403`（挡 DNS rebinding）。
-  2. **动作要自定义头**：`POST /api/actions` 的两个必需头，缺任一条 `403`（改状态的动作集中在这一个信封里，头校验也只守它一处 —— 另开带写语义的 POST 端点会绕开这道头哨，这是新动作不另开端点的原因）。
+  2. **写语义端点要自定义头**：带写语义的端点必须带 `X-Meeting-Service: 1`，缺了 `403`（挡表单式简单请求——本机浏览器里的恶意页面发不出带自定义头的请求）。现在守两处：`POST /api/actions`（还要求 `Content-Type: application/json`；改状态的动作集中在这一个信封里，这是新动作不另开端点的原因）与**会议资料的两条写端点**（`POST …/materials` 上传、`DELETE …/materials/{name}` 删除）——那两条的正文是二进制、装不进 JSON 信封，头哨由中间件按端点扩到它们身上（`meeting/service/app.py` 的 `_materials_write_path()` 一张对账表），防线仍然只守中间件这一处。校验都先于路由匹配生效。
   3. **不开 CORS**：不发 `Access-Control-Allow-Origin`，前端由本服务同源发出。
 
 ## 6. 复核时怎么打
@@ -255,6 +275,11 @@ curl.exe -s http://127.0.0.1:8765/api/sessions
 # 单场状态（会后进度读数；{id} 是这一场的目录路径，得 URL 编码）
 curl.exe -s "http://127.0.0.1:8765/api/sessions/C%3A%5C%E4%BC%9A%E8%AE%AE%5C%E8%B7%9F%E8%80%81%E7%8E%8B%E8%81%8A%E5%91%A8%E4%BC%9A"
 curl.exe -s http://127.0.0.1:8765/api/dirs
+# 会议资料（清单；{id} 同样是 URL 编码的目录路径）
+curl.exe -s "http://127.0.0.1:8765/api/sessions/C%3A%5C%E4%BC%9A%E8%AE%AE%5C%E8%B7%9F%E8%80%81%E7%8E%8B%E8%81%8A%E5%91%A8%E4%BC%9A/materials"
+# 上传（请求体 = 文件原样字节；写请求必须带头）与取原文件
+curl.exe -s -X POST "http://127.0.0.1:8765/api/sessions/<URL编码目录路径>/materials?name=%E6%8A%A5%E5%91%8A.pdf" -H "X-Meeting-Service: 1" --data-binary "@报告.pdf"
+curl.exe -s -o - "http://127.0.0.1:8765/api/sessions/<URL编码目录路径>/materials/%E6%8A%A5%E5%91%8A.pdf"
 curl.exe -s -X POST http://127.0.0.1:8765/api/actions `
   -H "Content-Type: application/json" -H "X-Meeting-Service: 1" `
   -d '{\"action\":\"workspace_open\",\"args\":{\"dir\":\"C:\\\\会议\\\\跟老王聊周会\"}}'
@@ -269,5 +294,5 @@ curl.exe -s -X POST http://127.0.0.1:8765/api/actions `
 - 怎么起服务、配置、日志、退出码、跑测试：`docs/service.md`
 - 后端协议与 dev 替身：`docs/backend-protocols.md`
 - 前端工程怎么跑、怎么构建：`web/README.md`
-- 契约的可机读基准（37 个 golden 样本与掩码规则）：`contract/README.md`
+- 契约的可机读基准（41 个 golden 样本与掩码规则）：`contract/README.md`
 - 索引：`docs/spec.md`

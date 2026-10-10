@@ -1,0 +1,13 @@
+{
+  "method": "GET",
+  "name": "报告 (2).pdf",
+  "status": 404,
+  "body": {
+    "ok": false,
+    "code": "material_missing",
+    "message": "资料里没有这一份：报告 (2).pdf",
+    "detail": {
+      "name": "报告 (2).pdf"
+    }
+  }
+}

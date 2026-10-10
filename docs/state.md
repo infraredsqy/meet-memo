@@ -433,5 +433,5 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 - 会中与会后两套模型的选型、四个 `post.*` 键的取值依据与本机实测：`docs/asr-backends.md`
 - 界面怎么画这四态：`docs/ui-design.md`
 - 前端工程怎么跑、怎么构建：`web/README.md`
-- 契约的可机读基准（37 个 golden 样本与掩码规则）：`contract/README.md`
+- 契约的可机读基准（41 个 golden 样本与掩码规则）：`contract/README.md`
 - 索引：`docs/spec.md`

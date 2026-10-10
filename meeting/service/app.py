@@ -14,7 +14,8 @@
     `trigger_shutdown`（安装点与处理函数体不变；换协程时必须自行包一层调度）。
   - 端口策略（`bind_http_socket()` / `probe_meeting_service()`，**标准库 socket + 单调时钟
     deadline**，运行时代码不许 import httpx）。
-  - 三道本地最低防线（Host 校验 / 动作自定义头 / 不开 CORS）与 `/api/*` 的 `no-store`。
+  - 三道本地最低防线（Host 校验 / 写语义端点自定义头——动作信封与会议资料两条写端点 /
+    不开 CORS）与 `/api/*` 的 `no-store`。
   - **六条路由全部只在 `meeting/service/routes.py` 注册一次**（五条 `/api/*` + `GET /debug`）：
     本模块把路由模块挂上应用，自己不留 `/api/state` 与 `/api/heartbeat` 的最小版注册
     （phase1 的那两条已随本次搬迁摘除）。
@@ -514,10 +515,14 @@ class _LocalGuardsMiddleware:
 
     1. **Host 校验**：非 `127.0.0.1[:port]` / `localhost[:port]` 的 `Host` 一律 **403**
        （挡 DNS rebinding）。
-    2. **动作要自定义头**：`POST /api/actions` 必须带 `Content-Type: application/json`
-       **且**带 `X-Meeting-Service: 1`，否则 **403**（挡表单式简单请求）。
-       **校验先于路由匹配生效**；phase2 新加的 `GET /api/events` 与 `POST /api/actions`
-       都落在这道中间件的覆盖范围内。
+    2. **写语义端点要自定义头**：带写语义的端点必须带 `X-Meeting-Service: 1`，否则
+       **403**（挡表单式简单请求——本机浏览器里的恶意页面发不出带自定义头的请求）。
+       现在守两处：`POST /api/actions`（还要求 `Content-Type: application/json`，
+       改状态的动作集中在这一个信封里）与**会议资料的两条写端点**（`POST
+       …/materials` 上传、`DELETE …/materials/{name}` 删除，资料节点 285bf58c）——
+       那两条的正文是二进制、装不进 JSON 动作信封，头哨由中间件按端点扩到它们身上：
+       防线还是只守中间件这一处，写语义端点在 `_materials_write_path()` 一张对账表里。
+       **校验先于路由匹配生效**。
     3. **不开 CORS**：**不发** `Access-Control-Allow-Origin`。
     """
 
@@ -530,6 +535,7 @@ class _LocalGuardsMiddleware:
             return
 
         path = scope.get("path", "")
+        method = scope.get("method", "").upper()
         headers = {
             key.decode("latin-1").lower(): value.decode("latin-1")
             for key, value in scope.get("headers", [])
@@ -540,19 +546,22 @@ class _LocalGuardsMiddleware:
             await self._plain(send, 403, "Forbidden: Host 校验不通过（只接受回环地址）")
             return
 
-        # ② 动作自定义头（校验先于路由匹配）
-        if path == "/api/actions" and scope.get("method", "").upper() == "POST":
+        # ② 写语义端点的自定义头（校验先于路由匹配）
+        is_action_post = method == "POST" and path == "/api/actions"
+        is_materials_write = _materials_write_path(path, method)
+        if is_action_post or is_materials_write:
             content_type = headers.get("content-type", "")
-            if (
-                headers.get(ACTION_HEADER_NAME, "").strip() != ACTION_HEADER_VALUE
-                or not content_type.lower().startswith(ACTION_CONTENT_TYPE)
-            ):
-                await self._plain(
-                    send,
-                    403,
+            header_ok = headers.get(ACTION_HEADER_NAME, "").strip() == ACTION_HEADER_VALUE
+            if is_action_post and not content_type.lower().startswith(ACTION_CONTENT_TYPE):
+                header_ok = False
+            if not header_ok:
+                message = (
                     "Forbidden: /api/actions 需要 Content-Type: application/json "
-                    "与 X-Meeting-Service: 1",
+                    "与 X-Meeting-Service: 1"
+                ) if is_action_post else (
+                    "Forbidden: 会议资料的写请求需要 X-Meeting-Service: 1"
                 )
+                await self._plain(send, 403, message)
                 return
 
         # ③ `/api/*` 一律 Cache-Control: no-store（不发 CORS 头）
@@ -594,6 +603,20 @@ class _LocalGuardsMiddleware:
             ],
         })
         await send({"type": "http.response.body", "body": body})
+
+
+def _materials_write_path(path: str, method: str) -> bool:
+    """这条请求是不是**会议资料的写端点**（头哨的对账表，与 routes.py 的注册逐条对应）。
+
+    只认两条：`POST /api/sessions/{dir}/materials`（上传）与
+    `DELETE /api/sessions/{dir}/materials/{name}`（删除）。清单与取原文件是纯读，
+    与其余 `GET /api/*` 同档（Host 校验已盖住）。`method` 由调用方先大写化。
+    """
+    if method == "POST":
+        return path.startswith("/api/sessions/") and path.endswith("/materials")
+    if method == "DELETE":
+        return path.startswith("/api/sessions/") and "/materials/" in path
+    return False
 
 
 def build_server_config(app: Any = None) -> uvicorn.Config:

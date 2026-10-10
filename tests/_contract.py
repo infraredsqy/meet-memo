@@ -74,8 +74,9 @@ ZERO_KEYS = frozenset(
 )
 #: 这些键是电平（dBFS），值换占位
 LEVEL_KEYS = frozenset({"level_dbfs", "peak_dbfs", "dbfs", "peak", "bar"})
-#: 这些键是路径 / 场次目录路径（`session_id` **不在其中**：它是目录名，见 `SESSION_ID_KEYS`）
-PATH_KEYS = frozenset({"log_path", "dir", "session_dir"})
+#: 这些键是路径 / 场次目录路径（`session_id` **不在其中**：它是目录名，见 `SESSION_ID_KEYS`；
+#: `materials_dir` 是会议资料那一片的资料目录，资料节点 285bf58c）
+PATH_KEYS = frozenset({"log_path", "dir", "session_dir", "materials_dir"})
 #: 这些键是**场次目录名**（裸 `YYMMDD` / `YYMMDD-N`）：`session.id` 的键名是 `id`、靠键路径判，
 #: 而动作失败 `detail.session_id` 直接以键名出现，两者掩成同一个形状诚实的占位符 `<session-id>`。
 SESSION_ID_KEYS = frozenset({"session_id"})

@@ -27,7 +27,7 @@
 
 **单一契约声明**：服务对外只有**一个**契约面，就是这一份。`GET /api/state` 的 body、SSE 的 `snapshot` 帧、SSE 的 `state` 帧**三者是同一个函数出的同一份东西**（`ServiceRuntime.to_dict()` → `Snapshot.to_dict()`），不存在「快照有两套形状」这回事。界面拿到哪一份都可以按第 2 章逐键读。
 
-**口径一句话**：**九条 `/api/*` + `/debug` + 静态挂载**（`sessions` / `dirs` 两只读端点来自工作台收编节点 e2f6166b，单场状态 `sessions/{id}` 来自会后进度读数节点 `a9affaa8`，设备清单 `devices` 来自设置抽屉节点 `311f84f5`，形状分别在 4.8、4.9 与 4.10）。
+**口径一句话**：**十三条 `/api/*` + `/debug` + 静态挂载**（`sessions` / `dirs` 两只读端点来自工作台收编节点 e2f6166b，单场状态 `sessions/{id}` 来自会后进度读数节点 `a9affaa8`，设备清单 `devices` 来自设置抽屉节点 `311f84f5`，形状分别在 4.8、4.9 与 4.10；会议资料四条来自资料节点 285bf58c，形状在 4.12）。
 
 | 路径 | 方法 | 给什么 |
 |---|---|---|
@@ -40,6 +40,10 @@
 | `/api/sessions/{id}` | GET | 单场状态：这一场此刻跑到哪一档、会后离线跑到第几块（第 4.9 章），**任何状态下都 200**；路径打不到已登记的工作区时 404 |
 | `/api/dirs` | GET | 目录选择器的一层现场（第 4.8 章），**任何状态下都 200** |
 | `/api/devices` | GET | 两路各自的候选设备端点表（第 4.10 章），**任何状态下都 200** |
+| `/api/sessions/{id}/materials` | GET | 会议资料的清单（第 4.12 章）：目录就是清单，**任何状态下都 200**（寻址失败 404，见 4.12） |
+| `/api/sessions/{id}/materials` | POST | 会议资料的上传：原样字节流式写盘（第 4.12 章）。**不走动作信封的二进制写端点**，头哨见第 6 章第 4 条与 4.12 |
+| `/api/sessions/{id}/materials/{name}` | GET | 取原文件：原始字节 + 按扩展名判的 `Content-Type`（第 4.12 章） |
+| `/api/sessions/{id}/materials/{name}` | DELETE | 删除那一个文件（第 4.12 章） |
 | `/debug` | GET | 骨架自检页。从**包内**读取，不依赖 `web/dist`，与产物在不在无关。页面内显式标注非产品界面、不承担任何告警职责 |
 | `/`（静态挂载） | GET | **三档**：产物目录有内容 → 整棵 `/` 子树交给 `StaticFiles(html=True)`；目录不存在 → 一页说明（`GET/HEAD /` 本身给说明页，其余路径回 404）；**目录在、里面是空的 → 404**。**存在性按每请求判定**：产物一建好刷新即可见，又被删掉刷新回说明页 |
 
@@ -67,7 +71,7 @@
 
 **排障说明（`[::1]` 的 403）**：这条规则是**有意为之**的现状，行为符合预期。浏览器打 `http://127.0.0.1:8765` 或 `http://localhost:8765` 都会给出允许的 `Host`；只有手工指定 `http://[::1]:8765` 才会撞上 403。撞上时的正确处置是**换成 `127.0.0.1` 或 `localhost` 再访问**，不要去改 Host 校验的允许集合 —— 服务只绑在 IPv4 回环上，`[::1]` 本来也连不上这个监听 socket。
 
-**这一档的 fixtures**：`contract/fixtures/snapshot/*.json`（五档快照）、`contract/fixtures/sse/*.json`（五帧）、`contract/fixtures/actions/*.json`（十七个：成功七档 `start-ok` / `stop-ok` / `mute-session-ok` / `settings-update-ok` / `summarize-ok` / `workspace-open-ok` / `workspace-remove-ok`；失败十档 = 九个 `code` 各一 + 未知动作名那一档，其中 `summary_failed` 这份是**缺键**那一档）、`contract/fixtures/heartbeat/*.json`（两个）、`contract/fixtures/summaries/*.json`（一个）、`contract/fixtures/sessions/*.json`（四个）、`contract/fixtures/devices/*.json`（一个）。
+**这一档的 fixtures**：`contract/fixtures/snapshot/*.json`（五档快照）、`contract/fixtures/sse/*.json`（五帧）、`contract/fixtures/actions/*.json`（十七个：成功七档 `start-ok` / `stop-ok` / `mute-session-ok` / `settings-update-ok` / `summarize-ok` / `workspace-open-ok` / `workspace-remove-ok`；失败十档 = 九个 `code` 各一 + 未知动作名那一档，其中 `summary_failed` 这份是**缺键**那一档）、`contract/fixtures/heartbeat/*.json`（两个）、`contract/fixtures/summaries/*.json`（一个）、`contract/fixtures/sessions/*.json`（四个）、`contract/fixtures/devices/*.json`（一个）、`contract/fixtures/materials/*.json`（四个，第 4.12 章）。
 
 ## 2. 快照 schema
 
@@ -661,6 +665,42 @@ R10 第四条 / R30：名字要能改、并且记住。这一只动作 + 4.9 的
 - **记下去之后用在哪**：下一次出纪要时，`meeting/minutes/prompt.py` 的 `{{SPEAKER_NAMES}}` 把这张表渲染进编排提示词——附录里那一格照抄机主确认过的名字（确认归确认、推断归推断，两件事在提示词里分开说话）；已生成的 `meeting_final.md` 一个字都不改（R13：名字是一份附录），改名也**不拉起**任何离线/纪要流程（R26）。
 - **golden 样本**：没有（4.3 末尾那条先例）；语义与失败档由 `tests/test_speaker_names.py` 实测。**这一档的 fixtures**：`contract/fixtures/sessions/status-after-run.json` 里带着 `speakers` 一格的形状（那一场盘上没有确认过的名字，名字一格如实 `null`）。
 
+### 4.12 会议资料：场次目录里的 `meeting_materials/`
+
+一场会放资料的地方（资料节点 285bf58c）：**资料是给纪要 AI 的 context**，`meeting_materials/` 这个目录名是与服务端和纪要提示词两侧共享的固定产品约定——**不设配置键、不可改名**；**首次上传时由服务创建**。四条端点都挂在 `/api/sessions/{id}/materials` 之下（`{id}` 与 4.9 同一个写法：URL 编码的场次目录路径），实现与清洗规则在 `meeting/service/runtime_materials.py`。
+
+**目标目录只认两种**（spec 的判尺）：服务的**当前活跃场次**、工作区注册表（`workspaces.json`）里**登记过的场次**；其余一律拒收。拒收口径与 4.9 同一套寻址（**404** + 通用失败信封 `{ok, code, message, detail}`）：
+
+| `code` | 什么时候 | `detail` |
+|---|---|---|
+| `session_dir_missing` | 这一场的目录已不在原地 | `{dir, kind: "missing"}` |
+| `invalid_setting` | 目录在，但既不是活跃场次、也不在清单里 | `{dir, kind}` |
+| `invalid_setting`（400） | 上传缺 `name`（空白也算没给） | `{key: "name", value, legal}` |
+
+活跃场次放在最前：录制中照收——哪怕那一行刚被 `workspace_remove` 摘出清单（那只动作只摘名单、文件不动），资料跟着**场次**走、不跟着清单行走。
+
+**上传**（`POST …/materials?name=<文件名>`）：
+
+- 请求体就是文件的原样字节，**流式写盘**——收到多少写多少、不整段进内存，写在工作线程上（事件循环照转，心跳与三个 SSE 通道不被一次大上传按住）。**不转码、不压缩、不限类型、大小不设服务端硬顶**——「超过 100M 要不要确认」是界面的事，不归这层。请求的 `Content-Type` 只是发送方的说法，服务不读它也不校验它。
+- `name` **不可信**，服务侧清洗（`sanitize_material_name()`，五步次序固定）：只留最后一段路径（`..\..\session.json` 剥成裸文件名，解析结果永远落在资料目录这一层）→ Windows 非法字符与控制字符换 `_` → 掐结尾的点与空格（Windows 落盘本就忽略它们）→ 保留设备名前置 `_`（`CON` / `NUL` / `COM1`…，按扩展名前那段判，`CON.pdf` 同样保留）→ 超长截断（保留扩展名）。清洗**不报错**：名字清到空交兜底名 `未命名`。清洗是**逐字的、确定性的**——同一个输入永远得到同一个名字。
+- **重名自动加序号后缀、保留用户看到的名字**：`报告.pdf` 已在 → `报告 (2).pdf` → `报告 (3).pdf`。「查完重名到真正落盘」之间被人抢了位的竞态由独占创建（`xb`）+ 让位重试收口，不截断别人正在写的文件。
+- **不保留原文件的时间戳**：落盘那一刻的 mtime 就是「贴上时刻」（`added_at` 一格）。中途失败（盘上出岔 → 500 `persist_failed`；客户端断开）把**半截文件收走**，不留残骸。
+- 成功体（200）：通用信封 + `material` 键——`{"ok": true, "revision": N, "material": {name, size_bytes, added_at}}`。
+
+**清单**（`GET …/materials`）：`{"dir": "<path>", "materials_dir": "<path>", "items": [{name, size_bytes, added_at}]}`，按名字排序（casefold），**任何状态下都 200**（寻址失败除外）。**没有旁注清单文件**（`docs/design-intent.md` 第 6 条的延伸）：目录就是清单，每条三格——名字、大小、贴上时刻（= 文件修改时间），不另设 JSON 账本、无备注元数据。`meeting_materials/` 还不在时 `items` 是空数组、**目录也不建**——「首次上传时由服务创建」是上传那一侧的事；目录里混进的子目录不冒充一条资料。
+
+**取原文件**（`GET …/materials/{name}`）：原始字节从盘上流式读出（`FileResponse`），`Content-Type` 按扩展名判（标准库 `mimetypes`，认不出给 `application/octet-stream`）——它只是给界面的提示，服务不校验内容、也不转码。
+
+**删除**（`DELETE …/materials/{name}`）：**只删那一个文件**（场次目录与资料目录里别的文件一个字节不动；这不是 4.8 的「删除工作区」——那一只是从清单摘名单，这一只是界面对单个文件的明确动作）。成功体（200）：`{"ok": true, "revision": N, "material": {name}}`。
+
+**取不到 / 删不到**：名字清不出现存的文件（含**重复删除**）→ **404 `material_missing`**，`detail = {name}`——这一片自己的 `code`（先例是 4.9 的 `session_dir_missing`；它不在 4.4 那张动作 `code` 表里，因为资料这四条不走 `/api/actions`）。盘上出岔（建不了目录 / 写不进去 / 清单读不出来 / 删不掉）→ **500 `persist_failed`**，`detail = {error}`。
+
+**写入的头哨**：上传与删除两条写端点**不走** `/api/actions` 的 JSON 信封（正文是二进制），`X-Meeting-Service: 1` 由中间件按端点扩到它们身上（`meeting/service/app.py` 的 `_materials_write_path()`）：缺头 **403**、不带失败信封（请求没走到端点）。清单与取原文件是纯读，与其余 `GET /api/*` 同档（Host 校验已盖住）。客户端义务见第 6 章第 4 条。
+
+**独立于四态快照**：四条端点都是纯读写文件——不提交、不涨 `revision`、不广播（spec 点名的最小口径）；成功信封里的 `revision` 只是当前版本号（先例是 4.7 的 `summarize`）。快照九键、列表十二键、4.9 的应答体一个字不动。
+
+**这一档的 fixtures**：`contract/fixtures/materials/{upload-ok,after-upload,delete-ok,missing}.json`（四份；形状与出处见 `contract/README.md` 第 1 章）。语义与失败档由 `tests/test_materials.py` 实测（上传 / 重名 / 清洗 / 目录校验拒绝 / 清单 / 取原文件 / 删除 / 流式大文件 / 头哨 / 快照独立）。
+
 ## 5. 心跳
 
 `GET /api/heartbeat`，**任何状态下都 200**（包括没有正在录的场次、包括收尾进行中）。应答**恰好七字段**：
@@ -755,7 +795,7 @@ R10 第四条 / R30：名字要能改、并且记住。这一只动作 + 4.9 的
 1. **只消费推送，不持本地权威状态。** 状态的唯一权威在服务侧（`ServiceRuntime` 手里的那一份快照）。界面手上那份是**它推过来的副本**，任何分歧以服务为准。
 2. **不用浏览器本地存储（`localStorage` / `sessionStorage` / IndexedDB / Cookie）保存会中状态。** 会中状态（哪一态、时长、告警、静音、转写）一律从服务取；刷新、重开、多开看到的都是同一份。界面自己持久化的只能是**纯界面偏好**（例如心跳周期、面板展开与否这一类与服务无关的东西）。
 3. **SSE 重连后以快照重同步**：服务**不重放**断开期间的事件（没有 `Last-Event-ID` 机制），重连后拿到的第一帧必然是完整 `snapshot`，界面据此**整块替换**。收到 `resync: true` 那一帧同样整块替换。
-4. **动作带两个必需头**：`POST /api/actions` 必须带 `Content-Type: application/json` **且** `X-Meeting-Service: 1`，缺任一条服务回 403 且**不带失败信封**（它没走到端点）。界面的 403 处理要与第 4.2 节的失败块分开。
+4. **写请求带必需头**：`POST /api/actions` 必须带 `Content-Type: application/json` **且** `X-Meeting-Service: 1`；会议资料的两条写端点（`POST …/materials` 上传、`DELETE …/materials/{name}` 删除，4.12）必须带 `X-Meeting-Service: 1`。缺了服务回 403 且**不带失败信封**（它没走到端点）。界面的 403 处理要与第 4.2 节的失败块分开。
 5. **心跳按配置周期轮询**：默认 10 秒、可配 1–60 秒（`settings.heartbeat_interval_seconds`）。判定用应答里的 `server_time` 作基准；失联按 5 章的处置做（冻结 + 压灰 + 横幅）。
 6. **不自己造派生数据**：包络（`envelope`）与 `bar` 由服务算好推过来，界面**不许自己造**；告警的 `muted` 由服务判定，界面**不算任何抑制窗口**、只按布尔值决定响不响。`recording_alive === false` 的连续两次判停计数（第 5 章的两拍规则）是**对数据字段的确认计数**，与声音无关：响不响照旧只读 `settings.alarm_sound` 与 `alerts.*.muted` 两个布尔（de899128）。
 7. **按 `code` 分派失败画法、按 `detail` 有哪个键显示哪个键**：九个 `code` 固定、`detail` 的档位（尤其是 `capture_unavailable` 四档与 `invalid_setting` 四档）以第 4.4 节为准，**不按 `message` 做字符串匹配**。
@@ -793,7 +833,7 @@ R10 第四条 / R30：名字要能改、并且记住。这一只动作 + 4.9 的
 
 ## 8. fixtures 与掩码（附录）
 
-契约的**可机读基准**是 `contract/fixtures/` 下的 37 个 golden 样本。它们一律**出自真实服务路径**，不是手写的。规则、出处与再生成办法写在 `contract/README.md`；这里给读者一份速查。
+契约的**可机读基准**是 `contract/fixtures/` 下的 41 个 golden 样本。它们一律**出自真实服务路径**，不是手写的。规则、出处与再生成办法写在 `contract/README.md`；这里给读者一份速查。
 
 | 目录 | 样本 | 对应本文件 |
 |---|---|---|
@@ -803,6 +843,7 @@ R10 第四条 / R30：名字要能改、并且记住。这一只动作 + 4.9 的
 | `summaries/` | `after-one`（按过一次之后的本场总结记录，**1**） | 第 4.7 节 |
 | `sessions/` | `empty`（空注册表） / `after-open`（登记三档目录之后的清单 + `recent`） / `status-after-run`（单场状态：两份块账 + 状态文件落好之后的那一读） / `status-interrupted`（单场状态的**被打断档**：盘上落 `interrupted` 的那一读，b1c6a58e）（**4**） | 第 4.8 / 4.9 节 |
 | `devices/` | `all`（两路各一份候选端点表；枚举走假件，名字与 `is_default` 是确定值）（**1**） | 第 4.10 节 |
+| `materials/` | `upload-ok` / `after-upload` / `delete-ok` / `missing`（会议资料四条端点：上传成功体、清单三格、删除成功体、取不到的 404 `material_missing`；名字、字节数与 `revision` 是确定值，`added_at` 走 `<iso>`、路径走 `<path>`，资料节点 285bf58c）（**4**） | 第 4.12 节 |
 | `heartbeat/` | `idle` / `recording` / `no-first-frame`（**还没有第一帧**的未知档：`top_state` 为 `recording` 而 `recording_alive` 与 `seconds_since_last_tick` 同为 `null`，de899128）/ `capture-gap`（**帧空洞留痕**：`recording_alive` 为 `true` 而空洞账 `total_count` 为 1，gil-stall-hole）（**4**） | 第 5 章 |
 
 **掩码（`tests/_contract.py` 的 `normalize()`）**：fixtures 由真实服务采集，采集里的墙钟、路径、端口、电平每次都不同，落盘前一律换成**自描述占位符**：
@@ -849,7 +890,7 @@ python -m pytest tests/test_contract_fixtures.py --regen-contract -q
 1. **抽一个快照 fixtures 与 `Snapshot.to_dict()` 逐字段对照**：`meeting/state.py` 的 `to_dict()` 是唯一产出形态，顶层九键、`settings` 七键、`session` 七子键、`sources` 九键、`DrainStep` 四键都能逐行对上。`ended` / `session` 两个 `null` 档都能在 `idle` 样本里看一次。
 2. **故意改坏一个键名跑比对测试，确认会红**（验完还原）：例如把 `contract/fixtures/snapshot/recording.json` 里的 `"top_state"` 改成 `"topState"`，`python -m pytest tests/test_contract_fixtures.py -q` 应当报出「与实时采集不一致」。
 3. **任选两条 `detail` 与 `meeting/service/runtime_drain.py` 的实际路径对照**：`already_recording` 三键在 `_already_recording_error()`、`draining` 四键在 `_draining_error()` / `_draining_error_for_dir()`（后者从盘上那一版读 `failed_steps`）。
-4. **确认保留登记章里没有任何端点被顺手实现**：`python -c "from meeting.service.routes import all_routes; print([r.path for r in all_routes()])"` 应当只打出十条路径（九条 `/api/*` + `/debug`：`/api/state` / `/api/events` / `/api/heartbeat` / `/api/actions` / `/api/summaries` / `/api/sessions` / `/api/sessions/{dir:path}` / `/api/dirs` / `/api/devices` / `/debug`）；`ACTION_NAMES` 应当有十六个名字（`start` / `stop` / `mute_session` / `settings_update` / `reprobe` / `dev_inject` / `summarize` / `workspace_open` / `workspace_remove` / `post_offline` / `post_minutes` / `post_stop` / `pause` / `resume` / `set_source` / `speaker_rename`），会中总结那一个的正文在第 4.7 节、工作台那三个在第 4.8 节、会后两个按钮与停掉那一趟在第 4.3 节、单场状态那一只在第 4.9 节、设备清单那一只在第 4.10 节、暂停与逐路开关那三个在第 4.3 节、说话人改名那一只在第 4.11 节。
+4. **确认保留登记章里没有任何端点被顺手实现**：`python -c "from meeting.service.routes import all_routes; print([r.path for r in all_routes()])"` 应当只打出十四条路径（十三条 `/api/*` + `/debug`：`/api/state` / `/api/events` / `/api/heartbeat` / `/api/actions` / `/api/summaries` / `/api/sessions` / `/api/sessions/{dir:path}/materials`（同名两条：GET 清单与 POST 上传） / `/api/sessions/{dir:path}/materials/{name}`（同名两条：GET 取原文件与 DELETE 删除） / `/api/sessions/{dir:path}` / `/api/dirs` / `/api/devices` / `/debug`）；`ACTION_NAMES` 应当有十六个名字（`start` / `stop` / `mute_session` / `settings_update` / `reprobe` / `dev_inject` / `summarize` / `workspace_open` / `workspace_remove` / `post_offline` / `post_minutes` / `post_stop` / `pause` / `resume` / `set_source` / `speaker_rename`），会中总结那一个的正文在第 4.7 节、工作台那三个在第 4.8 节、会后两个按钮与停掉那一趟在第 4.3 节、单场状态那一只在第 4.9 节、设备清单那一只在第 4.10 节、暂停与逐路开关那三个在第 4.3 节、说话人改名那一只在第 4.11 节、会议资料那四条在 4.12 节（它们不是动作、不在 `ACTION_NAMES` 里）。
 
 ## 10. 相关文档
 

@@ -26,7 +26,9 @@
 （接线 / 解析 / 探测 / 起停）、`runtime_facts.py`（心跳 / 电平 / 转写 / 告警）、
 `runtime_sessions.py`（场次生命周期）、`runtime_catalog.py`（工作台 / 目录 / 状态视图）、
 `runtime_post.py`（会后作业）、`runtime_summary.py`（会中总结）、`runtime_drain.py`
-（收尾 / 关停）。类名、构造语义、方法名与方法语义依旧一字不改 —— 本文件只保留
+（收尾 / 关停）、`runtime_summary.py`（会中总结）、`runtime_materials.py`
+（会议资料：场次目录里的 `meeting_materials/`，资料节点 285bf58c）。类名、构造语义、
+方法名与方法语义依旧一字不改 —— 本文件只保留
 构造（`__init__`）、状态权威核心（`to_dict()` / `commit()` 等）与 re-export，
 `__all__` 冻结名字的对外 import 路径不变；测试要 patch 的模块级名字，一律打在
 **读它的那个模块**（`runtime_drain` 等）上。
@@ -138,6 +140,10 @@ from meeting.service.runtime_facts import (
     TRANSCRIBER_HEALTH_INTERVAL_SECONDS,
     RuntimeFactsMixin,
 )
+from meeting.service.runtime_materials import (
+    MATERIALS_DIR_NAME,
+    RuntimeMaterialsMixin,
+)
 from meeting.service.runtime_post import RuntimePostMixin
 from meeting.service.runtime_sessions import (
     MODEL_EXECUTOR_MAX_WORKERS,
@@ -169,6 +175,7 @@ class ServiceRuntime(
     RuntimeCatalogMixin,
     RuntimePostMixin,
     RuntimeSummaryMixin,
+    RuntimeMaterialsMixin,
     RuntimeDrainMixin,
 ):
     """唯一状态权威：持有 `Snapshot` 与唯一一份状态字段，只在事件循环里改，不加锁。"""
@@ -453,6 +460,7 @@ __all__ = [
     "DRAIN_LOG_MIN_BUDGET_SECONDS",
     "DRAIN_SETTLE_POLL_SECONDS",
     "LEVELS_INTERVAL_SECONDS",
+    "MATERIALS_DIR_NAME",
     "MODEL_EXECUTOR_MAX_WORKERS",
     "SESSION_MODES",
     "SUMMARY_EXECUTOR_MAX_WORKERS",

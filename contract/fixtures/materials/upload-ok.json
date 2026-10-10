@@ -1,0 +1,14 @@
+{
+  "method": "POST",
+  "name": "报告.pdf",
+  "status": 200,
+  "body": {
+    "ok": true,
+    "revision": 1,
+    "material": {
+      "name": "报告.pdf",
+      "size_bytes": 32,
+      "added_at": "<iso>"
+    }
+  }
+}

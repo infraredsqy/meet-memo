@@ -1050,6 +1050,115 @@ def test_capture_session_status_interrupted_group(tmp_path, make_client, contrac
     )
 
 
+def test_capture_materials_group(tmp_path, make_client, contract_regen) -> None:
+    """会议资料四条端点的样本（资料节点 285bf58c）：上传 / 清单 / 删除 / 取不到。
+
+    采样路径是**真实服务路径**：往临时根下造一个目的目录、经 `workspace_open` 登记，
+    然后打 `/api/sessions/{id}/materials` 那四条端点。样本记的是**形状**：
+
+    - 上传三连：干净名字原样存、重名自动加序号后缀（`报告.pdf` → `报告 (2).pdf`）、
+      穿越加非法字符的脏名字清洗后落盘 —— 名字是**确定值**，原样留在样本里；
+    - 清单一条三格（`name` / `size_bytes` / `added_at`），贴上时刻走 `<iso>` 掩码、
+      路径走 `<path>` 掩码、字节数是确定值；
+    - 删除成功体与「取不到」的 404 失败体（`material_missing`）各一份。
+
+    资料层独立于快照：这一档不提交、不涨 `revision`，样本里的 `revision` 是登记那一刻
+    的现值（确定）。
+    """
+    client = make_client({"capture.backend": "dev"})
+
+    place = tmp_path / "contract-materials"
+    place.mkdir()
+    session = place / "250906"
+    session.mkdir()
+    opened = _act(client, "workspace_open", {"dir": str(session)})
+    assert opened.status_code == 200, opened.text
+
+    base = f"/api/sessions/{quote(str(session), safe='')}/materials"
+
+    first = client.post(
+        f"{base}?name={quote('报告.pdf', safe='')}",
+        content=b"%PDF-1.4\ncontract fixture bytes\n",
+        headers={"X-Meeting-Service": "1"},
+    )
+    assert first.status_code == 200, first.text
+    first_body = first.json()
+    assert set(first_body) == {"ok", "revision", "material"}
+    assert set(first_body["material"]) == {"name", "size_bytes", "added_at"}
+    assert first_body["material"]["name"] == "报告.pdf"
+    assert first_body["material"]["size_bytes"] == len(b"%PDF-1.4\ncontract fixture bytes\n")
+
+    duplicate = client.post(
+        f"{base}?name={quote('报告.pdf', safe='')}",
+        content=b"duplicate bytes",
+        headers={"X-Meeting-Service": "1"},
+    )
+    assert duplicate.status_code == 200, duplicate.text
+    assert duplicate.json()["material"]["name"] == "报告 (2).pdf"
+
+    hostile = client.post(
+        f"{base}?name={quote('..\\假报告<v>?.pdf ', safe='')}",
+        content=b"cleaned bytes",
+        headers={"X-Meeting-Service": "1"},
+    )
+    assert hostile.status_code == 200, hostile.text
+    assert hostile.json()["material"]["name"] == "假报告_v__.pdf"
+
+    listed = client.get(base)
+    assert listed.status_code == 200
+    listing = listed.json()
+    assert set(listing) == {"dir", "materials_dir", "items"}
+    assert [row["name"] for row in listing["items"]] == [
+        "假报告_v__.pdf", "报告 (2).pdf", "报告.pdf",
+    ]
+    for row in listing["items"]:
+        assert set(row) == {"name", "size_bytes", "added_at"}
+
+    fetched = client.get(f"{base}/{quote('报告.pdf', safe='')}")
+    assert fetched.status_code == 200
+    assert fetched.content == b"%PDF-1.4\ncontract fixture bytes\n"
+    assert fetched.headers["content-type"].startswith("application/pdf")
+
+    deleted = client.delete(
+        f"{base}/{quote('报告 (2).pdf', safe='')}", headers={"X-Meeting-Service": "1"}
+    )
+    assert deleted.status_code == 200, deleted.text
+    deleted_body = deleted.json()
+    assert deleted_body["material"] == {"name": "报告 (2).pdf"}
+
+    missing = client.get(f"{base}/{quote('报告 (2).pdf', safe='')}")
+    assert missing.status_code == 404
+    missing_body = missing.json()
+    assert missing_body["ok"] is False
+    assert missing_body["code"] == "material_missing"
+    assert missing_body["detail"] == {"name": "报告 (2).pdf"}
+
+    emit(
+        {
+            "materials/upload-ok.json": {
+                "method": "POST",
+                "name": "报告.pdf",
+                "status": first.status_code,
+                "body": normalize(first_body),
+            },
+            "materials/after-upload.json": normalize(listing),
+            "materials/delete-ok.json": {
+                "method": "DELETE",
+                "name": "报告 (2).pdf",
+                "status": deleted.status_code,
+                "body": normalize(deleted_body),
+            },
+            "materials/missing.json": {
+                "method": "GET",
+                "name": "报告 (2).pdf",
+                "status": missing.status_code,
+                "body": normalize(missing_body),
+            },
+        },
+        regen=contract_regen,
+    )
+
+
 # ---------------------------------------------------------------------------
 # SSE 帧样本（真服务子进程：dev 替身 + module:Class 假转写后端）
 # ---------------------------------------------------------------------------

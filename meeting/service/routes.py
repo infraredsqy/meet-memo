@@ -2,7 +2,9 @@
 工作台收编节点 e2f6166b 加 `sessions` / `dirs` 两只读端点与 `workspace_open` / `workspace_remove` 两动作；
 会后进度读数节点 `a9affaa8` 加 `sessions/{dir}` 那只单场状态端点；设置抽屉节点 `311f84f5` 加
 `devices` 那只设备清单端点；人名节点 `91b6752e` 加 `speaker_rename` 那只改名动作；打断会后的
-b1c6a58e 加 `post_stop` 那只停掉动作）。
+b1c6a58e 加 `post_stop` 那只停掉动作；资料节点 285bf58c 加会议资料的四条端点
+——清单 / 上传 / 取原文件 / 删除，都在 `/api/sessions/{dir:path}` 之后那两层路径上，
+注册在单场状态那条**之前**（`{dir:path}` 收得下斜杠，注册在后会抢走资料那几条）。
 
 全应用只在这里注册一次：
 
@@ -16,6 +18,14 @@ b1c6a58e 加 `post_stop` 那只停掉动作）。
   - `GET /api/sessions`（工作区注册表：按路径去重的那一份"我这些会"，读盘上注册表文件）；
   - `GET /api/sessions/{id}`（单场状态：这一场此刻跑到哪一档、会后离线跑过几块 / 共几块、
     正在跑哪一路、已经跑了多久；`{id}` 是这一场的目录路径，形状见 `docs/contract.md` 4.9）；
+  - 会议资料四条（资料节点 285bf58c，`{id}` 同样是 URL 编码的场次目录路径；
+    语义见 `docs/contract.md` 4.12）：
+    - `GET /api/sessions/{id}/materials`（清单：目录就是清单，没有 JSON 账本）；
+    - `POST /api/sessions/{id}/materials?name=`（上传：原样字节流式写盘；二进制正文
+      装不进 JSON 动作信封，是唯一一组不走 `/api/actions` 的写端点——头哨由中间件
+      按端点扩到它们身上，`meeting/service/app.py` 的 `_LocalGuardsMiddleware`）；
+    - `GET /api/sessions/{id}/materials/{name}`（取原文件，`Content-Type` 按扩展名）；
+    - `DELETE /api/sessions/{id}/materials/{name}`（删那一个文件）；
   - `GET /api/dirs`（目录选择器的现场：一层子目录的名目判读，读现场不写任何东西）；
   - `GET /api/devices`（两路各自的候选设备端点表：只读、纯枚举、不开设备）；
   - `GET /debug`（骨架自检页，从包内读）。
@@ -31,10 +41,12 @@ from __future__ import annotations
 
 import json
 import logging
+import mimetypes
 from typing import Any, Callable
 
+import anyio
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response, StreamingResponse
+from starlette.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 from meeting.service.runtime import ACTION_NAMES, ActionError, ServiceRuntime
@@ -220,6 +232,163 @@ async def _api_devices(request: Request) -> Response:
     runtime.bind_from_scope(request.scope)
     try:
         return JSONResponse(runtime.devices_listing())
+    except ActionError as exc:
+        return _error_response(exc)
+
+
+# ---------------------------------------------------------------------------
+# 会议资料四条（资料节点 285bf58c）：清单 / 上传 / 取原文件 / 删除
+# ---------------------------------------------------------------------------
+
+
+def _materials_missing_error(name: str) -> ActionError:
+    """资料里没有这一份的失败体（`material_missing`，404；取原文件与删除共用）。"""
+    return ActionError(
+        "material_missing",
+        f"资料里没有这一份：{name}",
+        status=404,
+        detail={"name": name},
+    )
+
+
+def _api_materials_listing(request: Request) -> Response:
+    """清单：`{dir, materials_dir, items:[{name, size_bytes, added_at}]}`（**200**）。
+
+    **目录就是清单**（没有 JSON 账本）：只读 `meeting_materials/` 的名目，目录还不在
+    （一场还没传过资料）时 `items` 是空数组、目录也不建——「首次上传时由服务创建」
+    是上传那一侧的事。与 `GET /api/sessions` 同一档纯读：不提交、不涨 `revision`、
+    不广播。寻址失败（目录不在原地 / 两样都不是）按 4.12 的失败口径回 404。
+    """
+    runtime = _runtime_of(request)
+    if runtime is None:  # pragma: no cover - 应用未装配
+        return JSONResponse({"error": "runtime 未装配"}, status_code=500)
+    runtime.bind_from_scope(request.scope)
+    try:
+        return JSONResponse(runtime.materials_listing(request.path_params.get("dir")))
+    except ActionError as exc:
+        return _error_response(exc)
+
+
+async def _api_materials_upload(request: Request) -> Response:
+    """上传：请求体就是文件的原样字节，**流式写盘**（收到多少写多少，不整段进内存）。
+
+    - `name` 必给（查询串），**不可信**：服务侧清洗防路径穿越、重名自动加序号后缀
+      （`runtime_materials.sanitize_material_name()` 与 `materials_reserve()`）；
+    - **不转码、不压缩、不限类型、大小不设服务端硬顶**；请求的 `Content-Type` 只是
+      发送方的说法，服务不读它也不校验它；
+    - 写盘走**独占创建**（`xb`）+ 异步文件（`anyio`，写在工作线程上、事件循环照转，
+      心跳与三个 SSE 通道不被一次大上传按住）；「查完重名到真正落盘」之间被人抢了位
+      的竞态由 `materials_next_free()` 让位重试，不截断别人正在写的文件；
+    - 中途失败（盘上出岔 / 客户端断开）把**半截文件收走**，不留残骸；
+    - 成功体 = 通用信封 + `material: {name, size_bytes, added_at}`（贴上时刻 = 落盘
+      那一刻的文件修改时间，不保留原文件的时间戳）。**不涨 `revision`**——资料层
+      独立于四态快照，信封里的 `revision` 只是当前版本号（先例是 `summarize`）。
+    """
+    runtime = _runtime_of(request)
+    if runtime is None:  # pragma: no cover - 应用未装配
+        return JSONResponse({"error": "runtime 未装配"}, status_code=500)
+    runtime.bind_from_scope(request.scope)
+    try:
+        path = runtime.materials_reserve(
+            request.path_params.get("dir"), request.query_params.get("name")
+        )
+    except ActionError as exc:
+        return _error_response(exc)
+
+    def _discard_partial() -> None:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:  # pragma: no cover - 残骸清理失败只留痕
+            _log.warning("上传失败后的半截文件收不走：%s", path)
+
+    try:
+        while True:
+            try:
+                handle = await anyio.open_file(path, "xb")
+                break
+            except FileExistsError:
+                # 查完重名到真正落盘之间被人抢了位：让到下一个序号名再试
+                path = runtime.materials_next_free(path)
+        try:
+            async for chunk in request.stream():
+                await handle.write(chunk)
+        finally:
+            await handle.aclose()
+    except ActionError:
+        _discard_partial()
+        raise
+    except OSError as exc:
+        _discard_partial()
+        return _error_response(
+            _action_error(
+                "persist_failed",
+                f"资料写盘失败（{type(exc).__name__}: {exc}）",
+                status=500,
+                detail={"error": f"{type(exc).__name__}: {exc}"},
+            )
+        )
+    except BaseException:
+        _discard_partial()
+        raise
+    material = runtime.materials_record(path)
+    _log.info("会议资料落盘：%s（%d 字节）", path, material["size_bytes"])
+    return JSONResponse(
+        {"ok": True, "revision": runtime.revision, "material": material}
+    )
+
+
+async def _api_materials_file(request: Request) -> Response:
+    """取原文件：原始字节 + 按扩展名判的 `Content-Type`（认不出 `application/octet-stream`）。
+
+    `Content-Type` 用标准库 `mimetypes.guess_type()` 按扩展名判断——它只是给界面的
+    提示，服务不校验内容、也不转码；从盘上流式读出（`FileResponse`）。名字先过与上传
+    同一套清洗（防路径穿越），存不在这个名字上回 404 `material_missing`。
+    """
+    runtime = _runtime_of(request)
+    if runtime is None:  # pragma: no cover - 应用未装配
+        return JSONResponse({"error": "runtime 未装配"}, status_code=500)
+    runtime.bind_from_scope(request.scope)
+    try:
+        _, path = runtime.materials_item_path(
+            request.path_params.get("dir"), request.path_params.get("name")
+        )
+        if not path.is_file():
+            raise _materials_missing_error(path.name)
+        media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        return FileResponse(path, media_type=media_type)
+    except ActionError as exc:
+        return _error_response(exc)
+
+
+async def _api_materials_delete(request: Request) -> Response:
+    """删除：**只删那一个文件**（场次目录与资料目录里别的文件一个字节不动）。
+
+    名字先过与上传同一套清洗；存不在这个名字上（含重复删除）如实回 404
+    `material_missing`。成功体 = 通用信封 + `material: {name}`；不涨 `revision`。
+    """
+    runtime = _runtime_of(request)
+    if runtime is None:  # pragma: no cover - 应用未装配
+        return JSONResponse({"error": "runtime 未装配"}, status_code=500)
+    runtime.bind_from_scope(request.scope)
+    try:
+        _, path = runtime.materials_item_path(
+            request.path_params.get("dir"), request.path_params.get("name")
+        )
+        if not path.is_file():
+            raise _materials_missing_error(path.name)
+        try:
+            path.unlink()
+        except OSError as exc:
+            raise ActionError(
+                "persist_failed",
+                f"资料删不掉（{type(exc).__name__}: {exc}）",
+                status=500,
+                detail={"error": f"{type(exc).__name__}: {exc}"},
+            ) from exc
+        _log.info("会议资料删除：%s", path)
+        return JSONResponse(
+            {"ok": True, "revision": runtime.revision, "material": {"name": path.name}}
+        )
     except ActionError as exc:
         return _error_response(exc)
 
@@ -454,7 +623,7 @@ async def _debug_page(request: Request) -> Response:
 
 
 def api_routes() -> list[Route]:
-    """九条 `/api/*` 路由（`/debug` 在 `debug_routes()` 里，同一个模块）。"""
+    """十三条 `/api/*` 路由（`/debug` 在 `debug_routes()` 里，同一个模块）。"""
     return [
         Route("/api/state", _api_state, methods=["GET"]),
         Route("/api/events", _api_events, methods=["GET"]),
@@ -462,9 +631,21 @@ def api_routes() -> list[Route]:
         Route("/api/actions", _api_actions, methods=["POST"]),
         Route("/api/summaries", _api_summaries, methods=["GET"]),
         Route("/api/sessions", _api_sessions, methods=["GET"]),
+        # 会议资料四条（资料节点 285bf58c）：注册在单场状态那条**之前**——
+        # `{dir:path}` 收得下斜杠，单场状态若排在前面会把 `/materials` 那两层
+        # 路径整个吃进 `{dir}` 里。GET 与 DELETE 同路径异方法：Starlette 按注册
+        # 顺序找 FULL 匹配，方法不匹配的算 PARTIAL，互不抢。
+        Route("/api/sessions/{dir:path}/materials", _api_materials_listing, methods=["GET"]),
+        Route("/api/sessions/{dir:path}/materials", _api_materials_upload, methods=["POST"]),
+        Route("/api/sessions/{dir:path}/materials/{name}", _api_materials_file, methods=["GET"]),
+        Route(
+            "/api/sessions/{dir:path}/materials/{name}",
+            _api_materials_delete,
+            methods=["DELETE"],
+        ),
         # 单场状态（会后视图的进度区）：`{dir:path}` 是为了收下 URL 编码的绝对路径
         # ——Windows 上的 `C:\会议\250906` 里那两段反斜杠过不了默认的路径段匹配。
-        # 注册在 `/api/sessions` 之后：星形路由按注册顺序匹配，两条路径不冲突。
+        # 注册在资料四条之后：星形路由按注册顺序匹配，资料那几条先吃自己的路径。
         Route("/api/sessions/{dir:path}", _api_session_status, methods=["GET"]),
         Route("/api/dirs", _api_dirs, methods=["GET"]),
         Route("/api/devices", _api_devices, methods=["GET"]),
@@ -477,7 +658,7 @@ def debug_routes() -> list[Route]:
 
 
 def all_routes() -> list[Route]:
-    """十条路由一次给全（装配模块只负责把它们挂上应用）。"""
+    """十四条路由一次给全（装配模块只负责把它们挂上应用）。"""
     return api_routes() + debug_routes()
 
 

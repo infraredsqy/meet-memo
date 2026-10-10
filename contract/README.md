@@ -1,12 +1,12 @@
 # contract/ —— 双端契约的 golden 样本
 
-> 这个目录是**服务与界面之间那份契约的可机读基准**：`fixtures/` 下的 37 个 JSON 样本一律出自真实服务路径，`tests/test_contract_fixtures.py` 每次跑测试都重走一遍采集、与盘上样本逐字比对，服务侧形状一漂移就红。
+> 这个目录是**服务与界面之间那份契约的可机读基准**：`fixtures/` 下的 41 个 JSON 样本一律出自真实服务路径，`tests/test_contract_fixtures.py` 每次跑测试都重走一遍采集、与盘上样本逐字比对，服务侧形状一漂移就红。
 >
 > 契约正文在 `docs/contract.md`（端点口径、快照 schema、SSE 帧形状、动作信封与 `code`/`detail` 表、心跳语义、客户端义务、保留登记）。这个 README 只讲三件事：**样本从哪儿来、掩码怎么打、怎么再生成**。
 >
 > 代码落点：掩码与采集辅助在 `tests/_contract.py`；比对与再生成在 `tests/test_contract_fixtures.py`；再生成开关 `--regen-contract` 注册在 `tests/conftest.py` 的 `pytest_addoption`。
 
-## 1. 样本清单（37 个）
+## 1. 样本清单（41 个）
 
 | 目录 | 文件 | 采集路径 | 固定的是什么 |
 |---|---|---|---|
@@ -36,6 +36,10 @@
 | | `fail-summary-failed-missing.json` | 录音中把只读配置视图换成一份缺端点的再 `summarize` | 502 + `detail = {missing: [...]}` |
 | `summaries/` | `after-one.json` | 进程内 TestClient：按过一次 `summarize` 之后读 `GET /api/summaries` | `{session_id, entries}`、记录那一条七键（不含 `lines`）、时刻与那次应答逐字同值 |
 | `devices/` | `all.json` | 进程内 TestClient（设置抽屉节点 `311f84f5`）：**设备枚举走假件**（`sources.py` 两个枚举函数换成固定端点表），读一次 `GET /api/devices` | `{mic, loopback}` 两路各一份、每项六格（`name` / `host_api` / `role` / `index` / `channels` / `is_default`）；名字与默认标记是假件的确定值；纯读，revision 不动 |
+| `materials/` | `upload-ok.json` | 进程内 TestClient（资料节点 285bf58c）：临时根下造目的目录、`workspace_open` 登记，往 `/api/sessions/{id}/materials?name=报告.pdf` POST 一段固定字节 | 请求两件套（`method` + `name`）+ `status` + 掩码后的成功体：通用信封 + `material` 三格（`name` / `size_bytes` / `added_at`）；名字与字节数是确定值，`added_at` 走 `<iso>`、`revision` 保留真实值 |
+| | `after-upload.json` | 同上：再传一次同名（样本里看得出 `报告 (2).pdf` 的序号后缀）与一个穿越加非法字符的脏名字（清洗后 `假报告_v__.pdf`），然后读 `GET …/materials` | `{dir, materials_dir, items:[{name, size_bytes, added_at}]}`：三格的清单形状、按名字排序的确定次序；路径走 `<path>` 掩码 |
+| | `delete-ok.json` | 同上：`DELETE …/materials/报告 (2).pdf`（带头） | 成功体 = 通用信封 + `material: {name}` |
+| | `missing.json` | 同上：删除之后再 GET 那同一个名字 | 404 + 失败信封，`code = material_missing`、`detail = {name}`（4.12 那一片自己的 `code`） |
 | `sessions/` | `empty.json` / `after-open.json` | 进程内 TestClient（工作台收编节点 e2f6166b）：空注册表一份；再往临时根下造的三个目的目录（空 / 带 `session.json` / 只有音频归档名的疑似档）逐个走 `workspace_open` 之后读 `GET /api/sessions` | `{sessions, recent}`、每行十一键（`dir` / `session_id` / `dir_exists` / `kind` / `suspected` / `state` / `date` / `mode` / `has_offline` / `added_at` / `last_opened_at`）；路径与目录名掩成 `<path>` / `<session-id>` |
 | | `status-after-run.json` | 进程内 TestClient（会后进度读数节点 `a9affaa8`；`speakers` 一格由人名节点 `91b6752e` 加进来）：往临时场次目录里按真实形状落那份逐块进度账（两路各两块，一块静音、一块失败）与状态文件，登记进工作台之后读 `GET /api/sessions/{id}` | `dir` / `session_id` / `kind` / `state` / `date` / `mode` / `has_offline` / `post` / `offline` / `speakers` 十键；`offline` 里两路各一格（`source` / `done` / `total` / `remaining` / `current_chunk` / `counts` 四档计数）；`speakers` 是身份集（样本那一场只有 mic 一路有稿、没有人名表 → 路级身份一行，名字与次数读数如实 `null`）。块号、块数、四档计数是确定值，路径与场次目录名掩成 `<path>` / `<session-id>`，两个墙钟戳掩成 `<iso>`，走秒的量掩成 `0` / `null`。这一份采的是**跨进程那一档**（这一趟早已收工）：`offline.state` 照盘上那份如实答 `done`、`offline.in_process` 如实答 `false` |
 | | `status-interrupted.json` | 进程内 TestClient（打断会后节点 `b1c6a58e`）：往临时场次目录里落那份逐块进度账（mic 两块里跑了一块）与一版 `interrupted` 状态文件，登记进工作台之后读 `GET /api/sessions/{id}` | 形状与 `status-after-run` 同体：`offline.state` 照盘答 **`interrupted`**（折档白名单里有它，不许折回 `running`）、`in_process` 如实 `false`；`sources` 两路各一格（mic `1/2`、loopback `0/null`——没开跑的那一路分母读不出如实 `null`）。路径与目录名掩 `<path>` / `<session-id>`，墙钟戳掩 `<iso>`，走秒量掩 `0` / `null` |
@@ -56,6 +60,8 @@
 ```
 
 `action` / `args` 是打过去的那份请求（两个必需请求头由驱动件自动带上），`status` 是 HTTP 状态码，`body` 是掩码后的应答体。**失败样本的 `message` 也逐字留在样本里** —— 它是给人看的整句，界面不该按它做字符串匹配，但契约要能看到它长什么样。
+
+**`materials/*.json` 的形状**：与动作样本同构，但请求侧是**两件套**（`method` + `name`）而不是 `action` + `args` —— 会议资料那四条不是动作（不走 `/api/actions`），上传 / 删除的写头哨（`X-Meeting-Service: 1`）由采集驱动件自动带上，清单 / 取原文件不带头。样本里的 `name` 是打过去的那份请求名（脏名字原样进样本——清洗前后的对照正是契约要看的东西），应答体里的 `material.name` 是服务清洗 / 让位之后的存盘名。
 
 **SSE 帧样本的形状**：`{event, id, data}`，`data` 掩码。`id` 保留线上形状的字符串（`levels` / `transcript` 不带 `id:`，这里就是 `null`）。
 

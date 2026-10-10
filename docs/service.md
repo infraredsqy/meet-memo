@@ -6,7 +6,7 @@
 >
 > 读者两种：把它装起来用的人（读第 1–3、8 章），和往它里面插后端 / 加功能的下游开发者（读第 2、4–7 章）。
 >
-> 四态状态机、快照字段、`session.json`、SSE 帧形状、告警判定写在 `docs/state.md`；十一条端点（九条 `/api/*` + 静态首页 + `/debug`）与动作信封写在 `docs/api.md`；会中总结那一层（窗口、提示词、配置键、动作与记录端点）写在 `docs/summary.md`。
+> 四态状态机、快照字段、`session.json`、SSE 帧形状、告警判定写在 `docs/state.md`；十五条端点（十三条 `/api/*` + 静态首页 + `/debug`）与动作信封写在 `docs/api.md`；会中总结那一层（窗口、提示词、配置键、动作与记录端点）写在 `docs/summary.md`。
 
 ## 章节目录
 
@@ -24,7 +24,7 @@
 
 ## 1. 怎么装、怎么起
 
-包名 `meeting`，Python ≥ 3.13。运行时依赖两条主干 `starlette` / `uvicorn`，外加**音频四件套** `numpy` / `sounddevice` / `soundcard` / `pydub`（`dca4539b` §5 的裁定：录音是产品主体，放可选 extra 会让「没装 extra」退化成「一场会什么都没录」）。转写要的模型依赖在 `.[asr]` extra 里（`torch==2.9.1+cu128` / `transformers==5.15.0` / `webrtcvad-wheels==2.0.14`）；`torch` 那个是 CUDA 12.8 构建、PyPI 上没有这个 wheel，装的时候要带索引：`pip install --extra-index-url https://download.pytorch.org/whl/cu128 "meeting[asr]"`（CPU 档写 `torch==2.9.1`、不用那个索引即可）。**不装这一格照样能起服务**：重依赖全在函数体内惰性 import，转写那一路缺模型时如实记失败，录音一个字都不受影响。`capture` extra 有意留空。本机实测环境：Python 3.13.7 / starlette 1.0.0 / uvicorn 0.42.0 / pytest 9.0.3 / httpx 0.28.1 / numpy 2.4.4 / sounddevice 0.5.5 / soundcard 0.4.6 / pydub 0.25.1。
+包名 `meeting`，Python ≥ 3.13。运行时依赖三条主干 `starlette` / `uvicorn` / `anyio`（routes.py 直接 import），外加**音频四件套** `numpy` / `sounddevice` / `soundcard` / `pydub`（`dca4539b` §5 的裁定：录音是产品主体，放可选 extra 会让「没装 extra」退化成「一场会什么都没录」）。转写要的模型依赖在 `.[asr]` extra 里（`torch==2.9.1+cu128` / `transformers==5.15.0` / `webrtcvad-wheels==2.0.14`）；`torch` 那个是 CUDA 12.8 构建、PyPI 上没有这个 wheel，装的时候要带索引：`pip install --extra-index-url https://download.pytorch.org/whl/cu128 "meeting[asr]"`（CPU 档写 `torch==2.9.1`、不用那个索引即可）。**不装这一格照样能起服务**：重依赖全在函数体内惰性 import，转写那一路缺模型时如实记失败，录音一个字都不受影响。`capture` extra 有意留空。本机实测环境：Python 3.13.7 / starlette 1.0.0 / uvicorn 0.42.0 / pytest 9.0.3 / httpx 0.28.1 / numpy 2.4.4 / sounddevice 0.5.5 / soundcard 0.4.6 / pydub 0.25.1。
 
 **外部前置条件：`ffmpeg` 要在 PATH 上**（`pydub` 靠它转 MP3；装机时一并装）。它缺席时服务照常起、照常录，只是收尾第 2 步 `transcode` 如实记 `failed`，**归档 PCM 原样留在场次目录里**（一个字节都不丢）。
 
@@ -338,7 +338,7 @@ fix 每改一点再跑一遍、发现一个错修完还要再跑一遍——跑�
 | `tests/test_config.py` | 64 | 默认值表、三层优先级、环境变量映射、十二个热读键（`asr.*` 五个 + `alarm.sound` + 设置抽屉那四项（`311f84f5`）+ 会中切模型两键）、键间校验（预设指针的键间规则在内）、配置损坏抛错、值非法 → 退出码 `2` |
 | `tests/test_port_policy.py` | 17 | 端口与只监听回环、两种占用文案与退出码 `2`、探针 1 秒总超时、用法错误、console script 入口面（`68927c27` 收尾轮：删浏览器三连 / `av` 清单核对 / 与 shutdown 重复的信号断言；子进程用例改按用例级标记进慢档） |
 | `tests/test_static.py` | 19 | `/` 的产物与说明页两条分支、**目录存在性按每请求判定**（同一个应用实例里「缺失 → 建出 → 又删掉」三步走完、中间不重启）、`/debug`、`/api/*` 的 `no-store`、Host 校验 `403`、动作头校验 `403`、完整版快照的键集与非空 `service.version`、`revision` 每次状态变更 +1、心跳七字段、空闲态盘上不留任何场次产物 |
-| `tests/test_contract_fixtures.py` | 14 | 与 `contract/fixtures/` 的漂移比对：重走真实服务路径采集 37 个样本逐文件比对（默认模式）、掩码结构断言（顶层九键 / 十一键、settings 七键、两路次序、包络长度 15、`levels` 的 `ts is None` 与 `bar == envelope[-1]`、心跳七键、四帧 `revision` 自洽）、`--regen-contract` 的再生成与幂等 |
+| `tests/test_contract_fixtures.py` | 15 | 与 `contract/fixtures/` 的漂移比对：重走真实服务路径采集 41 个样本逐文件比对（默认模式）、掩码结构断言（顶层九键 / 十一键、settings 七键、两路次序、包络长度 15、`levels` 的 `ts is None` 与 `bar == envelope[-1]`、心跳七键、四帧 `revision` 自洽）、`--regen-contract` 的再生成与幂等 |
 | `tests/test_logging_setup.py` | 15 | 服务级 log 位置与格式、bootstrap 重建、按两个配置键轮转、幂等、主 log 不可写与配置损坏 → 退出码 `3`、**启动不再读/改写别的场次目录**（扫描退场的三条新判据） |
 | `tests/test_api_actions.py` | 32 | 除收编与会后那四个动作外其余七个动作的成功与拒绝路径、`mode` 取值域、R17 的两个 409、`capture_unavailable`、`settings_update` 的两分（12 个热读键 / 28 个要重启的键）与写盘拓扑与 `persist_failed`、`alarm.sound` 当场生效、`muted` 的首发与重算、逐动作 × 逐态可用性、`dev_inject` 的三档可用性、动作名与 `code` 集合逐字冻结、`pause`/`resume` 动作接线（`68927c27` 自 test_pause_actions 收编；start 落点校验与续接放行的用例在 `test_session_dir.py`） |
 | `tests/test_state_machine.py` | 21 | 四态取值域与全部合法迁移、非法迁移抛错且不涨 `revision`、三条铁律、`elapsed_seconds` 走秒与冻结、15 柱 × 2 秒包络、收尾闭环两个分支（成功档第 4 步停在 `waiting`、失败停留档）、**`waiting` 只许落在 `post` 那一格**、取消路径、探针越界取值回退 |
@@ -498,7 +498,7 @@ minutes_dsh_web 里「真子进程 / 真阈值等待」的用例改按用例级 
 快档不会被慢用例拖慢（进不来），慢用例也逃不过收尾那一趟全量。离线契约那一族
 （`test_offline_artifacts.py` / `test_offline_engine.py` / `test_offline_runner.py` /
 `test_offline_segment.py` / `test_offline_speakers.py` / `test_offline_audio.py` /
-`test_post_hook.py`）与 `test_contract_fixtures.py` 的 37 个 golden 样本漂移比对、
+`test_post_hook.py`）与 `test_contract_fixtures.py` 的 41 个 golden 样本漂移比对、
 `test_cli_post.py` / `test_post_idempotency.py` 两条 `meeting post` 入口，在 `68927c27`
 收尾轮一并归入慢档——它们是收尾功能的验收，跟着收尾那一趟全量跑。
 
@@ -507,7 +507,7 @@ minutes_dsh_web 里「真子进程 / 真阈值等待」的用例改按用例级 
 
 ## 8. 现在能做什么 / 还接不上的部分
 
-**能**：起停、跑完启动序列、交 `/`（产物或说明页）、**接通了的 `/debug` 自检页**、`/api/state` 的完整快照、`/api/events` 的三通道 SSE、`/api/heartbeat` 的真值、`POST /api/actions` 的十六个动作（含停掉正在跑的精细稿那一只 `post_stop`，b1c6a58e）、`GET /api/summaries` 的本场总结记录、**工作台收编（e2f6166b）**：工作区注册表（`meeting/workspace.py`，住配置目录 `workspaces.json`）、`workspace_open` / `workspace_remove` 两动作与 `GET /api/sessions` / `GET /api/dirs` 两只纯读端点、`start` 开成一场后刷新注册表的 `last_opened_at` 与 `recent`、空闲态的工作区首页（`web/src/home/`，左侧清单（行四态）+ 目录选择器 + 非空收编 / 删除确认弹窗 + 选中那一场的会后两个按钮与会后进度区（轮询 `GET /api/sessions/{id}`，可展开收缩、逐块行往下刷、每路一条进度条）+ 两处顶栏的「显卡忙不忙」一格，`52b24392`；对录过的行顶栏按钮叫「接着录」、详情里摆各段的时长与时间（`670d72b5`））、四态与全部迁移、场次目录与原子写 `session.json`、**续接（`670d72b5`）**：对录过的工作区按 start = 同一场会再录一段 —— 旧段归档与临时稿一个字节不碰、段账与权威时长合并着写盘、转写开场各路落记号行并推 `gap` 行、续接失败旧记录原样写回、`GET /api/sessions` 两只端点的行带段读数、`stop` 的四步收尾跑到终态（含自适应预算、超时如实上报、失败后两条出路）、`Ctrl+C` 的两阶段语义与五档退出码、场次 log 的挂上与摘下、告警判定与静音、`settings_update` 的原子写、**设置抽屉（`311f84f5`）**：`GET /api/devices` 纯枚举设备清单、抽屉六行（两设备键位 / 告警出声 / 心跳频率 / 总结缺省档 / 总结模型预设）就地写进 config（都收 `HOT_KEYS` 热读档，写盘那一刻快照就换新值，设备改完 `reprobe` 按新值挑，换一套模型预设会中当场生效）、**设备枚举与试开（`devices.mic` / `devices.loopback` 两个键位与 `reprobe` 动作）**、**真实双路采集与归档**（`capture.backend` 默认值 `auto`：两路各自独立读写、边采边落盘 16k / 单声道 / int16 裸 PCM（**按段落盘**：`meeting_audio_<source>_<NNN>.pcm`，一段 = 一次录制）、每 0.5 秒一帧 dBFS 电平事实、**引擎层的暂停/继续与「关一路」**（`6ea32d8d`：暂停写静音不录内容、不切段；关一路写静音、不报 `SourceLost` —— HTTP 动作入口是 `pause` / `resume` / `set_source` 三个动作与界面上那两个位置，`10770b41`；这两个动作还各让会中模型退出显存 / 回到手上，`fix-3`）、收尾 `finalize()` 停流落盘 + `transcode()` 逐段出 64k MP3）、**真实转写与会中临时稿**（`transcriber.backend` 默认值 `auto`：两路各一本 `meeting_transcript_<source>.md`、一行 `[HH:MM] 正文`）、**会后离线转写与说话人聚类**（`post.hook` 默认值 `auto`，由「生成会后精细稿」按钮按需拉起：两路各一份 `meeting_offline_transcript_<source>.md` 与 `meeting_offline_speakers_<source>.json`，外加一份运行报告与一份状态文件，都落进场次目录；**每跑完一块往 `meeting_offline_progress.jsonl` 补一行**，跑到哪一档由 `GET /api/sessions/{id}` 回答）、**会后纪要生成**（`minutes.hook` 默认值 `auto`，由「生成纪要」按钮按需拉起：拉起一个 headless DSH 子会话按五个阶段出一份 `meeting_final.md`，正文之外带说话人附录）、dev 替身（采集合成电平与三档故障注入 / 转写合成行，按 key 分流）、仓库根的简版 `README.md`、**契约看守**（`python -m pytest tests/test_contract_fixtures.py -q` 比对 `contract/fixtures/` 的 37 个 golden 样本，`--regen-contract` 重新生成；同一批样本在 `web/tests/` 里由 `npx vitest run` 再验一遍类型层）。
+**能**：起停、跑完启动序列、交 `/`（产物或说明页）、**接通了的 `/debug` 自检页**、`/api/state` 的完整快照、`/api/events` 的三通道 SSE、`/api/heartbeat` 的真值、`POST /api/actions` 的十六个动作（含停掉正在跑的精细稿那一只 `post_stop`，b1c6a58e）、`GET /api/summaries` 的本场总结记录、**工作台收编（e2f6166b）**：工作区注册表（`meeting/workspace.py`，住配置目录 `workspaces.json`）、`workspace_open` / `workspace_remove` 两动作与 `GET /api/sessions` / `GET /api/dirs` 两只纯读端点、`start` 开成一场后刷新注册表的 `last_opened_at` 与 `recent`、空闲态的工作区首页（`web/src/home/`，左侧清单（行四态）+ 目录选择器 + 非空收编 / 删除确认弹窗 + 选中那一场的会后两个按钮与会后进度区（轮询 `GET /api/sessions/{id}`，可展开收缩、逐块行往下刷、每路一条进度条）+ 两处顶栏的「显卡忙不忙」一格，`52b24392`；对录过的行顶栏按钮叫「接着录」、详情里摆各段的时长与时间（`670d72b5`））、四态与全部迁移、场次目录与原子写 `session.json`、**续接（`670d72b5`）**：对录过的工作区按 start = 同一场会再录一段 —— 旧段归档与临时稿一个字节不碰、段账与权威时长合并着写盘、转写开场各路落记号行并推 `gap` 行、续接失败旧记录原样写回、`GET /api/sessions` 两只端点的行带段读数、`stop` 的四步收尾跑到终态（含自适应预算、超时如实上报、失败后两条出路）、`Ctrl+C` 的两阶段语义与五档退出码、场次 log 的挂上与摘下、告警判定与静音、`settings_update` 的原子写、**设置抽屉（`311f84f5`）**：`GET /api/devices` 纯枚举设备清单、抽屉六行（两设备键位 / 告警出声 / 心跳频率 / 总结缺省档 / 总结模型预设）就地写进 config（都收 `HOT_KEYS` 热读档，写盘那一刻快照就换新值，设备改完 `reprobe` 按新值挑，换一套模型预设会中当场生效）、**设备枚举与试开（`devices.mic` / `devices.loopback` 两个键位与 `reprobe` 动作）**、**真实双路采集与归档**（`capture.backend` 默认值 `auto`：两路各自独立读写、边采边落盘 16k / 单声道 / int16 裸 PCM（**按段落盘**：`meeting_audio_<source>_<NNN>.pcm`，一段 = 一次录制）、每 0.5 秒一帧 dBFS 电平事实、**引擎层的暂停/继续与「关一路」**（`6ea32d8d`：暂停写静音不录内容、不切段；关一路写静音、不报 `SourceLost` —— HTTP 动作入口是 `pause` / `resume` / `set_source` 三个动作与界面上那两个位置，`10770b41`；这两个动作还各让会中模型退出显存 / 回到手上，`fix-3`）、收尾 `finalize()` 停流落盘 + `transcode()` 逐段出 64k MP3）、**真实转写与会中临时稿**（`transcriber.backend` 默认值 `auto`：两路各一本 `meeting_transcript_<source>.md`、一行 `[HH:MM] 正文`）、**会后离线转写与说话人聚类**（`post.hook` 默认值 `auto`，由「生成会后精细稿」按钮按需拉起：两路各一份 `meeting_offline_transcript_<source>.md` 与 `meeting_offline_speakers_<source>.json`，外加一份运行报告与一份状态文件，都落进场次目录；**每跑完一块往 `meeting_offline_progress.jsonl` 补一行**，跑到哪一档由 `GET /api/sessions/{id}` 回答）、**会后纪要生成**（`minutes.hook` 默认值 `auto`，由「生成纪要」按钮按需拉起：拉起一个 headless DSH 子会话按五个阶段出一份 `meeting_final.md`，正文之外带说话人附录）、dev 替身（采集合成电平与三档故障注入 / 转写合成行，按 key 分流）、仓库根的简版 `README.md`、**契约看守**（`python -m pytest tests/test_contract_fixtures.py -q` 比对 `contract/fixtures/` 的 41 个 golden 样本，`--regen-contract` 重新生成；同一批样本在 `web/tests/` 里由 `npx vitest run` 再验一遍类型层）。
 
 **下面这几条是已经接通的细节；其余按「能力还没进来」理解，服务本身照常跑**：
 

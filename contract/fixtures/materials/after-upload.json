@@ -1,0 +1,21 @@
+{
+  "dir": "<path>",
+  "materials_dir": "<path>",
+  "items": [
+    {
+      "name": "假报告_v__.pdf",
+      "size_bytes": 13,
+      "added_at": "<iso>"
+    },
+    {
+      "name": "报告 (2).pdf",
+      "size_bytes": 15,
+      "added_at": "<iso>"
+    },
+    {
+      "name": "报告.pdf",
+      "size_bytes": 32,
+      "added_at": "<iso>"
+    }
+  ]
+}

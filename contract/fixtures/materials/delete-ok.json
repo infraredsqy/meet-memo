@@ -1,0 +1,12 @@
+{
+  "method": "DELETE",
+  "name": "报告 (2).pdf",
+  "status": 200,
+  "body": {
+    "ok": true,
+    "revision": 1,
+    "material": {
+      "name": "报告 (2).pdf"
+    }
+  }
+}

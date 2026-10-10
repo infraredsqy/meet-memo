@@ -5,7 +5,9 @@
 #   - 不引 FastAPI（技术栈是 Starlette + uvicorn）
 #   - 不引 pytest-asyncio（测试一律同步写）
 #   - 不引 websockets
-# 运行时依赖只有 starlette 与 uvicorn 两条；模型依赖一律放 optional extra，
+# 运行时依赖只有 starlette / uvicorn / anyio 三条（anyio 由 meeting/service/routes.py
+# 直接 import —— materials 上传的流式写盘，虽是 starlette 的传递依赖也照实声明）；
+# 模型依赖一律放 optional extra，
 # 保证 `meeting web` 的 import 链不碰重依赖、启动在秒级完成（B11 / E10）。
 #
 # **音频依赖是例外（`dca4539b` §5 的裁定）**：录音是这个产品的主体（R1），所以
@@ -27,6 +29,8 @@ requires-python = ">=3.13"
 dependencies = [
     "starlette",
     "uvicorn",
+    # routes.py 直接 import（materials 上传的流式写盘），不靠 starlette 传递
+    "anyio",
     # 音频四件套（版本号是本机实测跑通整套采集与归档的那几个，照 `dca4539b` 的验收环境写）
     "numpy==2.4.4",
     "sounddevice==0.5.5",
