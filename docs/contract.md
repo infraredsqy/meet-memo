@@ -287,7 +287,7 @@ X-Meeting-Service: 1
 | `mute_session` | 本场不再出声：`alerts.*.muted` 立刻变 `true`。**不改**持久化开关 `alarm.sound`，**下一场 `start` 自动复位** | 无 |
 | `pause` | **暂停**：这一场从这一刻起不录内容 —— 两路的归档改写数字静音（第 8 条），快照 `session.paused` 变 `true`，段**不**切（第 9 条），时长读数停在原地（第 7 条）。暂停的那几段时间**不计入静默判定**：安静房间里暂停多久都不会冒出一条「这一路静默已达 N 秒」的致命级（第 17 条）。顺带让**会中模型当场退出显存**（可选成员 `release_gpu()`，异步提交，应答不等它做完；第 21 条点名了「暂停」这一格）。幂等；顶层四态一个字不动 | 无 |
 | `resume` | **继续**：归档回到录内容，`session.paused` 回到 `false`，时长接着走。顺带把**会中模型拉回来**（配对的 `acquire_gpu()`，同样异步提交）。幂等 | 无 |
-| `set_source` | **会中关掉某一路 / 重新打开某一路**：`active=false` 关掉 —— 那一路停流、改写静音，**不报 `SourceLost`、不进告警**（用户按的按钮与「这一路真死了」是两件事），快照里那一路落 `health = stopped`；`active=true` 重新打开 —— 重新挑设备、重开流，成功回 `capturing`（关掉之前那一路还挂着致命级时回 `lost`，等有信号的自然恢复），**打不开**（设备又被别的程序占着这一档）如实回 `capture_unavailable`(503) 且那一路照旧停在 `stopped`。幂等；两种方向都不切段 | `source`：**必给**，`mic` / `loopback`；`active`：**必给**，bool（`true` 打开、`false` 关掉） |
+| `set_source` | **会中关掉某一路 / 重新打开某一路**：`active=false` 关掉 —— 那一路停流、改写静音，**不报 `SourceLost`、不进告警**（用户按的按钮与「这一路真死了」是两件事），快照里那一路落 `health = stopped`；`active=true` 重新打开 —— 重新挑设备、重开流，成功回 `capturing`（**干净开场**：不回 `lost`、不落「曾中断」的残留横幅，静默判定从零起算——关掉那一刻这一路挂着的致命级已当场清空），**打不开**（设备又被别的程序占着这一档）如实回 `capture_unavailable`(503) 且那一路照旧停在 `stopped`。幂等；两种方向都不切段 | `source`：**必给**，`mic` / `loopback`；`active`：**必给**，bool（`true` 打开、`false` 关掉） |
 | `settings_update` | 写配置文件（原子写），键态两分见 4.6 | 「配置点号键名 → 值」的扁平映射 |
 | `reprobe` | 重新枚举并试开设备，结果落进快照两路（`revision +1`）。**只在没有场次在跑的时候可用**：`recording` / `alert` 回 `already_recording`(409) | 无 |
 | `dev_inject` | 注入故障（**只在 dev 采集替身在场时可用**） | `source` / `fault` / `after_seconds` / `duration_seconds` |
