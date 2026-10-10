@@ -434,6 +434,35 @@ class AlertJudge:
         track.last_raise_ts = None
         track.raise_in_flight = None
 
+    # -- 会中开关某一路（`set_source` 的两处收场点） -------------------------
+
+    def reset_source(self, source: str) -> None:
+        """把**这一路**的判定账整个收走（下一条帧当全新一路起算）。
+
+        用在会中开关某一路的两处（`set_source` 关断成功 / 重新打开成功）：关掉之后这一路
+        的电平帧不再进判定（切断落在 runtime 侧的帧入口），账留着没有意义；重开必须当
+        **干净开场**——静默 / 恢复两条累计、抑制窗口的锚点、在告警记号一格不留。只收
+        这一路，其余路（含提示级记账）一概不动（与 `reset_for_new_session()` 的整场清空
+        分开）。
+
+        **为什么重开也要收一遍**：关掉前攒下的静默秒数若留着，重开后的第一帧会拿关掉前
+        那个旧 `last_ts` 做差，把整段关掉的时间当成一帧的间隔补进 `silent_seconds`——
+        重开第一秒就被旧计数拉回致命级，正是「恢复即收场」不许发生的那件事。
+        """
+        self._tracks.pop(source, None)
+
+    def event_message(self, source: str) -> str | None:
+        """这一路当前在告警的那条事件的原文（没在告警里就是 `None`）。
+
+        给「致命级换挂」用（`set_source` 关掉横幅上那一路、而同场还有**别的**路真在
+        `lost` 时）：致命级同时只留一条，被覆盖掉的那条的原文还在这份记账里
+        （`event_key`），换挂时**原话照搬**，不另造文案。
+        """
+        track = self._tracks.get(source)
+        if track is None or not track.in_alert:
+            return None
+        return track.event_key
+
     # -- 提示级 -----------------------------------------------------------
 
     def on_transcript_health(self, health: str) -> Alert | None:

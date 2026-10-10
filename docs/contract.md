@@ -95,7 +95,7 @@
 
 `sources[*]` **九键**：`id`（`mic` / `loopback`，**不掩码**：它是取值域字面量）/ `label`（`本地` / `远端`）/ `device_name`（string \| null）/ `health` / `lost_since`（ISO \| null，**掩码 `<iso>`**）/ `restored`（bool）/ `level_dbfs` 与 `peak_dbfs`（number \| null，**掩码 `<dbfs>`**）/ `envelope`（number 数组，**逐根掩码 `<dbfs>`**，长度不变）。
 
-- `health` **七取值**：`unprobed` / `ready` / `probe_failed` / `capturing` / `lost` / `restored` / `stopped`。前三档由启动时的设备探测直取（后端 `probe()` 只许报这三档），后四档由状态迁移写值。**七档之外不新增第八个**：会中关掉某一路（动作 `set_source` 的 `active=false`）落的就是现成的 `stopped` 那一档（`capturing → stopped`），重新打开回到 `capturing`（关掉之前那一路还挂着致命级时回 `lost`，让有信号时的恢复路照常走）——**这是用户按的按钮**：不报 `SourceLost`、不进告警，与 `lost` 那一档分得清清楚楚。
+- `health` **七取值**：`unprobed` / `ready` / `probe_failed` / `capturing` / `lost` / `restored` / `stopped`。前三档由启动时的设备探测直取（后端 `probe()` 只许报这三档），后四档由状态迁移写值。**七档之外不新增第八个**：会中关掉某一路（动作 `set_source` 的 `active=false`）落的就是现成的 `stopped` 那一档（`capturing → stopped`），重新打开回到 `capturing`（**干净开场**：重开这一动作本身不再把这一路挂回致命级——不回 `lost`、不落「曾中断」的残留横幅、静默判定从零起算；关掉那一刻这一路挂着的致命级已当场清空。此后这一路真静默 / 真断流照旧按真故障报警，真恢复的正常读数照给）——**这是用户按的按钮**：不报 `SourceLost`、不进告警，与 `lost` 那一档分得清清楚楚。
 - `device_name` 是**探测实际落到的那个端点名**（试开通过的那一条），与用户在配置文件里配的名字是两件事 —— 配置表达的是**意图**，这一个字段表达的是**结果**，两者的关系见第 2 章 `settings.devices` 那一段。
 - `envelope` 是最近 30 秒的电平包络：**15 根柱、一根 2 秒**。一根柱的值 = 它那 2 秒窗口内所有 `LevelFrame.peak` 的最大值；窗口里一帧都没有就沿用左边那根。**录音中（乃至 `ended` 停留档）长度恰为 15**，会话开场（还没开始录）是**空数组 `[]`**。这根柱由服务算，**前端不许自己造**。
 - 两路的位置是固定的：`sources[0]` 恒为 `mic`、`sources[1]` 恒为 `loopback`。

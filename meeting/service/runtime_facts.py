@@ -284,6 +284,14 @@ class RuntimeFactsMixin:
         self.last_frame_ts = time.monotonic()
         self.last_fact_at = self.last_frame_ts
 
+        # 用户主动关掉的那一路（`health = stopped`）：静音电平帧**不进静默判定**。
+        # 关掉是机主的主动选择，不是「这一路采不到」（设计意图第 17 条：致命级=采不到；
+        # 第 9 条：关掉的那一路写静音——静音帧由写静音的节拍器照常产出）。切断必须在
+        # **帧进判定器之前**完成：静默 / 恢复两条累计一格不动，致命横幅自然无从谈起，
+        # 不是等横幅冒出来再拦一遍。包络与瞬时读数照旧更新（如实显示静音），帧时钟照旧
+        # 刷新（写静音的采集管线活着，`recording_alive` 不因此翻假）。
+        if item.health == "stopped":
+            return
         changed = False
         judgement = self.judge.on_level_frame(frame.source, float(frame.ts), float(frame.dbfs))
         if judgement.alert is not None:
@@ -344,6 +352,16 @@ class RuntimeFactsMixin:
     def _apply_source_lost(self, fact: SourceLost) -> None:
         """后端报「这一路的流中断了」：立刻起致命级（**服务绝不因此结束会话**）。"""
         if self.snapshot.top_state not in ("recording", "alert"):
+            return
+        if self.snapshot.source(fact.source).health == "stopped":
+            # 用户已关的那一路：这条流中断是「用户关流」在途的余波（关掉前后那条线程
+            # 退出时报的），不是故障——不进告警、也不把已关路的 health 写回 lost
+            # （旧行为会把徽标拉回「信号丢失」）。真死的那一路（没被用户关过）不经过
+            # 这一格，既有的整套致命级判定原样。
+            _log.info(
+                "用户已关的 %s 这一路来了一条流中断事实：按「关流余波」处理，不进告警",
+                fact.source,
+            )
             return
         self._ensure_ticker()
         now = time.monotonic()

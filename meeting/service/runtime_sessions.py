@@ -25,6 +25,7 @@ from meeting.service.runtime_shared import (
 )
 from meeting.state import (
     DRAIN_STEP_IDS,
+    Alert,
     InvalidTransitionError,
     SessionInfo,
     begin_drain,
@@ -569,10 +570,15 @@ class RuntimeSessionsMixin:
         """`set_source`：会中关掉某一路 / 重新打开某一路（第 9 条：那一路写静音，段不切）。
 
         `active=false` 关掉：那一路停流、改写静音，**不报 `SourceLost`、不进告警**
-        （用户按的按钮与「这一路真死了」是两件事）。
+        （用户按的按钮与「这一路真死了」是两件事）。**关断即收场**：这一路挂着的致命级
+        当场清空——横幅消失、告警胶囊回「录音中」，不是「点了没反应」；清完若还有别的路
+        真在 `lost`，致命级换挂那一路（顶层停在 `alert`，真采不到的那一路不许跟着这
+        一下一起从界面上消失）。
 
         `active=true` 重新打开：重新挑设备、重开流；**开不起来如实回 `capture_unavailable`(503)**
         （设备被别的程序占着那一档，按按钮的人必须看得见），那一路照旧停在「已关掉」。
+        开成了就是**干净开场**：直接回 `capturing`，不回 `lost`、不落「曾中断 / 曾关掉」
+        的残留横幅，静默计数从零起算（机主拍板「恢复即收场」，不留痕）。
 
         快照里这一路的落点是**复用现有的 `health = stopped` 档**（「这一路没在采」的读数本来
         就有这一格，本节点不为它发明新的取值）；打开之后回到 `capturing`。
@@ -615,6 +621,23 @@ class RuntimeSessionsMixin:
             item.health = "stopped"
             item.restored = False
             item.lost_since = None
+            # **关断即收场**：这一路挂着的致命级当场清空（机主点关掉，横幅要当场消失、
+            # 胶囊回「录音中」，不是「点了没反应」）。只清这一路自己的那一条——致命级
+            # 同时只留一条，横幅是别路的不动。清完若还有别的路真在 `lost`，致命级换挂
+            # 那一路、顶层停在 `alert`：真采不到的那一路的横幅不能跟着这一下一起收
+            # （设计意图第 1 条：采不到的那一路不许被忽略）。
+            critical = self.snapshot.alerts.critical
+            if critical is not None and critical.source == source:
+                self.snapshot.alerts.critical = None
+                remaining = [one for one in self.snapshot.sources if one.health == "lost"]
+                if remaining:
+                    self.snapshot.alerts.critical = self._resurface_lost_alert(remaining[0].id)
+                elif self.snapshot.top_state == "alert":
+                    self.snapshot.top_state = "recording"
+            # 这一路的判定账（静默 / 恢复累计、抑制窗口、在告警记号）一并收场：帧从这一刻
+            # 起不再进判定（切断在 `_apply_level_frame` 的帧入口），旧账留着只会污染重开
+            # 之后的干净开场。
+            self.judge.reset_source(source)
             _log.info("会中关掉 %s 这一路：改写静音（不报故障、不进告警）", source)
             self._log_health_migrations(
                 source=source,
@@ -639,15 +662,35 @@ class RuntimeSessionsMixin:
                 status=503,
                 detail={"source": source, "error": reason},
             ) from exc
-        # 这一路还挂着那一条致命级（关掉之前它就丢了流）：回 `lost` 而不是 `capturing`，
-        # 让它在有信号时走那条现成的恢复路（`alert → recording`）；直接写成 `capturing`
-        # 会让那一条告警永远出不去（恢复判定只从 `lost` 那一档出发）。
-        critical = self.snapshot.alerts.critical
-        item.health = "lost" if critical is not None and critical.source == source else "capturing"
-        _log.info("会中重新打开 %s 这一路：读线程回到读源（health=%s）", source, item.health)
+        # **重开 = 干净开场**（机主拍板「恢复即收场」）：直接回 `capturing`，不回 `lost`、
+        # 不落「曾中断 / 曾关掉」的残留横幅，静默计数从零起算。旧口径「关掉之前还挂着
+        # 致命级时回 `lost` 走自然恢复」随「关断即收场」退场——关断已把这一路的致命级
+        # 清空，重开那一刻不存在「这一路自己的横幅」可恢复；判定账在关断那一刻已收走，
+        # 这里再收一道是幂等的（真有信号时的正常恢复读数照给，与此无关）。
+        self.judge.reset_source(source)
+        item.health = "capturing"
+        _log.info("会中重新打开 %s 这一路：读线程回到读源（health=capturing，干净开场）", source)
         self._log_health_migrations(
             source=source,
             reason="用户会中重新打开这一路",
             threshold="无阈值（打开设备不看阈值）",
         )
         self.commit()
+
+    def _resurface_lost_alert(self, source: str) -> Alert:
+        """把仍然真在 `lost` 的那一路的致命级重新摆回横幅（**致命级换挂**）。
+
+        关掉横幅上那一路时，同场若还有**别的**路真在 `lost`：它的告警对象早被「同时只留
+        一条致命级」覆盖掉了，但原文还在判定器的记账里（`event_message()` 原话照搬）、
+        出事的时刻还在快照上（`lost_since`）——换挂的一条照这两样如实组装，不另造文案、
+        不改「从几点起」。`muted` 只给当下初值，`commit()` 那一次重算说了算。
+        """
+        item = self.snapshot.source(source)
+        return Alert(
+            level="critical",
+            source=source,
+            since=item.lost_since or now_iso(),
+            duration_seconds=0.0,
+            message=self.judge.event_message(source) or f"{source} 这一路的采集流中断了",
+            muted=self.judge.is_muted(source),
+        )
