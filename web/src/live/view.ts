@@ -25,14 +25,9 @@ import {
   type CaptureStalledView,
   type HeartbeatState,
 } from './heartbeat';
+import { comboOf, snapshotComboState, type CaptureCombo } from './combo';
 import { meterView, type MeterView, type StoredLevels } from './levels';
-import {
-  pauseBanner,
-  pauseButtonLabel,
-  sourceToggle,
-  type PauseBannerView,
-  type SourceToggleView,
-} from './pause';
+import { pauseBanner, type PauseBannerView } from './pause';
 import { healthView, statusView, type HealthView, type StatusView } from './status';
 import { emptyLossRecord, type LossRecord } from './loss';
 
@@ -51,8 +46,6 @@ export interface ChannelView {
   stamp: string;
   /** 这一路被用户关掉了没有（服务侧落在现成的 `stopped` 档上）。 */
   closed: boolean;
-  /** 这一档摆不摆那颗「关掉 / 打开」的按钮；要摆时是它的样子。 */
-  toggle: SourceToggleView | null;
 }
 
 export interface LiveView {
@@ -75,8 +68,8 @@ export interface LiveView {
   alertsHidden: boolean;
   /** 这一场此刻是不是暂停中（读快照的 `session.paused`，界面不自己记）。 */
   paused: boolean;
-  /** 暂停 / 继续那颗按钮上的字。 */
-  pauseLabel: string;
+  /** 此刻处在四个收音组合中的哪一个（`c9f5d04d`：收音状态只有这一处出口）。 */
+  combo: CaptureCombo;
   /** 「本场已暂停」那条横幅；不在这一档时是 `null`。 */
   pause: PauseBannerView | null;
 }
@@ -162,6 +155,18 @@ export function liveView(
       ? null
       : stalled.lastFrameAt;
 
+  /**
+   * 「暂停中」只从快照读（`session.paused`）：界面不自己记、不自己推断，
+   * 刷新页面之后看到的是同一份（契约章 6 第 1、2 条）。
+   */
+  const paused = snapshot.session?.paused ?? false;
+
+  /**
+   * 此刻的收音组合（`c9f5d04d`）：暂停一格 + 两路各自的 `stopped`，照 `comboOf`
+   * 的表落到四档之一。四组合控件用它点亮当前档；「切换已落地没落地」也用它判。
+   */
+  const combo = comboOf(snapshotComboState(snapshot));
+
   const channels = snapshot.sources.map<ChannelView>((source) => {
     const key: 'mic' | 'loopback' = source.id === 'mic' ? 'mic' : 'loopback';
     const health = healthView(source, losses.windows[key]);
@@ -191,9 +196,8 @@ export function liveView(
       readout: dataStopped || health.frozen ? '—' : formatDbfs(meter.readout),
       stamp: frozenStamp ?? envelopeStamp(snapshot, source, observedAtIso),
       // 「用户关掉这一路」与「这一路出事」是两件事：关掉的那一路服务侧落 `stopped`
-      // 这一档（不报故障、不进告警），按钮也是照这一格翻的。
+      // 这一档（不报故障、不进告警），四组合控件照这一格判现状。
       closed: source.health === 'stopped',
-      toggle: sourceToggle(source, snapshot.top_state),
     };
   });
 
@@ -206,12 +210,6 @@ export function liveView(
    * 状态（设计章 2.5），收的只有致命级这一条。
    */
   const fatalVisible = snapshot.top_state === 'recording' || snapshot.top_state === 'alert';
-
-  /**
-   * 「暂停中」只从快照读（`session.paused`）：界面不自己记、不自己推断，
-   * 刷新页面之后看到的是同一份（契约章 6 第 1、2 条）。
-   */
-  const paused = snapshot.session?.paused ?? false;
 
   /**
    * 暂停态里那一格「已录」**不走秒**：把界面自走的那一项收掉。
@@ -238,7 +236,7 @@ export function liveView(
     gapNote,
     alertsHidden: lost,
     paused,
-    pauseLabel: pauseButtonLabel(paused),
+    combo,
     pause: pauseBanner(paused, snapshot.top_state),
   };
 }

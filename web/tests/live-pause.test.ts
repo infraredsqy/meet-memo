@@ -1,34 +1,22 @@
 import { describe, expect, it } from 'vitest';
 
-import { pauseBanner, pauseButtonLabel, sourceToggle } from '../src/live/pause';
+import { pauseBanner } from '../src/live/pause';
 import { liveView } from '../src/live/view';
 import { initialHeartbeatState } from '../src/live/heartbeat';
 import { makeSnapshot, makeSource, T } from './live-fixtures';
 
 /**
- * 暂停 / 继续与会中开关某一路这两处入口（`10770b41`）。
+ * 「暂停中」那条横幅与会中收音四组合的派生（`10770b41` 起，`c9f5d04d` 收编）。
  *
  * 判据三条：
  *
- * 1. 字就叫「暂停 / 继续」（设计意图第 8 条：不许用「休息」这类绕开的词）；
+ * 1. 文案就叫「暂停 / 全停」这一族（设计意图第 8 条：不许用「休息」这类绕开的词）；
  * 2. 「暂停中」只在录音 / 告警两态出现，而且它是一条**与致命横幅同级**的横幅 ——
  *    这一层给出它的取数，画法在 `App.tsx` 的告警区；
- * 3. 逐路那颗开关的字与它按下去的方向都由**快照里那一路的 `health`** 决定
- *    （关掉的那一路服务侧落 `stopped` 这一档），界面不自己记状态。
+ * 3. 此刻处在四个收音组合中的哪一档，从**快照**派生（暂停一格 + 两路的
+ *    `stopped`），界面不自己记状态；旧的两颗入口按钮（顶栏暂停、电平卡上的
+ *    「关掉 / 打开」）已由四组合控件收编，取数不再存在。
  */
-
-describe('pauseButtonLabel：就这两个词', () => {
-  it('没暂停时是「暂停」，暂停中是「继续」', () => {
-    expect(pauseButtonLabel(false)).toBe('暂停');
-    expect(pauseButtonLabel(true)).toBe('继续');
-  });
-
-  it('字面上不出现「休息」这类绕开的说法', () => {
-    for (const paused of [true, false]) {
-      expect(pauseButtonLabel(paused)).not.toContain('休息');
-    }
-  });
-});
 
 describe('pauseBanner：只在录音 / 告警态给横幅', () => {
   it('录音中暂停：横幅给标题与正文', () => {
@@ -52,27 +40,10 @@ describe('pauseBanner：只在录音 / 告警态给横幅', () => {
   });
 });
 
-describe('sourceToggle：字与方向都照那一路的 health', () => {
-  it('在采的那一路是「关掉」，按下去发 active=false', () => {
-    const view = sourceToggle(makeSource('mic'), 'recording');
-    expect(view).toEqual({ label: '关掉', closed: false });
-  });
-
-  it('被关掉的那一路是「打开」，按下去发 active=true', () => {
-    const view = sourceToggle(makeSource('mic', { health: 'stopped' }), 'alert');
-    expect(view).toEqual({ label: '打开', closed: true });
-  });
-
-  it('空闲与已结束两态不摆这颗按钮', () => {
-    expect(sourceToggle(makeSource('mic'), 'idle')).toBeNull();
-    expect(sourceToggle(makeSource('mic', { health: 'stopped' }), 'ended')).toBeNull();
-  });
-});
-
-describe('liveView：暂停与逐路开关都从快照读', () => {
+describe('liveView：暂停、组合与逐路关闭都从快照读', () => {
   const heartbeat = initialHeartbeatState();
 
-  it('session.paused 为真 → paused 与那条横幅都在', () => {
+  it('session.paused 为真 → paused、组合「全停」与那条横幅都在', () => {
     const snapshot = makeSnapshot({
       session: {
         id: '跟老王聊周会',
@@ -86,7 +57,7 @@ describe('liveView：暂停与逐路开关都从快照读', () => {
     });
     const view = liveView(snapshot, heartbeat, null, null, T('20:57:31'), 40);
     expect(view.paused).toBe(true);
-    expect(view.pauseLabel).toBe('继续');
+    expect(view.combo).toBe('paused');
     expect(view.pause?.title).toBe('本场已暂停');
     // 这一条把界面自走的那一项**真**传了进去（复审 C1 就是从这一行穿过去的：
     // 只传到第 5 个参数时 `liveElapsedSeconds` 走缺省 0，时长那一格压根没被碰过）
@@ -115,10 +86,10 @@ describe('liveView：暂停与逐路开关都从快照读', () => {
     expect(running.clock.value).toBe('01:13:14');
   });
 
-  it('没在暂停时 false，字是「暂停」', () => {
+  it('没在暂停时 false、组合「两路都录」，横幅不出现', () => {
     const view = liveView(makeSnapshot(), heartbeat, null, null, T('20:57:31'));
     expect(view.paused).toBe(false);
-    expect(view.pauseLabel).toBe('暂停');
+    expect(view.combo).toBe('both');
     expect(view.pause).toBeNull();
   });
 
@@ -133,16 +104,21 @@ describe('liveView：暂停与逐路开关都从快照读', () => {
       T('20:57:31'),
     );
     expect(view.paused).toBe(false);
+    expect(view.combo).toBe('both');
   });
 
-  it('关掉的那一路：closed 为真、按钮写作「打开」，另一路照旧', () => {
-    const snapshot = makeSnapshot({
+  it('关掉的那一路：closed 为真、组合跟着落到「仅本地 / 仅远端」，另一路照旧', () => {
+    const localOnly = makeSnapshot({
+      sources: [makeSource('mic'), makeSource('loopback', { health: 'stopped' })],
+    });
+    const local = liveView(localOnly, heartbeat, null, null, T('20:57:31'));
+    expect(local.channels[0]!.closed).toBe(false);
+    expect(local.channels[1]!.closed).toBe(true);
+    expect(local.combo).toBe('local');
+
+    const remoteOnly = makeSnapshot({
       sources: [makeSource('mic', { health: 'stopped' }), makeSource('loopback')],
     });
-    const view = liveView(snapshot, heartbeat, null, null, T('20:57:31'));
-    expect(view.channels[0]!.closed).toBe(true);
-    expect(view.channels[0]!.toggle?.label).toBe('打开');
-    expect(view.channels[1]!.closed).toBe(false);
-    expect(view.channels[1]!.toggle?.label).toBe('关掉');
+    expect(liveView(remoteOnly, heartbeat, null, null, T('20:57:31')).combo).toBe('remote');
   });
 });

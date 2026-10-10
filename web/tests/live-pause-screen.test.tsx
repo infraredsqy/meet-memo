@@ -5,23 +5,25 @@ import TestRenderer, { act } from 'react-test-renderer';
 import {
   createEventsClient,
   createHeartbeatClient,
-  type EventsClient,
+  postAction,
   type EventsClientHandlers,
   type HeartbeatClient,
 } from '../src/api';
 import { fetchSessions } from '../src/api/sessions';
 import { LiveView } from '../src/App';
 import type { Snapshot } from '../src/contract';
-import { makeSnapshot, T } from './live-fixtures';
+import { makeSnapshot, makeSource, T } from './live-fixtures';
 
 /**
- * 会中那一屏的**渲染层**断言（复审-1 m2 的第二条）：暂停态下告警区里真有那条横带、
- * 顶栏那颗真写作「继续」。
+ * 会中那一屏的**渲染层**断言：暂停横带照旧极其显眼，收音的四组合直切
+ * （`c9f5d04d`）收在顶栏一处 —— 旧的两颗入口（顶栏暂停按钮、电平卡上的
+ * 「关掉 / 打开」）不再以原形出现，按下组合的受理反馈即时点亮。
  *
  * 手法照 `settings-drawer.test.tsx` / `home-mount.test.tsx`：`react-test-renderer`
  * 在 node 环境里真挂载，**不起浏览器**（vitest.config.ts 的 environment 就是 node）。
- * 服务那两侧（SSE / 心跳）在这一档里是替身 —— 用例自己把一份快照塞进 `onSnapshot`，
- * 这正是「界面画什么只由服务推来的那一份决定」的验证方式。
+ * 服务那两侧（SSE / 心跳 / 动作端点）在这一档里是替身 —— 用例自己把快照塞进
+ * `onSnapshot`、数 `postAction` 的调用，这正是「界面画什么只由服务推来的那一份决定」
+ * 的验证方式。
  *
  * 挂载 `LiveView` 要给它两样 node 里没有的全局：`window`（自动播放授权那两个监听）
  * 与 `document.body`（页身类名）。这里只补这两样空壳 —— 不引 jsdom、不装 DOM 环境，
@@ -49,6 +51,7 @@ vi.mock('../src/api/sessions', async (importOriginal) => {
 const createEventsClientMock = vi.mocked(createEventsClient);
 const createHeartbeatClientMock = vi.mocked(createHeartbeatClient);
 const fetchSessionsMock = vi.mocked(fetchSessions);
+const postActionMock = vi.mocked(postAction);
 
 /** 捕获 SSE 那一侧的 handlers（`LiveView` 在 effect 里建连，回调就在这一刻交出来）。 */
 const captured: { handlers: EventsClientHandlers | null } = { handlers: null };
@@ -66,6 +69,13 @@ function pausedSnapshot(): Snapshot {
       frozen: false,
       paused: true,
     },
+  });
+}
+
+/** 一份「远端被关掉」的快照（仅本地那一档）。 */
+function localOnlySnapshot(): Snapshot {
+  return makeSnapshot({
+    sources: [makeSource('mic'), makeSource('loopback', { health: 'stopped' })],
   });
 }
 
@@ -136,6 +146,45 @@ function byClass(
   return renderer.root.findAll((node) => `${node.props.className ?? ''}` === className);
 }
 
+/** 顶栏那组四组合直切（`aria-label="收音组合"`）。 */
+function comboGroup(
+  renderer: TestRenderer.ReactTestRenderer,
+): TestRenderer.ReactTestInstance {
+  const groups = renderer.root.findAll(
+    (node) => node.props.role === 'group' && node.props['aria-label'] === '收音组合',
+  );
+  expect(groups, '顶栏该有一组「收音组合」').toHaveLength(1);
+  return groups[0] as TestRenderer.ReactTestInstance;
+}
+
+/** 组里的四个档位按钮（渲染次序 = `COMBO_ORDER`）。 */
+function comboItems(group: TestRenderer.ReactTestInstance): TestRenderer.ReactTestInstance[] {
+  return group.findAll((node) => `${node.props.className ?? ''}`.startsWith('seg__item'));
+}
+
+/** 某一档此刻亮不亮。 */
+function comboLit(
+  group: TestRenderer.ReactTestInstance,
+  label: string,
+): boolean {
+  const item = comboItems(group).find((node) => textOf(node) === label);
+  expect(item, `四档里该有「${label}」这一档`).toBeDefined();
+  return `${(item as TestRenderer.ReactTestInstance).props.className}`.includes('seg__item--on');
+}
+
+/** 按下某一档（真按：走 onClick，受理反馈与动作调用都发生在里面）。 */
+async function pressCombo(
+  renderer: TestRenderer.ReactTestRenderer,
+  label: string,
+): Promise<void> {
+  const group = comboGroup(renderer);
+  const item = comboItems(group).find((node) => textOf(node) === label);
+  expect(item, `四档里该有「${label}」这一档`).toBeDefined();
+  await act(async () => {
+    (item as TestRenderer.ReactTestInstance).props.onClick();
+  });
+}
+
 afterEach(async () => {
   if (mounted !== null) {
     const renderer = mounted;
@@ -146,12 +195,15 @@ afterEach(async () => {
   createEventsClientMock.mockReset();
   createHeartbeatClientMock.mockReset();
   fetchSessionsMock.mockReset();
+  postActionMock.mockReset();
 });
 
 beforeEach(() => {
   // 会后在飞读数的缺省替身：没有会后的活儿（要特定读数自己覆盖）。
   // LiveView 挂上就取 `GET /api/sessions`（review-1 m2），不能让它在替身空转时炸掉。
   fetchSessionsMock.mockResolvedValue({ sessions: [], recent: null, post_job: null });
+  // 动作端点的缺省替身：成功体（pause / resume / set_source 的成功形状）。
+  postActionMock.mockResolvedValue({ kind: 'ok', ok: true, revision: 8 });
 });
 
 describe('暂停态那一屏（渲染层）', () => {
@@ -165,24 +217,85 @@ describe('暂停态那一屏（渲染层）', () => {
     expect(text).toContain('继续');
   });
 
-  it('顶栏那颗按钮写作「继续」，按下去发的是 resume 那一档', async () => {
+  it('四组合直切亮在「全停」，整组 data-combo 也落在那一档', async () => {
     const renderer = await mountLive(pausedSnapshot());
 
-    const button = byClass(renderer, 'btn btn--pause');
-    expect(button, '顶栏该有一颗 .btn--pause').toHaveLength(1);
-    expect(textOf(button[0] as TestRenderer.ReactTestInstance)).toBe('继续');
-    // `aria-pressed` 就是这一格的「暂停中」身份：界面没有自己记一份状态，读的是快照
-    expect((button[0] as TestRenderer.ReactTestInstance).props['aria-pressed']).toBe(true);
+    const group = comboGroup(renderer);
+    expect(group.props['data-combo']).toBe('paused');
+    expect(comboItems(group).map(textOf)).toEqual(['两路都录', '仅本地', '仅远端', '全停']);
+    expect(comboLit(group, '全停')).toBe(true);
+    expect(comboLit(group, '两路都录')).toBe(false);
+    // 亮着的那一档，按下它一个请求都不发（幂等重按）
+    postActionMock.mockClear();
+    await pressCombo(renderer, '全停');
+    expect(postActionMock).not.toHaveBeenCalled();
   });
 
-  it('没暂停那一档：横带不出现，同一颗按钮写作「暂停」', async () => {
+  it('旧的顶栏暂停按钮不再出现（职能全由四组合承担）', async () => {
+    const renderer = await mountLive(pausedSnapshot());
+    expect(byClass(renderer, 'btn btn--pause'), '.btn--pause 已随四组合收编退场').toHaveLength(0);
+  });
+});
+
+describe('录音态那一屏（渲染层）', () => {
+  it('横带不出现；四组合亮在「两路都录」，重按它一个请求都不发', async () => {
     const renderer = await mountLive(makeSnapshot());
 
     expect(byClass(renderer, 'alert alert--paused')).toHaveLength(0);
-    const button = byClass(renderer, 'btn btn--pause');
-    expect(button, '录音态顶栏那颗照样在，只是字不同').toHaveLength(1);
-    expect(textOf(button[0] as TestRenderer.ReactTestInstance)).toBe('暂停');
-    expect((button[0] as TestRenderer.ReactTestInstance).props['aria-pressed']).toBe(false);
+    const group = comboGroup(renderer);
+    expect(group.props['data-combo']).toBe('both');
+    expect(comboLit(group, '两路都录')).toBe(true);
+
+    postActionMock.mockClear();
+    await pressCombo(renderer, '两路都录');
+    expect(postActionMock).not.toHaveBeenCalled();
+  });
+
+  it('按下「仅本地」：立即只发一条 set_source(loopback, false)，受理反馈当下点亮那一档', async () => {
+    const renderer = await mountLive(makeSnapshot());
+
+    await pressCombo(renderer, '仅本地');
+
+    expect(postActionMock).toHaveBeenCalledTimes(1);
+    expect(postActionMock).toHaveBeenCalledWith('set_source', {
+      source: 'loopback',
+      active: false,
+    });
+    // 快照还没回来：高亮已经在目标档上（按下即有反馈，不读成「没反应」）
+    const group = comboGroup(renderer);
+    expect(comboLit(group, '仅本地')).toBe(true);
+    expect(comboLit(group, '两路都录')).toBe(false);
+  });
+
+  it('推来的快照真落到那一档：高亮继续亮在「仅本地」（落地收摊）', async () => {
+    const renderer = await mountLive(makeSnapshot());
+    await pressCombo(renderer, '仅本地');
+
+    await act(async () => {
+      captured.handlers?.onSnapshot?.(localOnlySnapshot(), { resync: false, dropped: 0 });
+    });
+
+    const group = comboGroup(renderer);
+    expect(group.props['data-combo']).toBe('local');
+    expect(comboLit(group, '仅本地')).toBe(true);
+  });
+
+  it('电平卡上不再有「关掉 / 打开」那颗按钮：通道卡里一颗按钮都没有', async () => {
+    const renderer = await mountLive(localOnlySnapshot());
+
+    const cards = renderer.root.findAll((node) =>
+      `${node.props.className ?? ''}`.split(' ').includes('m-ch'),
+    );
+    expect(cards, '两路各一张通道卡').toHaveLength(2);
+    for (const card of cards) {
+      const buttons = (card as TestRenderer.ReactTestInstance).findAll(
+        (node) => node.type === 'button',
+      );
+      expect(buttons, '通道卡里不该有任何按钮（开关收进了顶栏四组合）').toHaveLength(0);
+    }
+    // 快照自己仍然是「仅本地」的那一档：健康位照旧从快照读
+    const group = comboGroup(renderer);
+    expect(comboLit(group, '仅本地')).toBe(true);
   });
 });
 

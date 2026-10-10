@@ -638,6 +638,15 @@ body {
   box-shadow: inset 0 -2px 0 var(--t-signal);
 }
 
+/* 会中收音的四组合（c9f5d04d）：顶栏那组档位挂 `data-combo`，选中档是青色；
+   「全停」（暂停）选中时换成硫红实心 —— 「现在没在录」要一眼看得见
+   （design-intent 第 8 条），这一格不能与「在录」的青色同脸。 */
+.seg[data-combo='paused'] .seg__item--on {
+  background: var(--t-alert);
+  color: var(--t-ink-inverse);
+  box-shadow: inset 0 -2px 0 var(--t-alert-ink);
+}
+
 .seg__item:disabled {
   color: var(--t-ink-faint);
   cursor: not-allowed;

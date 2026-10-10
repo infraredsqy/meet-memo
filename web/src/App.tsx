@@ -34,6 +34,16 @@ import { holdFrameWhileDataStopped, releaseHeldFrame, type StoredLevels } from '
 import { healthView } from './live/status';
 import { createAlarmSound, browserAudioContextFactory } from './live/sound';
 import {
+  COMBO_LABELS,
+  COMBO_ORDER,
+  comboActions,
+  comboOf,
+  comboStateOf,
+  snapshotComboState,
+  type CaptureCombo,
+  type ComboState,
+} from './live/combo';
+import {
   SUMMARY_CLIENT_TIMEOUT_SECONDS,
   SUMMARY_WINDOWS,
   summaryAvailable,
@@ -114,16 +124,7 @@ class ShellErrorBoundary extends Component<{ children: ReactNode }, { error: Err
 }
 
 /** 一路电平表：刻度、填充、峰值保持指针、15 根历史包络、当前读数。 */
-function Channel({
-  channel,
-  busy,
-  onToggle,
-}: {
-  channel: ChannelView;
-  busy: boolean;
-  /** 按下那颗开关：`closed` 是这一路**现在**的状态（关着的就打开、开着的就关掉）。 */
-  onToggle: (source: 'mic' | 'loopback', closed: boolean) => void;
-}): ReactNode {
+function Channel({ channel }: { channel: ChannelView }): ReactNode {
   const id = useId();
   const { meter, health } = channel;
   const dead = health.dead;
@@ -150,18 +151,8 @@ function Channel({
           <span className={`glyph ${health.glyph}`} aria-hidden="true" />
           {health.text}
         </span>
-        {/* 会中开关某一路（R25）：关掉的那一路改写静音、不报故障；字与状态都从快照读 */}
-        {channel.toggle !== null && (
-          <button
-            className="btn btn--small btn--ghost"
-            type="button"
-            aria-pressed={channel.closed}
-            disabled={busy}
-            onClick={() => onToggle(channel.sourceId, channel.closed)}
-          >
-            {channel.toggle.label}
-          </button>
-        )}
+        {/* 这一卡上没有开关：会中收音收在顶栏的四组合控件一处（`c9f5d04d`），
+            旧的那颗「关掉 / 打开」小按钮不再以任何形态留在这里 */}
       </div>
       <div className="m-grid">
         {/* 左格：竖电平 + 读数。两样裹在同一格里，读数才落在井的正下方
@@ -316,6 +307,13 @@ export function LiveView({
   const [losses, setLosses] = useState<LossRecord>(() => emptyLossRecord());
   const [failure, setFailure] = useState<ActionFailureView | null>(null);
   const [busy, setBusy] = useState(false);
+  /**
+   * 正在切去的那个组合（`c9f5d04d` 的受理反馈）：按下这一刻就把高亮交给它，
+   * 快照没回来的半途界面照样自洽（高亮在目标档上，别的档不亮也不至于「没反应」）。
+   * 收摊的时机有两个 —— 推来的快照真落到这一档（落地），或这一趟动作失败
+   * （没落成，高亮退回快照说的那一档，原因交给失败块）。
+   */
+  const [pendingCombo, setPendingCombo] = useState<CaptureCombo | null>(null);
   const [logShown, setLogShown] = useState(false);
   const [transcriptOpen, setTranscriptOpen] = useState(false);
   const [jumpVisible, setJumpVisible] = useState(false);
@@ -364,6 +362,11 @@ export function LiveView({
     setSnapshot(next);
     setObservedAt(at);
     setLosses((previous) => observeLosses(previous, next, at));
+    // 组合切换的「落地」判据：推来的这一份真落到按下的那一档，乐观高亮才收
+    // （中途路过的新快照 —— 别的动作 commit 的 —— 不算落地）。
+    setPendingCombo((current) =>
+      current !== null && comboOf(snapshotComboState(next)) === current ? null : current,
+    );
   }, []);
 
   // SSE 那条唯一连接的接线：挂载即往源侧注册五路回调 —— 晚于首帧的积压帧在
@@ -551,6 +554,43 @@ export function LiveView({
   );
 
   /**
+   * 四组合直切（`c9f5d04d`）：映射表差几步发几步，按次序发、中途失败即停。
+   *
+   * 「现状」在半途要读对：上一趟还没落地（`pendingCombo` 有值）时快照还是旧的，
+   * 现状改读按下那一档所代表的那份 —— 连切几次才不会串态（spec 完成判定第一条）。
+   * 重按当前档映射表给空表，一个请求都不发；受理反馈靠 `pendingCombo` 即时点亮
+   * （快照没回来，界面也不读成「没反应」）。
+   */
+  const onCombo = (target: CaptureCombo): void => {
+    const snapshotState = snapshotComboState(snapshot);
+    const current: ComboState =
+      pendingCombo === null
+        ? snapshotState
+        : pendingCombo === 'paused'
+          ? // 「全停」不改两路的开 / 关：两路留在原处，暂停这一格才是它定下的
+            { ...snapshotState, paused: true }
+          : comboStateOf(pendingCombo);
+    const actions = comboActions(target, current);
+    if (actions.length === 0) return;
+    setPendingCombo(target);
+    void (async () => {
+      try {
+        for (const action of actions) {
+          await runAction(
+            action.name,
+            action.name === 'set_source'
+              ? { source: action.source, active: action.active }
+              : {},
+          );
+        }
+      } catch {
+        // 失败块已由 runAction 画出；这里只把乐观高亮收掉，让它退回快照说的那一档
+        setPendingCombo(null);
+      }
+    })();
+  };
+
+  /**
    * 「数据已停」＝失联（界面看不见服务）或采集已停（服务在应答但没有帧）。
    *
    * 这两档为真时两路电平、15 根包络、读数**全部冻在被冻那一刻**（设计章 4.5：
@@ -657,6 +697,8 @@ export function LiveView({
   const started = snapshot.top_state !== 'idle';
   const showStart = snapshot.top_state === 'idle';
   const showEnd = snapshot.top_state === 'recording' || snapshot.top_state === 'alert';
+  /** 四组合控件此刻亮哪一档：半途亮按下去的那档（乐观），落地后亮快照说的那档。 */
+  const shownCombo: CaptureCombo = pendingCombo ?? view.combo;
   const capsuleTone =
     view.status.tone === 'alert'
       ? 'statusline__caps--alert'
@@ -759,15 +801,24 @@ export function LiveView({
             </button>
           )}
           {showEnd && (
-            <button
-              className="btn btn--pause"
-              type="button"
-              aria-pressed={view.paused}
-              disabled={busy}
-              onClick={() => runActionQuietly(view.paused ? 'resume' : 'pause')}
-            >
-              {view.pauseLabel}
-            </button>
+            /* 会中收音的四组合直切（`c9f5d04d`）：暂停与两路开关收成这一处集中控制，
+                一次只处在四档之一，切换即到位。半途（`pendingCombo` 有值）高亮跟着
+                按下去的那一档走，受理即有反馈；「全停」选中那一格是硫红实心
+                （live.css 按 `data-combo` 换色），与「在录」的青色分得开 */
+            <div className="seg" role="group" aria-label="收音组合" data-combo={shownCombo}>
+              {COMBO_ORDER.map((combo) => (
+                <button
+                  key={combo}
+                  className={`seg__item ${shownCombo === combo ? 'seg__item--on' : ''}`}
+                  type="button"
+                  aria-pressed={shownCombo === combo}
+                  disabled={busy}
+                  onClick={() => onCombo(combo)}
+                >
+                  {COMBO_LABELS[combo]}
+                </button>
+              ))}
+            </div>
           )}
           {showEnd && (
             <button
@@ -852,14 +903,7 @@ export function LiveView({
           <div className="m-band m-band--split m-band--tools">
             <div className="m-chans">
               {view.channels.map((channel) => (
-                <Channel
-                  key={channel.sourceId}
-                  channel={channel}
-                  busy={busy}
-                  onToggle={(source, closed) =>
-                    runActionQuietly('set_source', { source, active: !closed })
-                  }
-                />
+                <Channel key={channel.sourceId} channel={channel} />
               ))}
             </div>
             <div className="live-tools">
