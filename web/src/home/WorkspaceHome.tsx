@@ -88,24 +88,80 @@ function ConfirmDialog({
   );
 }
 
-/** 目录选择器弹窗：起点用户主目录（服务给 `home`），`up` 回上层。只挑**已有**目录。 */
+/**
+ * 目录选择器弹窗：起点用户主目录（服务给 `home`），`up` 回上层。只挑**已有**目录。
+ *
+ * 「选中再确认」的形状（节点 57ab5255）：单击目录行只**选中**（行上出选中样式，
+ * 不发任何动作请求），双击才进下层——原「进这一层」被双击收编；地址栏显示当前层，
+ * 可直接输入一条路径回车跳过去（跳不过去当场说清，层不动）；底部一颗「选定这个目录」
+ * 确认钮，未选中置灰，点它才把选中项交给调用方按名目走登记/收编。单击不再当场登记。
+ */
 function DirPicker({
   browse,
   onBrowse,
+  onJump,
   onPick,
   onClose,
 }: {
   browse: DirsResponse | null;
   onBrowse: (dir: string | null) => void;
-  /** 点一项：这一项的 dir 交给调用方，按它的名目走三档（本弹窗不开动作）。 */
-  onPick: (item: { dir: string; kind: 'empty' | 'meeting' | 'unknown' | 'missing' }) => void;
+  /** 地址栏回车：按输入的路径跳层。成功 resolve `null`（层已换）；跳不过去把那句
+   *  说清的话 resolve 回来——层不动，弹窗里画一行。 */
+  onJump: (dir: string) => Promise<string | null>;
+  /** 确认一颗：选中项交给调用方，按它的名目走三档（本弹窗不开动作）。 */
+  onPick: (item: PickPath) => void;
   onClose: () => void;
 }): ReactNode {
+  const [picked, setPicked] = useState<PickPath | null>(null);
+  const [addr, setAddr] = useState('');
+  const [jumpError, setJumpError] = useState<string | null>(null);
+  // 层一换（首次取到现场、跳层成功）：选中不跨层带走——旧层那一行已不在清单里，
+  // 留着会让确认钮指向看不见的目录；地址栏重置成新层的路径。
+  useEffect(() => {
+    setPicked(null);
+    setJumpError(null);
+    setAddr(browse?.cwd ?? '');
+  }, [browse]);
+
+  const jumpFromAddr = (): void => {
+    const target = addr.trim();
+    // 空输入与「输入的就是当前层」都不动层；失败那句由 onJump resolve 回来画。
+    if (browse === null || target === '' || target === browse.cwd) return;
+    setJumpError(null);
+    void onJump(target).then((error) => {
+      if (error !== null) setJumpError(error);
+    });
+  };
+
   return (
     <div className="dlg__layer" role="presentation">
       <div className="dlg dlg--picker" role="dialog" aria-modal="true" aria-label="选择已有目录">
-        <div className="dlg__title">选择已有目录（起点主目录）</div>
-        <p className="hint">起点为用户主目录；选择器仅用于选择，不会创建目录。</p>
+        <div className="dlg__title">选择已有目录</div>
+        <p className="hint">
+          单击选中、双击进下层；地址栏可直接输入路径回车跳转。选择器仅用于选择，不会创建目录。
+        </p>
+        <div className="picker__addrrow">
+          <input
+            className="field__input picker__addr"
+            type="text"
+            value={addr}
+            aria-label="当前层路径，可输入路径回车跳转"
+            disabled={browse === null}
+            onChange={(event) => setAddr(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') jumpFromAddr();
+            }}
+          />
+          <button
+            className="btn"
+            type="button"
+            disabled={browse === null || browse.up === null}
+            onClick={() => browse !== null && browse.up !== null && onBrowse(browse.up)}
+          >
+            向上一层
+          </button>
+        </div>
+        {jumpError !== null && <p className="picker__jumperr">{jumpError}</p>}
         <div className="picker__list" role="listbox" aria-label="这一层的子目录">
           {browse === null && <p className="empty">正在取目录…</p>}
           {browse !== null && browse.dirs.length === 0 && (
@@ -115,48 +171,42 @@ function DirPicker({
             browse.dirs.map((item) => (
               <div
                 key={item.dir}
-                className="picker__row"
+                className={`picker__row ${picked?.dir === item.dir ? 'picker__row--on' : ''}`}
                 role="option"
-                aria-selected="false"
+                aria-selected={picked?.dir === item.dir}
                 tabIndex={0}
+                onClick={() => setPicked({ dir: item.dir, kind: item.kind })}
+                onDoubleClick={() => onBrowse(item.dir)}
                 onKeyDown={(event) => {
-                  if (event.key === 'Enter' || event.key === ' ') onPick(item);
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    setPicked({ dir: item.dir, kind: item.kind });
+                  }
                 }}
               >
-                <button className="picker__pick" type="button" onClick={() => onPick(item)}>
-                  <span className="picker__name">{item.name}</span>
-                  <span className="picker__kind">
-                    {item.kind === 'empty'
-                      ? '空目录'
-                      : item.kind === 'meeting'
-                        ? item.suspected
-                          ? '疑似会议目录'
-                          : '会议目录'
-                        : '普通目录'}
-                  </span>
-                </button>
-                <button
-                  className="btn btn--small btn--ghost"
-                  type="button"
-                  title="把这一层换成这个目录，继续往深处挑（review-2 m1）"
-                  onClick={() => onBrowse(item.dir)}
-                >
-                  进这一层
-                </button>
+                <span className="picker__name">{item.name}</span>
+                <span className="picker__kind">
+                  {item.kind === 'empty'
+                    ? '空目录'
+                    : item.kind === 'meeting'
+                      ? item.suspected
+                        ? '疑似会议目录'
+                        : '会议目录'
+                      : '普通目录'}
+                </span>
               </div>
             ))}
         </div>
         <div className="dlg__acts">
-          <button
-            className="btn"
-            type="button"
-            disabled={browse === null || browse.up === null}
-            onClick={() => browse !== null && onBrowse(browse.up)}
-          >
-            向上一层
-          </button>
-          <button className="btn btn--primary" type="button" onClick={onClose}>
+          <button className="btn" type="button" onClick={onClose}>
             关闭
+          </button>
+          <button
+            className="btn btn--primary"
+            type="button"
+            disabled={picked === null}
+            onClick={() => picked !== null && onPick(picked)}
+          >
+            选定这个目录
           </button>
         </div>
       </div>
@@ -642,6 +692,25 @@ export function WorkspaceHome({
     );
   };
 
+  /**
+   * 地址栏跳层（57ab5255）：不清当前层地取新层——清单双击/向上层那半边才清层。
+   * 跳不过去把服务回的那句原话带上「跳不过去」resolve 回弹窗，层原地不动：
+   * 输入不存在的路径不许静默，也不许把正在看的层顶掉。
+   */
+  const jumpTo = (dir: string): Promise<string | null> =>
+    browseDirs(dir).then(
+      (data) => {
+        setBrowse(data);
+        return null;
+      },
+      (error) => {
+        const view = failureFrom(error);
+        const message =
+          view.kind === 'envelope' || view.kind === 'drain' ? view.message : view.text;
+        return `跳不过去：${message}`;
+      },
+    );
+
   // -- 画 -------------------------------------------------------------------
 
   const whyForSelected = selected === null ? null : startWhy(selected);
@@ -1013,6 +1082,7 @@ export function WorkspaceHome({
         <DirPicker
           browse={browse}
           onBrowse={browseInto}
+          onJump={jumpTo}
           onPick={openFromPicker}
           onClose={() => {
             setPicker(false);

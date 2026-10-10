@@ -551,19 +551,28 @@ function flyingList(
   });
 }
 
-/** 目录选择器里的那一行按钮（按钮上拼着目录名与名目）。 */
-function pickerRowButton(
+/** 目录选择器里的一行（57ab5255 起行本体不是按钮：单击选中、双击进下层）。 */
+function pickerRow(
   renderer: TestRenderer.ReactTestRenderer,
   name: string,
 ): TestRenderer.ReactTestInstance {
   const found = renderer.root.findAll(
     (node) =>
-      node.type === 'button' &&
-      node.props.className === 'picker__pick' &&
+      node.props.role === 'option' &&
+      node.parent?.props['aria-label'] === '这一层的子目录' &&
       textOf(node).includes(name),
   );
   expect(found, `选择器里该有「${name}」这一项`).toHaveLength(1);
   return found[0] as TestRenderer.ReactTestInstance;
+}
+
+/** 目录选择器的地址栏（当前层路径，可输入回车跳转）。 */
+function pickerAddr(renderer: TestRenderer.ReactTestRenderer): TestRenderer.ReactTestInstance {
+  return renderer.root.find(
+    (node) =>
+      node.type === 'input' &&
+      node.props['aria-label'] === '当前层路径，可输入路径回车跳转',
+  );
 }
 
 const emptyDirs: DirsResponse = {
@@ -579,6 +588,17 @@ const nonEmptyDirs: DirsResponse = {
   cwd: 'C:\\Users\\<user>',
   up: null,
   dirs: [{ name: '旧文件夹', dir: 'C:\\杂物\\旧文件夹', kind: 'unknown', suspected: false }],
+};
+
+/** 选中再确认那组用例的现场：同一层里摆空目录与非空目录各一个。 */
+const twoKindDirs: DirsResponse = {
+  home: 'C:\\Users\\<user>',
+  cwd: 'C:\\Users\\<user>',
+  up: null,
+  dirs: [
+    { name: '新场', dir: 'C:\\会议\\新场', kind: 'empty', suspected: false },
+    { name: '旧文件夹', dir: 'C:\\杂物\\旧文件夹', kind: 'unknown', suspected: false },
+  ],
 };
 
 describe('停掉会后与「添加工作区会打断」确认（R28 / b1c6a58e）', () => {
@@ -623,8 +643,9 @@ describe('停掉会后与「添加工作区会打断」确认（R28 / b1c6a58e�
 
     await click(renderer, buttonByText(renderer, '添加工作区'));
     await act(async () => {
-      pickerRowButton(renderer, '新场').props.onClick();
+      pickerRow(renderer, '新场').props.onClick();
     });
+    await click(renderer, buttonByText(renderer, '选定这个目录'));
 
     const dialogs = renderer.root.findAll((node) => node.props.role === 'dialog');
     const dialogText = dialogs.map((node) => textOf(node as TestRenderer.ReactTestInstance)).join('\n');
@@ -648,8 +669,9 @@ describe('停掉会后与「添加工作区会打断」确认（R28 / b1c6a58e�
 
     await click(renderer, buttonByText(renderer, '添加工作区'));
     await act(async () => {
-      pickerRowButton(renderer, '新场').props.onClick();
+      pickerRow(renderer, '新场').props.onClick();
     });
+    await click(renderer, buttonByText(renderer, '选定这个目录'));
     await click(renderer, buttonByText(renderer, '取消'));
 
     expect(postActionMock).not.toHaveBeenCalled();
@@ -663,8 +685,9 @@ describe('停掉会后与「添加工作区会打断」确认（R28 / b1c6a58e�
 
     await click(renderer, buttonByText(renderer, '添加工作区'));
     await act(async () => {
-      pickerRowButton(renderer, '新场').props.onClick();
+      pickerRow(renderer, '新场').props.onClick();
     });
+    await click(renderer, buttonByText(renderer, '选定这个目录'));
 
     expect(postActionMock).toHaveBeenLastCalledWith('workspace_open', { dir: 'C:\\会议\\新场' });
     expect(postActionMock.mock.calls.map(([name]) => name)).not.toContain('post_stop');
@@ -680,8 +703,9 @@ describe('停掉会后与「添加工作区会打断」确认（R28 / b1c6a58e�
 
     await click(renderer, buttonByText(renderer, '添加工作区'));
     await act(async () => {
-      pickerRowButton(renderer, '新场').props.onClick();
+      pickerRow(renderer, '新场').props.onClick();
     });
+    await click(renderer, buttonByText(renderer, '选定这个目录'));
 
     // 没有东西会已中断：不弹任何确认（minutes 在飞不摆打断那只）
     expect(renderer.root.findAll((node) => node.props.role === 'dialog')).toHaveLength(0);
@@ -699,8 +723,9 @@ describe('停掉会后与「添加工作区会打断」确认（R28 / b1c6a58e�
 
     await click(renderer, buttonByText(renderer, '添加工作区'));
     await act(async () => {
-      pickerRowButton(renderer, '旧文件夹').props.onClick();
+      pickerRow(renderer, '旧文件夹').props.onClick();
     });
+    await click(renderer, buttonByText(renderer, '选定这个目录'));
 
     // 先按 R20 问收编；打断那一问要等收编过了、且 offline 在飞才轮到
     const dialogs = renderer.root.findAll((node) => node.props.role === 'dialog');
@@ -725,8 +750,9 @@ describe('停掉会后与「添加工作区会打断」确认（R28 / b1c6a58e�
 
     await click(renderer, buttonByText(renderer, '添加工作区'));
     await act(async () => {
-      pickerRowButton(renderer, '旧文件夹').props.onClick();
+      pickerRow(renderer, '旧文件夹').props.onClick();
     });
+    await click(renderer, buttonByText(renderer, '选定这个目录'));
 
     // 第一问：收编（R20）；此刻零发送
     const dialogs = renderer.root.findAll((node) => node.props.role === 'dialog');
@@ -761,8 +787,9 @@ describe('停掉会后与「添加工作区会打断」确认（R28 / b1c6a58e�
 
     await click(renderer, buttonByText(renderer, '添加工作区'));
     await act(async () => {
-      pickerRowButton(renderer, '旧文件夹').props.onClick();
+      pickerRow(renderer, '旧文件夹').props.onClick();
     });
+    await click(renderer, buttonByText(renderer, '选定这个目录'));
     await click(renderer, buttonByText(renderer, '取消'));
 
     expect(postActionMock).not.toHaveBeenCalled();
@@ -775,11 +802,232 @@ describe('停掉会后与「添加工作区会打断」确认（R28 / b1c6a58e�
 
     await click(renderer, buttonByText(renderer, '添加工作区'));
     await act(async () => {
-      pickerRowButton(renderer, '旧文件夹').props.onClick();
+      pickerRow(renderer, '旧文件夹').props.onClick();
     });
+    await click(renderer, buttonByText(renderer, '选定这个目录'));
     await click(renderer, buttonByText(renderer, '确认添加'));
     await click(renderer, buttonByText(renderer, '取消'));
 
     expect(postActionMock).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 目录选择器「选中再确认」（节点 57ab5255）：spec 完成判定的四条 + 换层清选中
+// ---------------------------------------------------------------------------
+
+describe('目录选择器「选中再确认」（57ab5255）', () => {
+  it('地址栏：输入存在的路径回车跳过去——地址栏与清单按新层渲染', async () => {
+    fetchSessionsMock.mockResolvedValue(list());
+    browseDirsMock.mockResolvedValue(twoKindDirs);
+    const renderer = await mountHome();
+    await click(renderer, buttonByText(renderer, '添加工作区'));
+
+    const deeper: DirsResponse = {
+      home: 'C:\\Users\\<user>',
+      cwd: 'C:\\会议',
+      up: 'C:\\Users\\<user>',
+      dirs: [
+        { name: '跟老王聊周会', dir: 'C:\\会议\\跟老王聊周会', kind: 'meeting', suspected: false },
+      ],
+    };
+    browseDirsMock.mockResolvedValue(deeper);
+    // onChange 与回车分两拍：同一拍里拿到的是旧渲染的闭包，addr 还没进到 onKeyDown
+    await act(async () => {
+      pickerAddr(renderer).props.onChange({ target: { value: 'C:\\会议' } });
+    });
+    await act(async () => {
+      pickerAddr(renderer).props.onKeyDown({ key: 'Enter' });
+    });
+
+    expect(browseDirsMock).toHaveBeenLastCalledWith('C:\\会议');
+    expect(pickerAddr(renderer).props.value).toBe('C:\\会议');
+    expect(textOf(pickerRow(renderer, '跟老王聊周会'))).toContain('会议目录');
+    // 旧层的那一行不跟着过来
+    expect(
+      renderer.root.findAll(
+        (node) => node.props.role === 'option' && textOf(node).includes('旧文件夹'),
+      ),
+    ).toHaveLength(0);
+  });
+
+  it('地址栏：输入不存在的路径回车——画出「跳不过去」，层不动、输入还在', async () => {
+    fetchSessionsMock.mockResolvedValue(list());
+    browseDirsMock.mockResolvedValue(twoKindDirs);
+    const renderer = await mountHome();
+    await click(renderer, buttonByText(renderer, '添加工作区'));
+
+    browseDirsMock.mockRejectedValueOnce(new Error('要浏览的目录不存在：C:\\没有这个地方'));
+    await act(async () => {
+      pickerAddr(renderer).props.onChange({ target: { value: 'C:\\没有这个地方' } });
+    });
+    await act(async () => {
+      pickerAddr(renderer).props.onKeyDown({ key: 'Enter' });
+    });
+
+    expect(browseDirsMock).toHaveBeenLastCalledWith('C:\\没有这个地方');
+    expect(textOf(renderer.root)).toContain('跳不过去');
+    // 层不动：清单还是原来那一层；地址栏值留在用户输入上
+    pickerRow(renderer, '新场');
+    pickerRow(renderer, '旧文件夹');
+    expect(pickerAddr(renderer).props.value).toBe('C:\\没有这个地方');
+  });
+
+  it('单击只选中：行上出选中样式、零动作请求；双击同条目进下层', async () => {
+    fetchSessionsMock.mockResolvedValue(list());
+    browseDirsMock.mockResolvedValue(twoKindDirs);
+    const renderer = await mountHome();
+    await click(renderer, buttonByText(renderer, '添加工作区'));
+
+    await act(async () => {
+      pickerRow(renderer, '新场').props.onClick();
+    });
+
+    const pickedRow = pickerRow(renderer, '新场');
+    expect(pickedRow.props['aria-selected']).toBe(true);
+    expect(`${pickedRow.props.className}`).toContain('picker__row--on');
+    expect(postActionMock).not.toHaveBeenCalled();
+    // 另一行不背选中样式
+    expect(`${pickerRow(renderer, '旧文件夹').props.className}`).not.toContain('picker__row--on');
+
+    browseDirsMock.mockResolvedValue({
+      home: 'C:\\Users\\<user>',
+      cwd: 'C:\\会议\\新场',
+      up: 'C:\\Users\\<user>',
+      dirs: [],
+    });
+    await act(async () => {
+      pickerRow(renderer, '新场').props.onDoubleClick();
+    });
+    expect(browseDirsMock).toHaveBeenLastCalledWith('C:\\会议\\新场');
+  });
+
+  it('「向上一层」住在地址栏旁：主目录置灰；有上层时点了退上一层', async () => {
+    fetchSessionsMock.mockResolvedValue(list());
+    browseDirsMock.mockResolvedValue(twoKindDirs);
+    const renderer = await mountHome();
+    await click(renderer, buttonByText(renderer, '添加工作区'));
+
+    const upAtHome = buttonByText(renderer, '向上一层');
+    expect(upAtHome.props.disabled).toBe(true);
+    // 位置：与地址栏输入框同一个容器行（地址栏右边那颗）
+    expect(upAtHome.parent?.findAll((node) => node.type === 'input')).toHaveLength(1);
+
+    browseDirsMock.mockResolvedValue({
+      home: 'C:\\Users\\<user>',
+      cwd: 'C:\\会议',
+      up: 'C:\\Users\\<user>',
+      dirs: [{ name: '新场', dir: 'C:\\会议\\新场', kind: 'empty', suspected: false }],
+    });
+    await act(async () => {
+      pickerAddr(renderer).props.onChange({ target: { value: 'C:\\会议' } });
+    });
+    await act(async () => {
+      pickerAddr(renderer).props.onKeyDown({ key: 'Enter' });
+    });
+
+    const up = buttonByText(renderer, '向上一层');
+    expect(up.props.disabled).toBe(false);
+    browseDirsMock.mockResolvedValue(twoKindDirs);
+    await click(renderer, up);
+    expect(browseDirsMock).toHaveBeenLastCalledWith('C:\\Users\\<user>');
+  });
+
+  it('底部「选定这个目录」：未选中置灰零请求；选中 empty 后点它才发 workspace_open', async () => {
+    fetchSessionsMock.mockResolvedValue(list());
+    browseDirsMock.mockResolvedValue(twoKindDirs);
+    postActionMock.mockResolvedValue({ kind: 'ok', ok: true, revision: 21 });
+    const renderer = await mountHome();
+    await click(renderer, buttonByText(renderer, '添加工作区'));
+
+    const confirmBtn = buttonByText(renderer, '选定这个目录');
+    expect(confirmBtn.props.disabled).toBe(true);
+    expect(postActionMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      pickerRow(renderer, '新场').props.onClick();
+    });
+    const armed = buttonByText(renderer, '选定这个目录');
+    expect(armed.props.disabled).toBe(false);
+    await click(renderer, armed);
+
+    expect(postActionMock).toHaveBeenLastCalledWith('workspace_open', { dir: 'C:\\会议\\新场' });
+    // 确认即收弹层
+    expect(renderer.root.findAll((node) => node.props.role === 'dialog')).toHaveLength(0);
+  });
+
+  it('选中 unknown 点确认：走收编确认弹窗，确认后带 confirm 登记——单击依旧零请求', async () => {
+    fetchSessionsMock.mockResolvedValue(list());
+    browseDirsMock.mockResolvedValue(twoKindDirs);
+    postActionMock.mockResolvedValue({ kind: 'ok', ok: true, revision: 22 });
+    const renderer = await mountHome();
+    await click(renderer, buttonByText(renderer, '添加工作区'));
+
+    await act(async () => {
+      pickerRow(renderer, '旧文件夹').props.onClick();
+    });
+    expect(postActionMock).not.toHaveBeenCalled();
+
+    await click(renderer, buttonByText(renderer, '选定这个目录'));
+
+    const dialogs = renderer.root.findAll((node) => node.props.role === 'dialog');
+    expect(dialogs).toHaveLength(1);
+    expect(textOf(dialogs[0] as TestRenderer.ReactTestInstance)).toContain('将该目录添加为工作区？');
+    expect(postActionMock).not.toHaveBeenCalled();
+
+    await click(renderer, buttonByText(renderer, '确认添加'));
+    expect(postActionMock).toHaveBeenLastCalledWith('workspace_open', {
+      dir: 'C:\\杂物\\旧文件夹',
+      confirm: true,
+    });
+  });
+
+  it('选中 meeting 目录点确认：直接 workspace_open 登记，不弹收编确认', async () => {
+    fetchSessionsMock.mockResolvedValue(list());
+    browseDirsMock.mockResolvedValue({
+      home: 'C:\\Users\\<user>',
+      cwd: 'C:\\Users\\<user>',
+      up: null,
+      dirs: [
+        { name: '旧会议', dir: 'C:\\会议\\旧会议', kind: 'meeting', suspected: false },
+      ],
+    });
+    postActionMock.mockResolvedValue({ kind: 'ok', ok: true, revision: 23 });
+    const renderer = await mountHome();
+    await click(renderer, buttonByText(renderer, '添加工作区'));
+
+    await act(async () => {
+      pickerRow(renderer, '旧会议').props.onClick();
+    });
+    expect(postActionMock).not.toHaveBeenCalled();
+
+    await click(renderer, buttonByText(renderer, '选定这个目录'));
+
+    expect(renderer.root.findAll((node) => node.props.role === 'dialog')).toHaveLength(0);
+    expect(postActionMock).toHaveBeenLastCalledWith('workspace_open', { dir: 'C:\\会议\\旧会议' });
+  });
+
+  it('换层后选中不跨层带走：确认钮回到置灰', async () => {
+    fetchSessionsMock.mockResolvedValue(list());
+    browseDirsMock.mockResolvedValue(twoKindDirs);
+    const renderer = await mountHome();
+    await click(renderer, buttonByText(renderer, '添加工作区'));
+
+    await act(async () => {
+      pickerRow(renderer, '新场').props.onClick();
+    });
+    expect(buttonByText(renderer, '选定这个目录').props.disabled).toBe(false);
+
+    browseDirsMock.mockResolvedValue({
+      home: 'C:\\Users\\<user>',
+      cwd: 'C:\\会议',
+      up: 'C:\\Users\\<user>',
+      dirs: [],
+    });
+    await act(async () => {
+      pickerRow(renderer, '新场').props.onDoubleClick();
+    });
+
+    expect(buttonByText(renderer, '选定这个目录').props.disabled).toBe(true);
   });
 });
