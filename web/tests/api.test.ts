@@ -8,6 +8,8 @@ import {
   DevicesUnavailableError,
   REQUIRED_HEADERS,
   SessionStatusHttpError,
+  DirsHttpError,
+  browseDirs,
   SessionsProtocolError,
   SessionsUnavailableError,
   SummariesProtocolError,
@@ -338,6 +340,57 @@ describe('fetchSessionStatus 的读法（会后进度界面节点 52b24392）', 
     await expect(fetchSessionStatus('C:\\x', { fetchImpl })).rejects.toBeInstanceOf(
       SessionsUnavailableError,
     );
+  });
+});
+
+describe('browseDirs 的读法（目录选择器 57ab5255）', () => {
+  it('dir 进查询串、GET、应答体逐键交回来', async () => {
+    const payload = {
+      home: 'C:\\Users\\<user>',
+      cwd: 'C:\\会议',
+      up: 'C:\\Users\\<user>',
+      dirs: [{ name: '新场', dir: 'C:\\会议\\新场', kind: 'empty', suspected: false }],
+    };
+    const fetchImpl = vi.fn(async () => jsonResponse(200, payload)) as unknown as typeof fetch;
+
+    const parsed = await browseDirs('C:\\会议', { fetchImpl });
+
+    expect(parsed.cwd).toBe('C:\\会议');
+    expect(parsed.dirs).toHaveLength(1);
+    const [url] = (fetchImpl as unknown as { mock: { calls: [string][] } }).mock.calls[0] as [string];
+    expect(url).toBe(`/api/dirs?dir=${encodeURIComponent('C:\\会议')}`);
+  });
+
+  it('400 失败信封：DirsHttpError 的 message 就是信封原话，协议话术不顶上来', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse(400, {
+        ok: false,
+        code: 'invalid_setting',
+        message: '要浏览的目录不存在：C:\\不存在',
+        detail: { key: 'dir' },
+      }),
+    ) as unknown as typeof fetch;
+
+    const error = await browseDirs('C:\\不存在', { fetchImpl }).then(
+      () => null,
+      (caught: unknown) => caught,
+    );
+    expect(error).toBeInstanceOf(DirsHttpError);
+    expect((error as DirsHttpError).status).toBe(400);
+    expect((error as DirsHttpError).code).toBe('invalid_setting');
+    expect((error as DirsHttpError).message).toBe('要浏览的目录不存在：C:\\不存在');
+  });
+
+  it('400 且读不出信封：DirsHttpError 落固定话术，不冒充原话', async () => {
+    const fetchImpl = vi.fn(async () => fakeResponse(500, '网关炸了')) as unknown as typeof fetch;
+
+    const error = await browseDirs('C:\\x', { fetchImpl }).then(
+      () => null,
+      (caught: unknown) => caught,
+    );
+    expect(error).toBeInstanceOf(DirsHttpError);
+    expect((error as DirsHttpError).note).toBeNull();
+    expect((error as DirsHttpError).message).toContain('HTTP 500');
   });
 });
 

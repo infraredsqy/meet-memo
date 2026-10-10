@@ -91,8 +91,46 @@ export interface BrowseDirsOptions {
 
 /**
  * 取一层目录；起点（`dir` 省略时）就是用户主目录。
- * `dir` 不存在时服务回 400 —— 这里照契约如实抛 `SessionsProtocolError`，不编一个空层。
+ * `dir` 不存在时服务回 400 —— 这里照契约如实拒（`DirsHttpError`，信封 `message`
+ * 原话在 `.message` 上），不编一个空层。
  */
+/**
+ * `GET /api/dirs` 的 HTTP 拒答（400：要浏览的目录不存在 / 读不动）。信封读得出时
+ * `message` 就是信封 `message` 的原话（「要浏览的目录不存在：…」）——地址栏跳层
+ * 失败要当场说清人话（57ab5255），协议话术不顶到选择器上。
+ */
+export class DirsHttpError extends Error {
+  readonly status: number;
+  readonly code: string | null;
+  /** 失败信封的 `message` 原话；读不出信封就是 `null`。 */
+  readonly note: string | null;
+
+  constructor(status: number, code: string | null, note: string | null, raw: string) {
+    super(note ?? (code !== null ? `目录浏览被拒：HTTP ${status} · ${code}` : `目录浏览被拒：HTTP ${status}`));
+    this.name = 'DirsHttpError';
+    this.status = status;
+    this.code = code;
+    this.note = note;
+    this.raw = raw;
+  }
+
+  readonly raw: string;
+}
+
+/** 4xx/5xx 信封读法：`code` / `message` 读得出就带走，整份信封读不出就都 `null`。 */
+function dirsHttpError(status: number, text: string): DirsHttpError {
+  let code: string | null = null;
+  let note: string | null = null;
+  try {
+    const body = JSON.parse(text) as { code?: unknown; message?: unknown };
+    if (typeof body.code === 'string') code = body.code;
+    if (typeof body.message === 'string' && body.message !== '') note = body.message;
+  } catch {
+    // 非 JSON：两格都留在 null，message 走固定话术
+  }
+  return new DirsHttpError(status, code, note, text);
+}
+
 export async function browseDirs(
   dir: string | null = null,
   options: BrowseDirsOptions = {},
@@ -106,6 +144,9 @@ export async function browseDirs(
     throw new SessionsUnavailableError('目录浏览', cause);
   }
   const text = await response.text();
+  if (!response.ok) {
+    throw dirsHttpError(response.status, text);
+  }
   const raw = parseOk('目录浏览')(response, text);
   const parsed = dirsResponseSchema.safeParse(raw);
   if (!parsed.success) {
