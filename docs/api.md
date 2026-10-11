@@ -208,7 +208,7 @@
 
 ### 会议资料的四条端点（资料节点 285bf58c）
 
-场次目录下固定的子目录 **`meeting_materials/`** 是一场会放资料的地方（资料是给纪要 AI 的 context）：目录名与服务端和纪要提示词两侧共享，**不设配置键、不可改名**；**首次上传时由服务创建**。四条端点都挂在 `/api/sessions/{id}/materials` 之下（`{id}` 同样是 URL 编码的目录路径），实现与清洗规则在 `meeting/service/runtime_materials.py`，契约正文在 `docs/contract.md` 4.12。
+场次目录下固定的子目录 **`meeting_materials/`** 是一场会放资料的地方（资料是给纪要 AI 的 context）：目录名与服务端和纪要提示词两侧共享，**不设配置键、不可改名**；**首次上传时由服务创建**。四条端点都挂在 `/api/sessions/{id}/materials` 之下（`{id}` 同样是 URL 编码的目录路径），实现与清洗规则在 `meeting/service/runtime_materials.py`，契约正文在 `docs/contract.md` 4.12；纪要提示词那一侧已落地（节点 `e8fe7da9`），资料怎么进纪要见 `docs/minutes.md` 第 3 节。
 
 - **只认两种目标目录**：服务的**当前活跃场次**、工作区注册表（`workspaces.json`）里**登记过的场次**；其余一律拒收。拒收口径与 `GET /api/sessions/{id}` 同一套寻址：目录已不在原地 → **404 `session_dir_missing`**（`detail = {dir, kind: "missing"}`）；目录在但两样都不是 → **404 `invalid_setting`**（`detail = {dir, kind}`）。活跃场次放在最前：录制中照收——哪怕那一行刚被 `workspace_remove` 摘出清单（只摘名单、文件不动），资料跟着场次走、不跟着清单行走。
 - **上传**（`POST …/materials?name=<文件名>`）：请求体就是文件的原样字节，**流式写盘**——收到多少写多少、不整段进内存，写在工作线程上（事件循环照转，心跳与三个 SSE 通道不被一次大上传按住）。**不转码、不压缩、不限类型、大小不设服务端硬顶**（「超过 100M 要不要确认」是界面的事）；请求的 `Content-Type` 只是发送方的说法，服务不读它也不校验它。`name` **必给**（缺 / 空白 → 400 `invalid_setting`，`detail.key = "name"`）、**不可信**：服务侧清洗防路径穿越（只留最后一段路径、Windows 非法字符与控制字符换 `_`、掐结尾点与空格、保留设备名前置 `_`、超长截断保留扩展名），重名自动加序号后缀、保留用户看到的名字（`报告.pdf` → `报告 (2).pdf`）。**不保留原文件的时间戳**：落盘那一刻的 mtime 就是「贴上时刻」。中途失败（盘上出岔 → 500 `persist_failed`；客户端断开）把半截文件收走，不留残骸。成功体 = `{"ok": true, "revision": N, "material": {name, size_bytes, added_at}}`。

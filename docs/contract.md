@@ -667,7 +667,7 @@ R10 第四条 / R30：名字要能改、并且记住。这一只动作 + 4.9 的
 
 ### 4.12 会议资料：场次目录里的 `meeting_materials/`
 
-一场会放资料的地方（资料节点 285bf58c）：**资料是给纪要 AI 的 context**，`meeting_materials/` 这个目录名是与服务端和纪要提示词两侧共享的固定产品约定——**不设配置键、不可改名**；**首次上传时由服务创建**。四条端点都挂在 `/api/sessions/{id}/materials` 之下（`{id}` 与 4.9 同一个写法：URL 编码的场次目录路径），实现与清洗规则在 `meeting/service/runtime_materials.py`。
+一场会放资料的地方（资料节点 285bf58c）：**资料是给纪要 AI 的 context**，`meeting_materials/` 这个目录名是与服务端和纪要提示词两侧共享的固定产品约定——**不设配置键、不可改名**；**首次上传时由服务创建**。纪要提示词那一侧已落地（节点 `e8fe7da9`）：资料怎么进纪要，口径见 `docs/minutes.md` 第 3 节。四条端点都挂在 `/api/sessions/{id}/materials` 之下（`{id}` 与 4.9 同一个写法：URL 编码的场次目录路径），实现与清洗规则在 `meeting/service/runtime_materials.py`。
 
 **目标目录只认两种**（spec 的判尺）：服务的**当前活跃场次**、工作区注册表（`workspaces.json`）里**登记过的场次**；其余一律拒收。拒收口径与 4.9 同一套寻址（**404** + 通用失败信封 `{ok, code, message, detail}`）：
 
