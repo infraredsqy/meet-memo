@@ -78,7 +78,7 @@
 | 占位符 | 常量 | 掩什么 |
 |---|---|---|
 | `<iso>` | `ISO_PLACEHOLDER` | ISO 时间戳 |
-| `<path>` | `PATH_PLACEHOLDER` | 路径（`log_path` / `dir` / `session_dir`，以及自由文本里内嵌的绝对路径） |
+| `<path>` | `PATH_PLACEHOLDER` | 路径（`log_path` / `dir` / `session_dir` / `materials_dir`，以及自由文本里内嵌的绝对路径） |
 | `<session-id>` | `SESSION_ID_PLACEHOLDER` | **工作区目录名**（`session.id` 与动作失败 `detail.session_id`，人给的名字、形状任意） |
 | `<port>` | `PORT_PLACEHOLDER` | 端口 |
 | `<url>` | `URL_PLACEHOLDER` | 服务 URL |
@@ -93,7 +93,7 @@
 | 对象 | 判据 | 换成 |
 |---|---|---|
 | ISO 时间戳 | 整串匹配 `^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z\|[+-]\d{2}:?\d{2})?$`（容忍带小数与 `Z` 的写法） | `<iso>` |
-| 路径类 | 键名在 `PATH_KEYS` = `{log_path, dir, session_dir}` | `<path>` |
+| 路径类 | 键名在 `PATH_KEYS` = `{log_path, dir, session_dir, materials_dir}` | `<path>` |
 | 场次目录名 | 键名在 `SESSION_ID_KEYS` = `{session_id}`（动作失败的 `detail`），**或**键名是 `id` 且父键是 `session`（靠键路径区分，见下） | `<session-id>` |
 | `url` | 键名是 `url`（字符串或数字都算） | `<url>` |
 | `port` | 键名是 `port` | `<port>` |

@@ -851,7 +851,7 @@ R10 第四条 / R30：名字要能改、并且记住。这一只动作 + 4.9 的
 | 掩码的对象 | 占位符 / 处理 |
 |---|---|
 | ISO 时间戳（`started_at` / `since` / `lost_since` / `last_line_at` / `server_time` …） | `<iso>` |
-| 路径（`log_path` / `dir` / `session_dir`，以及自由文本里内嵌的绝对路径） | `<path>` |
+| 路径（`log_path` / `dir` / `session_dir` / `materials_dir`，以及自由文本里内嵌的绝对路径） | `<path>` |
 | **场次目录名**（`session.id` 与动作失败 `detail.session_id` 的工作区目录名，形状任意） | **`<session-id>`** |
 | 端口 | `<port>` |
 | 服务 URL | `<url>` |
