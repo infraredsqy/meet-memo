@@ -723,6 +723,49 @@ def test_the_real_template_renders_a_mixed_shape_without_contradicting_itself(
     assert "| mic | 会后稿 | meeting_offline_transcript_mic.md |" in text
 
 
+def test_the_real_template_carries_the_three_materials_rules(tmp_path: Path) -> None:
+    """资料口径的三处新文字逐处在场、各落各的阶段，有料与没料的场次是同一份模板。
+
+    三处口径（节点 spec 的定案）：逐段总结把相关资料读进来、当会议内容融进总结
+    （文件修改时间是时机参考）；合并扫一眼资料、把段总结漏掉的补进正文；只读检查对资料核
+    （转写块里找不到不算幻觉）。纪要正文形状零变化：固定骨架一格不改、没有「参考资料」一节。
+    """
+    with_materials = _write_session(tmp_path / "with")
+    (with_materials / "meeting_materials").mkdir()
+    (with_materials / "meeting_materials" / "需求草稿.md").write_text(
+        "# 需求草稿\n\n会议要讨论的方案 v2，三条结论都写在这里。\n", encoding="utf-8"
+    )
+    without_materials = _write_session(tmp_path / "without")
+
+    rich = render_session_prompt(with_materials)
+    plain = render_session_prompt(without_materials)
+
+    for text in (rich, plain):
+        # 三处口径与公共说明都是固定文案：目录不在也照写（有就多看一眼，没有就跳过）
+        assert "meeting_materials" in text
+        assert "没有就整段跳过" in text
+        assert "读进来、当这场会的内容" in text
+        assert "文件修改时间是时机参考、不是必要条件" in text
+        assert "扫一眼资料" in text
+        assert "不算幻觉" in text
+        # 正文形状零变化：固定骨架的标题逐个在，没有「参考资料」一节
+        assert "## 会议概要" in text
+        assert "## 一、核心共识与结论" in text
+        assert "## 二、遗留问题与待办" in text
+        assert "## 花絮" in text
+        assert "## 参考资料" not in text
+        assert "{{" not in text and "}}" not in text
+        assert "\\" not in text
+    # 三处口径各落各的阶段（管道概览图里没有这些词，按阶段标题切开来查）
+    phase3 = rich.split("### 阶段 3", 1)[1].split("### 阶段 4", 1)[0]
+    phase4 = rich.split("### 阶段 4", 1)[1].split("### 阶段 5", 1)[0]
+    phase5 = rich.split("### 阶段 5", 1)[1].split("## 质量目标", 1)[0]
+    assert "读进来、当这场会的内容" in phase3
+    assert "文件修改时间是时机参考、不是必要条件" in phase3
+    assert "扫一眼资料" in phase4
+    assert "不算幻觉" in phase5
+
+
 def test_the_real_template_carries_the_two_fixed_sections_verbatim() -> None:
     """两条固定标题与附录表头在模板里**逐字**在（启动器的产物判据按它们判）。"""
     text = DEFAULT_TEMPLATE.read_text(encoding="utf-8")
