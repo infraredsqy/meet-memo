@@ -328,6 +328,49 @@ def test_api_dirs_browses_from_home(api, tmp_path: Path):
     assert bad.json()["code"] == "invalid_setting"
 
 
+def test_api_dirs_files_param_lists_files_only_when_asked(api, tmp_path: Path):
+    """`?files=1`（资料界面的选择器文件模式，160d1a78）：应答体多一个 `files` 键。
+
+    不带这个参数时**没有**这个键——挑录音落点的老路径旧应答体一个字节不动；
+    带上时这一层的普通文件每项 `{name, dir, size_bytes}`，与 `dirs` 分开两列
+    （目录进不了 files，文件也进不了 dirs），按名字排序。
+    """
+    client, _home, _out_root = api
+    base = tmp_path / "files-root"
+    base.mkdir()
+    (base / "一个子目录").mkdir()
+    (base / "报告.pdf").write_bytes(b"0123456789")
+    (base / "notes.md").write_bytes(b"abc")
+
+    plain = client.get(f"/api/dirs?dir={base}")
+    assert plain.status_code == 200
+    assert "files" not in plain.json(), "不带 files 参数时旧形状一个字节不动"
+
+    listed = client.get(f"/api/dirs?dir={base}&files=1")
+    assert listed.status_code == 200
+    body = listed.json()
+    file_rows = body["files"]
+    assert [row["name"] for row in file_rows] == ["notes.md", "报告.pdf"]  # 按名字排序
+    for row in file_rows:
+        assert set(row) == {"name", "dir", "size_bytes"}
+    by_name = {row["name"]: row for row in file_rows}
+    assert by_name["报告.pdf"]["size_bytes"] == 10
+    assert by_name["报告.pdf"]["dir"] == str(base / "报告.pdf")
+    # 目录照旧只进 dirs，文件不进 dirs
+    assert {row["name"] for row in body["dirs"]} == {"一个子目录"}
+    # 目录那几行的形状照旧四格
+    for row in body["dirs"]:
+        assert set(row) == {"name", "dir", "kind", "suspected"}
+
+
+def test_api_dirs_files_param_unreadable_dir_still_400(api, tmp_path: Path):
+    """`?files=1` 打到不存在的目录，与不带参数同一档：400 `invalid_setting`。"""
+    client, _home, _out_root = api
+    bad = client.get(f"/api/dirs?dir={tmp_path / 'nope'}&files=1")
+    assert bad.status_code == 400
+    assert bad.json()["code"] == "invalid_setting"
+
+
 def test_api_remove_and_reclaim(api, tmp_path: Path):
     """spec 完成判定第 3 条：删除之后文件仍在盘上，且「打开目录」能把它收回列表。"""
     client, _home, _out_root = api

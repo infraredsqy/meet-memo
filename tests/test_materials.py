@@ -437,3 +437,76 @@ def test_materials_writes_require_the_custom_header(materials_client) -> None:
         ).status_code
         == 200
     )
+
+
+# ---------------------------------------------------------------------------
+# 选择器文件模式的盘上拷入（160d1a78）：`?name=<名>&from=<路径>`
+# ---------------------------------------------------------------------------
+
+
+def _upload_from(client, session: Path, name: str, source: Path):
+    return client.post(
+        f"{_materials_base(session)}?name={quote(name, safe='')}"
+        f"&from={quote(str(source), safe='')}",
+        headers={"X-Meeting-Service": "1"},
+    )
+
+
+def test_upload_from_copies_an_existing_file_verbatim(materials_client) -> None:
+    """`from` 档：盘上那个已有文件**原样字节流式拷入**，清洗/重名/头哨与正文上传同一套。
+
+    资料界面的选择器文件模式挑中的是盘上的路径，界面上没有那些字节——拷入这一下
+    归服务做。源文件一个字节不动；成功体与正文上传同一形状。
+    """
+    session = _open_session(materials_client)
+    source = materials_client.place_root / "季度报表.pdf"
+    payload = b"%PDF-1.4\n" + "从盘上拷进来的那份\n".encode("utf-8")
+    source.write_bytes(payload)
+    source_mtime = source.stat().st_mtime
+
+    bare = materials_client.post(
+        f"{_materials_base(session)}?name=x.pdf&from={quote(str(source), safe='')}"
+    )
+    assert bare.status_code == 403, "from 档也是写端点：头哨照拦"
+
+    uploaded = _upload_from(materials_client, session, "季度报表.pdf", source)
+    assert uploaded.status_code == 200, uploaded.text
+    body = uploaded.json()
+    assert set(body) == {"ok", "revision", "material"}
+    material = body["material"]
+    assert material["name"] == "季度报表.pdf"
+    assert material["size_bytes"] == len(payload)
+
+    stored = _materials_dir(session) / "季度报表.pdf"
+    assert stored.read_bytes() == payload, "原样字节拷入"
+    assert source.read_bytes() == payload, "源文件一个字节不动"
+    assert source.stat().st_mtime == source_mtime
+
+    # 清单里看得到这一份（目录就是清单）
+    listed = materials_client.get(_materials_base(session))
+    assert [item["name"] for item in listed.json()["items"]] == ["季度报表.pdf"]
+
+
+def test_upload_from_a_missing_file_is_a_400_and_lands_nothing(materials_client) -> None:
+    """`from` 给到不存在的文件：400 `invalid_setting`（detail.key = "from"），盘上不落任何东西。"""
+    session = _open_session(materials_client)
+    missing = materials_client.place_root / "没有这份.pdf"
+
+    uploaded = _upload_from(materials_client, session, "资料.pdf", missing)
+    assert uploaded.status_code == 400
+    body = uploaded.json()
+    assert body["code"] == "invalid_setting"
+    assert body["detail"]["key"] == "from"
+    assert not _materials_dir(session).exists(), "源头验不过就什么都不落"
+
+
+def test_upload_from_duplicate_names_get_sequence_suffixes(materials_client) -> None:
+    """`from` 档的重名让位与正文上传同一套：`a.md` 已在 → 拷入同名落 `a (2).md`。"""
+    session = _open_session(materials_client)
+    source = materials_client.place_root / "来源.md"
+    source.write_bytes("第二批\n".encode("utf-8"))
+
+    assert _upload_from(materials_client, session, "纪要.md", source).status_code == 200
+    uploaded = _upload_from(materials_client, session, "纪要.md", source)
+    assert uploaded.status_code == 200, uploaded.text
+    assert uploaded.json()["material"]["name"] == "纪要 (2).md"

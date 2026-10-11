@@ -88,13 +88,28 @@ export const dirRowSchema = z
   })
   .strict();
 
-/** `GET /api/dirs` 的应答体。`up` 到主目录时为 `null`（不再往上给）。 */
+/**
+ * 目录选择器现场的一项**普通文件**（`?files=1` 才有，资料界面的选择器文件模式要的，
+ * 160d1a78）。`dir` 是文件的绝对路径（选中它 = 把这份盘上文件拷进资料）；`size_bytes`
+ * 是现读的文件大小。不带那个参数时服务不摆这个键，旧应答体一个字节不动。
+ */
+export const dirFileRowSchema = z
+  .object({
+    name: z.string(),
+    dir: z.string(),
+    size_bytes: z.number().int(),
+  })
+  .strict();
+
+/** `GET /api/dirs` 的应答体。`up` 到主目录时为 `null`（不再往上给）；
+ *  `files` 只在 `?files=1` 那一档出现（一层里的普通文件，与 `dirs` 分开两列）。 */
 export const dirsResponseSchema = z
   .object({
     home: z.string(),
     cwd: z.string(),
     up: z.string().nullable(),
     dirs: z.array(dirRowSchema),
+    files: z.array(dirFileRowSchema).optional(),
   })
   .strict();
 
@@ -219,6 +234,7 @@ export type SessionSegmentCell = z.infer<typeof sessionSegmentCellSchema>;
 export type SessionRow = z.infer<typeof sessionRowSchema>;
 export type SessionsResponse = z.infer<typeof sessionsResponseSchema>;
 export type DirRow = z.infer<typeof dirRowSchema>;
+export type DirFileRow = z.infer<typeof dirFileRowSchema>;
 export type DirsResponse = z.infer<typeof dirsResponseSchema>;
 export type WorkspaceOk = z.infer<typeof workspaceOkSchema>;
 export type PostJobCell = z.infer<typeof postJobCellSchema>;

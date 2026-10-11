@@ -72,6 +72,7 @@ import { normalizeDefaultWindow } from './live/settings';
 import { clampHeartbeatInterval } from './api/heartbeat';
 import { fetchSessions } from './api/sessions';
 import { gpuBusyView } from './home/progress';
+import { MaterialsPanel } from './materials/MaterialsPanel';
 import { SettingsDrawer } from './settings/SettingsDrawer';
 import { HomeGate } from './home/HomeGate';
 import { createEventsSource, type EventsSource } from './home/events-source';
@@ -697,6 +698,9 @@ export function LiveView({
   const started = snapshot.top_state !== 'idle';
   const showStart = snapshot.top_state === 'idle';
   const showEnd = snapshot.top_state === 'recording' || snapshot.top_state === 'alert';
+  /** 会议资料区的目标目录：当前场次（资料跟场次走）。空闲 / 已收场没有在录的目录，
+   *  这一块不摆——会后那一半在工作台详情里（`WorkspaceHome` 的 `MaterialsPanel`）。 */
+  const sessionDir = snapshot.session?.dir ?? null;
   /** 四组合控件此刻亮哪一档：半途亮按下去的那档（乐观），落地后亮快照说的那档。 */
   const shownCombo: CaptureCombo = pendingCombo ?? view.combo;
   const capsuleTone =
@@ -1217,6 +1221,11 @@ export function LiveView({
 
       {/* 心跳失联那条判据的说明（章 4.5）：只在失联时出现 */}
       {lost && <div className="hint hb-guidance">{HEARTBEAT_GUIDANCE}</div>}
+
+      {/* 会议资料（160d1a78）：会中把图片 / 文件放进这一场的 meeting_materials/。
+          目标目录 = 当前场次（资料跟着场次走，哪怕录制中照收）；还没有场次时这一块
+          不摆 —— 没有目标就没有入口。页面级粘贴由面板自己挂在 document 上。 */}
+      {sessionDir !== null && <MaterialsPanel dir={sessionDir} />}
 
       {/* 实时转写：临时稿。区里不出现保存 / 导出 / 正式记录这类字样 */}
       <section className="band transcript-block">

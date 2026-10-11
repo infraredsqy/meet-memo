@@ -48,6 +48,15 @@ vi.mock('../src/api/sessions', async (importOriginal) => {
   return { ...actual, fetchSessions: vi.fn() };
 });
 
+// 会议资料区（160d1a78）：会中那块面板挂上即取清单 —— 替身给空清单，这个文件不连网。
+vi.mock('../src/api/materials', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/api/materials')>();
+  return {
+    ...actual,
+    fetchMaterials: vi.fn(async () => ({ dir: '', materials_dir: '', items: [] })),
+  };
+});
+
 const createEventsClientMock = vi.mocked(createEventsClient);
 const createHeartbeatClientMock = vi.mocked(createHeartbeatClient);
 const fetchSessionsMock = vi.mocked(fetchSessions);

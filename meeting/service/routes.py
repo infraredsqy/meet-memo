@@ -42,6 +42,7 @@ from __future__ import annotations
 import json
 import logging
 import mimetypes
+from pathlib import Path
 from typing import Any, Callable
 
 import anyio
@@ -55,6 +56,9 @@ _log = logging.getLogger("meeting.service.routes")
 
 #: SSE 的响应类型
 SSE_MEDIA_TYPE = "text/event-stream"
+
+#: `from` 档（选择器文件模式）拷贝源文件时的块大小：一块一兆，原样字节、不整段进内存
+_MATERIALS_COPY_CHUNK_BYTES = 1 << 20
 
 
 def _runtime_of(request: Request) -> ServiceRuntime | None:
@@ -208,13 +212,20 @@ def _api_dirs(request: Request) -> Response:
 
     纯读：只判每层子目录的名目（三档），不写任何东西。「软件自己会不建目录」这条
     在这里同样成立 —— 选择器只用来挑一个**已有**目录。
+
+    `?files=1`（资料界面的选择器文件模式要的，160d1a78）：应答体**多一个 `files` 键**
+    ——这一层里的普通文件每项 `{name, dir, size_bytes}`，与 `dirs` 分开两列。不带这个
+    参数时没有这个键，旧应答体一个字节不动（挑录音落点的老路径照旧）。
     """
     runtime = _runtime_of(request)
     if runtime is None:  # pragma: no cover - 应用未装配
         return JSONResponse({"error": "runtime 未装配"}, status_code=500)
     runtime.bind_from_scope(request.scope)
+    with_files = (request.query_params.get("files") or "").strip().lower() in ("1", "true")
     try:
-        return JSONResponse(runtime.dirs_listing(request.query_params.get("dir")))
+        return JSONResponse(
+            runtime.dirs_listing(request.query_params.get("dir"), with_files=with_files)
+        )
     except ActionError as exc:
         return _error_response(exc)
 
@@ -276,6 +287,11 @@ async def _api_materials_upload(request: Request) -> Response:
       （`runtime_materials.sanitize_material_name()` 与 `materials_reserve()`）；
     - **不转码、不压缩、不限类型、大小不设服务端硬顶**；请求的 `Content-Type` 只是
       发送方的说法，服务不读它也不校验它；
+    - `from=<路径>`（选择器文件模式要的，160d1a78）：字节不从请求正文来，从盘上那个
+      **已有文件流式拷入**——同样原样字节、不整段进内存；`from` 给到不存在的文件回
+      **400 `invalid_setting`**（`detail = {key: "from", value, legal}`），此时盘上
+      什么都不落；给了 `from` 时请求正文被忽略。清洗 / 重名让位 / 头哨与正文上传
+      同一套；
     - 写盘走**独占创建**（`xb`）+ 异步文件（`anyio`，写在工作线程上、事件循环照转，
       心跳与三个 SSE 通道不被一次大上传按住）；「查完重名到真正落盘」之间被人抢了位
       的竞态由 `materials_next_free()` 让位重试，不截断别人正在写的文件；
@@ -288,6 +304,26 @@ async def _api_materials_upload(request: Request) -> Response:
     if runtime is None:  # pragma: no cover - 应用未装配
         return JSONResponse({"error": "runtime 未装配"}, status_code=500)
     runtime.bind_from_scope(request.scope)
+
+    #: `from` 档（选择器文件模式）：拷贝源头必须是**已存在的普通文件**，先验再占名
+    from_param = request.query_params.get("from")
+    source_path: Path | None = None
+    if from_param is not None and from_param.strip() != "":
+        source_path = Path(from_param)
+        if not source_path.is_file():
+            return _error_response(
+                _action_error(
+                    "invalid_setting",
+                    f"要拷入的文件不存在：{from_param}",
+                    status=400,
+                    detail={
+                        "key": "from",
+                        "value": from_param,
+                        "legal": ["已存在的文件路径（目录选择器文件模式给的那一个）"],
+                    },
+                )
+            )
+
     try:
         path = runtime.materials_reserve(
             request.path_params.get("dir"), request.query_params.get("name")
@@ -310,8 +346,20 @@ async def _api_materials_upload(request: Request) -> Response:
                 # 查完重名到真正落盘之间被人抢了位：让到下一个序号名再试
                 path = runtime.materials_next_free(path)
         try:
-            async for chunk in request.stream():
-                await handle.write(chunk)
+            if source_path is None:
+                async for chunk in request.stream():
+                    await handle.write(chunk)
+            else:
+                # from 档：流式拷贝盘上那份源文件（原样字节，一块一兆，不整段进内存）
+                source = await anyio.open_file(source_path, "rb")
+                try:
+                    while True:
+                        chunk = await source.read(_MATERIALS_COPY_CHUNK_BYTES)
+                        if not chunk:
+                            break
+                        await handle.write(chunk)
+                finally:
+                    await source.aclose()
         finally:
             await handle.aclose()
     except ActionError:

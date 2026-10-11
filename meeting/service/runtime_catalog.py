@@ -685,12 +685,18 @@ class RuntimeCatalogMixin:
         _log.info("说话人改名落盘：%s（%s → %s）", target, saved["key"], saved["name"])
         return {"dir": target, "key": saved["key"], "name": saved["name"]}
 
-    def dirs_listing(self, dir: Any) -> dict[str, Any]:
+    def dirs_listing(self, dir: Any, with_files: bool = False) -> dict[str, Any]:
         """`GET /api/dirs` 的应答体：目录选择器的一个现场（起点是用户主目录）。
 
         `cwd` 是规范化后的当前层；`up` 是上一层（到了主目录就是 `null`，不再往上给）。
         `parent` 恒是主目录（`docs/design-intent.md` 第 4 条：选择器起点 `~/`，落点由
         用户挑，软件不替他挑）。每项只判名目（`classify_workspace_dir()`），不读内容。
+
+        `with_files=True`（`?files=1`，资料节点的选择器文件模式要的）时应答体**多一个
+        `files` 键**：这一层里的**普通文件**每项 `{name, dir, size_bytes}`（`dir` 是绝对
+        路径，`size_bytes` 是现读的文件大小），按名字排序、与 `dirs` 分开两列——目录
+        进不了 `files`，文件也进不了 `dirs`。不带这个参数时**没有这个键**，旧应答体
+        一个字节不动（挑录音落点的老路径照旧）。同样纯读：只列名目与大小，不读内容。
         """
         raw = config_module.home_dir() if dir is None else str(dir)
         cwd = Path(canonical_dir(raw))
@@ -707,6 +713,14 @@ class RuntimeCatalogMixin:
         try:
             children = sorted((item for item in cwd.iterdir() if item.is_dir()),
                               key=lambda item: item.name.lower())
+            file_rows: list[dict[str, Any]] = []
+            if with_files:
+                for item in sorted((item for item in cwd.iterdir() if item.is_file()),
+                                   key=lambda item: item.name.lower()):
+                    file_rows.append(
+                        {"name": item.name, "dir": str(item),
+                         "size_bytes": int(item.stat().st_size)}
+                    )
         except OSError as exc:
             raise ActionError(
                 "invalid_setting",
@@ -720,12 +734,15 @@ class RuntimeCatalogMixin:
                 {"name": item.name, "dir": str(item), "kind": probe["kind"],
                  "suspected": bool(probe["suspected"])}
             )
-        return {
+        payload: dict[str, Any] = {
             "home": str(home),
             "cwd": str(cwd),
             "up": None if cwd == home else str(cwd.parent),
             "dirs": rows,
         }
+        if with_files:
+            payload["files"] = file_rows
+        return payload
 
     def devices_listing(self) -> dict[str, Any]:
         """`GET /api/devices` 的应答体：两路各自的候选端点表（**只读、纯枚举、不开设备**）。

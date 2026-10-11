@@ -17,3 +17,4 @@ export * from './summaries';
 export * from './sessions';
 export * from './devices';
 export * from './heartbeat';
+export * from './materials';

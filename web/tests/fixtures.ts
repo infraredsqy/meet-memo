@@ -20,7 +20,8 @@ export type FixtureGroup =
   | 'summaries'
   | 'sessions'
   | 'heartbeat'
-  | 'devices';
+  | 'devices'
+  | 'materials';
 
 /** 读一份样本的原文。 */
 export function readFixtureText(group: FixtureGroup, name: string): string {
@@ -122,5 +123,22 @@ export const SESSIONS_FIXTURES = [
   'after-open',
   'status-after-run',
   'status-interrupted',
+] as const;
+
+/**
+ * 会议资料四份样本（4.12，资料节点 285bf58c）：上传成功体（通用信封 + `material`
+ * 三格）、上传之后的清单（目录就是清单）、删除成功体（`material` 一格）、取不到 /
+ * 删不到那一档（`material_missing`，4.12 那片自己的 `code`）。
+ *
+ * 样本的请求侧是**两件套**（`method` + `name`）—— 资料四条不走 `/api/actions`；
+ * `name` 是打过去的那份请求名（`after-upload` 里那个穿越加非法字符的脏名字原样进样本，
+ * 清洗前后的对照正是契约要看的东西）。web 侧的对齐用例在 `contract.test.ts` 的
+ * 「会议资料样本」那一组（160d1a78 接的线）。
+ */
+export const MATERIALS_FIXTURES = [
+  'after-upload',
+  'delete-ok',
+  'missing',
+  'upload-ok',
 ] as const;
 

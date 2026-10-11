@@ -3,6 +3,7 @@ import {
   ACTION_FIXTURES,
   DEVICES_FIXTURES,
   HEARTBEAT_FIXTURES,
+  MATERIALS_FIXTURES,
   SESSIONS_FIXTURES,
   SNAPSHOT_FIXTURES,
   SSE_FIXTURES,
@@ -15,10 +16,16 @@ import {
   ENVELOPE_BAR_COUNT,
   ERROR_CODES,
   ERROR_CODE_STATUS,
+  MATERIAL_ERROR_CODES,
   actionFixtureSchema,
   captureGapsSchema,
   devicesResponseSchema,
   heartbeatSchema,
+  materialDeleteOkSchema,
+  materialErrorSchema,
+  materialItemSchema,
+  materialUploadOkSchema,
+  materialsListSchema,
   resyncSnapshotSchema,
   sessionStatusSchema,
   sessionsResponseSchema,
@@ -728,5 +735,103 @@ describe('工作区样本（4.8 / 4.9，会后进度界面节点 52b24392 接的
       ],
     };
     expect(sessionStatusSchema.safeParse(withExtraIdentity).success).toBe(false);
+  });
+});
+
+describe('会议资料样本（4.12，资料面板节点 160d1a78 接的对齐用例）', () => {
+  /** 请求两件套（资料四条不走 `/api/actions`）：`method` + `name` + `status` + `body`。 */
+  function materialsFixture(name: string): { method: string; name: string; status: number; body: unknown } {
+    const raw = readFixture('materials', name) as Record<string, unknown>;
+    return {
+      method: raw['method'] as string,
+      name: raw['name'] as string,
+      status: raw['status'] as number,
+      body: raw['body'],
+    };
+  }
+
+  it('四份样本一个不少：目录里没有多余的资料样本', () => {
+    expect(listFixtures('materials')).toEqual([...MATERIALS_FIXTURES].sort());
+  });
+
+  it('materials/upload-ok.json 过 materialUploadOkSchema：material 恰好三格', () => {
+    const fixture = materialsFixture('upload-ok');
+    expect(fixture.method).toBe('POST');
+    expect(fixture.name).toBe('报告.pdf');
+    expect(fixture.status).toBe(200);
+    const body = materialUploadOkSchema.parse(fixture.body);
+    expect(body.ok).toBe(true);
+    expect(Object.keys(body).sort()).toEqual(['material', 'ok', 'revision']);
+    expect(Object.keys(body.material).sort()).toEqual(['added_at', 'name', 'size_bytes']);
+    expect(body.material.name).toBe('报告.pdf');
+    expect(body.material.size_bytes).toBe(32);
+    expect(body.material.added_at).toBe('<iso>');
+  });
+
+  it('materials/after-upload.json 过 materialsListSchema：三格清单、按名字排序、路径走 <path>', () => {
+    // 清单样本就是 GET 应答体的原文（不带请求两件套的壳）
+    const listing = materialsListSchema.parse(readFixture('materials', 'after-upload'));
+    expect(Object.keys(listing).sort()).toEqual(['dir', 'items', 'materials_dir']);
+    expect(listing.dir).toBe('<path>');
+    expect(listing.materials_dir).toBe('<path>');
+    expect(listing.items.map((item) => item.name)).toEqual([
+      '假报告_v__.pdf',
+      '报告 (2).pdf',
+      '报告.pdf',
+    ]);
+    expect(listing.items).toEqual([...listing.items].sort((a, b) => (a.name < b.name ? -1 : 1)));
+    for (const item of listing.items) {
+      expect(Object.keys(item).sort()).toEqual(['added_at', 'name', 'size_bytes']);
+    }
+  });
+
+  it('materials/delete-ok.json 过 materialDeleteOkSchema：material 恰好一格（名字）', () => {
+    const fixture = materialsFixture('delete-ok');
+    expect(fixture.method).toBe('DELETE');
+    expect(fixture.name).toBe('报告 (2).pdf');
+    expect(fixture.status).toBe(200);
+    const body = materialDeleteOkSchema.parse(fixture.body);
+    expect(body.ok).toBe(true);
+    expect(Object.keys(body.material)).toEqual(['name']);
+    expect(body.material.name).toBe('报告 (2).pdf');
+  });
+
+  it('materials/missing.json 过 materialErrorSchema：material_missing 是这一片自己的 code', () => {
+    const fixture = materialsFixture('missing');
+    expect(fixture.method).toBe('GET');
+    expect(fixture.status).toBe(404);
+    const body = materialErrorSchema.parse(fixture.body);
+    expect(body.ok).toBe(false);
+    expect(Object.keys(body).sort()).toEqual(['code', 'detail', 'message', 'ok']);
+    expect(body.code).toBe('material_missing');
+    expect(body.detail).toEqual({ name: '报告 (2).pdf' });
+    // `material_missing` 不在动作那九个 code 里（资料四条不走 /api/actions）
+    expect(ERROR_CODES).not.toContain('material_missing');
+    expect(MATERIAL_ERROR_CODES).toContain('material_missing');
+  });
+
+  it('两份成功体的形状互斥：上传体过不了删除那条 schema，反之亦然', () => {
+    const upload = materialUploadOkSchema.parse(materialsFixture('upload-ok').body);
+    const del = materialDeleteOkSchema.parse(materialsFixture('delete-ok').body);
+    // 上传体多两格（size_bytes / added_at），删除 schema（.strict()）要拒
+    expect(
+      materialDeleteOkSchema.safeParse({ ok: true, revision: 1, material: upload.material })
+        .success,
+    ).toBe(false);
+    // 删除体少两格，上传 schema 同样要拒
+    expect(
+      materialUploadOkSchema.safeParse({ ok: true, revision: 1, material: del.material })
+        .success,
+    ).toBe(false);
+  });
+
+  it('清单条目多一格 / 少一格、顶层多一格都不符合契约（封闭形状）', () => {
+    const listing = readFixture('materials', 'after-upload') as Record<string, unknown>;
+    expect(materialsListSchema.safeParse({ ...listing, extra: 1 }).success).toBe(false);
+    const items = structuredClone(listing['items']) as Array<Record<string, unknown>>;
+    items[0]!['备注'] = '没有旁注元数据';
+    expect(materialsListSchema.safeParse({ ...listing, items }).success).toBe(false);
+    const { added_at: _dropped, ...withoutStamp } = items[0] as Record<string, unknown>;
+    expect(materialItemSchema.safeParse(withoutStamp).success).toBe(false);
   });
 });

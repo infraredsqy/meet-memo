@@ -72,6 +72,15 @@ const fetchSessionsMock = vi.mocked(fetchSessions);
 const fetchSessionStatusMock = vi.mocked(fetchSessionStatus);
 const createPollerMock = vi.mocked(createSessionStatusPoller);
 
+// 会议资料区（160d1a78）：详情里那块面板挂载即取清单 —— 替身给空清单，这条文件不连网。
+vi.mock('../src/api/materials', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/api/materials')>();
+  return {
+    ...actual,
+    fetchMaterials: vi.fn(async () => ({ dir: '', materials_dir: '', items: [] })),
+  };
+});
+
 const DIR = 'C:\\会议\\这一场';
 
 function row(over: Partial<SessionRow> = {}): SessionRow {

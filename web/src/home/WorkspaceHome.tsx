@@ -15,9 +15,11 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
  */
 
 import { postAction } from '../api';
+import { ConfirmDialog } from '../dialogs';
 import { confirmWorkspaceOpen } from './confirmWorkspaceOpen';
+import { DirPicker, useDirBrowse, type PickerPick } from './DirPicker';
+import { MaterialsPanel } from '../materials/MaterialsPanel';
 import {
-  browseDirs,
   createSessionStatusPoller,
   fetchSessions,
   SessionStatusHttpError,
@@ -48,171 +50,11 @@ import {
 import { SPEAKER_RENAME_ACTION, duplicateNameHolders, namesRows, type NamesRowView } from './names';
 import { failureFrom, type ActionFailureView } from '../failure';
 import { FailureBlock } from '../failure-ui';
-import type { DirsResponse, SessionRow, SessionStatus, SessionsResponse } from '../contract';
+import type { SessionRow, SessionStatus, SessionsResponse } from '../contract';
 
 // ---------------------------------------------------------------------------
 // 小料
 // ---------------------------------------------------------------------------
-
-/** 一只确认弹窗（非空目录当工作区 / 从列表移除共用这一只）。 */
-function ConfirmDialog({
-  title,
-  text,
-  confirmLabel,
-  busy,
-  onConfirm,
-  onCancel,
-}: {
-  title: string;
-  text: string;
-  confirmLabel: string;
-  busy: boolean;
-  onConfirm: () => void;
-  onCancel: () => void;
-}): ReactNode {
-  return (
-    <div className="dlg__layer" role="presentation">
-      <div className="dlg" role="dialog" aria-modal="true" aria-label={title}>
-        <div className="dlg__title">{title}</div>
-        <div className="dlg__text">{text}</div>
-        <div className="dlg__acts">
-          <button className="btn" type="button" disabled={busy} onClick={onCancel}>
-            取消
-          </button>
-          <button className="btn btn--primary" type="button" disabled={busy} onClick={onConfirm}>
-            {confirmLabel}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/**
- * 目录选择器弹窗：起点用户主目录（服务给 `home`），`up` 回上层。只挑**已有**目录。
- *
- * 「选中再确认」的形状（节点 57ab5255）：单击目录行只**选中**（行上出选中样式，
- * 不发任何动作请求），双击才进下层——原「进这一层」被双击收编；地址栏显示当前层，
- * 可直接输入一条路径回车跳过去（跳不过去当场说清，层不动）；底部一颗「选定这个目录」
- * 确认钮，未选中置灰，点它才把选中项交给调用方按名目走登记/收编。单击不再当场登记。
- */
-function DirPicker({
-  browse,
-  onBrowse,
-  onJump,
-  onPick,
-  onClose,
-}: {
-  browse: DirsResponse | null;
-  onBrowse: (dir: string | null) => void;
-  /** 地址栏回车：按输入的路径跳层。成功 resolve `null`（层已换）；跳不过去把那句
-   *  说清的话 resolve 回来——层不动，弹窗里画一行。 */
-  onJump: (dir: string) => Promise<string | null>;
-  /** 确认一颗：选中项交给调用方，按它的名目走三档（本弹窗不开动作）。 */
-  onPick: (item: PickPath) => void;
-  onClose: () => void;
-}): ReactNode {
-  const [picked, setPicked] = useState<PickPath | null>(null);
-  const [addr, setAddr] = useState('');
-  const [jumpError, setJumpError] = useState<string | null>(null);
-  // 层一换（首次取到现场、跳层成功）：选中不跨层带走——旧层那一行已不在清单里，
-  // 留着会让确认钮指向看不见的目录；地址栏重置成新层的路径。
-  useEffect(() => {
-    setPicked(null);
-    setJumpError(null);
-    setAddr(browse?.cwd ?? '');
-  }, [browse]);
-
-  const jumpFromAddr = (): void => {
-    const target = addr.trim();
-    // 空输入与「输入的就是当前层」都不动层；失败那句由 onJump resolve 回来画。
-    if (browse === null || target === '' || target === browse.cwd) return;
-    setJumpError(null);
-    void onJump(target).then((error) => {
-      if (error !== null) setJumpError(error);
-    });
-  };
-
-  return (
-    <div className="dlg__layer" role="presentation">
-      <div className="dlg dlg--picker" role="dialog" aria-modal="true" aria-label="选择已有目录">
-        <div className="dlg__title">选择已有目录</div>
-        <p className="hint">
-          单击选中、双击进下层；地址栏可直接输入路径回车跳转。选择器仅用于选择，不会创建目录。
-        </p>
-        <div className="picker__addrrow">
-          <input
-            className="field__input picker__addr"
-            type="text"
-            value={addr}
-            aria-label="当前层路径，可输入路径回车跳转"
-            disabled={browse === null}
-            onChange={(event) => setAddr(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') jumpFromAddr();
-            }}
-          />
-          <button
-            className="btn"
-            type="button"
-            disabled={browse === null || browse.up === null}
-            onClick={() => browse !== null && browse.up !== null && onBrowse(browse.up)}
-          >
-            向上一层
-          </button>
-        </div>
-        {jumpError !== null && <p className="picker__jumperr">{jumpError}</p>}
-        <div className="picker__list" role="listbox" aria-label="这一层的子目录">
-          {browse === null && <p className="empty">正在取目录…</p>}
-          {browse !== null && browse.dirs.length === 0 && (
-            <p className="empty">这一层没有子目录。</p>
-          )}
-          {browse !== null &&
-            browse.dirs.map((item) => (
-              <div
-                key={item.dir}
-                className={`picker__row ${picked?.dir === item.dir ? 'picker__row--on' : ''}`}
-                role="option"
-                aria-selected={picked?.dir === item.dir}
-                tabIndex={0}
-                onClick={() => setPicked({ dir: item.dir, kind: item.kind })}
-                onDoubleClick={() => onBrowse(item.dir)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    setPicked({ dir: item.dir, kind: item.kind });
-                  }
-                }}
-              >
-                <span className="picker__name">{item.name}</span>
-                <span className="picker__kind">
-                  {item.kind === 'empty'
-                    ? '空目录'
-                    : item.kind === 'meeting'
-                      ? item.suspected
-                        ? '疑似会议目录'
-                        : '会议目录'
-                      : '普通目录'}
-                </span>
-              </div>
-            ))}
-        </div>
-        <div className="dlg__acts">
-          <button className="btn" type="button" onClick={onClose}>
-            关闭
-          </button>
-          <button
-            className="btn btn--primary"
-            type="button"
-            disabled={picked === null}
-            onClick={() => picked !== null && onPick(picked)}
-          >
-            选定这个目录
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 /**
  * 一只改名字的弹窗（人名节点 `91b6752e`，R10 第四条 / R30）：一行一个身份
@@ -321,8 +163,10 @@ function SpeakerNamesDialog({
  * 名目 → 挑了之后走哪一档（spec 三情形的唯一出处是 `api/sessions.ts` 的 `probeDecision()`，
  * 这里只转手）。`missing` 名目到不了选择器——`GET /api/dirs` 只摆存在的目录；真到了不走
  * 确认弹窗，显式失败（不可当作可收编入口，见 `openFromPicker`）。
+ *
+ * 目录选择器本体与它的取数（`useDirBrowse`）住在 `./DirPicker`（160d1a78 搬出共用，
+ * 文件模式归资料区）；这里只留挑中之后的登记三档。
  */
-type PickPath = { dir: string; kind: 'empty' | 'meeting' | 'unknown' | 'missing' };
 
 /** 两个按钮的动作名 → 界面上的名字（与 `docs/requirements.md` R26 的叫法逐字对齐）。 */
 const POST_LABELS: Readonly<Record<string, string>> = {
@@ -357,10 +201,9 @@ export function WorkspaceHome({
   const [busy, setBusy] = useState(false);
   // 选择器的两层弹窗与待确认的一只
   const [picker, setPicker] = useState(false);
-  const [browse, setBrowse] = useState<DirsResponse | null>(null);
+  /** 选择器的取数（换层 / 跳层 / 失败那一行）——本体在 `./DirPicker`（老路径不带文件）。 */
+  const dirBrowse = useDirBrowse(false);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
-  /** 选择器取数失败的暂存（弹窗里画一行，不顶掉首页的失败块）。 */
-  const [browseError, setBrowseError] = useState<string | null>(null);
   /** 会后那两个按钮的动作回执（一句话：这一趟已起 / 被拒的原因在失败块里）。 */
   const [postNote, setPostNote] = useState<string | null>(null);
   /** 说话人名字那只弹窗开没有（R10 第四条：唯一要动手的地方，入口在会后区那一行）。 */
@@ -676,41 +519,6 @@ export function WorkspaceHome({
     });
   };
 
-  // -- 选择器换层 -----------------------------------------------------------
-
-  const browseInto = (dir: string | null): void => {
-    setBrowse(null);
-    setBrowseError(null);
-    void browseDirs(dir).then(
-      (data) => setBrowse(data),
-      (error) => {
-        const view = failureFrom(error);
-        setBrowseError(
-          view.kind === 'envelope' || view.kind === 'drain' ? view.message : view.text
-        );
-      },
-    );
-  };
-
-  /**
-   * 地址栏跳层（57ab5255）：不清当前层地取新层——清单双击/向上层那半边才清层。
-   * 跳不过去把服务回的那句原话带上「跳不过去」resolve 回弹窗，层原地不动：
-   * 输入不存在的路径不许静默，也不许把正在看的层顶掉。
-   */
-  const jumpTo = (dir: string): Promise<string | null> =>
-    browseDirs(dir).then(
-      (data) => {
-        setBrowse(data);
-        return null;
-      },
-      (error) => {
-        const view = failureFrom(error);
-        const message =
-          view.kind === 'envelope' || view.kind === 'drain' ? view.message : view.text;
-        return `跳不过去：${message}`;
-      },
-    );
-
   // -- 画 -------------------------------------------------------------------
 
   const whyForSelected = selected === null ? null : startWhy(selected);
@@ -727,14 +535,15 @@ export function WorkspaceHome({
   /** 一场都没有：右栏让给那张空态（左栏照旧留着「添加工作区」）。 */
   const isEmpty = sessions !== null && sessions.sessions.length === 0;
 
-  const openFromPicker = (item: { dir: string; kind: PickPath['kind'] }): void => {
+  const openFromPicker = (pick: PickerPick): void => {
     setPicker(false);
-    if (item.kind === 'missing') {
+    if (pick.what !== 'dir') return; // 这只选择器是目录模式：文件那一档归资料区
+    if (pick.kind === 'missing') {
       // 理论上不可达（选择器只摆存在的目录）；真到达就如实失败，不该弹「确认收编」。
-      setFailure(failureFrom(new Error(`该目录已不存在：${item.dir}`)));
+      setFailure(failureFrom(new Error(`该目录已不存在：${pick.dir}`)));
       return;
     }
-    openDir(item.dir, decisionFor(item.kind));
+    openDir(pick.dir, decisionFor(pick.kind));
   };
 
   return (
@@ -750,7 +559,7 @@ export function WorkspaceHome({
             disabled={busy}
             onClick={() => {
               setPicker(true);
-              browseInto(null);
+              dirBrowse.browseInto(null);
             }}
           >
             添加工作区
@@ -1063,6 +872,10 @@ export function WorkspaceHome({
                   )}
                 </div>
               )}
+
+              {/* 会议资料（160d1a78）：这一场的 meeting_materials/。粘贴图片、拖入文件、
+                  提交文字、选盘上的文件，四个入口都在那一块里；删除走多选 + 确认。 */}
+              <MaterialsPanel dir={selected.dir} />
               </div>
             </div>
           )}
@@ -1080,21 +893,21 @@ export function WorkspaceHome({
 
       {picker && (
         <DirPicker
-          browse={browse}
-          onBrowse={browseInto}
-          onJump={jumpTo}
+          browse={dirBrowse.browse}
+          onBrowse={dirBrowse.browseInto}
+          onJump={dirBrowse.jumpTo}
           onPick={openFromPicker}
           onClose={() => {
             setPicker(false);
-            setBrowse(null);
+            dirBrowse.reset();
           }}
         />
       )}
-      {picker && browseError !== null && (
+      {picker && dirBrowse.browseError !== null && (
         <div className="dlg__layer" role="presentation">
           <div className="dlg">
             <div className="dlg__title">目录浏览失败</div>
-            <div className="dlg__text">{browseError}</div>
+            <div className="dlg__text">{dirBrowse.browseError}</div>
             <div className="dlg__acts">
               <button className="btn" type="button" onClick={() => setPicker(false)}>
                 关闭

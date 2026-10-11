@@ -92,6 +92,15 @@ vi.mock('../src/api/sessions', async (importOriginal) => {
   return { ...actual, fetchSessions: vi.fn() };
 });
 
+// 会议资料区（160d1a78）：会中那块面板挂上即取清单 —— 替身给空清单，这条文件不连网。
+vi.mock('../src/api/materials', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/api/materials')>();
+  return {
+    ...actual,
+    fetchMaterials: vi.fn(async () => ({ dir: '', materials_dir: '', items: [] })),
+  };
+});
+
 /** 捕获 SSE 那一侧的 handlers（LiveView 在 effect 里建连，回调就在这一刻交出来）。 */
 const captured: { handlers: import('../src/api').EventsClientHandlers | null } = { handlers: null };
 

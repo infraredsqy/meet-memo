@@ -87,6 +87,8 @@ export async function fetchSessions(
 export interface BrowseDirsOptions {
   fetchImpl?: typeof fetch;
   url?: string;
+  /** `?files=1`（资料界面的选择器文件模式要的，160d1a78）：应答体多一个 `files` 键。 */
+  withFiles?: boolean;
 }
 
 /**
@@ -136,7 +138,13 @@ export async function browseDirs(
   options: BrowseDirsOptions = {},
 ): Promise<DirsResponse> {
   const doFetch = options.fetchImpl ?? fetch;
-  const url = dir === null ? DIRS_URL : `${DIRS_URL}?dir=${encodeURIComponent(dir)}`;
+  // `?files=1` 只在文件模式那档带上（`BrowseDirsOptions.withFiles`）：老路径的请求
+  // 串一个字节不动，服务也就照旧不摆 `files` 键。
+  const filesParam = options.withFiles === true ? 'files=1' : null;
+  const query = [dir === null ? null : `dir=${encodeURIComponent(dir)}`, filesParam]
+    .filter((part): part is string => part !== null)
+    .join('&');
+  const url = query === '' ? DIRS_URL : `${DIRS_URL}?${query}`;
   let response: Response;
   try {
     response = await doFetch(url, { method: 'GET' });

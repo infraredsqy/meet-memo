@@ -2248,6 +2248,178 @@ input[type="checkbox"] {
   color: var(--t-amber);
 }
 
+/* 6.7 会议资料（160d1a78）：一块资料区，四个入口（粘贴 / 拖拽 / 提交文字 / 选文件）、
+   多选删除 + 确认、逐文件的上传反馈。骨架照 `.wsprog`（同一副区块语言）；
+   拖进来的时候边框翻信号青，说「松手就放进去」。 */
+.mat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: var(--size-divider) solid var(--t-rule-hair);
+  background: var(--t-surface);
+}
+
+.mat--drop {
+  border-color: var(--t-signal);
+  border-style: dashed;
+}
+
+.mat__head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+}
+
+.mat__title {
+  font-family: var(--t-font-sign);
+  font-size: var(--size-small);
+  font-weight: var(--weight-semibold);
+  color: var(--t-ink);
+}
+
+.mat__count {
+  color: var(--t-ink-quiet);
+  font-size: var(--size-micro);
+}
+
+.mat__hint {
+  color: var(--t-ink-quiet);
+  font-size: var(--size-caption);
+}
+
+.mat__acts {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+
+.mat__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+/* 一行资料：勾选格 + 缩略图（或类型标签）+ 名字 + 大小 · 贴上时刻 */
+.mat__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: var(--size-divider) solid var(--t-rule-hair);
+  background: var(--t-sunk);
+}
+
+.mat__item--on {
+  border-color: var(--t-rule-strong);
+  background: var(--t-raised);
+  box-shadow: inset var(--size-rule) 0 0 var(--t-signal);
+}
+
+.mat__check {
+  flex: none;
+}
+
+.mat__thumb {
+  flex: none;
+  width: 3rem;
+  height: 3rem;
+  object-fit: cover;
+  border: var(--size-divider) solid var(--t-rule-hair);
+  background: var(--t-sunk);
+}
+
+.mat__icon {
+  flex: none;
+  white-space: nowrap;
+}
+
+.mat__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--t-ink);
+  font-size: var(--size-small);
+  text-align: left;
+}
+
+/* 图片行的名字是一颗按钮（点开看原图）：透明底，选中配色归 `.mat__item--on` 那半边 */
+button.mat__name {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+  text-decoration-color: var(--t-rule-strong);
+}
+
+button.mat__name:focus-visible {
+  outline: var(--size-focus) solid var(--t-focus);
+  outline-offset: var(--size-focus-offset);
+}
+
+.mat__meta {
+  flex: none;
+  color: var(--t-ink-quiet);
+  font-size: var(--size-caption);
+  white-space: nowrap;
+}
+
+/* 逐文件的上传反馈：进行中（spinner + 名字）、完成（勾 + 大小）、失败（叉 + 原因）。
+   失败一行不许悄悄吞 —— 原因照 `materials/model.ts` 的分档写明。 */
+.mat__tasks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.mat__task {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--t-ink-mid);
+  font-size: var(--size-caption);
+  line-height: var(--line-snug);
+}
+
+.mat__task--bad {
+  color: var(--t-alert-ink);
+}
+
+.mat__bad {
+  color: var(--t-alert-ink);
+  font-size: var(--size-caption);
+  line-height: var(--line-snug);
+}
+
+.mat__note {
+  color: var(--t-ink-quiet);
+  font-size: var(--size-caption);
+  line-height: var(--line-snug);
+}
+
+.mat__textinput {
+  resize: vertical;
+  font-family: var(--t-font-mono);
+}
+
+/* 原图查看（图片行点名字）：原样字节就是取原文件端点那一副，缩放归浏览器 */
+.dlg--viewer {
+  width: min(56rem, 100%);
+}
+
+.mat__view {
+  display: block;
+  max-width: 100%;
+  max-height: 60vh;
+  overflow: auto;
+}
+
 /* 7. 弹窗：目录选择器与确认共用一层 */
 .dlg__layer {
   position: fixed;
