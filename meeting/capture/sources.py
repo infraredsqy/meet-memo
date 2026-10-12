@@ -31,8 +31,6 @@ import queue
 import threading
 from typing import Any, Iterable
 
-import numpy as np
-
 from meeting.capture.devices import (
     PROBE_CHANNELS,
     PROBE_FRAME_COUNT,
@@ -307,6 +305,8 @@ class _QueueReader:
     """
 
     def __init__(self, label: str) -> None:
+        import numpy as np
+
         self.label = label
         self.queue: queue.Queue[bytes] = queue.Queue(maxsize=QUEUE_MAX_CHUNKS)
         self.stop_event = threading.Event()
@@ -435,6 +435,8 @@ class SounddeviceMicSource:
         末尾多一步「把这一块样本交给读侧当电平素材」——电平刻度是 V2 契约新增的，
         V1 里没有对应物。
         """
+        import numpy as np
+
         if status:
             _log.warning("audio(mic): %s", status)
         if self._reader.stop_event.is_set():
@@ -531,6 +533,8 @@ class SoundcardLoopbackSource:
         顺带把这一块样本留作电平素材）。退出时 recorder 由 `with` 释放（照 V1），日志的
         那一判同样保留。
         """
+        import numpy as np
+
         try:
             # soundcard 依赖 COM（WASAPI），子线程必须手动初始化 apartment
             import ctypes

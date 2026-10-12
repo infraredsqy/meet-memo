@@ -34,8 +34,6 @@ import threading
 import time
 from typing import Any, Callable, Protocol, runtime_checkable
 
-import numpy as np
-
 from meeting.backends.base import (
     DEFAULT_FRAME_INTERVAL_SECONDS,
     FrameGap,
@@ -315,6 +313,8 @@ class _SourceWorker:
 
     def _emit_level(self) -> None:
         """每 `frame_interval` 秒一帧：先记空洞账（超窗报一次 `FrameGap`），再发电平帧。"""
+        import numpy as np
+
         self._gap_detector.observe()
         source = self.source_impl
         samples: np.ndarray

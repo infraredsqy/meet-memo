@@ -20,8 +20,6 @@
 
 from __future__ import annotations
 
-import numpy as np
-
 #: 全零 / 空窗口兜底的 dBFS（静音窗口必须落到 `alert.silence_dbfs` 默认值 `-60` 以下）
 SILENCE_DBFS = -120.0
 
@@ -34,6 +32,8 @@ _RMS_FLOOR = 1e-12
 
 def to_dbfs(amplitude: float) -> float:
     """把 int16 量级的幅度折算成 dBFS（`0` → `SILENCE_DBFS`，不抛错、不返回 `-inf`）。"""
+    import numpy as np
+
     value = abs(float(amplitude))
     if value <= 0.0:
         return SILENCE_DBFS
@@ -42,6 +42,8 @@ def to_dbfs(amplitude: float) -> float:
 
 def rms_dbfs(samples: np.ndarray) -> float:
     """一块 int16 样本的**均方根** dBFS（空块给 `SILENCE_DBFS`）。"""
+    import numpy as np
+
     values = np.asarray(samples, dtype=np.float64).reshape(-1)
     if values.size == 0:
         return SILENCE_DBFS
@@ -53,6 +55,8 @@ def rms_dbfs(samples: np.ndarray) -> float:
 
 def peak_dbfs(samples: np.ndarray) -> float:
     """一块 int16 样本里**绝对值最大样本**的 dBFS（空块给 `SILENCE_DBFS`）。"""
+    import numpy as np
+
     values = np.asarray(samples, dtype=np.float64).reshape(-1)
     if values.size == 0:
         return SILENCE_DBFS
