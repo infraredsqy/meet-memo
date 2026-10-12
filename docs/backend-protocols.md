@@ -2,7 +2,7 @@
 
 > 这份文档写服务与后端之间的接缝：四个协议的成员、数据结构、缺省值，以及后端怎么被找到、怎么被注入。
 >
-> 现状：**协议本身已经定死，四个位置现在都有实现。** `capture.backend` 的默认值 `auto` 解析到真采集后端（`meeting.backends.capture:CaptureBackend`，真探测、真起两路、真落盘与真转码）；`transcriber.backend` 的默认值 `auto` 解析到真转写后端（`meeting.backends.transcribe:TranscriberBackend`，尾读归档 → VAD 切段 → 单 worker 顺序识别 → 每路一份会中稿 + 行出口）；`post.hook` 的默认值 `auto` 解析到 `meeting.backends.post:PostProcessHook`，`minutes.hook` 的默认值 `auto` 解析到 `meeting.backends.minutes:MinutesHook` —— 这两个实现现在**由人按按钮时才被拉起**（R26）：会后两个动作 `post_offline` / `post_minutes` 各起一条后台线程，起完即回，跑成什么样由场次目录里的状态文件回答。**收尾第 4 步 `post` 一个会后动作都不自动跑**：它做完该做的（让会中模型退出显存）就停在 `waiting`（＝等你动手），`ended.phase` 仍判 `done`。`post.hook = null` / `minutes.hook = null` 两档是缺席：对应的按钮当场回 404 `action_unavailable`（如实说这台机器上没接这一层）。`meeting post` 已经接通（`65dd3e4c`）：它是**命令行那条入口**，两层都跑（R15 的两词命令形照守）。命令行另有一个重放验证入口 `meeting replay`（`a3b684bd`）：素材截断复制进工具自己的落地、直调 `run_session(..., minutes=False)`，只验证离线链——不经这两个钩子、不拉纪要，那一场的产物一个字节不动。会后那条链自己的四个开关是 `post.engine` / `post.model` / `post.dtype` / `post.chunk_seconds`（见第 3 章末），会后纪要那一层的五个开关是 `minutes.hook` / `minutes.chunk_lines` / `minutes.max_segments` / `minutes.timeout_seconds` / `minutes.dsh_url`（见第 3 章末那一节）。另有一个只给开发与测试用的 dev 替身（默认关闭，**按 key 分流**：`capture.backend = dev` 落采集替身、`transcriber.backend = dev` 落转写替身）。
+> 现状：**协议本身已经定死，四个位置现在都有实现。** `capture.backend` 的默认值 `auto` 解析到真采集后端（`meeting.backends.capture:CaptureBackend`，真探测、真起两路、真落盘与真转码）；`transcriber.backend` 的默认值 `auto` 解析到真转写后端（`meeting.backends.transcribe:TranscriberBackend`，尾读归档 → VAD 切段 → 单 worker 顺序识别 → 每路一份会中稿 + 行出口）；`post.hook` 的默认值 `auto` 解析到 `meeting.backends.post:PostProcessHook`（**解析落点**：本实现不带任何钩子方法，只答「这一层接没接」），`minutes.hook` 的默认值 `auto` 解析到 `meeting.backends.minutes:MinutesHook` —— 这两个键现在**由人按按钮时才被用到**（R26）：会后两个动作 `post_offline` / `post_minutes` 各起一条后台线程（后者经 `MinutesHook.launch()`），起完即回，跑成什么样由场次目录里的状态文件回答。**收尾第 4 步 `post` 一个会后动作都不自动跑**：它做完该做的（让会中模型退出显存）就停在 `waiting`（＝等你动手），`ended.phase` 仍判 `done`。`post.hook = null` / `minutes.hook = null` 两档是缺席：对应的按钮当场回 404 `action_unavailable`（如实说这台机器上没接这一层）。`meeting post` 已经接通（`65dd3e4c`）：它是**命令行那条入口**，两层都跑（R15 的两词命令形照守）。命令行另有一个重放验证入口 `meeting replay`（`a3b684bd`）：素材截断复制进工具自己的落地、直调 `run_session(..., minutes=False)`，只验证离线链——不经这两个钩子、不拉纪要，那一场的产物一个字节不动。会后那条链自己的四个开关是 `post.engine` / `post.model` / `post.dtype` / `post.chunk_seconds`（见第 3 章末），会后纪要那一层的五个开关是 `minutes.hook` / `minutes.chunk_lines` / `minutes.max_segments` / `minutes.timeout_seconds` / `minutes.dsh_url`（见第 3 章末那一节）。另有一个只给开发与测试用的 dev 替身（默认关闭，**按 key 分流**：`capture.backend = dev` 落采集替身、`transcriber.backend = dev` 落转写替身）。
 >
 > 协议与数据结构住在 `meeting/backends/base.py`（**只放协议与数据结构**，实现全在下游自己的模块里），替身住在 `meeting/backends/null.py` 与 `meeting/backends/dev.py`，解析的唯一入口是 `meeting/backends/registry.py`。
 
@@ -67,19 +67,11 @@
 
 每一段落一份产物：`session_dir/meeting_transcript_<source>.md`，一行 `[HH:MM] 正文`（分钟级时间戳取**采集时刻**，追加写、逐行 flush）。识别失败的段落照落一行，正文是**占位符**（`[[识别失败: 超时 20s]]` 这一形状：双层方括号、裸文本、不带时间戳、不含 `**`）；真后端产出的 `kind` 一律是 `line`，失败段落也是 `line`，靠正文认出来。文件位置、行格式与占位符的几档见 `docs/state.md` 第 3 章，SSE 侧那一行见 `docs/contract.md` 第 3.3 节。
 
-### `PostProcessHook` —— 会后钩子
+### `PostProcessHook` —— 会后钩子（解析落点）
 
-| 成员 | 语义 |
-|---|---|
-| `launch(session_dir)` | **返回即算启动成功**（不等它跑完）。收尾第 4 步不再调它（那一格做完释放显存就停在 `waiting`）；「生成会后精细稿」按钮（`post_offline`）走 `run_session(..., minutes=False)` 那条直路、不经它，`post.hook` 在那一侧只答「这一层接没接」（`null` → 按钮 404 `action_unavailable`） |
+真钩子住在 `meeting/backends/post.py`（`7c6952e5` 已落地，`post.hook` 的默认值 `auto` 解析到它）。**本类只是 `post.hook` 的解析落点，不带任何钩子方法**（起 daemon 线程跑会后链的那套 `launch` / `_run` / `_mark_failed` 没有任何产品调用方，已随收尾第 4 步的退场一并删除）：收尾第 4 步不拉起它（那一格做完释放显存就停在 `waiting`），「生成会后精细稿」按钮（`post_offline`）走 `run_session(..., minutes=False)` 那条直路、不经它，`post.hook` 在那一侧只答「这一层接没接」（`null` → 按钮 404 `action_unavailable`）。「跑会后一套」（音频归档补齐 → 离线那一趟 → 等纪要终态 → 汇总）的产品入口只剩 `meeting post` 这一条（`meeting.cli.run_post()`）；会后离线那条链由按钮按需直接跑，跑成什么样由场次目录的 `meeting_offline_status.json` 与逐块账回答（产物契约见 `docs/state.md` 第 3 章）。
 
-真钩子住在 `meeting/backends/post.py`（`7c6952e5` 已落地，`post.hook` 的默认值 `auto` 解析到它）：收尾第 4 步不再拉起它（那一格停在 `waiting`），会后离线那条链由「生成会后精细稿」按钮按需直接跑。
-
-- `launch(session_dir)` 起一条 daemon 线程跑 `meeting.offline.runner.run_session(session_dir)`，随即返回 —— 收尾不等它跑完，它跑多久都不占收尾那条预算；
-- 线程里的异常落进场次目录的 `meeting_offline_status.json`（`error` 那一格），**不回收尾流程**；`session_dir` 是空值时当场抛错，那一步据实记 `failed`；
-- 会话级 `session.json` 归收尾流程写，这条线程不去碰它；它只往场次目录落会后产物（文件名与字段契约见 `docs/state.md` 第 3 章）。整条链每跑完一块就往 `meeting_offline_progress.jsonl` 补一行（这一块的文字与这一块的落点，`a9affaa8` 落地），于是「跑到第几块」不必等整路跑完；正式稿 `meeting_offline_transcript_<source>.md` 的写时机没变（整路跑完一次写），`GET /api/sessions` 的 `has_offline` 那一格因此不受它影响；
-- `torch` / `transformers` / `av` 都在函数体内 import，`import meeting.backends.post` 保持轻量，`meeting web` 的启动链不被拖慢；
-- 它**不带 `finalize` / `transcode`**：那两项是采集后端的能力，这两个键上的闸门不看它。
+- `registry.capabilities_of()` 靠类的 `__module__` 把它当本实现、不当替身；它**不带 `finalize` / `transcode`**：那两项是采集后端的能力，这两个键上的闸门不看它。
 
 ### `MinutesHook` —— 会后纪要钩子
 
@@ -88,7 +80,7 @@
 | `claim(session_dir)` | **可选成员**：**同步**把「这一层在飞」落到盘上（真实现里是 `meeting/minutes/status.py` 的 `mark_running()`），盘上已经停着一版 `running` 时当场抛 `AlreadyRunningError`。`post_minutes` 按钮那趟在起线程之前调它同步认账（runtime 用 `getattr` 找它，取不到就跳过同步认账这一步、照旧走线程体那条路） |
 | `launch(session_dir)` | `meeting post` 的离线尾巴与 `post_minutes` 按钮调它，**返回即算启动成功**（不等它跑完）。`minutes.hook = null` 那一档不调它（按钮当场 404，`meeting post` 补纪要那一路安静跳过）。真实现另收两格 keyword-only：`force`（`meeting post --force` 那一趟）—— 盘上已经停着一版 `running` 时**建线程之前**就抛 `AlreadyRunningError`（当场拒跑），带 `force` 时放行；`claimed` —— 按钮那趟在 `claim()` 认过账时带 `claimed=True` 调它（实现若接受 `claim()` 就应接受这个格，缺省 `False`）：这里不再重复认账，重复一次会读到自己刚落下的 `running`、把这一趟自己拒掉 |
 
-真钩子住在 `meeting/backends/minutes.py`（`41465462` 已落地，`minutes.hook` 的默认值 `auto` 解析到它）。形状与 `PostProcessHook` 同一条：
+真钩子住在 `meeting/backends/minutes.py`（`41465462` 已落地，`minutes.hook` 的默认值 `auto` 解析到它）。它的形状：
 
 - `launch(session_dir)` 起一条 daemon 线程（线程名 `minutes-final`）跑 `meeting.minutes.runner.run(session_dir)`，随即返回 —— 它跑多久都不占收尾预算，也不占离线那一趟的墙钟；
 - **返回之前先把「这一层在飞」落到盘上**：`meeting/minutes/status.py` 的 `mark_running()` 同步写一版 `state = "running"` 的 `meeting_minutes_status.json`，盘上已经停着一版 `running` 时抛 `AlreadyRunningError`（带 `force=True` 时放行）—— 「同一场被拉起两个子会话」这件事因此在**跨进程**下也读得出来（用户随后手敲的 `meeting post` 是另一个进程），判据与那把瞬态 `meeting_minutes_status.lock` 见 `docs/minutes.md` 第 1.1 节；

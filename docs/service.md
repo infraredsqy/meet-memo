@@ -403,10 +403,10 @@ fix 每改一点再跑一遍、发现一个错修完还要再跑一遍——跑�
 | `tests/test_offline_replay.py` | 18 | `meeting replay` 重放验证（`a3b684bd`，**慢档**）：`--seconds` / `--chunks` 的上限换算与拒绝档、素材截断复制进自己的落地（原目录 digest 树不动）、跑完的三样读数、入口的用法错与退出码映射 |
 | `tests/test_offline_progress.py` | 14 | **逐块进度账**（`a9affaa8`）：一块跑完那一块的字与落点就在盘上（含块内 `cNN:` 标签与结果档）、跑到一半时盘上那份账与现场读数对得上、静音跳过的块与失败的块都算跑过了一块而分母不因此增减、不给 `progress` 时一个字节都不落、落盘写不下去也不带走这一趟、半行 / 空文件 / 不存在的文件读得出来、连写两次字节逐字相同且不留 `.tmp` |
 | `tests/test_session_status.py` | 14 | `GET /api/sessions/{id}`（`a9affaa8`）：路由注册点、**跑到一半读得到读数**（第 N 块 / 共 M 块、当前哪一路、已跑多久，且不涨 `revision`）、服务重启之后退回读盘那份账（`elapsed_seconds` 如实为 `null`）、目录不在原地 404 `session_dir_missing`、没登记过 404 `invalid_setting`、一次都没跑过时读数如实为空、读它之后快照九键与列表十二键一个字不动；**列表顶层第三格 `post_job`**（`52b24392`）：没在飞如实 `null`、在飞带 `{kind, dir, started_at}` 三格且每行照旧十二键、跑完翻回 `null`；**行里的 `segments` 段读数（`670d72b5`）**：行键数 11 → 12、清单与单场两只端点都带盘上段账原文；**被打断档照盘答**（`b1c6a58e`）：盘上 `interrupted` 的那一场这一格答 `interrupted`，不折回 `running` |
-| `tests/test_post_hook.py` | 19 | 会后钩子：`auto` 解析到 `PostProcessHook`、`launch()` 立即返回（daemon 线程）、缺席档记 `skipped`、空场次目录抛 `ValueError`、能力表三项皆假、补账不把盘上的 `interrupted` 盖成 `failed`（`b1c6a58e`） |
-| `tests/test_cli_post.py` | 57 | `meeting post` 这条入口：位置参数与 `--force` 的用法档、终端文案与产物绝对路径、归档补齐的六档判据（非空才转、空 PCM 不产、比 PCM 新的不重转、转砸了 PCM 一个字节不动、一路砸不拖住另一路）、编排的注入点与 `run_session` 的模块属性调用、纪要那道闸的四档、等待的上界与落定、再入闸在产品路径上的安静跳过 |
+| `tests/test_post_hook.py` | 10 | 会后钩子的解析落点与收尾第 4 步的接线：`auto` 解析到 `PostProcessHook`（本类不带任何钩子方法）、`null` 缺席档记 `skipped`、能力表三项皆假、第 4 步停 `waiting` 且一个会后动作都不启动（`auto` 与 `null` 两档）、释放显存照做（释放抛错如实记 log、真后端确实走这条线）、惰性导入（起线程跑会后链的钩子机器已删，19 → 10） |
+| `tests/test_cli_post.py` | 54 | `meeting post` 这条入口：位置参数与 `--force` 的用法档、终端文案与产物绝对路径、归档补齐的六档判据（非空才转、空 PCM 不产、比 PCM 新的不重转、转砸了 PCM 一个字节不动、一路砸不拖住另一路）、编排的注入点与 `run_session` 的模块属性调用、纪要那道闸的四档、等待的上界与落定、再入闸在产品路径上的安静跳过 |
 | `tests/test_cli_post_config.py` | 18 | `meeting post` 接配置层：`post.engine` / `post.model` / `post.dtype` / `post.chunk_seconds` 与 `minutes.*` 逐个生效（不再退回默认值）、配置损坏与取值非法两档的退出码与终端说法、用法错误优先于配置、按生效 `log.*` 重建服务级日志（主 log 不可写那一档） |
-| `tests/test_post_idempotency.py` | 32 | 幂等闸与两条入口一致性：连跑两遍时引擎与启动器的调用次数都为 0、PCM 与 MP3 不动、产物文件名集合相等、两层各缺一条判据的那几档、`running` 拒跑与 `--force` 的放行、`mark_running()` 在 `launch()` 返回之前落盘（`68927c27` 收尾轮 39 → 31：文件挪慢档，其中 8 条系**删除**非挪——在飞标记时序、双线程 claim 原子性两条并发守卫加其余 6 条等终态/超时观察类，机主裁决不恢复、逐名清单见节点报告；门闸判定走盘上状态组合的表驱动） |
+| `tests/test_post_idempotency.py` | 30 | 幂等闸：连跑两遍时引擎与启动器的调用次数都为 0、PCM 与 MP3 不动、两层各缺一条判据的那几档、`running` 拒跑与 `--force` 的放行、`mark_running()` 在 `launch()` 返回之前落盘（`68927c27` 收尾轮 39 → 31：文件挪慢档，其中 8 条系**删除**非挪——在飞标记时序、双线程 claim 原子性两条并发守卫加其余 6 条等终态/超时观察类，机主裁决不恢复、逐名清单见节点报告；门闸判定走盘上状态组合的表驱动。「两条入口一致性」那 2 条随钩子机器删除，32 → 30） |
 | `tests/test_post_actions.py` | 23 | 会后两个按钮（`05a48b6a`，全程假件）：只按「生成会后精细稿」只跑离线链（`minutes=False` 那一趟、纪要一动不动）、只按「生成纪要」只拉纪要层、**都不按就什么都没起**（第 4 步落 `waiting`）、显式 `dir` 的三档校验（不在注册表 / 目录不在原地 / 盘上还在录或收尾）与省略语义、有一趟在飞 → 409、收尾没落定 → 409、两个 hook 缺席 → 404、纪要 claim 闸同步拒与线起不来时把 claim 退回去、`GET /api/sessions` 每行的 `has_offline`、**`post_stop` 四档**（`b1c6a58e`：受理回执带 `stopping`、没有在飞拒、纪要在飞如实拒、`dir` 指到另一场拒） |
 | `tests/test_post_reconcile.py` | 5 | 服务启动对账（`b1c6a58e`，**快档**）：在飞记录 + 盘上 `running` → offline 补成 `interrupted`（缺口注记进 `error`）并清记录、盘上不是 `running` 只清记录一个字节不写、minutes 档只清 + log、没有记录不动任何东西、坏记录按空表起不阻塞启动 |
 | `tests/test_config_isolation.py` | 5 | 第六道兜底自己的用例：真入口读的是重定向后的家目录而不是机主那一份、下一条用例从「没有生效配置」开始、机主家目录被建出 / 改过时守卫当场判红并打出差 |
@@ -475,7 +475,7 @@ minutes_dsh_web 里「真子进程 / 真阈值等待」的用例改按用例级 
 |---|---|---|
 | `tests/test_drain.py` | 15.56 s | ② 真墙钟等待 + 预算边界（收尾轮 32 → 29 条；历史读数，本轮未单跑） |
 | `tests/test_offline_runner.py` | ~15 s | ② 真归档链 × 63 条（`68927c27` 收尾轮整文件挪入慢档：`meeting post` 的承重契约归收尾验收） |
-| `tests/test_cli_post.py` | ~15 s | ① `meeting post` 真入口 × 56 条（`68927c27` 收尾轮整文件挪入慢档） |
+| `tests/test_cli_post.py` | ~15 s | ① `meeting post` 真入口 × 54 条（`68927c27` 收尾轮整文件挪入慢档） |
 | `tests/test_dev_backend.py` | 0.39 s | 收尾轮 15 → 3 条后的实测（基本盘：确定性 / finalize 记账 / 注入校验；3 秒故障窗口时钟戏删） |
 | `tests/test_transcriber_backend.py` | 5.70 s | ③ 模型注入与协议（收尾轮 20 → 14 条后实测；时钟戏换成「模型线程 id ≠ 主线程」结构断言） |
 | `tests/test_shutdown_signal.py` | 8.70 s | ① 真服务子进程 + `CTRL_BREAK_EVENT`（子进程用例现按用例级标记；历史读数） |

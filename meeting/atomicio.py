@@ -7,8 +7,9 @@
 
 临时文件名**每个写方各不相同**（见 `_tmp_path_for()`）：同一个目标上并发两个写方时，
 共用一个 `<名字>.tmp` 会让先落地的 `os.replace` 把那份临时文件消费掉，另一边的
-`os.replace` 随即抛 `FileNotFoundError` —— 会后主链与 `meeting/backends/post.py` 的
-`_mark_failed` 正是这种并发写方。各写各的临时文件之后，两个写方都能落地，
+`os.replace` 随即抛 `FileNotFoundError` —— 同一份状态文件的两个写方（比如服务侧的
+会后链与另一个进程里 `meeting post` 那一趟的补账，都经 `write_text_atomic()` 落盘）
+正是这种并发写方。各写各的临时文件之后，两个写方都能落地，
 目标那一格任何时刻读到的都是一份完整的内容。
 
 Windows 上一份**别人正拿在手里**的文件会让 `os.replace` 抛 `PermissionError`

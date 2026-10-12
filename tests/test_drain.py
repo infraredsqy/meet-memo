@@ -1764,20 +1764,20 @@ def test_log_step_lands_failed_when_the_session_log_write_reports_a_problem(
 # 「缺席」这半边。代价是本文件从此不再观察**产品缺省**：`post.hook = auto` 配上
 # `meeting/backends/post.py` 这条真实现，第 4 步该按「有实现且启动成功」记 `done`。
 # 这一条把那半边补回来：`post.hook` 整个不写（`post_hook_absent=False`，取值直接来自
-# `config.DEFAULT_VALUES`）、走真正的 `_resolve_backends()` 与真正的 `drain()` 四步，
-# 只把 `launch()` 换成一条只记账的替身 —— 真 `launch()` 会起后台线程按 `post.engine = auto`
-# 真去加载权重，`tests/conftest.py` 不许任何一个用例碰真模型。
+# `config.DEFAULT_VALUES`）、走真正的 `_resolve_backends()` 与真正的 `drain()` 四步。
+# 本实现不再带任何钩子方法（`launch()` 已随收尾第 4 步的退场一并删除），第 4 步因此
+# 起不了任何后台线程，`tests/conftest.py` 不许任何一个用例碰真模型。
 # ---------------------------------------------------------------------------
 
 
 def test_post_step_waits_for_the_user_under_the_product_default_hook(tmp_path, monkeypatch):
-    """产品缺省 `post.hook = auto`：第 4 步解析到真实现，但**一次都不被拉起**（R26）。
+    """产品缺省 `post.hook = auto`：第 4 步解析到真实现，但**一个会后动作都不启动**（R26）。
 
     与 ⑤b2 同一条进程内路子，差别只在 `post.hook` 这一格：这里**不写它**，
     配置里那一格的取值就是 `config.DEFAULT_VALUES` 里的产品缺省（先断言它确实是 `auto`，
     免得缺省值哪天改了这条用例悄悄换成另一档）。断言这几件事：解析落到本单元的钩子类且
-    `skipped()` 为假、第 4 步停在 `waiting`（＝等你动手）、`launch()` **一次都没被调到**、
-    收尾终态 `ended.phase == "done"`（按「结束录音」之后什么都不发生，工作区回到没有进行中的会议）。
+    `skipped()` 为假、第 4 步停在 `waiting`（＝等你动手）、收尾终态
+    `ended.phase == "done"`（按「结束录音」之后什么都不发生，工作区回到没有进行中的会议）。
     """
     from meeting.backends import post as post_module
     from meeting.config import DEFAULT_VALUES
@@ -1796,14 +1796,6 @@ def test_post_step_waits_for_the_user_under_the_product_default_hook(tmp_path, m
     assert runtime.post_resolution.skipped() is False
     assert isinstance(runtime.post_hook, post_module.PostProcessHook)
 
-    launched: list[str] = []
-
-    def fake_launch(self, session_dir: str) -> None:
-        """替身 `launch()`：只记下收到的场次目录（这一条要证明的正是它一次都没被调到）。"""
-        launched.append(str(session_dir))
-
-    monkeypatch.setattr(post_module.PostProcessHook, "launch", fake_launch)
-
     async def one_pass() -> None:
         runtime.start_session(dir=_new_workspace(tmp_path, "post-default-hook"))
         begin_drain(runtime.snapshot, reason="user")
@@ -1813,7 +1805,6 @@ def test_post_step_waits_for_the_user_under_the_product_default_hook(tmp_path, m
 
     statuses = {step.id: step.status for step in runtime.snapshot.ended.steps}
     assert statuses["post"] == "waiting", (statuses, runtime.snapshot.ended)
-    assert launched == [], f"结束录音之后会后流程不许自己被拉起来：{launched}"
     assert runtime.snapshot.ended.phase == "done", runtime.snapshot.ended.phase
 
 

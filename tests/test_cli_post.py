@@ -1,6 +1,6 @@
 """`meeting post` 真入口与「跑会后一套」那段编排（`65dd3e4c` phase1）。
 
-要盯住的六条（对应任务书「验证口径」那一节）：
+要盯住的五条（对应任务书「验证口径」那一节）：
 
   1. **参数面**：不给位置参数 → 用法说明 + `EXIT_REJECTED`；指到不存在的目录 →
      原因里带上那条路径 + `EXIT_REJECTED`；`--force` 被认下（不报用法错误）；
@@ -12,9 +12,7 @@
      这一趟 `EXIT_FAILURE`、**PCM 的 sha256 与转换前逐字节相同**；
   4. **编排只走一条路**：`run_post` 里的 `run_session` 是经 `runner.run_session` 这个
      模块属性取的（用例换掉它之后，替身真的被调到）；
-  5. **第二条入口同源**：`PostProcessHook._run()` 调到的是同一个 `run_post`，
-     而 `launch()` 仍然立刻返回；
-  6. **纪要闸**：终态 `done` + `meeting_final.md` 过得了现成四条判据时**不调启动器**、
+  5. **纪要闸**：终态 `done` + `meeting_final.md` 过得了现成四条判据时**不调启动器**、
      返回 `announced is False`；把那份纪要删掉之后再调，启动器**又被调一次**。
 
 **一条真子进程都不起**：参数面走进程内 `pytest.raises(SystemExit)`，编排面一律注入假件
@@ -46,7 +44,6 @@ import pytest
 
 from meeting import cli as cli_module
 from meeting import config as config_module
-from meeting.backends import post as post_module
 from meeting.minutes import status as minutes_status
 from meeting.offline import artifacts as offline_artifacts
 from meeting.offline import progress as offline_progress
@@ -59,8 +56,8 @@ from meeting.cli import (
     EXIT_FAILURE,
     EXIT_OK,
     EXIT_REJECTED,
-    _minutes_outcome,
     _parse_post_args,
+    _wait_for_settled_minutes,
     post,
     run_post,
     sync_archive,
@@ -1129,84 +1126,7 @@ def test_the_engine_is_handed_to_the_offline_layer(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 五、两条入口同源
-# ---------------------------------------------------------------------------
-
-
-def test_the_post_hook_runs_the_same_orchestration(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """`PostProcessHook._run()` 调到的是同一个 `run_post`（换成记账替身，断言调到一次）。"""
-    session = synth_session(tmp_path / "250919")
-    seen: list[tuple[str, dict]] = []
-
-    def stand_in(session_dir, **kwargs):
-        seen.append((str(session_dir), dict(kwargs)))
-        return {"session_dir": str(session_dir), "state": "done", "exit_code": EXIT_OK}
-
-    monkeypatch.setattr(cli_module, "run_post", stand_in)
-
-    post_module.PostProcessHook()._run(str(session))
-
-    assert len(seen) == 1, f"编排函数该被调到一次，实测 {seen}"
-
-    # 线程体不显式传参：`force` 缺省 `False`、其余假件缺省 `None`（走产品路径）
-    def fake_run_post(session_dir, **kwargs):
-        seen.clear()
-        seen.append((str(session_dir), dict(kwargs)))
-        return {"session_dir": str(session_dir), "state": "done", "exit_code": EXIT_OK}
-
-    monkeypatch.setattr(cli_module, "run_post", fake_run_post)
-    post_module.PostProcessHook()._run(str(session))
-
-    assert seen == [(str(session), {})], f"第二条入口该原样交给编排函数：{seen}"
-
-
-def test_the_post_hook_still_returns_immediately(tmp_path: Path, monkeypatch) -> None:
-    """`launch()` 仍然**立刻返回**（本单元不许把它变成同步等待）。"""
-    import threading
-
-    session = synth_session(tmp_path / "250919")
-    entered = threading.Event()
-    release = threading.Event()
-
-    def blocking(session_dir, **_kwargs):
-        entered.set()
-        release.wait(timeout=10.0)
-        return {"session_dir": str(session_dir)}
-
-    monkeypatch.setattr(cli_module, "run_post", blocking)
-
-    begun = time.monotonic()
-    post_module.PostProcessHook().launch(str(session))
-    elapsed = time.monotonic() - begun
-
-    assert elapsed < 0.5, f"launch() 该当场返回，实测 {elapsed:.3f}s"
-    assert entered.wait(timeout=10.0), "后台那一条线程该已经跑起来"
-    assert not release.is_set()
-    release.set()
-
-
-def test_a_failing_orchestration_still_lands_in_the_offline_status(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """编排函数整个抛出来时，钩子把状态文件补成 `failed`，异常不外传。"""
-    session = synth_session(tmp_path / "250919")
-
-    def boom(session_dir, **_kwargs):
-        raise RuntimeError("编排函数整个炸了")
-
-    monkeypatch.setattr(cli_module, "run_post", boom)
-
-    post_module.PostProcessHook()._run(str(session))
-
-    document = json.loads((session / OFFLINE_STATUS_NAME).read_text(encoding="utf-8"))
-    assert document["state"] == "failed"
-    assert "编排函数整个炸了" in str(document["error"])
-
-
-# ---------------------------------------------------------------------------
-# 六、纪要那一层起跑之前那道闸
+# 五、纪要那一层起跑之前那道闸
 # ---------------------------------------------------------------------------
 
 
@@ -1367,16 +1287,21 @@ def test_the_offline_status_file_is_untouched_by_the_gate(tmp_path: Path) -> Non
 
 
 # ---------------------------------------------------------------------------
-# 七、等纪要终态：有界、落定就走
+# 六、等纪要终态：有界、落定就走
 # ---------------------------------------------------------------------------
 
 
 def test_the_wait_returns_as_soon_as_the_terminal_state_lands(tmp_path: Path) -> None:
-    """状态文件一落终态就返回，不等满上界（拿一个宽裕的上界跑，实测耗时远小于它）。"""
+    """状态文件一落终态就返回，不等满上界（拿一个宽裕的上界跑，实测耗时远小于它）。
+
+    判据落在产品路径那条等待（`_wait_for_settled_minutes()`）上：基线取在写入终态**之前**，
+    「这一趟新落的终态」一出现就该立刻回来。
+    """
     session = synth_session(tmp_path / "250919")
+    baseline = cli_module._minutes_baseline(session)
     write_minutes_status(session, state="done")
 
-    outcome = _minutes_outcome(session, timeout=600.0)
+    outcome = _wait_for_settled_minutes(session, baseline=baseline, timeout=600.0)
 
     assert outcome["hook"] == "finished"
     assert outcome["state"] == "done"
@@ -1387,9 +1312,10 @@ def test_the_wait_returns_as_soon_as_the_terminal_state_lands(tmp_path: Path) ->
 def test_the_wait_gives_up_at_its_deadline(tmp_path: Path) -> None:
     """上界到点还没落定 → 记 `timeout`，退出码走 `EXIT_FAILURE`（不无限等）。"""
     session = synth_session(tmp_path / "250919")
+    baseline = cli_module._minutes_baseline(session)
     write_minutes_status(session, state="running")
 
-    outcome = _minutes_outcome(session, timeout=0.0)
+    outcome = _wait_for_settled_minutes(session, baseline=baseline, timeout=0.0)
 
     assert outcome["hook"] == "timeout"
     assert outcome["state"] == "timeout"
@@ -1500,7 +1426,7 @@ def test_the_wait_upper_bound_comes_from_the_minutes_wall_clock_key(
 
 
 # ---------------------------------------------------------------------------
-# 八、退出码只走现成那五档
+# 七、退出码只走现成那五档
 # ---------------------------------------------------------------------------
 
 

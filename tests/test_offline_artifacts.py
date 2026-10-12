@@ -865,8 +865,9 @@ def test_concurrent_writers_to_one_target_both_succeed(tmp_path) -> None:
 
     旧写法把临时文件叫 `<名字>.tmp`：两个写方共用它，先落地的 `os.replace` 把它消费掉，
     另一边的 `os.replace` 随即抛 `FileNotFoundError` —— 那条异常逃出了只认
-    `PermissionError` 的重试。现场正有这种并发写方：会后主链在写状态文件，收尾那一步
-    `meeting/backends/post.py` 的 `_mark_failed()` 也在写同一格。
+    `PermissionError` 的重试。现场正有这种并发写方：会后主链在写状态文件，另一个进程里
+    `meeting post` 那一趟上抛前的补账（`_mark_offline_failed()` → `mark_failed_if_unset()`）
+    也在写同一格。
 
     两个写方各写 20 轮（`session_id` 各不相同，好认出最后留下的是谁那一版），收尾断言
     三件事：没有哪一边抛错、盘上那份读得回来且取值来自其中一个写方、临时文件一个不留。

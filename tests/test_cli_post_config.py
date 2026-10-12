@@ -81,8 +81,8 @@ from meeting.offline import minutes_tail as minutes_tail_module
 from meeting.offline import runner as offline_runner
 from meeting.offline.engine import OfflineSegment
 
-#: 落终态的现成替身（本仓既有那一族：`SettlingLauncher` / `SettlingHookImplementation` /
-#: `DelayedHookImplementation`）——本文件不新造一套，拉起那一处的记账替身交给它收工。
+#: 落终态的现成替身（本仓既有那一族：`SettlingLauncher` / `DelayedHookImplementation`）
+#: ——本文件不新造一套，拉起那一处的记账替身交给它收工。
 from tests.test_post_idempotency import DelayedHookImplementation
 
 #: 假引擎在配置里的取值（`module:Class` 形状：配置层的 `BACKEND_SELECTORS` 对这一档放行）

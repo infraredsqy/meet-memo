@@ -13,9 +13,8 @@
 （PCM → MP3，复用 `meeting/capture/archive.py` 那一份转码）→ 跑离线那一趟 → 等纪要那一层的
 终态 → 把每层的结论与产物**绝对路径**汇总成一份可读摘要。`post()` 只做三件事：解析参数 →
 调 `run_post()` → 按返回的 `exit_code` 挑 `sys.exit(<常量>)` 并打终端输出。
-**编排的共用面**：`run_post()` 是 `meeting post` 这条入口的编排；`meeting/backends/post.py`
-的 `PostProcessHook._run()` 调的也是它（`7c6952e5`），但那个钩子当前没有调用方 ——
-收尾第 4 步不再拉起任何会后动作，「生成会后精细稿」按钮走 `run_session` 直路。
+**编排只有一条入口**：`run_post()` 是 `meeting post` 这条入口的编排 —— 收尾第 4 步
+不拉起任何会后动作，「生成会后精细稿」按钮走 `run_session` 直路。
 
 `config.py` / `logging_setup.py` **不定义退出码常量**：它们只抛本 Phase 已定的异常
 （配置损坏、值级非法、主 log 不可写），由 `main()` 映射成 §3.4 的常量后 `sys.exit`。
@@ -103,8 +102,7 @@ REPLAY_USAGE = (
 REPLAY_FLAGS: tuple[str, ...] = ("--seconds", "--chunks", "--out")
 
 # ---------------------------------------------------------------------------
-# 会后编排（`meeting post` 这条入口的 run_post()；`PostProcessHook._run()` 也调它，
-# 但该钩子当前没有调用方——收尾不自动跑、按钮走 run_session 直路）
+# 会后编排（`meeting post` 这条入口的 run_post()；收尾不自动跑、按钮走 run_session 直路）
 # ---------------------------------------------------------------------------
 
 #: 归档那一层的三种结论文档名
@@ -872,7 +870,7 @@ def run_post(
             else None
         )
         # 逐块进度账（`meeting_offline_progress.jsonl`）：**这一条入口也落**。挂在离线段
-        # 收工入口这一个落点上，`meeting post` 与会后钩子（同一个 `run_post()`）因此都算数，
+        # 收工入口这一个落点上，`meeting post`（经 `run_post()`）因此也算数，
         # 落盘跟着链走、不挑是哪个按钮拉起的（`docs/design-intent.md` 第 12 条）。
         # 调用方注入的那一份优先（用例与下游的「拿旧录音全速重跑」都靠这一格）。
         if progress is None:
@@ -895,10 +893,8 @@ def run_post(
             except Exception:  # pragma: no cover - 同上
                 pass
             # 上抛的理由：`meeting post` 这一条入口自己接住它（摘要里那一格如实写、这一趟按
-            # `EXIT_FAILURE` 收场），而收尾第 4 步那条入口的线程体接住它之后把
-            # `meeting_offline_status.json` 补成 `failed` —— 那一格因此不会永远停在 `running`
-            # （`PostProcessHook` 的既有契约：任何异常都落进状态文件、绝不外传给收尾流程）。
-            # 在**上抛之前**把状态文件补一版 `failed`，好让直接调 `run_post()` 的读者也有账可查。
+            # `EXIT_FAILURE` 收场）。在**上抛之前**把状态文件补一版 `failed`，好让直接调
+            # `run_post()` 的读者也有账可查 —— 那一格不会永远停在 `running`。
             _mark_offline_failed(directory, offline_error)
             raise
 
@@ -1040,9 +1036,9 @@ def _launch_minutes_on_the_product_path(
 
     **拉起 ≠ 落定，因此拉起成功之后要等这一层的终态**：真启动器起一条 daemon 线程就返回
     （`backends/minutes.py::MinutesHook.launch`），线程体第一件事是把状态文件落成 `running`，
-    整条链要跑几十分钟。等待交给现成的 `_minutes_outcome()`（上界取现成的配置键
-    `minutes.timeout_seconds`，事件驱动轮询、落定即返回），等到的终态再由
-    `_settled_minutes_outcome()` **如实映射**成这一层的结论与退出码。
+    整条链要跑几十分钟。等待交给现成的 `_settled_minutes_outcome()`（上界取现成的配置键
+    `minutes.timeout_seconds`，事件驱动轮询、落定即返回），等到的终态**如实映射**成
+    这一层结论与退出码。
 
     拉起点整个缺席 / 被再入闸拦下 / 解析不出实现时**不等**：这一趟什么都没被拉起来，
     没有终态会来。**再入闸那一档（`skipped`）安静跳过** —— 走 `_minutes_from_launcher()`
@@ -1412,7 +1408,6 @@ def _mark_offline_failed(directory: Path, error: str) -> None:
     之前，离线段自己**已经现场写过**一版（`runner._write_failed_status()` 落 `failed`，
     一路跑成那种场面落 `partial`），那一版里的话比这里收到的通用串准
     （`engine_load_error` 这类词档只在它那儿）。否则补一版 `failed` 并写上这次的原因。
-    `meeting/backends/post.py` 的线程体兜底走的是同一个函数。
 
     本函数只剩「尽力而为」这一层壳：补写失败只留一条 log，
     不掩盖调用方正在上抛的那条异常。
@@ -1835,96 +1830,6 @@ def _minutes_from_launcher(
     return result
 
 
-def _minutes_outcome(
-    directory: Path,
-    *,
-    deadline: float | None = None,
-    timeout: float | None = None,
-    poll_seconds: float = MINUTES_POLL_SECONDS,
-    launched: bool = False,
-) -> dict[str, Any]:
-    """纪要那一层的结论：等它的**终态**落定，再如实报出来。
-
-    等待的上界 `timeout` 缺省取现成的纪要墙钟键 `minutes.timeout_seconds`；编排函数还会把
-    它自己那一趟的绝对时刻 `deadline` 传下来，两者取更早的那一个。**这个等待是这一层唯一
-    读得到的完成通知**：启动器起的是 daemon 线程（`launch()` 返回即算启动成功），终态由那条
-    线程或一个 headless 子进程写进 `meeting_minutes_status.json` —— 编排函数手里没有可 join
-    的句柄、也没有跨进程的回调，于是只能盯着盘上那一份文件，每读一次之间让出 `poll_seconds`
-    （缺省 50 毫秒）。落定就立刻返回，不等满上界；到点还没落定就以 `timeout` 收场。
-
-    `launched = True` 是「这一趟刚把启动器拉起来、正等它交终态」那一档：那一刻状态文件可能
-    **还没出现**（真启动器起的是 daemon 线程，线程体写第一版 `running` 要等一小会儿），
-    因此这一档把「文件还没出现」也算成「还没落定」、接着等到它出现或到点。缺省 `False`
-    （读者只想知道盘上现状）照旧把缺席当成 `absent` 当场交回，不空等。
-
-    落定之后按状态文件分档：
-
-      - `already_done`：这一层的终态早就是 `done`、`meeting_final.md` 也过得了那四条判据，
-        离线那一趟尾巴上的闸因此**没调启动器**（R8 的「反复重跑不再拉起子会话」在此可读）；
-      - `absent`：这一层这一趟没有留下状态文件（`minutes.hook` 缺席或子会话闸那一档）；
-      - `finished`：按状态文件的终态分档（`done` / `failed`），`state` 就是那一档；
-      - `unreadable` / `timeout`：状态文件读不动（坏 JSON、缺字段）/ 到点还没落定。
-    """
-    status_path = directory / offline_runner.MINUTES_STATUS_NAME
-    final_path = directory / MINUTES_FINAL_NAME
-    budget = _minutes_timeout_seconds() if timeout is None else float(timeout)
-
-    if not status_path.is_file() and not launched:
-        if final_path.is_file():
-            return {
-                "hook": "finished",
-                "state": "done",
-                "reason": None,
-                "status_path": str(status_path.resolve()),
-                "final": str(final_path.resolve()),
-                "waited_seconds": 0.0,
-            }
-        return {
-            "hook": "absent",
-            "state": None,
-            "reason": "纪要那一层这一趟没有留下状态文件",
-            "status_path": str(status_path.resolve()),
-            "final": None,
-            "waited_seconds": 0.0,
-        }
-
-    begun = time.monotonic()
-    state = _read_minutes_state(status_path)
-
-    def unsettled() -> bool:
-        """盘上那一刻还看不出终态吗（`launched` 那一档：文件还没出现也算还没落定）。"""
-        if not status_path.is_file():
-            return bool(launched)
-        return state == LAYER_RUNNING
-
-    while unsettled():
-        remaining = _remaining_seconds(begun, budget, deadline)
-        if remaining <= 0.0:
-            state = "timeout"
-            break
-        time.sleep(min(float(poll_seconds), remaining))
-        state = _read_minutes_state(status_path)
-
-    if state == "timeout":
-        reason = (
-            f"等纪要终态超过 {budget:.0f} 秒（上界取 minutes.timeout_seconds）还没落定"
-        )
-    elif state == "unreadable":
-        reason = "纪要状态文件读不动（坏 JSON 或缺字段）"
-    elif state == LAYER_FAILED:
-        reason = "纪要那一层落 failed（详见 meeting_minutes_status.json 与 working/minutes-run.log）"
-    else:
-        reason = None
-    return {
-        "hook": state if state in ("unreadable", "timeout") else "finished",
-        "state": state,
-        "reason": reason,
-        "status_path": str(status_path.resolve()),
-        "final": str(final_path.resolve()) if final_path.is_file() else None,
-        "waited_seconds": round(time.monotonic() - begun, 3),
-    }
-
-
 def _remaining_seconds(begun: float, budget: float, deadline: float | None) -> float:
     """等纪要还剩多少秒：`budget` 与 `deadline` 里更早的那一个说了算。"""
     remaining = float(budget) - (time.monotonic() - begun)
@@ -2025,7 +1930,7 @@ def _wait_for_settled_minutes(
     自己那一趟的绝对时刻 `deadline` 传下来，两者取更早的那一个。到点还没落定 → `timeout`
     那一档：如实报「还在跑」，既不写成功也不写 `failed`。
 
-    落定的那一版按 `state` 分档（与 `_minutes_outcome()` 同一套口径）：
+    落定的那一版按 `state` 分档：
 
       - `done` / `failed` → `hook="finished"`、`state` 就是那一档；
       - `unreadable` → 状态文件读不动（坏 JSON 或缺字段，且到上界都没换成一份读得动的）；

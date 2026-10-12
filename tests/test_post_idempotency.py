@@ -10,10 +10,9 @@
      提示里点名那一个状态文件与 `--force`；带上 `--force` → 两层都重跑；
   4. **无待办**：两层都 `done`、产物齐、MP3 比 PCM 新 → `EXIT_OK`、两条计数都为 0，
      终端打出「无待办」那一句；
-  5. **两条入口的同源与一致**：`meeting post` 与 `PostProcessHook().launch()` 都经
-     `meeting.cli.run_post`（换成记账替身后各被调到一次），且对内容等价的两份场次目录
-     写出**同一套产物文件名**；
-  6. **注入件一路向下传**：两个入口并发跑时各自的假启动器互不串台（没有一处替换模块
+  5. **入口编排**：`meeting post` 经 `meeting.cli.run_post`（起线程跑会后链的那条钩子
+     入口已随收尾第 4 步的退场删除，产品入口只剩这一条）；
+  6. **注入件一路向下传**：两条并发跑的链各自的假启动器互不串台（没有一处替换模块
      全局属性，也没有摘掉 `tests/conftest.py` 的再入闸标记）。
 
 **一条真子会话都不起**：本文件每一个会走到纪要钩子的用例都注入只记账的假启动器；
@@ -37,7 +36,6 @@ import pytest
 from meeting import cli as cli_module
 from meeting import config as config_module
 from meeting.backends import minutes as minutes_backend
-from meeting.backends import post as post_module
 from meeting.minutes import launch as minutes_launch
 from meeting.minutes import status as minutes_status
 from meeting.offline import artifacts as offline_artifacts
@@ -255,23 +253,6 @@ class SettlingLauncher(RecordingLauncher):
         self(session_dir)
 
 
-class SettlingHookImplementation:
-    """纪要那一层解析出来的**实现**的替身：`launch()` 记账，并照子会话的收工样子落产物。
-
-    产品路径拉起走的是 `resolution.implementation.launch(目录)`（`minutes.hook = auto`
-    解析出来的东西的形状），因此这台替身与 `SettlingLauncher` 落同一套终态、记同一个账。
-    """
-
-    def __init__(self) -> None:
-        self.calls: list[str] = []
-
-    def launch(self, session_dir: Any) -> None:
-        self.calls.append(str(session_dir))
-        session = Path(session_dir)
-        write_minutes_done(session)
-        write_final(session)
-
-
 class DelayedHookImplementation:
     """**真 `MinutesHook` 的时序形状**：`launch()` 起一条 daemon 线程就返回，终态隔一会儿才落。
 
@@ -282,8 +263,8 @@ class DelayedHookImplementation:
     写终态那一版）。
 
     `latency` 是**被模拟的那个子会话的耗时**，用它造出「拉起那一刻盘上还是 `running`」
-    这个现场；用例侧的等待落在产品代码那条轮询上（`_minutes_outcome()`），因此这里不必
-    用 `wait_until()` 去赌时序。
+    这个现场；用例侧的等待落在产品代码那条轮询上（`_wait_for_settled_minutes()`），
+    因此这里不必用 `wait_until()` 去赌时序。
     """
 
     def __init__(self, *, latency: float = 0.1, state: str = "done") -> None:
@@ -807,115 +788,7 @@ def test_the_offline_runner_keeps_its_own_announce_function(
 
 
 # ---------------------------------------------------------------------------
-# 六、两条入口：同源 + 产物文件名集合相等
-# ---------------------------------------------------------------------------
-
-
-def test_both_entries_call_the_same_orchestration(tmp_path: Path) -> None:
-    """`meeting post` 与直接驱动的 `PostProcessHook._run()` 都经 `meeting.cli.run_post`：替身各被调到一次。"""
-    session = synth_session(tmp_path / "250919")
-    seen: list[tuple[str, dict]] = []
-
-    def stand_in(session_dir, **kwargs):
-        seen.append((str(session_dir), dict(kwargs)))
-        return {"session_dir": str(Path(session_dir).resolve()), "state": "done", "exit_code": EXIT_OK}
-
-    original = cli_module.run_post
-    cli_module.run_post = stand_in
-    try:
-        with pytest.raises(SystemExit):
-            post([str(session)])
-        post_module.PostProcessHook()._run(str(session))
-    finally:
-        cli_module.run_post = original
-
-    assert len(seen) == 2, f"两条入口该各调一次编排函数，实测 {seen}"
-    assert {Path(item[0]).resolve() for item in seen} == {session.resolve()}
-
-
-def test_the_two_entries_write_the_same_artifact_names(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _a_short_minutes_bound: float
-) -> None:
-    """内容等价的两份场次目录：一条走 `meeting post`、一条走钩子，产物文件名集合相等。
-
-    两条入口都注入**同一个假引擎与同一台（形状相同的）假启动器**：第一条经 `run_post(...)`
-    的形参递进去，第二条（`PostProcessHook._run()` 起的 daemon 线程）经 `runner.build_engine`
-    与 `registry.resolve_minutes_hook` 这两处**模块属性**递进去 —— 线程体不给形参，
-    产品路径上这两处就是引擎与启动器的解析点。**本文件一条真模型都不加载**：
-    `build_engine` 在现场被换成假引擎。
-
-    **两条链的纪要产物都由各自的假件自己落**（`SettlingLauncher` / `SettlingHookImplementation`
-    照真子会话的收工样子写 `meeting_minutes_status.json` + `meeting_final.md`）：拉起那一档
-    一律等这一趟新落的终态，因此只记账不落终态、或由用例手工补齐的写法都不算数 ——
-    这条断言量的才是**两条入口各自的编排**写出来的文件名集合。
-    """
-    engine = FakeEngine()
-    by_entry = synth_session(tmp_path / "by-entry")
-    by_hook = synth_session(tmp_path / "by-hook")
-    entry_launcher = SettlingLauncher()
-    # 收尾那条入口走的是**产品路径**（线程体不给形参），拉起这一步落地在 `minutes.hook` 的
-    # 解析结果上：因此这里的替身与 `SettlingLauncher` 同形 —— 记账之外还要照真子会话的
-    # 收工样子落那两份产物（`meeting post` 那一趟拉起之后会**等这一趟新落的终态**，
-    # 只记账不落终态的替身会让那一趟等到上界）。
-    hook_implementation = SettlingHookImplementation()
-    monkeypatch.setattr(offline_runner, "build_engine", lambda config=None: engine)
-    monkeypatch.setattr(
-        "meeting.backends.registry.resolve_minutes_hook",
-        lambda *a, **k: FakeResolution(hook_implementation),
-    )
-    # 入口一：`meeting post` 那一趟（`post()` 自己按摘要里的退出码收场）
-    original = cli_module.run_post
-    cli_module.run_post = lambda session_dir, **kwargs: run_post(
-        session_dir, engine=engine, minutes_launcher=entry_launcher
-    )
-    try:
-        with pytest.raises(SystemExit) as info:
-            post([str(by_entry)])
-    finally:
-        cli_module.run_post = original
-    assert info.value.code == EXIT_OK
-
-    # 入口二：直接驱动的 `PostProcessHook()._run()`（daemon 线程，等它落定靠轮询状态文件）
-    # —— 该钩子的产品调用方已退场（收尾第 4 步不再拉起、两个按钮各走各的路），这条用例
-    # 拿它的线程体当第二条入口，钉「两条入口共用 run_post」这件事。
-    # 这一趟走的是**产品路径**（线程体不给形参），再入闸标记在场时会当场安静跳过，
-    # 因此先摘掉它 —— 这一档安全：实现那一格已经被换成只记账的计数替身，起不了任何东西。
-    monkeypatch.delenv("MEETING_MINUTES_CHILD", raising=False)
-    post_module.PostProcessHook()._run(str(by_hook))
-    helpers.wait_until(
-        lambda: (by_hook / OFFLINE_STATUS_NAME).is_file()
-        and json.loads((by_hook / OFFLINE_STATUS_NAME).read_text(encoding="utf-8"))["state"]
-        == "done",
-        timeout=BG_TIMEOUT_SECONDS,
-        what="收尾那一趟的离线状态文件落到终态",
-    )
-
-    # 两条入口的纪要那一层都得到过终态，且各自由**那一趟的假件**写下（不是用例手工补齐）
-    assert entry_launcher.calls == [str(by_entry)], entry_launcher.calls
-    assert hook_implementation.calls == [str(by_hook)], hook_implementation.calls
-    for session in (by_entry, by_hook):
-        assert (session / MINUTES_STATUS_NAME).is_file(), session
-        assert (session / MINUTES_FINAL_NAME).is_file(), session
-
-    def names(root: Path) -> set[str]:
-        return {path.name for path in root.iterdir() if path.is_file()}
-
-    assert names(by_entry) == names(by_hook), (
-        f"两条入口该写出同一套产物文件名：\n{names(by_entry)}\n{names(by_hook)}"
-    )
-    # 集合里确实含音频归档、两份状态文件与纪要（不然这条断言是空的）
-    for expected in (
-        "meeting_audio_mic_001.pcm",
-        "meeting_audio_mic_001.mp3",
-        OFFLINE_STATUS_NAME,
-        MINUTES_STATUS_NAME,
-        MINUTES_FINAL_NAME,
-    ):
-        assert expected in names(by_entry), expected
-
-
-# ---------------------------------------------------------------------------
-# 六之一、**注入路径**上的等待：拉起那一档等的是**本趟新落的终态**
+# 六、**注入路径**上的等待：拉起那一档等的是**本趟新落的终态**
 # ---------------------------------------------------------------------------
 
 
