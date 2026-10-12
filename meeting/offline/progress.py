@@ -1,12 +1,12 @@
-"""会后离线转写的**逐块进度账**（`meeting_offline_progress.jsonl`）与它的现场读数。
+"""会后离线转写的**逐块进度记录**（`meeting_offline_progress.jsonl`）与它的现场读数。
 
 ## 这份文件是什么
 
-每跑完一块就往场次目录里那份进度账上补一行：**这一块的文字 + 这一块的落点**。
+每跑完一块就往场次目录里那份进度记录上补一行：**这一块的文字 + 这一块的落点**。
 一块跑完，那一块的字当场就能从盘上读到，不必等整路跑完（`docs/design-intent.md`
 第 12 条「每跑完一块就落一次盘」、R27）。
 
-一份进度账、两路分节（`source` 那一格）。**两路各算各的块数与分母**（第 9 条：
+一份进度记录、两路分节（`source` 那一格）。**两路各算各的块数与分母**（第 9 条：
 两路永远不合并），合成一个整场分母就是在造一个不存在的量。
 
 ## 三条边界（照做，别放宽）
@@ -14,13 +14,13 @@
 1. **正式稿另有一份**。正式稿 `meeting_offline_transcript_<source>.md` 的写时机一个字
    不改（整路跑完一次写）、**也不许提前建它**：`meeting/workspace.py` 的
    `has_offline_transcript()` 只看名目，提前建正式文件会让 R29 那一格提前变真。
-   进度账的名字与正式稿不同（`meeting_offline_progress.jsonl`），前缀也对不上，
+   进度记录的名字与正式稿不同（`meeting_offline_progress.jsonl`），前缀也对不上，
    两者互不冒充。
 2. **它是一份给人看的读数，不带校验性质的含义**。墙钟跨度、块计数这类错了就错了，
-   任何代码不许拿它去对账、报错、改结论（`docs/design-intent.md` 第 6、7 条）。
+   任何代码不许拿它去核对、报错、改结论（`docs/design-intent.md` 第 6、7 条）。
    它也不参与 `meeting/cli.py` 的幂等闸（那道闸读的是 `meeting_offline_status.json`
    的 `state` 那一格）。
-3. **落盘失败不带走这一趟**。进度账是附注，写不下去只记一条 log；正片照跑。
+3. **落盘失败不带走这一趟**。进度记录是附注，写不下去只记一条 log；正片照跑。
 
 ## 形状
 
@@ -46,7 +46,7 @@
 
 整份重写 + 原子替换（`artifacts.write_text_atomic()`）。写方是会后那条后台线程，
 读方是界面随时打过来的请求；一篇写到一半的 JSON 比慢一点更坏，而原子替换正是这一族
-既有产物在用的写法（`meeting_offline_status.json` 同款）。代价是每块重写整份 —— 一份账
+既有产物在用的写法（`meeting_offline_status.json` 同款）。代价是每块重写整份 —— 一份记录
 按每行约 200 字节算，几十块也就几十 KB，相对一次几十秒的模型推理可以忽略。
 
 **读方容忍原子写的中间态**：读到空文件、半行、或文件正被换走时，如实交回"读不出来"，
@@ -67,17 +67,17 @@ from meeting.offline import artifacts
 
 _log = logging.getLogger("meeting.offline.progress")
 
-#: 逐块进度账的文件名。刻意与正式稿分家：`has_offline_transcript()` 按
+#: 逐块进度记录的文件名。刻意与正式稿分家：`has_offline_transcript()` 按
 #: `meeting_offline_transcript_` 前缀判「有没有会后精细稿」，这份对不上那个前缀。
 PROGRESS_NAME = "meeting_offline_progress.jsonl"
 
-#: 进度账自己的模式版本（与转写/对照表/状态文件那三个各自独立）
+#: 进度记录自己的模式版本（与转写/对照表/状态文件那三个各自独立）
 PROGRESS_SCHEMA_VERSION = 1
 
 #: 表头那一行的 `kind` 字面量（读方据此认出表头）
 LEDGER_KIND = "ledger"
 
-#: 一块跑完之后落在账上的四档结果。**四档都算"跑过了一块"**（分母不因它们增减）。
+#: 一块跑完之后落在记录里的四档结果。**四档都算"跑过了一块"**（分母不因它们增减）。
 CHUNK_STATES = ("transcribed", "silent", "failed", "unjudged")
 
 #: 落盘失败时的重试次数（与 `artifacts.write_text_atomic()` 的退避同一条口径）
@@ -85,7 +85,7 @@ WRITE_RETRIES = 5
 
 
 def ledger_path(session_dir: Path | str) -> Path:
-    """这一场的逐块进度账落在哪。"""
+    """这一场的逐块进度记录落在哪。"""
     return Path(session_dir) / PROGRESS_NAME
 
 
@@ -145,7 +145,7 @@ def write_progress(
     sources: Sequence[str],
     rows: Iterable[Mapping[str, Any]],
 ) -> Path:
-    """把整份进度账重写一遍（表头 + 逐块那些行，原子替换）。
+    """把整份进度记录重写一遍（表头 + 逐块那些行，原子替换）。
 
     JSON Lines、行尾一个换行、末行也有换行：读方按行读，半行由 `read_progress()` 挡在
     外面（它只收能被 `json.loads` 认下来的行）。
@@ -163,10 +163,10 @@ def write_progress(
 
 
 def read_progress(path: Path | str) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
-    """读回一份进度账：`(表头, 逐块那些行)`。
+    """读回一份进度记录：`(表头, 逐块那些行)`。
 
     **读不出来就如实交回 `(None, [])`**：文件不在、正被原子替换换走、写到一半的半行，
-    都走这一档。这份账是给人看的读数，读方不必为它抛错，安安静静答一句"这会儿读不到"
+    都走这一档。这份记录是给人看的读数，读方不必为它抛错，安安静静答一句"这会儿读不到"
     就够了。
     """
     target = Path(path)
@@ -219,7 +219,7 @@ def _source_progress(
 
 
 class OfflineProgressLedger:
-    """这一趟离线跑的逐块账：**每块跑完落一次盘**，同时留一份能在进程内读的现场。
+    """这一趟离线跑的逐块记录：**每块跑完落一次盘**，同时留一份能在进程内读的现场。
 
     两个读法各有各的用处：
 
@@ -258,7 +258,7 @@ class OfflineProgressLedger:
 
     @classmethod
     def for_session(cls, session_dir: Path | str) -> "OfflineProgressLedger":
-        """按场次目录立一份账：`session_id` 与路清单都**现问 `offline.runner`**。
+        """按场次目录立一份记录：`session_id` 与路清单都**现问 `offline.runner`**。
 
         `meeting/service/runtime.py` 的 `_run_post_offline()` 与 `meeting/cli.py::run_post()`
         （`progress` 缺省分支）从前各抄一遍同一个三参构造（场次目录 + `runner.session_id_of()`
@@ -277,7 +277,7 @@ class OfflineProgressLedger:
     # -- 写 ---------------------------------------------------------------
 
     def start(self, *, started_at: str) -> None:
-        """这一趟开跑：记下墙钟起点，并把一份**只有表头**的账落下去。
+        """这一趟开跑：记下墙钟起点，并把一份**只有表头**的记录落下去。
 
         先落表头那一下有用：盘上从这一刻起就有「这一场在跑、跑的是哪几路、一块都还没
         跑完」这份读数，与 `meeting_offline_status.json` 开头那一版 `running` 同时到位。
@@ -297,7 +297,7 @@ class OfflineProgressLedger:
             self._totals[str(source)] = int(total_chunks)
 
     def record_chunk(self, entry: ChunkProgress) -> None:
-        """一块跑完：把这一块的文字与落点补进账里，**当场落盘**。"""
+        """一块跑完：把这一块的文字与落点补进记录里，**当场落盘**。"""
         with self._lock:
             total = (
                 entry.chunks_total
@@ -308,18 +308,18 @@ class OfflineProgressLedger:
             self._flush_locked()
 
     def has_source(self, source: str) -> bool:
-        """这一路在账上有没有行（切法算不出来那一档要据此补一行）。"""
+        """这一路在记录里有没有行（切法算不出来那一档要据此补一行）。"""
         with self._lock:
             return any(str(row.get("source") or "") == str(source) for row in self._rows)
 
     def finish(self, *, finished_at: str | None = None) -> None:
-        """这一趟跑完（成了、失败、被打断都走这里）：标记终态并把账再落一次。"""
+        """这一趟跑完（成了、失败、被打断都走这里）：标记终态并把记录再落一次。"""
         with self._lock:
             self.finished_at = None if finished_at is None else str(finished_at)
             self._flush_locked()
 
     def _flush_locked(self) -> None:
-        """落盘（**调用方已经持锁**）。写不下去只记 log：进度账是附注，不带走这一趟。"""
+        """落盘（**调用方已经持锁**）。写不下去只记 log：进度记录是附注，不带走这一趟。"""
         try:
             self._writer(
                 ledger_path(self.session_dir),
@@ -329,14 +329,14 @@ class OfflineProgressLedger:
             )
         except Exception:  # pragma: no cover - 盘满/只读盘那一档
             _log.warning(
-                "会后离线的逐块进度账落不下去（不影响这一趟）：%s",
+                "会后离线的逐块进度记录落不下去（不影响这一趟）：%s",
                 ledger_path(self.session_dir), exc_info=True,
             )
 
     # -- 读 ---------------------------------------------------------------
 
     def elapsed_seconds(self) -> float:
-        """这一趟从开跑到此刻的墙钟秒数（**只作附注**，不许拿它对账）。"""
+        """这一趟从开跑到此刻的墙钟秒数（**只作附注**，不许拿它核对）。"""
         with self._lock:
             return max(0.0, round(float(self._clock()) - self._started, 3))
 
@@ -385,13 +385,13 @@ class OfflineProgressLedger:
 def snapshot_of(
     session_dir: Path | str, *, sources: Sequence[str], session_id: str
 ) -> dict[str, Any]:
-    """**从盘上那份进度账**拼出同一套形状的读数（进程里没有现场时用它）。
+    """**从盘上那份进度记录**拼出同一套形状的读数（进程里没有现场时用它）。
 
     服务重启之后、或命令行那一趟跑完回头翻这一场，走的就是这一条。跨进程算不出单调钟
     的差值，`elapsed_seconds` 因此如实交回 `None`（它本来就只作附注）；`started_at`
-    照旧只在这份账的落盘内容里出现……它不在账里（表头记的是场次与两路），于是交给
+    照旧只在这份记录的落盘内容里出现……它不在记录里（表头记的是场次与两路），于是交给
     调用方去问状态文件。`finished_at` / `current_source` 同理交回 `None`，
-    `state` 那一格答 `"ledger"`：盘上有这份账，跑没跑完由状态文件回答。
+    `state` 那一格答 `"ledger"`：盘上有这份记录，跑没跑完由状态文件回答。
     """
     header, rows = read_progress(ledger_path(session_dir))
     names = list(sources)

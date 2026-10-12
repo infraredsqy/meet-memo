@@ -564,7 +564,7 @@ def test_api_heartbeat_shape_is_the_full_one(tmp_path, client_factory):
     assert payload["service"] == "meeting"
     assert isinstance(payload["revision"], int)
     assert payload["top_state"] == "idle"
-    # 空闲态：两字段都是 null（没有采集事实帧在跑）；空洞账是零账、不给 null
+    # 空闲态：两字段都是 null（没有采集事实帧在跑）；空洞记录是空记录、不给 null
     assert payload["recording_alive"] is None
     assert payload["seconds_since_last_tick"] is None
     assert payload["capture_gaps"] == {"total_count": 0, "total_seconds": 0.0, "recent": []}

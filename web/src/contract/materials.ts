@@ -4,7 +4,7 @@ import { isoStringSchema, pathStringSchema } from './snapshot';
 /**
  * 会议资料的四条端点（`docs/contract.md` 4.12，资料节点 285bf58c）。
  *
- * - `GET /api/sessions/{id}/materials`：**目录就是清单**（没有 JSON 账本），每条三格
+ * - `GET /api/sessions/{id}/materials`：**目录就是清单**（没有 JSON 记录），每条三格
  *   ——名字、大小、贴上时刻（= 文件修改时间）；`meeting_materials/` 还不在时 `items`
  *   是空数组。任何状态下都 200（寻址失败 404）；
  * - `POST /api/sessions/{id}/materials?name=`：上传成功体 = 通用信封 + `material`

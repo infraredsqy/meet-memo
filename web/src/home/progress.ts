@@ -65,7 +65,7 @@ export interface RowStatusView {
  * - 目录不在原地 → 「目录不存在」（最优先 —— 目录都没了，联结无从谈起）；
  * - `post_job.dir === row.dir` → 「会后任务运行中」（联结命中；跑的是哪一趟写在全局那格）；
  * - 盘上 `state`：`recording` → 录音中、`draining` → 收尾中；
- * - `done` / `failed` → **待处理语义**（05a48b6a 立的账：收尾落定、会后归两个按钮，
+ * - `done` / `failed` → **待处理语义**（05a48b6a 立下这条口径：收尾落定、会后归两个按钮，
  *   都不按就什么都不跑）——「待处理」；失败那档在文字里把「收尾失败」说破；
  * - 其余（还没开过会的目录）→ 空闲族，文案以 `model.ts` `statusLabel()` 为唯一出处。
  */
@@ -288,7 +288,7 @@ export function initialChunkRows(status: SessionStatus): ChunkRow[] {
  * 归档靠**四档计数的差值**（每档差几就有几块落在那一档），次序 `transcribed` /
  * `silent` / `failed` / `unjudged`；差值对不上 `done` 的差值时，多出来的块如实记
  * `observed`（界面不猜它是哪一档）。`before` 为 `null`（这一场是刚选中才第一次读）
- * 时交空数组 —— 初始那批归 `initialChunkRows()`。**重跑那一档不进这里**：账已重置
+ * 时交空数组 —— 初始那批归 `initialChunkRows()`。**重跑那一档不进这里**：记录已重置
  * （`chunkLedgerReset()` 命中）时差值全是钳出来的 0，组件按重播整段换行，不走差值。
  */
 export function advanceChunkRows(
@@ -332,16 +332,16 @@ export function advanceChunkRows(
 }
 
 /**
- * 两次读数之间，逐块行该不该整段**重播**（review-2 m2：账已重置 —— 新一趟开始了）。
+ * 两次读数之间，逐块行该不该整段**重播**（review-2 m2：记录已重置 —— 新一趟开始了）。
  *
- * 后端每趟重跑都新造账、`start()` 落**只有表头**的账（`meeting/offline/progress.py`
+ * 后端每趟重跑都新建记录、`start()` 落**只有表头**的记录（`meeting/offline/progress.py`
  * 的 `start()`；`runtime.py` 每趟新造 ledger），重跑时盘上 `done` 从 0 重数 ——
  * `advanceChunkRows()` 的差值 `Math.max(0, next - was)` 把回落全钳成 0，旧行一行
- * 都掉不下去，追加行号还会接旧账（出「第 11/10 块」这种行）。判据两条、命中即重播：
+ * 都掉不下去，追加行号还会接旧记录（出「第 11/10 块」这种行）。判据两条、命中即重播：
  *
  * - **`started_at` 换新**：新一趟的墙钟起点，`start()` 写一次后整趟不变（`finish()`
- *   只动 `finished_at`）—— 两边一比就知道手上是哪一趟的账；
- * - **某路 `done` 回落 ∨ 四档合计回落**：账被整段换过的另一面（`started_at` 相同
+ *   只动 `finished_at`）—— 两边一比就知道手上是哪一趟的记录；
+ * - **某路 `done` 回落 ∨ 四档合计回落**：记录被整段换过的另一面（`started_at` 相同
  *   时兜底）。
  *
  * 换场（`dir` 不同）不算 —— 那一档由组件的换选中清零负责。
@@ -411,10 +411,10 @@ export function gpuBusyView(postJob: PostJobCell | null, recording: boolean): Gp
  * 进度区现在该不该问服务要读数（`api/sessions.ts` 的轮询器只在这一档跑，不空转）：
  *
  * - 选中的这一场被 `post_job` 联结命中 → 问，**但只问到读数落定为止**：手上还没有
- *   这一场的读数（或还是上一场的旧账）时先问一跳；读数到手后按读数本身判 ——
+ *   这一场的读数（或还是上一场的旧记录）时先问一跳；读数到手后按读数本身判 ——
  *   `in_process` ∨ 盘上 `running` 才继续问，**终态那一跳让 watch 翻 false**
  *   （review-1 C1：联结命中恒真会让「跑完」永远收不了尾，行四态、全局格、轮询器
- *   一起楔死）；翻账由组件那头的「不用刷顺手刷一遍列表」接住；
+ *   一起楔死）；读数翻新由组件那头的「不用刷顺手刷一遍列表」接住；
  * - 手上已有一份读数、且它说「真在跑」（`in_process`）或「盘上停着 `running`」→ 问
  *   （后者也要问：万一那一趟其实还活着，读数会翻回 `in_process: true`）；
  * - 其余（终态、**被打断**（b1c6a58e：它也是终态，重按按钮才再跑）、还没跑过、

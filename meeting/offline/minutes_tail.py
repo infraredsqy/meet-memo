@@ -78,13 +78,13 @@ def _announce_minutes(
     实现）。`force = True` 时**跳过那道闸**（`--force` 的语义：无视终态，这一层重跑），
     `force = False` 时那道闸照旧。`deadline` 是拉起的上界，本函数不用它，只原样交给启动器
     （`launch()` 的既有签名只收场次目录时按位置给）。`status_reader` / `artifact_checker`
-    是那道闸的两个接缝，缺省落在纪要那一层的实现上；`captured` 是给调用方留的一格记账
+    是那道闸的两个接缝，缺省落在纪要那一层的实现上；`captured` 是给调用方留的一格登记
     （真把启动器调到时就地记下它交回的那个对象、给的是谁 —— 调用方据此在没有真纪要状态
     文件可读时也能出结论），不给就什么都不记。
 
     **再入闸那一档只挡产品路径**：`MEETING_MINUTES_CHILD=1`（这一趟是 DSH 子会话自己）
     时安静跳过 —— 但调用方**显式递了 `launcher`** 的那一档照常把它调到：那个假件就是
-    「真拉起」这一步的替身，它自己什么都不起，用例靠它的调用记账核「这一趟有没有再花一次
+    「真拉起」这一步的替身，它自己什么都不起，用例靠它的调用登记核「这一趟有没有再花一次
     钱」。注入件因此连这道闸都不必摘（它本来也不该摘：那道闸的落点是产品路径）。
 
     返回值只进 `run_session()` 的摘要（`{"hook": …, "announced": …, "status": …}`），
@@ -116,7 +116,7 @@ def _announce_minutes(
 
     minutes_status_path = Path(session_dir) / MINUTES_STATUS_NAME
     if launcher is not None:
-        # 调用方递了替身：这一档不解析 `minutes.hook` 的实现（替的就是它），直接记账。
+        # 调用方递了替身：这一档不解析 `minutes.hook` 的实现（替的就是它），直接登记。
         # 替身认 `force` / `deliver` 那两格时原样递下去（真实现都认：`MinutesHook.launch`），
         # 只收场次目录的老形状照旧按位置参调它。
         kwargs: dict[str, Any] = {}

@@ -119,7 +119,7 @@ def _status_document(
     result: Any = None,
     with_dsh: bool = False,
 ) -> dict[str, Any]:
-    """落一份状态文件并把它交回调用方（本模块的唯一记账出口）。
+    """落一份状态文件并把它交回调用方（本模块的唯一登记出口）。
 
     `state = "running"` 那一份（拉起 DSH **之前**落）走的是同一条路：收尾时刻**明写成空串**
     —— `write_session_status()` 把 `None` 当成「调用方没给」并补上当前时刻（那条口径给终局
@@ -365,7 +365,7 @@ def _probe_web(
 
 
 def _chunk_summary(chunks: Mapping[str, Any]) -> dict[str, Any]:
-    """分块那一趟的账（每一路每一份稿的行数与块数），进状态文件之外的返回值。
+    """分块那一趟的结果（每一路每一份稿的行数与块数），进状态文件之外的返回值。
 
     形状与 `chunk_session()` 的返回值同构（`{source: {kind: {…}}}`）：两份稿都在时两份各答一格
     （R11 的两份稿对拍靠的就是这一层）。状态文件的形状是冻结的，因此这一格只出现在返回值里：

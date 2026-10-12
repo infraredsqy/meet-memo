@@ -225,7 +225,7 @@ def test_replay_truncates_by_seconds_and_leaves_source_untouched(tmp_path: Path)
     assert reading["rtf"] is not None and reading["rtf"] > 0
     assert reading["counts"]["transcribed"] == 2
     assert reading["summary"]["state"] == "done"
-    # 逐块进度账落在了拷贝目录里（注入的 ledger）
+    # 逐块进度记录落在了拷贝目录里（注入的 ledger）
     assert (tmp_path / "work" / PROGRESS_NAME).exists()
     # 原目录一个字节没动、一个文件没添
     assert digest_tree(source) == before
@@ -507,5 +507,5 @@ def test_replay_entry_maps_failed_session_to_exit_failure(
 
 
 def test_chunk_states_are_the_four_known_states() -> None:
-    """读数的四档计数与链上进度账的四档同表（别自己另立词表）。"""
+    """读数的四档计数与链上进度记录的四档同表（别自己另立词表）。"""
     assert set(CHUNK_STATES) == {"transcribed", "silent", "failed", "unjudged"}

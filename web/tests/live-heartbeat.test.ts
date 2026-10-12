@@ -267,7 +267,7 @@ describe('失联档的几处读数', () => {
   });
 });
 
-describe('captureGapNote：帧空洞账的提示行（gil-stall-hole）', () => {
+describe('captureGapNote：帧空洞记录的提示行（gil-stall-hole）', () => {
   it('一次空洞：`曾中断 X 秒，该段内容未记上`', () => {
     const beat = makeHeartbeat({
       capture_gaps: {
@@ -290,7 +290,7 @@ describe('captureGapNote：帧空洞账的提示行（gil-stall-hole）', () => 
     expect(captureGapNote(beat)).toBe('曾中断 3 次共 7.5 秒，该段内容未记上');
   });
 
-  it('零账、缺应答、缺字段（旧服务）：都是 null，null 安全', () => {
+  it('空记录、缺应答、缺字段（旧服务）：都是 null，null 安全', () => {
     expect(captureGapNote(null)).toBeNull();
     expect(captureGapNote(makeHeartbeat())).toBeNull();
     expect(
@@ -306,7 +306,7 @@ describe('captureGapNote：帧空洞账的提示行（gil-stall-hole）', () => 
         recent: [{ at: T('21:03:20'), seconds: 2.4 }],
       },
     });
-    // 两拍计数的单一归并点：`recording_alive` 为 true 的读数清零，空洞账不投任何一拍
+    // 两拍计数的单一归并点：`recording_alive` 为 true 的读数清零，空洞记录不投任何一拍
     const state = applyHeartbeatReading(
       initialHeartbeatState(),
       { kind: 'reply', heartbeat: beat, status: '正常', lagSeconds: 0 },

@@ -148,7 +148,7 @@ float32 的整段波形会被 `int()` 截成一串 0 —— 一串真有声的�
 
 **跳过的区间要露出来**（四档必须分得开：正常跑完 / 没声跳过 / 引擎失败 / 跑成而段全零时长）：
 
-  - 逐块记账 `ChunkRun.silent`、`ChunkRun.gate` 与 `ChunkRun.reason`（`digital_silence`）；
+  - 逐块登记 `ChunkRun.silent`、`ChunkRun.gate` 与 `ChunkRun.reason`（`digital_silence`）；
   - 对照表 `audio.silent_spans` 与 `audio.silent`，状态文件顶层的
     `silent` / `silent_spans`，报告单列一节，转写第一行一条注释行（`silent_note()`）；
   - `state` 仍是 `done`、`partial` 仍是 `false`：**没声这一档什么都没出错**。
@@ -182,7 +182,7 @@ float32 的整段波形会被 `int()` 截成一串 0 —— 一串真有声的�
   - 这一层炸了**不影响离线那三份产物、也不改 `meeting_offline_status.json`**（全程
     `try/except BaseException` 兜住，只记 log）；
   - 非人工发起、`minutes.hook = null`、环境里的 `MEETING_MINUTES_CHILD=1` 三档都安静跳过；
-  - 它自己的账记在**另一份**状态文件 `meeting_minutes_status.json` 里（那一份归纪要那一层写）。
+  - 它自己的记录记在**另一份**状态文件 `meeting_minutes_status.json` 里（那一份归纪要那一层写）。
 
 音频时长的换算只有一处口径：PCM = 字节数 / 2 / 16000（16k 单声道 int16），
 MP3 = 解码后样本数 / 16000（`decode_audio()` 给出的就是 16k 单声道波形）。
@@ -261,7 +261,7 @@ REASON_ENGINE_LOAD_ERROR = "engine_load_error"
 #: 引擎一次都没被喊过（也可能连这一路都没轮到）。兜成 `engine_error` 的话，读方按失败原因
 #: 筛「是不是引擎的锅」时会把「压根没跑起来」算进去，而那一格自己没话可对（`error` 是
 #: `null`）——那正是本节点要消灭的「读方读不出来」。这个兜底词只落在**兜底那一版状态文件**
-#: 的逐路 `reason` 上，不进逐块账、也不进 `reasons` 这个分布。
+#: 的逐路 `reason` 上，不进逐块记录、也不进 `reasons` 这个分布。
 REASON_NOT_RUN = "not_run"
 REASON_NO_SEGMENTS = "no_segments"
 #: 分块模式下**每一块都失败**：这一路一段都没留下来（与「一块坏、别的块还在」的
@@ -394,9 +394,9 @@ class ChunkStep:
 
 @dataclass(slots=True)
 class ChunkRun:
-    """一块跑完之后的如实记账（成功、跳过、失败三种都记一条）。
+    """一块跑完之后的如实登记（成功、跳过、失败三种都记一条）。
 
-    这一条记账要回答的是**「这一段为什么没有字」**，读方按 `reason` 那一格分档即可，
+    这一条登记要回答的是**「这一段为什么没有字」**，读方按 `reason` 那一格分档即可，
     不必从整场的字段反推：
 
       | `reason` | 这一块发生了什么 | `error` |
@@ -932,7 +932,7 @@ def measure_span(
      `waveform_length` 是**已经解好的那段波形的总样本数**（不给就按 `len()` 算）：有了它，
     「这一段没读全」与「读到全零」才分得开。`decode_attempted` 说明调用方**已经为这一段
     解过一次**（`_plan_for_source()` 量长度那一步）：那一次没成时这里不再解第二遍，
-    直接照「门判不了」记账（`GATE_METHOD_DECODE_AT_PLAN`）—— 同一个坏文件解两次只会把
+    直接照「门判不了」登记（`GATE_METHOD_DECODE_AT_PLAN`）—— 同一个坏文件解两次只会把
     同一句话打两遍日志。
     """
     audio_paths = _audio_paths(path)
@@ -1318,7 +1318,7 @@ def run_session(
     早了也不行（状态文件的终态还没写）。这一层炸了只记 log：离线那三份产物与
     `meeting_offline_status.json` 一个字节都不动（见 `_announce_minutes()`）。
 
-    `progress` 是**逐块进度账**的注入点（`meeting/offline/progress.py`）：给一份就每跑完
+    `progress` 是**逐块进度记录**的注入点（`meeting/offline/progress.py`）：给一份就每跑完
     一块往场次目录里那份 `meeting_offline_progress.jsonl` 上补一行（这一块的文字 + 这一块
     的落点），不给就一个字节都不落。**正式稿的写时机与它无关**（整路跑完一次写，
     `_write_source_artifacts()`），`meeting_offline_status.json` 那十二格也一个字不动。
@@ -1421,8 +1421,8 @@ def run_session(
         )
         raise
     finally:
-        # 这一趟跑完（成了、失败、被打断都算）就把进度账收在终态上：`state` 从 `running`
-        # 翻到 `done`，那一份账因此自带"这一趟到此为止"的位置感。收尾这一步不会抛
+        # 这一趟跑完（成了、失败、被打断都算）就把进度记录收在终态上：`state` 从 `running`
+        # 翻到 `done`，那一份记录因此自带"这一趟到此为止"的位置感。收尾这一步不会抛
         # （`finish()` 内部兜住落盘失败），原来那个异常照旧上抛。
         if progress is not None:
             progress.finish(finished_at=_now_iso())
@@ -1465,7 +1465,7 @@ def run_session(
         never_ran = [str(source) for source in sources if source not in per_source]
         if never_ran:
             gap_notes.append(
-                "没开跑：" + "、".join(never_ran) + "（逐块账里没有它们的行）"
+                "没开跑：" + "、".join(never_ran) + "（逐块记录里没有它们的行）"
             )
         error = "；".join(gap_notes) or "interrupted：取消旗标在块边界命中，这一趟收场"
         # 没跑到的那几路**也要有格子**（同 `_write_failed_status()` 的兜法）：
@@ -1590,15 +1590,15 @@ def write_interrupted_status(
     *,
     reason: str,
 ) -> dict[str, Any] | None:
-    """把盘上停在 `running` 的那版离线状态补成 `interrupted`（**服务启动对账**用）。
+    """把盘上停在 `running` 的那版离线状态补成 `interrupted`（**服务启动核对**用）。
 
     「被打断」终态的第二个写点：`run_session` 自己的打断终态由它自己落（它手里有全部
-    现场），这一只给**进程死了、盘上停着 running** 的对账用（服务重启时发现上一趟
-    offline 会后没跑完，b1c6a58e 的 d5）—— 从盘上读（状态文件 + 逐块账）拼出**同一
+    现场），这一只给**进程死了、盘上停着 running** 的核对用（服务重启时发现上一趟
+    offline 会后没跑完，b1c6a58e 的 d5）—— 从盘上读（状态文件 + 逐块记录）拼出**同一
     形状**的终态：同十二格、`state = "interrupted"`、缺口注记拼进 `error`。
 
     盘上不是 `running`（已经是终态、或压根没有状态文件）时**什么都不写**、交回 `None`
-    ——对账不许把已经落定的终态翻掉。写完交回盘上那一版（读方据此记 log）。
+    ——核对不许把已经落定的终态翻掉。写完交回盘上那一版（读方据此记 log）。
     """
     directory = Path(session_dir)
     status_path = directory / artifacts.STATUS_NAME
@@ -1624,10 +1624,10 @@ def write_interrupted_status(
         )
         if road["remaining"] not in (None, 0):
             missing_any = True
-    gap = "；".join(per_road) if per_road else "逐块账读不出（这一趟可能一块都没落）"
+    gap = "；".join(per_road) if per_road else "逐块记录读不出（这一趟可能一块都没落）"
     note = (
         f"{REASON_INTERRUPTED}：{reason}；{gap}；"
-        "正式稿与对照表都还没有（已跑块的文字在逐块账里），重按按钮可从头再跑"
+        "正式稿与对照表都还没有（已跑块的文字在逐块记录里），重按按钮可从头再跑"
     )
     artifacts.write_status(
         status_path,
@@ -1673,7 +1673,7 @@ def _run_one_source(
 
     **被打断的那一路也有一格**（`state = "interrupted"`、`reason = interrupted`）：
     正式稿与对照表不由这里写 —— 那两份是「整路跑完」才写的产物，半份稿缺哪几段的
-    说明行只有完整跑完的那次才写得周全；半份材料就是逐块账上已有的那几行（每块当场
+    说明行只有完整跑完的那次才写得周全；半份材料就是逐块记录上已有的那几行（每块当场
     落盘），未跑的块进 `missing_spans` 与顶层 `error` 的缺口注记。
 
     分块由 `post.chunk_seconds` 定（见模块头那一节）：块数为 1 时引擎拿到原始音频路径
@@ -1682,12 +1682,12 @@ def _run_one_source(
     每一块都失败时这一路落 `failed`（`all_chunks_failed`），两块产物照落：转写只剩一条
     写明缺失区间的注释行、对照表是空表，终态与原因写在对照表的 `state` / `error` 上。
     **引擎加载失败**是另一档（`engine_load_error`）：模型没起来时这一路一块都没交给引擎、
-    一份产物都不落，只有状态文件里那一格与逐块账上那一行（那一行让读方看得到这一路本来
+    一份产物都不落，只有状态文件里那一格与逐块记录上那一行（那一行让读方看得到这一路本来
     切了几块）。整路都是数字静音时这一档**不会现形**：一块都不必送引擎，模型就不加载，
     终态照旧是 `done` + `silent: true`。
 
     **没声而跳过的块不算失败也不算缺段**（见模块头「数字静音门」）：`state` 仍落 `done`，
-    `partial` 仍为 `false`，跳过的区间进 `metric.silent_spans`，逐块记账里 `silent = True`。
+    `partial` 仍为 `false`，跳过的区间进 `metric.silent_spans`，逐块登记里 `silent = True`。
     整路**一块音频都没有**（全是数字静音）时也照落产物：那是一份空转写配一条说明的
     正常结果，读方从 `audio.silent_spans` 与状态文件的 `silent` 看得出它为什么是空的。
     """
@@ -1743,7 +1743,7 @@ def _run_one_source(
             metric.error = f"{REASON_ENGINE_ERROR}：{type(exc).__name__}: {exc}"
             metric.reasons[REASON_ENGINE_ERROR] = 1
             if progress is not None and not progress.has_source(source):
-                # 切法还算不出来（一块都没进循环）时，这一路在账上也得留下一行：
+                # 切法还算不出来（一块都没进循环）时，这一路在记录里也得留下一行：
                 # 否则读方看到的是"这一路一块都没跑"，与"这一路没跑成"分不开。
                 progress.record_chunk(
                     ChunkProgress(
@@ -1755,7 +1755,7 @@ def _run_one_source(
                         error=metric.error,
                     )
                 )
-            _log.exception("会后离线：%s 这一路引擎抛错（如实记账，继续跑另一路）", source)
+            _log.exception("会后离线：%s 这一路引擎抛错（如实登记，继续跑另一路）", source)
         else:
             if stopped:
                 # **块边界命中了取消旗标**：这一路带着已跑完的那几块就地收场（b1c6a58e）。
@@ -1774,7 +1774,7 @@ def _run_one_source(
                 metric.partial = bool(metric.missing_spans)
                 metric.error = (
                     f"{REASON_INTERRUPTED}：跑到第 {len(runs)}/{len(plan.chunks)} 块被停下"
-                    f"（前 {len(runs)} 块的文字在逐块账里；这一路的正式稿与对照表没有落）"
+                    f"（前 {len(runs)} 块的文字在逐块记录里；这一路的正式稿与对照表没有落）"
                 )
                 _log.warning(
                     "会后离线：%s 被打断：已跑 %d/%d 块，下一块开跑前收场",
@@ -1861,7 +1861,7 @@ def _plan_for_source(
     **解出来的那段波形一并交回**（`(切法, 波形, 解过没有)`）：同一个文件不该为了不同的理由
     解两遍 —— 单趟跑的 MP3 要在门口看一眼峰值（C1），分块跑的 MP3 要逐块切，两处都用这一段
     波形。第三个交回值说的是「这个容器**试过**解码了没有」：试过而没成就别再试第二遍，
-    直接照「门判不了」记账（同一个坏文件解两次只会把同一句话打两遍日志）。
+    直接照「门判不了」登记（同一个坏文件解两次只会把同一句话打两遍日志）。
 
     量长度这一步失败时**退回单趟**（时长记 0）：解不出来是引擎该报的错（它反正要解一遍），
     在这里替它下结论会让「引擎交回什么」这件事变成「我们量长度成没成」。
@@ -1904,7 +1904,7 @@ def _execute_chunks(
     progress: OfflineProgressLedger | None = None,
     cancel: Any = None,
 ) -> tuple[list[OfflineSegment], list[ChunkRun], str | None, bool]:
-    """按切法逐块调引擎，交回 `(拼回整场时间轴的分段, 逐块记账, 加载失败原话, 被打断没有)`。
+    """按切法逐块调引擎，交回 `(拼回整场时间轴的分段, 逐块登记, 加载失败原话, 被打断没有)`。
 
     第四个交回值是**打断档**（b1c6a58e）：`cancel` 是可注入的取消旗标（callable，返回真
     = 请求停），在**逐块主循环顶**检查 —— 当前块跑完、下一块开跑前收场，正在跑的那一块
@@ -1935,13 +1935,13 @@ def _execute_chunks(
     几十分钟音频一起废掉，但它**必须露在产物里**（见 `ChunkRun.error`）。
 
     跑完（或抛出来）都把临时块扫干净：分块目录是这一趟的中间产物，留着只会让下一趟
-    分不清哪一份是哪一次的。产物里留下的是**逐块的记账**（`ChunkRun`），音频本身可重切。
+    分不清哪一份是哪一次的。产物里留下的是**逐块的登记**（`ChunkRun`），音频本身可重切。
 
     第三个交回值说的是**引擎加载**这一档：非 `None` 时这一路一块都没交给引擎（模型压根
     没起来），它与逐块那几行 `engine_error` 是两件事，调用方按它记
     `REASON_ENGINE_LOAD_ERROR`（见 `_run_one_source`）。探测**推迟到第一块真要送引擎的
     那一刻**：整路都是数字静音时探都不探，模型一次都不加载（`docs/design-intent.md`
-    第 21 条）；真探到加载失败时，这一块在逐块账上留一行（见循环里那一段）。
+    第 21 条）；真探到加载失败时，这一块在逐块记录上留一行（见循环里那一段）。
     """
     audio_paths = _audio_paths(paths)
     steps = plan.chunks
@@ -2068,7 +2068,7 @@ def _execute_chunks(
                 load_probed = True
                 load_failure = _ensure_engine_loaded(engine)
                 if load_failure is not None:
-                    # 这一块照**兄弟路径**（切法都算不出来那一条）在账上留一行：那一档的
+                    # 这一块照**兄弟路径**（切法都算不出来那一条）在记录里留一行：那一档的
                     # 理由是「否则读方看到的是这一路一块都没跑，与这一路没跑成分不开」，
                     # 加载失败这条新路径一样成立。少了这一行，盘上这一路只有表头，进程不在
                     # 场的读方从 4.9 的 `sources[].total` 上看到的是 `null` —— 那个数由切块
@@ -2089,7 +2089,7 @@ def _execute_chunks(
             begun = time.monotonic()
             try:
                 produced = list(engine.transcribe(target))
-            except Exception as exc:  # 这一块失败：记账，下一块照跑
+            except Exception as exc:  # 这一块失败：登记，下一块照跑
                 run = ChunkRun(
                     index=step.index,
                     offset=step.offset,
@@ -2104,7 +2104,7 @@ def _execute_chunks(
                 runs.append(run)
                 _note_progress(progress, source, run, spans=[])
                 _log.warning(
-                    "会后离线：%s 第 %d 块（%.0fs 起）引擎抛错，如实记账后继续",
+                    "会后离线：%s 第 %d 块（%.0fs 起）引擎抛错，如实登记后继续",
                     source, step.index, step.offset,
                 )
                 continue
@@ -2125,7 +2125,7 @@ def _execute_chunks(
                 runs.append(run)
                 _note_progress(progress, source, run, spans=[])
                 _log.warning(
-                    "会后离线：%s 第 %d 块（%.0fs 起）一段都没交回，如实记账后继续",
+                    "会后离线：%s 第 %d 块（%.0fs 起）一段都没交回，如实登记后继续",
                     source, step.index, step.offset,
                 )
                 continue
@@ -2159,7 +2159,7 @@ def _execute_chunks(
                 _shift_segment(segment, step, namespaced=plan.namespace)
                 for segment in produced
             ]
-            # 这一块的文字与这一块的落点**当场落进进度账**：块一跑完那一块的字就在盘上
+            # 这一块的文字与这一块的落点**当场落进进度记录**：块一跑完那一块的字就在盘上
             # 读得到，不必等整路跑完（正式稿照旧整路跑完一次写）。
             _note_progress(progress, source, run, spans=shifted)
             merged.extend(shifted)
@@ -2245,10 +2245,10 @@ def _shift_segment(segment: OfflineSegment, step: ChunkStep, *, namespaced: bool
 
 
 def _entry_state(run: ChunkRun) -> str:
-    """这一块在**进度账**上落哪一档（四档，见 `progress.CHUNK_STATES`）。
+    """这一块在**进度记录**上落哪一档（四档，见 `progress.CHUNK_STATES`）。
 
-    逐块的记账（`ChunkRun.reason`）分得更细：它要回答「这一段为什么没有字」，
-    `transcribed` 那一档还按零时长段拆成两个词。进度账这一格只有一个用途 ——
+    逐块的登记（`ChunkRun.reason`）分得更细：它要回答「这一段为什么没有字」，
+    `transcribed` 那一档还按零时长段拆成两个词。进度记录这一格只有一个用途 ——
     让读的人一眼看出这一块是跑成了、跳过了、还是没成，因此四档就够。
     """
     if run.silent:
@@ -2267,12 +2267,12 @@ def _note_progress(
     *,
     spans: Sequence[OfflineSegment],
 ) -> None:
-    """把这一块落进进度账：**这一块的文字 + 这一块的落点**（`progress=None` 时什么都不做）。
+    """把这一块落进进度记录：**这一块的文字 + 这一块的落点**（`progress=None` 时什么都不做）。
 
     `spans` 是这一块拼回整场时间轴之后的分段（静音、失败那几档交回空序列）。
     正文按正式稿同一套行格式（`artifacts.format_transcript_line()`）写成一行一条、
     `\\n` 相连；说话人编号是块内命名空间那个形式（`cNN:Sxx`）—— 它与正式稿的编号
-    （整路内按首次出现顺序）不是同一个东西，读账的人据此就知道这一块的字还没编号。
+    （整路内按首次出现顺序）不是同一个东西，读记录的人据此就知道这一块的字还没编号。
 
     **落盘失败不带走这一趟**：`record_chunk()` 内部兜住写盘异常，这里再兜一层调用方的
     意外（拿不准的那一档：这一格是附注，让它把正片带走才是真的坏）。
@@ -2297,7 +2297,7 @@ def _note_progress(
                 error=run.error,
             )
         )
-    except Exception:  # pragma: no cover - 进度账是附注，出意外也不许带走这一趟
+    except Exception:  # pragma: no cover - 进度记录是附注，出意外也不许带走这一趟
         _log.warning(
             "会后离线：%s 第 %d 块的进度没记上（不影响这一趟）",
             source, run.index, exc_info=True,
@@ -2305,7 +2305,7 @@ def _note_progress(
 
 
 def _record_chunk_runs(metric: artifacts.SourceMetrics, runs: Sequence[ChunkRun]) -> None:
-    """把逐块的记账写进度量：失败的块进缺失区间、进失败原因分布、把这一路标成 `partial`。
+    """把逐块的登记写进度量：失败的块进缺失区间、进失败原因分布、把这一路标成 `partial`。
 
     **缺失区间按「块覆盖的那一段」记**，不按引擎吐出来的那一两句记：一块 OOM 掉的时候
     没有任何段落能说明它覆盖了哪里，而块的位置是切法算出来的、始终知道。
@@ -2448,7 +2448,7 @@ def _missing_spans_note(spans: Sequence[Sequence[float]]) -> str:
 
 
 def _failure_reasons(metric: artifacts.SourceMetrics) -> set[str]:
-    """这一路缺区间的原因词档（从逐块记账里取，`engine_error` / `no_segments` 这些）。
+    """这一路缺区间的原因词档（从逐块登记里取，`engine_error` / `no_segments` 这些）。
 
     摘要与状态文件里那句话带上它，读的人一眼分得清「丢的那几块是显存不够」与
     「丢的那几块一段都没交回」。词读逐块那一行的 `reason` 格（构造时显式给的

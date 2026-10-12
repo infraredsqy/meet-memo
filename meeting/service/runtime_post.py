@@ -101,7 +101,7 @@ class RuntimePostMixin:
 
         **起线程之前落一条「在飞」记录**（`meeting/service/postjobs.py`，配置目录的
         `post_jobs.json`）：`post_job` 是内存事实、进程一死就没，记录是跨进程的那一格
-        ——服务重启时按它把「盘上停着 running」的那一场对账成 `interrupted`（治「杀了
+        ——服务重启时按它把「盘上停着 running」的那一场核对成 `interrupted`（治「杀了
         进程就永远停在在跑」）。写不上只警告、不挡动作：这张网兜的是重启后那一场，
         动作本身照常起跑。
         """
@@ -118,7 +118,7 @@ class RuntimePostMixin:
             "thread": thread,
             "started_at": now_iso(),
             "finished_at": None,
-            #: 离线那一趟的逐块进度账（下线那条链跑起来之后自己塞进来；纪要那趟是 `None`）
+            #: 离线那一趟的逐块进度记录（下线那条链跑起来之后自己塞进来；纪要那趟是 `None`）
             "progress": None,
             #: 打断接缝（b1c6a58e）：offline 档是一条 `Event`，`post_stop` 立它；纪要那趟 `None`
             "cancel": cancel,
@@ -146,7 +146,7 @@ class RuntimePostMixin:
 
         收工**顺带把在飞记录清掉**：记录还写着而线程活着收了工，说明这一趟是自己跑完的
         （没被杀），下一趟起跑时会落新记录 —— 留着旧记录会让下一次启动多做一次无谓的
-        对账读盘。清不上只警告（安全网的那一半归启动对账兜）。
+        核对读盘。清不上只警告（安全网的那一半归启动核对兜）。
         """
         try:
             if kind == "offline":
@@ -173,7 +173,7 @@ class RuntimePostMixin:
         `_announce_minutes()` 不拉起子会话）—— 纪要归另一个按钮。
         引擎按 `post.engine` / `post.model` / `post.dtype` 现造（缺省就是真离线模型）。
 
-        **逐块进度账在这一趟里立起来**：`run_session(..., progress=…)` 每跑完一块就往
+        **逐块进度记录在这一趟里立起来**：`run_session(..., progress=…)` 每跑完一块就往
         场次目录里那份 `meeting_offline_progress.jsonl` 上补一行，同一份现场读数由
         `GET /api/sessions/{id}` 随取随用（见 `session_status_dict()`）。
 
@@ -262,7 +262,7 @@ class RuntimePostMixin:
 
         **在飞判据是同步的**（m2）：起线程之前先按 `minutes` 那一层**盘上的 claim 闸**
         （`MinutesHook.claim()` → `meeting/minutes/status.py::mark_running()`，既有那一把锁，
-        不另发明一套）同步认一次账 —— 上一趟还在飞时当场按 409 `draining`
+        不另发明一套）同步认领一次 —— 上一趟还在飞时当场按 409 `draining`
         如实回一句「已经在飞」，而不是回 `{kind: 'minutes'}` 那个假成功（线程体里那条
         `AlreadyRunningError` 原先只落一条 log，动作本体早就把「已起」答出去了）。
         """
@@ -283,7 +283,7 @@ class RuntimePostMixin:
             self._start_post_job("minutes", target, claimed_minutes=claimed)
         except BaseException as exc:
             # 线没起来（`threading.Thread(...)` / `thread.start()` 这一类）：刚认下的那一版
-            # claim 不能留在盘上 —— 留着就是一个永远在飞的账，之后每一次按「直接出纪要」都被
+            # claim 不能留在盘上 —— 留着就是一条永远在飞的记录，之后每一次按「直接出纪要」都被
             # claim 闸按 409 拒，界面上没有出路（m4）。退回它、再把异常原样上抛。
             if claimed:
                 self._release_minutes_claim(resolution, target, exc)
@@ -353,7 +353,7 @@ class RuntimePostMixin:
         return {"kind": kind, "dir": target, "stopping": True}
 
     def _claim_minutes_layer(self, resolution: Any, target: str) -> bool:
-        """起线程之前**同步**认一次「纪要这一层在飞」的账（m2），**返回认没认成**。
+        """起线程之前**同步**登记一次「纪要这一层在飞」（m2），**返回认没认成**。
 
         判据复用 `meeting/minutes/status.py` 那把 claim 闸（实现经 `claim()` 暴露它，
         没有 `claim()` 的实现照旧走线程体那条路，返回值是 `False`）：盘上停着一版 `running`

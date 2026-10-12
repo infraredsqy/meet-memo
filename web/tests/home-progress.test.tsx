@@ -39,7 +39,7 @@ vi.mock('../src/api/sessions', async (importOriginal) => {
     fetchSessions: vi.fn(),
     browseDirs: vi.fn(),
     fetchSessionStatus,
-    // 每只轮询器都是新造的：替身的 start/stop 记账互不串场（用例各拿各的那只）。
+    // 每只轮询器都是新造的：替身的 start/stop 登记互不串场（用例各拿各的那只）。
     createSessionStatusPoller: vi.fn((registered: unknown) => {
       onTick = registered as (tick: unknown) => void;
       const deliver = (dir: string): Promise<unknown> =>
@@ -434,7 +434,7 @@ describe('联结档收敛（review-1 C1）：跑完那一跳之后界面要跟�
     expect(rowStatesOf(renderer)).toContain('会后任务运行中');
     expect(gpuCellOf(renderer).props['data-busy']).toBe('true');
 
-    // 跑完：读数翻终态、服务把 post_job 翻 null —— 这一次翻账要全跟上（旧行为全部卡死）
+    // 跑完：读数翻终态、服务把 post_job 翻 null —— 这一次读数翻新要全跟上（旧行为全部卡死）
     fetchSessionStatusMock.mockImplementation(async () =>
       status({ state: 'done', in_process: false }),
     );
@@ -560,7 +560,7 @@ describe('错误跳的分档（review-1 m1）：与轮询器「失败跳照交�
 
 describe('按钮起跑档（review-2 C1）：post_job 出现在选中行上之后，最多一个周期内进度区要跟上', () => {
   it('挂载握着旧终态 → 按「生成会后精细稿」→ post_job 出现 → 补跳一跳 start 被喊、读数跟走；终局照旧收敛', async () => {
-    // 挂载：终态读数在手（上一趟的账）、post_job:null —— 轮询不该起
+    // 挂载：终态读数在手（上一趟的记录）、post_job:null —— 轮询不该起
     fetchSessionsMock.mockResolvedValueOnce({
       sessions: [row({ state: 'done', has_offline: true })],
       recent: DIR,
@@ -591,7 +591,7 @@ describe('按钮起跑档（review-2 C1）：post_job 出现在选中行上之�
       recent: DIR,
       post_job: { kind: 'offline', dir: DIR, started_at: '2026-09-21T22:10:00+08:00' },
     });
-    // 补跳那一跳读到的是新一趟的在飞读数（新账：done 从 0 重数）
+    // 补跳那一跳读到的是新一趟的在飞读数（新记录：done 从 0 重数）
     fetchSessionStatusMock.mockImplementation(async () =>
       status({
         state: 'running',
@@ -614,7 +614,7 @@ describe('按钮起跑档（review-2 C1）：post_job 出现在选中行上之�
     // 补跳把在飞读数喂进来 → watch 翻真 → start 被喊（一个周期都没用上）
     expect(pollerOf().start).toHaveBeenCalledWith(DIR);
     expect(textsOf(renderer, 'wsprog__phase').join(' ')).toContain('正在运行：本地 第 1/10 块');
-    // 旧趟的行整段换掉（m2：账重置重播），新账一块没跑完 → 空态那句
+    // 旧趟的行整段换掉（m2：记录重置重播），新记录一块没跑完 → 空态那句
     expect(textsOf(renderer, 'wsprog__row').join(' ')).not.toContain('已处理');
     expect(textsOf(renderer, 'wsprog__row').join(' ')).toContain('暂无逐块记录');
     const fills = renderer.root.findAll((node) => node.props.className === 'wsprog__fill');
@@ -658,15 +658,15 @@ describe('按钮起跑档（review-2 C1）：post_job 出现在选中行上之�
     });
     await feed();
     expect(pollerOf().stop).toHaveBeenCalled();
-    // 列表取了三次：挂载、按按钮的收尾重取、跑完翻账那一次
+    // 列表取了三次：挂载、按按钮的收尾重取、跑完读数翻新那一次
     expect(fetchSessionsMock).toHaveBeenCalledTimes(3);
     expect(gpuCellOf(renderer).props['data-busy']).toBe('false');
     expect(textsOf(renderer, 'wsprog__row').join(' ')).toContain('本地 第 10/10 块 · 成功');
   });
 });
 
-describe('重跑一场的逐块行（review-2 m2）：账重置那一跳整段重播，不接旧账往下编', () => {
-  it('started_at 换新的那一跳：旧趟十行整段换掉，新账从空起步、往下照常落', async () => {
+describe('重跑一场的逐块行（review-2 m2）：记录重置那一跳整段重播，不接旧记录往下编', () => {
+  it('started_at 换新的那一跳：旧趟十行整段换掉，新记录从空起步、往下照常落', async () => {
     fetchSessionsMock.mockResolvedValue({
       sessions: [row({ state: 'done', has_offline: true })],
       recent: DIR,
@@ -703,7 +703,7 @@ describe('重跑一场的逐块行（review-2 m2）：账重置那一跳整段�
       }),
     );
     await feed();
-    // 旧行整段换掉（不是「第 11/10 块」接着旧账编）；新账还没跑完一块 → 空态那句
+    // 旧行整段换掉（不是「第 11/10 块」接着旧记录编）；新记录还没跑完一块 → 空态那句
     const rowsAfterReset = textsOf(renderer, 'wsprog__row').join(' ');
     expect(rowsAfterReset).not.toContain('第 10/10 块');
     expect(rowsAfterReset).toContain('暂无逐块记录');
@@ -741,7 +741,7 @@ async function mountWithPostJumpFailing(
   error: Error,
 ): Promise<{ renderer: TestRenderer.ReactTestRenderer; ticksBefore: number }> {
   vi.useFakeTimers();
-  // 挂载：终态读数在手（上一趟的账）、post_job:null —— 轮询不该起
+  // 挂载：终态读数在手（上一趟的记录）、post_job:null —— 轮询不该起
   fetchSessionsMock.mockResolvedValueOnce({
     sessions: [row({ state: 'done', has_offline: true })],
     recent: DIR,

@@ -15,7 +15,7 @@
   6. **注入件一路向下传**：两条并发跑的链各自的假启动器互不串台（没有一处替换模块
      全局属性，也没有摘掉 `tests/conftest.py` 的再入闸标记）。
 
-**一条真子会话都不起**：本文件每一个会走到纪要钩子的用例都注入只记账的假启动器；
+**一条真子会话都不起**：本文件每一个会走到纪要钩子的用例都注入只登记的假启动器；
 产品路径那一档由 `tests/conftest.py` 的 `MEETING_MINUTES_CHILD=1` 兜底挡着，
 本文件另外把 `resolve_minutes_hook()` 换成假件（第二层网）。引擎一律是
 `tests/test_offline_runner.py` 的 `FakeEngine`，音频是现场合成的最小 PCM。
@@ -72,12 +72,12 @@ BG_TIMEOUT_SECONDS = 4.0
 
 
 # ---------------------------------------------------------------------------
-# 假件：两个只记账的替身 + 第二层网
+# 假件：两个只登记的替身 + 第二层网
 # ---------------------------------------------------------------------------
 
 
 class FakeMinutesHook:
-    """假钩子实现：`launch()` 只记账（真子会话一次都不该被拉起）。
+    """假钩子实现：`launch()` 只登记（真子会话一次都不该被拉起）。
 
     `resolutions` 另记「纪要那一层的启动器被解析出几次」（产品路径补纪要那一半的入口计数）。
     """
@@ -91,7 +91,7 @@ class FakeMinutesHook:
 
 
 class FakeHookImplementation:
-    """纪要那一层**解析出来的那个实现**的替身：`launch()` 只记账。
+    """纪要那一层**解析出来的那个实现**的替身：`launch()` 只登记。
 
     产品路径上调的是 `resolution.implementation.launch(session_dir)`，因此替身要长成
     「有 `launch()` 的对象」这个形状（与 `minutes.hook = auto` 解析出来的东西同形）。
@@ -106,13 +106,13 @@ class FakeHookImplementation:
 
 @pytest.fixture(autouse=True)
 def _no_real_minutes_hook(monkeypatch: pytest.MonkeyPatch) -> FakeMinutesHook:
-    """**第二层网**：产品路径上解析出来的纪要钩子换成只记账的假件。
+    """**第二层网**：产品路径上解析出来的纪要钩子换成只登记的假件。
 
     第一层网是 `tests/conftest.py` 的 `MEETING_MINUTES_CHILD=1`（它挡在 `minutes.hook`
     的解析之前）。这一层接着兜住「标记被摘掉之后」那一档：本机 PATH 上真的有 `dsh`。
 
     它同时是「产品路径补纪要那一半」的判据来源：产品路径不递启动器，判据只能落在
-    「这一趟解没解析出纪要那一层的启动器」上 —— 记账挂在假解算器自己的 `resolutions`
+    「这一趟解没解析出纪要那一层的启动器」上 —— 登记挂在假解算器自己的 `resolutions`
     那一格上（`_announce_minutes()` 那条路是「闸放行 → 解析实现 → 拉起」：解析到了就
     一定走到 `launch()`；`MEETING_MINUTES_CHILD=1` 那一档连解析都不发生）。
     """
@@ -231,7 +231,7 @@ def archive_mp3s(session: Path, *, newer_than_pcm: bool = True) -> list[Path]:
 
 
 class SettlingLauncher(RecordingLauncher):
-    """假启动器：记账之外，**把纪要那一层该落的产物补上**（替那个 headless 子会话收工）。
+    """假启动器：登记之外，**把纪要那一层该落的产物补上**（替那个 headless 子会话收工）。
 
     真的启动器起一条 headless 子会话，子会话跑完会写 `meeting_minutes_status.json` 与
     `meeting_final.md`。假件替的就是这一步，因此它也得让这两份落下来 —— 不然「反复重跑
@@ -498,7 +498,7 @@ def test_an_injected_launcher_stands_in_for_the_gate(tmp_path: Path) -> None:
     """注入假启动器那一档：闸放行时它被调到一次，闸拦下时它一次都不被调到。
 
     假件**照真子会话的收工样子落终态**（`SettlingLauncher`）：拉起那一档一律等这一趟
-    新落的终态，于是第一遍那一格 `state` 出自**等到的那一版**（不是盘上读来的旧账），
+    新落的终态，于是第一遍那一格 `state` 出自**等到的那一版**（不是盘上读来的旧记录），
     第二遍因为终态与产物都齐，闸拦下、交回 `already_done`。
     """
     session = synth_session(tmp_path / "250919")
@@ -663,7 +663,7 @@ def test_a_second_launch_on_the_same_session_is_refused(
 ) -> None:
     """同一场再来一次拉起 → **拒跑**（没有第二条线程、没有第二个子会话）。
 
-    判据落在真实现的记账上：`launch()` 抛 `AlreadyRunningError`、`minutes.runner.run()` 只被
+    判据落在真实现的记记录里：`launch()` 抛 `AlreadyRunningError`、`minutes.runner.run()` 只被
     调到一次、盘上第一趟那一版状态一个字节都没被第二趟覆盖。
     """
     session = synth_session(tmp_path / "250919")
@@ -693,7 +693,7 @@ def test_force_carries_the_flag_all_the_way_to_the_implementation(
     """同一现场带 `--force` → 允许重跑（这一档没有把 `--force` 的出路堵死）。
 
     `--force` 会一路走到拉起这一步，因此这一条把再入闸（`MEETING_MINUTES_CHILD=1`）摘掉，
-    并给真实现那一格钉一个桩：记账之后照在飞那一档抛 `AlreadyRunningError`（桩自己不起任何
+    并给真实现那一格钉一个桩：登记之后照在飞那一档抛 `AlreadyRunningError`（桩自己不起任何
     东西，`runner.run()` 也就没有机会被走到）。判据是**带 `--force` 的那一趟真的落到了
     「调实现」这一步**，而 `launch(..., force=True)` 那一格收到的是 `True`。
     """
@@ -703,7 +703,7 @@ def test_force_carries_the_flag_all_the_way_to_the_implementation(
     calls: list[bool] = []
 
     def stub(_self, session_dir, *, force: bool = False) -> None:
-        """照真实现那一格：记账、落一版在飞（这一趟不被拒），随后替子会话收工。"""
+        """照真实现那一格：登记、落一版在飞（这一趟不被拒），随后替子会话收工。"""
         calls.append(bool(force))
         minutes_status.mark_running(session_dir, branch="headless", force=force)
         write_final(Path(session_dir))
@@ -732,7 +732,7 @@ def test_two_entries_can_inject_launchers_at_the_same_time(
     这是「注入件经形参向下传、不落在模块全局上」的判据：替换模块全局的写法在并发下会把
     对方的替身当成原函数、整条链以 `TypeError` 收场，并把离线状态文件补成 `failed`。
     两条链的假启动器都**落本趟终态**（`SettlingLauncher`）：拉起那一档一律等落定，
-    只记账的替身会各自等到上界（真链是四小时，这一格由 `_a_short_minutes_bound` 压到秒级）。
+    只登记的替身会各自等到上界（真链是四小时，这一格由 `_a_short_minutes_bound` 压到秒级）。
     """
     first = synth_session(tmp_path / "a")
     second = synth_session(tmp_path / "b")
@@ -959,7 +959,7 @@ def test_a_minutes_launch_that_never_settles_is_not_reported_as_success(
     """
     session, engine = offline_only_session(tmp_path / "250919")
     a_finished_minutes_layer(session, state="failed")
-    implementation = FakeHookImplementation()  # 只记账：一份新终态都不落
+    implementation = FakeHookImplementation()  # 只登记：一份新终态都不落
     monkeypatch.setattr(
         "meeting.backends.registry.resolve_minutes_hook",
         lambda *a, **k: FakeResolution(implementation),

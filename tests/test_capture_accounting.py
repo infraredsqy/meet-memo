@@ -1,6 +1,6 @@
-"""`tests/test_capture_accounting.py` —— 归档对账逻辑本身，以及把它拆穿的反例。
+"""`tests/test_capture_accounting.py` —— 归档核对逻辑本身，以及把它拆穿的反例。
 
-对账回答一个问题：**归档里躺着的 PCM，能不能信？** 口径（任务书 §1 / §3）：
+核对回答一个问题：**归档里躺着的 PCM，能不能信？** 口径（任务书 §1 / §3）：
 
   - 逐帧：把归档 PCM 按 0.5 秒一帧重新切片、用 `meeting.capture.levels.frame_level`
     **重跑一遍电平换算**——帧序号从 0 连续编号、一帧不落（一帧不落 = 丢 0 秒），
@@ -12,12 +12,12 @@
     = 0.1 秒）以内。
 
 **期望侧从哪儿来**：本模块只收调用方给的 `expected_bytes` / `expected_samples`——
-端到端里它们来自假源当场记下的喂块账（`tests/_capture_faulty.py` 的 `fed` 与
+端到端里它们来自假源当场记下的喂块记录（`tests/_capture_faulty.py` 的 `fed` 与
 `expected_archive_bytes()`），没有一个自己编的常数。
 
-**反例的必要性**：一个只会说「全对」的对账函数没有价值。本文件后半段用已知洞
+**反例的必要性**：一个只会说「全对」的核对函数没有价值。本文件后半段用已知洞
 （中段丢块、换序、截断奇字节、缺尾帧、纯静音段、空归档）逐条验它报得出、报得准。
-本文件里对账函数是**纯函数**（只吃字节、不碰设备、不起线程），端到端那一场在
+本文件里核对函数是**纯函数**（只吃字节、不碰设备、不起线程），端到端那一场在
 `tests/test_capture_e2e.py` 里复用同一组函数。
 """
 
@@ -45,7 +45,7 @@ BLOCK_SAMPLES = 1600
 
 
 # ---------------------------------------------------------------------------
-# 对账函数（纯函数；端到端文件从这里 import 同一组）
+# 核对函数（纯函数；端到端文件从这里 import 同一组）
 # ---------------------------------------------------------------------------
 
 
@@ -61,7 +61,7 @@ class FrameReading:
 
 @dataclass
 class PcmAudit:
-    """一份归档 PCM 的对账结论（逐项都可以直接当断言用）。"""
+    """一份归档 PCM 的核对结论（逐项都可以直接当断言用）。"""
 
     #: 字节面
     total_bytes: int
@@ -80,7 +80,7 @@ class PcmAudit:
     #: 电平重放（产品的静音语义：dbfs ≤ 阈值算静音帧）
     voiced_frames: int = 0
     silent_frames: int = 0
-    #: 与期望侧的对账（没给期望侧就是 None：这两栏「没验」与「验过全对」要分得开）
+    #: 与期望侧的核对（没给期望侧就是 None：这两栏「没验」与「验过全对」要分得开）
     expected_samples: int | None = None
     sample_gap: int | None = None  # 样本数 − 期望样本数（负 = 少了样本）
     byte_match: bool | None = None
@@ -120,7 +120,7 @@ def audit_pcm(
     frame_interval_seconds: float = DEFAULT_FRAME_INTERVAL_SECONDS,
     silence_dbfs_threshold: float = SILENCE_DBFS_THRESHOLD,
 ) -> PcmAudit:
-    """对一份归档 PCM 做完上面那四层对账，交回一份 `PcmAudit`。"""
+    """对一份归档 PCM 做完上面那四层核对，交回一份 `PcmAudit`。"""
     payload = bytes(data)
     trailing_bytes = len(payload) % BYTES_PER_SAMPLE
     usable = payload[: len(payload) - trailing_bytes]
@@ -208,11 +208,11 @@ def samples_within_one_block(
 
 
 # ---------------------------------------------------------------------------
-# 反例与正例（对账函数自己的验收）
+# 反例与正例（核对函数自己的验收）
 # ---------------------------------------------------------------------------
 
-#: 一块 0.1 秒的样本（对账用例自己的序列生成器；与 `_capture_faulty` 的规则无关——
-#: 对账函数吃的只是「字节 + 期望侧」，它不关心期望侧是哪家假源记的账）
+#: 一块 0.1 秒的样本（核对用例自己的序列生成器；与 `_capture_faulty` 的规则无关——
+#: 核对函数吃的只是「字节 + 期望侧」，它不关心期望侧是哪家假源记下的）
 CHUNK_SAMPLES = 1600
 
 
@@ -293,7 +293,7 @@ def test_a_partial_tail_is_leftover_not_a_frame():
 
 
 def test_silence_is_counted_but_never_reported_as_loss():
-    """反例（静音段）：字节完整、样本数齐——静音是内容，丢块是事故，两者分开记账。"""
+    """反例（静音段）：字节完整、样本数齐——静音是内容，丢块是事故，两者分开登记。"""
     values = [1000, 0, 0, 1003]  # 中间两块静音
     stream = _stream(values)
     audit = audit_pcm(stream, expected_bytes=stream, expected_samples=4 * CHUNK_SAMPLES)
@@ -306,7 +306,7 @@ def test_silence_is_counted_but_never_reported_as_loss():
 
 
 def test_an_empty_archive_audits_to_zero_without_drama():
-    """空归档（未选中的那一路）：0 帧、0 计数、偶数字节，对账不炸。"""
+    """空归档（未选中的那一路）：0 帧、0 计数、偶数字节，核对不炸。"""
     audit = audit_pcm(b"", expected_bytes=b"", expected_samples=0)
     assert audit.total_bytes == 0 and audit.samples == 0 and audit.seconds == 0.0
     assert audit.frames == 0 and audit.frame_indices == []
@@ -326,7 +326,7 @@ def test_a_frame_replay_reruns_the_level_math_on_archived_bytes():
 
 
 def test_missing_frames_are_listed_when_the_archive_is_short():
-    """少了一整帧还多：期望帧里没人顶的那些序号被点名（帧序号层面的空洞账）。"""
+    """少了一整帧还多：期望帧里没人顶的那些序号被点名（帧序号层面的空洞记录）。"""
     audit = audit_pcm(
         _stream([1000] * 5),  # 0.5 秒 = 1 帧
         expected_samples=15 * CHUNK_SAMPLES,  # 本该有 3 帧
@@ -336,7 +336,7 @@ def test_missing_frames_are_listed_when_the_archive_is_short():
 
 
 def test_the_wall_clock_deviation_bound_is_one_block():
-    """墙钟对账的分界：差一个块（1600 样本）算过，再多半块就翻脸。"""
+    """墙钟核对的分界：差一个块（1600 样本）算过，再多半块就翻脸。"""
     assert samples_within_one_block(16000, 1.0)  # 一秒整
     assert samples_within_one_block(16000 + 1600, 1.0)  # 恰好多一个块
     assert samples_within_one_block(16000 - 1600, 1.0)  # 恰好少一个块

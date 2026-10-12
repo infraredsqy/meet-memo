@@ -43,7 +43,7 @@ class _AttemptsSeen:
 
     会中总结的尝试次数由内核 `run_summary()` 逐个 attempt 累加，正常路径上那两格
     （`elapsed_seconds` / `attempts`）随 `SummaryOutcome.detail` 一起给出来。走到
-    「墙钟预算到点、等待被放弃」那一档时内核还没返回，它的记账读不到 —— 契约那一档要的
+    「墙钟预算到点、等待被放弃」那一档时内核还没返回，它的登记读不到 —— 契约那一档要的
     仍是 `{elapsed_seconds, attempts}`，于是**在交给内核的客户端上**记一份。
 
     读数为什么可信：内核每一次 attempt 都先经 `complete()` 才可能卡住（`runner.py` 的循环
@@ -105,7 +105,7 @@ class RuntimeSummaryMixin:
             `cancel()` 口径同一句），因此紧接着按下的第二次总结由池里另一条线程接住
             （`SUMMARY_EXECUTOR_MAX_WORKERS` 取 2 的来路）。
 
-        `client` 外面包一层 `_AttemptsSeen` 记账：走到超时这一档时内核的
+        `client` 外面包一层 `_AttemptsSeen` 登记：走到超时这一档时内核的
         `SummaryOutcome.detail` 已经拿不到了，`attempts` 只能从这里读（见那个类的说明）。
 
         到点的报法与内核判「预算用尽」那一档同形：`ActionError("summary_failed", …, 502,
@@ -162,7 +162,7 @@ class RuntimeSummaryMixin:
              点名缺哪几个键；
           5. **才动手**。
 
-        **前四档没过，一个请求都不发出去、一条记录都不写**（判据是用例里那个记账的假客户端
+        **前四档没过，一个请求都不发出去、一条记录都不写**（判据是用例里那个登记的假客户端
         读数为 0）。第 3 / 4 档的读数在读到的当口就判掉：判定与动手之间不再把后端或配置问第二遍。
 
         **这是一条协程，而且「动手」那一段经 `_summary_wait()` 丢进工作线程**

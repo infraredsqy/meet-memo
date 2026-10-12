@@ -6,7 +6,7 @@
 覆盖（整文件慢档；`68927c27` 收尾轮按机主判尺删去时钟观察用例后，只剩这三条纯逻辑测试）：
 
   - 确定性（构造两个 `DevCaptureBackend()`、取前若干帧逐项比对，电平序列**逐帧相同**）；
-  - **不写真实音频、`finalize()` / `transcode()` 只记账**（把真实存在的场次目录交给替身，
+  - **不写真实音频、`finalize()` / `transcode()` 只登记**（把真实存在的场次目录交给替身，
     跑完目录里空无一物）；
   - `inject_fault()` 的参数校验：非法 `source` / `fault` / `duration_seconds` /
     `after_seconds` 一律抛 `ValueError`；非 dev 后端 `dev_inject` 回
@@ -66,7 +66,7 @@ DEV_ALERT_FAULT_WINDOW_SECONDS = 2.0
 
 
 # ---------------------------------------------------------------------------
-# 纯进程内：确定性、帧率、记账
+# 纯进程内：确定性、帧率、登记
 # ---------------------------------------------------------------------------
 
 
@@ -84,9 +84,9 @@ def test_two_instances_produce_the_same_level_sequence():
 
 
 def test_finalize_and_transcode_only_keep_books(tmp_path):
-    """**不写真实音频**：`finalize()` / `transcode()` 只记账，盘上一份文件都不落地。
+    """**不写真实音频**：`finalize()` / `transcode()` 只登记，盘上一份文件都不落地。
 
-    「只记账」的判据落在两处：两笔调用计数各加一；把**真实存在的场次目录**交给替身之后，
+    「只登记」的判据落在两处：两笔调用计数各加一；把**真实存在的场次目录**交给替身之后，
     这两口子跑完目录里依旧空无一物（`iterdir()` 一个条目都没有）。此前这里只断言
     `_session_dir` 这个字符串还被替身记着 —— 那句话证明不了「没落音频」，因为整条用例
     并没有碰过盘。现在目录是真的（`tmp_path`），盘上有没有东西由 `iterdir()` 直接说话。
@@ -100,7 +100,7 @@ def test_finalize_and_transcode_only_keep_books(tmp_path):
     backend.transcode()
     assert backend.finalize_calls == 1
     assert backend.transcode_calls == 1
-    # 记账那两口子走完之后场次目录仍在（替身只拿它记账），盘上一份音频都没有
+    # 登记那两口子走完之后场次目录仍在（替身只拿它登记），盘上一份音频都没有
     assert backend._session_dir == str(session_dir)  # noqa: SLF001 - 替身只把它记着，不拿它落盘
     assert list(session_dir.iterdir()) == [], [p.name for p in session_dir.iterdir()]
 

@@ -552,7 +552,7 @@ def _assert_interrupted_face(proc: Any) -> dict[str, Any]:
       - `ended_at` 无值（强制打断路径不写它，也不补写任何别的终态字段）；
       - 四步 `id` 齐全（`DRAIN_STEP_IDS` 逐项相等）、四步 `status` 落在 `DRAIN_STEP_STATUS`
         的成员域里（成员关系，不重抄取值域）；
-      - **每一步只报真事、落定过的保持原样**：取消时的记账不许伪造终态，也不许把已经落定的
+      - **每一步只报真事、落定过的保持原样**：取消时的登记不许伪造终态，也不许把已经落定的
         步骤改回去 —— **正在飞的那一步照实记 `running`**（③ 的现场是第 1 步 `flush`：假采集件的
         `finalize()` 把它钉在工作线程里，取消只中止了等待，它既没跑完也没抛错），
         还没轮到的维持 `waiting`，已经落定的各自维持 `done` / `skipped` / `failed`。
@@ -1370,7 +1370,7 @@ def test_sigint_and_sigbreak_share_one_handler(service_process, case_env):
 
 
 class _FakeLogger:
-    """只记账的 logger（`cli.web()` 会往它写启动几行与出错那一行）。"""
+    """只登记的 logger（`cli.web()` 会往它写启动几行与出错那一行）。"""
 
     def __init__(self) -> None:
         self.records: list[tuple[str, str]] = []

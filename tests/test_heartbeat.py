@@ -94,7 +94,7 @@ def post(client, action: str, args: dict | None = None):
 
 
 def test_idle_heartbeat_fields(tmp_path):
-    """① 空闲态：七字段齐、`service` 字面量在、两字段为 `null`、空洞账零账、revision 一致。"""
+    """① 空闲态：七字段齐、`service` 字面量在、两字段为 `null`、空洞记录为空、revision 一致。"""
     with live(tmp_path) as (client, _runtime, _home):
         response = client.get("/api/heartbeat")
         assert response.status_code == 200

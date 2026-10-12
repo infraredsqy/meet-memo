@@ -4,7 +4,7 @@
 
 | 文件 | 作用 | 读者 |
 |---|---|---|
-| `meeting_offline_transcript_<source>.md` | 会后稿，每行 `[HH:MM] **S01**: 正文`（**分钟级**） | 人 + 下游对账 |
+| `meeting_offline_transcript_<source>.md` | 会后稿，每行 `[HH:MM] **S01**: 正文`（**分钟级**） | 人 + 下游核对 |
 | `meeting_offline_speakers_<source>.json` | 类编号 → 每段区间对照表（**秒级浮点**） | 下游程序 |
 | `meeting_offline_report.md` | 运行报告（段耗时分布 / 失败原因分布 / 实时率 + 本场基本事实） | 人 |
 | `meeting_offline_status.json` | 状态文件（`running` / `done` / `partial` / `failed`） | `phase3` 与将来的界面 |
@@ -12,7 +12,7 @@
 **每路各一份，两路不合并**：转写与对照表两张表都按 `source` 分别落盘，文件名里带
 `<source>`。混成一份就再也说不出「这一行出自哪一路」了。
 
-## 字段契约（写入方是本模块，读方是下游程序与对账节点）
+## 字段契约（写入方是本模块，读方是下游程序与核对节点）
 
 对照表是机器读的那一份，字段契约落在这里：
 
@@ -196,7 +196,7 @@ TRANSCRIPT_NOTE_SUFFIX = "-->"
 #: 永远停在在跑」那种状态里，「被打断」这一格是治它的那一半。
 STATES = ("running", "done", "partial", "failed", "interrupted")
 
-#: 「盘上停着一版已落定的账」的三档（`mark_failed_if_unset()` 的沿用判据；与
+#: 「盘上停着一版已落定的记录」的三档（`mark_failed_if_unset()` 的沿用判据；与
 #: `meeting/backends/post.py` 的 `STATE_FAILED` / `STATE_PARTIAL` / `STATE_INTERRUPTED`
 #: 同值）：`interrupted`（人停的）也算 —— 后来逃出来的异常不许把它盖成 `failed`（b1c6a58e）。
 _SETTLED_STATES = ("failed", "partial", "interrupted")
@@ -275,7 +275,7 @@ def is_transcript_note(line: str) -> bool:
 
 
 def _round(value: Any) -> float:
-    """秒数落盘前统一收成 3 位小数（秒级浮点，读数稳定、对账可复算）。"""
+    """秒数落盘前统一收成 3 位小数（秒级浮点，读数稳定、核对可复算）。"""
     return round(float(value), 3)
 
 
@@ -519,7 +519,7 @@ class SourceMetrics:
     读不全），那几段照常送引擎。它同时进 `gate`（`applied = false` 与 `unjudged_spans`），
     于是「这一趟的门在哪几段上没做成判断」不必从整场那几个字段去猜。
 
-    `zero_span_segments` 由**逐块的记账**数出来（每一块交回的段里 `end <= start` 的条数之和），
+    `zero_span_segments` 由**逐块的登记**数出来（每一块交回的段里 `end <= start` 的条数之和），
     与对照表 `audio.zero_span_segments` 同源：整路那一格与逐块那几行的数因此对得上。
     """
 
@@ -534,7 +534,7 @@ class SourceMetrics:
     rtf: float | None = None
     error: str | None = None
     reasons: dict[str, int] = field(default_factory=dict)
-    #: 逐块的记账（单趟跑时是空列表）
+    #: 逐块的登记（单趟跑时是空列表）
     chunks: list[dict[str, Any]] = field(default_factory=list)
     #: 没跑成的那几块覆盖的区间（秒，原录音时间轴）
     missing_spans: list[tuple[float, float]] = field(default_factory=list)
@@ -673,7 +673,7 @@ def _gate_headline(rows: Sequence[dict[str, Any]]) -> str:
 
 
 def _unjudged_indexes(item: dict[str, Any]) -> list[int]:
-    """这一路门判不了的那几块**是第几块**（逐块记账里的 `gate == "unjudged"`）。"""
+    """这一路门判不了的那几块**是第几块**（逐块登记里的 `gate == "unjudged"`）。"""
     return [
         int(run["index"])
         for run in item["chunks"]
@@ -689,7 +689,7 @@ def _chunk_reason(run: dict[str, Any]) -> str:
     因为读报告的是人、读对照表的是程序，两边都该看得出「这一段为什么没有字」。
     """
     reason = str(run.get("reason") or "")
-    return f"{reason}（{_CHUNK_REASON_TEXT.get(reason, '见逐块记账')}）"
+    return f"{reason}（{_CHUNK_REASON_TEXT.get(reason, '见逐块登记')}）"
 
 
 #: 逐块结论词 → 一句人话（报告里那一行用）
@@ -1062,12 +1062,12 @@ def _now_iso() -> str:
 
 
 def mark_failed_if_unset(session_dir: Path | str, error: str) -> Path:
-    """把状态文件补成 `failed` + 原因；**盘上停着一版已落定的账时沿用那一版的字段**。
+    """把状态文件补成 `failed` + 原因；**盘上停着一版已落定的记录时沿用那一版的字段**。
 
-    「读回状态文件 → 盘上已是终态账则沿用它的字段 → 否则补 `failed` + 原因」这一段，
+    「读回状态文件 → 盘上已是终态记录则沿用它的字段 → 否则补 `failed` + 原因」这一段，
     从前在两个调用点逐字各抄一份（`meeting/backends/post.py` 的线程体兜底与
-    `meeting/cli.py::run_post()` 上抛前那次补账），现在只有这一份 —— 幂等闸、启动对账
-    与读回侧都读这份文件，补账口径因此只能有一处。
+    `meeting/cli.py::run_post()` 上抛前那次补记录），现在只有这一份 —— 幂等闸、启动核对
+    与读回侧都读这份文件，补记录口径因此只能有一处。
 
     沿用判据（**以原有两处的口径为准，字段一个不变**）：
 
@@ -1079,9 +1079,9 @@ def mark_failed_if_unset(session_dir: Path | str, error: str) -> Path:
         `interrupted`（人停的）不许被后来逃出来的异常盖成 `failed`（引擎炸的），b1c6a58e；
       - 否则（没有文件、读不动、或停着 `running` / `done`）→ `state = "failed"`、
         `error` 用这次递进来的串、`partial` / `silent` 落假、`silent_spans` / `gate` 落空；
-      - `finished_at` 一律写现在（补账这一刻就是收工时刻）。
+      - `finished_at` 一律写现在（补记录这一刻就是收工时刻）。
 
-    读不动盘上那一版（不合契约）时按空账补：兜底归写方这一段，读侧照旧走
+    读不动盘上那一版（不合契约）时按空记录补：兜底归写方这一段，读侧照旧走
     「拿不准的文件拒收」那条闸，两边各管各的一段。写盘走 `write_status()`（原子替换）。
     **整段尽力而为**：
     写不下去时异常原样抛给调用方，由调用方记 log（不掩盖各自那条更早的异常）。

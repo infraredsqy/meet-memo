@@ -8,7 +8,7 @@
 
 `meeting post` 那条链上，离线那一趟跑完之后，`meeting/offline/runner.py` 的 `run_session()` 在**最后**通知一次这一层（`_announce_minutes()`）。顺序不能反：离线那条转写就是这一层的输入之一，先出纪要就永远只有降级档。工作台上「生成会后精细稿」按钮那一趟走的是 `run_session(..., minutes=False)`——**不**通知这一层，纪要归「生成纪要」那个按钮。
 
-**整条链默认与 DSH 隔离，两个人工入口才放行（隔离闸）**：`run_session()` 的 `announce_minutes` 与 `MinutesHook.launch()` 的 `deliver` 两个开关**缺省假**——测试、脚本、库调用不传就是「本次非人工发起」，安静跳过：不解析钩子、不落任何状态文件（绝不留卡在 `running` 的账）、不渲染提示词、不切块、探针一次都不发，主 log 只留一行「纪要层隔离：本次非人工发起，跳过」。传真的只有两处：`meeting post`（首跑的离线尾巴与「离线段已终态、只补纪要」两路都传 `announce_minutes=True`），以及工作台「生成纪要」按钮（`post_minutes` 动作把 `deliver=True` 递进 `launch()`）。放行之后 `launch()` 经 `minutes.runner.run()` 把标记逐层下传；探针 / 交付 / headless 拉起三处各自还有一道**默认拒绝**的闸（`allow_dsh=False`，不放行当场抛 `DeliveryForbidden`，一次网络 / 子进程动作都不发生）——未来任何代码绕过纪要层直接 import 这些函数，也到不了 DSH。跳过那一档只出现在返回值与主 log 里，`skipped` 不落盘。
+**整条链默认与 DSH 隔离，两个人工入口才放行（隔离闸）**：`run_session()` 的 `announce_minutes` 与 `MinutesHook.launch()` 的 `deliver` 两个开关**缺省假**——测试、脚本、库调用不传就是「本次非人工发起」，安静跳过：不解析钩子、不落任何状态文件（绝不留卡在 `running` 的状态）、不渲染提示词、不切块、探针一次都不发，主 log 只留一行「纪要层隔离：本次非人工发起，跳过」。传真的只有两处：`meeting post`（首跑的离线尾巴与「离线段已终态、只补纪要」两路都传 `announce_minutes=True`），以及工作台「生成纪要」按钮（`post_minutes` 动作把 `deliver=True` 递进 `launch()`）。放行之后 `launch()` 经 `minutes.runner.run()` 把标记逐层下传；探针 / 交付 / headless 拉起三处各自还有一道**默认拒绝**的闸（`allow_dsh=False`，不放行当场抛 `DeliveryForbidden`，一次网络 / 子进程动作都不发生）——未来任何代码绕过纪要层直接 import 这些函数，也到不了 DSH。跳过那一档只出现在返回值与主 log 里，`skipped` 不落盘。
 
 钩子住在 `meeting/backends/minutes.py` 的 `MinutesHook`：`launch(session_dir)` 起一条 daemon 线程跑 `meeting/minutes/runner.py` 的 `run()`，**返回即算启动成功**。离线那一趟不等它跑完，它跑多久都不占收尾预算；它炸了也不带走离线那四份产物、不改 `meeting_offline_status.json`（全程 `try/except BaseException` 兜住，只在主 log 记一条）。
 
@@ -31,13 +31,13 @@
 拉起这一层的地方有三处 —— 离线那一趟的尾巴（`_announce_minutes()`，`meeting post` 首跑走它）、`meeting post` 在「离线段已完成、只补纪要」时自己经同一个拉起点补上的那一趟，以及工作台的「生成纪要」按钮（`post_minutes`，按 `minutes.hook` 解析出的实现直接 `launch()`）。三处走的是同一条拉起契约，**也都过同一道隔离闸**（非人工发起一律安静跳过，见第 1 章），也都可能被用户敲的 `meeting post` 与按下的按钮**同时**走到，因此「这一场已经在飞」这件事必须有盘上的落点：
 
 - `MinutesHook.launch()` 在**建线程之前**同步调一次 `meeting/minutes/status.py` 的 `mark_running()`：方法返回时盘上的 `meeting_minutes_status.json` 已经读得出 `state = "running"`，那一趟起线程的动作在它**之后**；
-- `mark_running()` 把「读一遍现状 + 写一版 `running`」这段用一把 `O_CREAT | O_EXCL` 的 **claim 锁**（场次目录根的瞬态文件 `meeting_minutes_status.lock`）裹住，跨进程只有一个进得来：拿不到锁就等 `0.05` 秒再读一遍（最多三次），读到 `running` 就抛 `AlreadyRunningError`、**不覆盖另一趟的账**；
+- `mark_running()` 把「读一遍现状 + 写一版 `running`」这段用一把 `O_CREAT | O_EXCL` 的 **claim 锁**（场次目录根的瞬态文件 `meeting_minutes_status.lock`）裹住，跨进程只有一个进得来：拿不到锁就等 `0.05` 秒再读一遍（最多三次），读到 `running` 就抛 `AlreadyRunningError`、**不覆盖另一趟的记录**；
 - `AlreadyRunningError` 一路交回调用方：`meeting post` 据此按现成的 `running` 拒跑档收场（退出码 `2`、点名状态文件、给出 `--force`），那一趟**没有起线程、没有拉起子会话**；
 - `--force` 是**唯一**的出路：`launch(..., force=True)` 跳过在飞判据，这一趟把那一版 `running` 原子覆盖成自己的（「无视现状重跑」那条语义由此一路走到拉起这一步）；
 - 上一趟崩在半路时那枚锁会留在盘上，`mark_running()` 的三次有界等待走完之后照常往下拉起 —— 「上一趟崩了」这条出路必须留着；
 - 锁是**瞬态**文件：写完那一版 `running` 就删掉，它**不在产物清单里**（`docs/state.md` 第 3 章那张表里也没有它的名字）。
 
-**拉起 ≠ 落定**：`launch()` 返回只说明这一层被拉起来了，终态要等那条线程或 headless 子进程写。因此 `meeting post` 拉起成功之后**等这一层落终态**才报结论，上界取现成的 `minutes.timeout_seconds`，判据是「盘上那份状态与**拉起之前**的基线不同、并且已经是终态」——上一趟留在盘上的终态不算这一趟的账；到上界还没落定就如实报 `timeout`（既不谎报成功，也不写成 `failed`）。
+**拉起 ≠ 落定**：`launch()` 返回只说明这一层被拉起来了，终态要等那条线程或 headless 子进程写。因此 `meeting post` 拉起成功之后**等这一层落终态**才报结论，上界取现成的 `minutes.timeout_seconds`，判据是「盘上那份状态与**拉起之前**的基线不同、并且已经是终态」——上一趟留在盘上的终态不算这一趟的结果；到上界还没落定就如实报 `timeout`（既不谎报成功，也不写成 `failed`）。
 
 ## 2. 输入
 
@@ -75,7 +75,7 @@
 | 4 合并 | sub agent C | `segmentation.json` + 全部 `segment-*.md`，扫一眼资料 | 场次目录根的 `meeting_final.md` |
 | 5 只读检查 | 1–2 个只读 sub agent | 终稿与块，来自资料的内容对着资料核 | 报告，主 agent 一次性改稿 |
 
-两条转写的对账在流程内部完成：第 3 阶段每个 sub agent 把这一段在两条稿上并排读，按内容判哪一边可信；判不出哪边对的地方如实写「两条稿不一致」。
+两条转写的核对在流程内部完成：第 3 阶段每个 sub agent 把这一段在两条稿上并排读，按内容判哪一边可信；判不出哪边对的地方如实写「两条稿不一致」。
 
 **会议资料（`meeting_materials/`，若在）也是这一轮的输入**（纪要提示词节点 `e8fe7da9`）：场次目录下的 `meeting_materials/` 目录（资料服务端落下来的，目录名是与服务端共享的固定产品约定，见 `docs/contract.md` 4.12）由生成纪要的 AI 当这场会的一部分消化，口径固定写在模板里、共三处——**逐段总结**把与这段讨论相关的资料读进来、当会议内容融进总结（文件修改时间是时机参考，资料可能会前贴、会中贴、会后补）；**合并**扫一眼资料、把段总结漏掉的补进正文；**只读检查**对资料核——正文里来自资料的内容对着资料查，转写块里找不到不算幻觉。资料只进模型的 context：纪要正文的格式骨架、章节结构、说话人附录、质量目标一格不改，没有「参考资料」一节；模板对有料与没料的场次是同一份（有就多看一眼，没有就跳过），渲染器与占位符一字未动——这层口径没有程序性映射。
 
@@ -95,7 +95,7 @@
 
 - **为什么必须先建工作区**：`dsh --profile headless` 建的会话**不带工作区归属**（它直接 `agents.create({meta: {cwd}})`，压根不碰 DSH 的 workspace registry），在 GUI 里落在「未分组」；而 `session/create` **只给 `cwd` 也不进工作区分组**。要让这一场出现在场次目录对应的那个工作区里，只有「先 `workspace/create`、再只带 `workspaceId` 建会话」这一条路。
 - **交付语义：投递 accepted 即算交付完成**。这一层**不等** DSH 那边把纪要写完、**也不校验产物**（产物校验是 headless 那条路的事：那是本进程自己起的子进程，等得起）；**停不停 DSH 是用户的事**，超出这一层的边界。跑成什么样，在 DSH GUI 的那条会话里看得见。
-- **两份盘上的记录**：`working/run_prompt.md`（发出去的提示词全文）与 `working/minutes-run.log`（三步 RPC 的账：头几行说清这一趟怎么交付的、成没成，后面逐段是三步的请求与应答摘要 —— 这条路没有子进程的 stdout / stderr 可落）。两份都是状态文件 `artifacts` 里声明的那两格。
+- **两份盘上的记录**：`working/run_prompt.md`（发出去的提示词全文）与 `working/minutes-run.log`（三步 RPC 的全程记录：头几行说清这一趟怎么交付的、成没成，后面逐段是三步的请求与应答摘要 —— 这条路没有子进程的 stdout / stderr 可落）。两份都是状态文件 `artifacts` 里声明的那两格。
 - **五个失败档各有各的名字**（`HandoffResult.failure`）：`credentials`（签不出 browser-session cookie：读不到凭据、那条记录不在、密钥长度不对）、`workspace_failed`、`session_failed`、`prompt_failed`、`timeout`（交付预算用完：`runner` 递下来的那一格被夹在 `1–60` 秒之间 —— `minutes.timeout_seconds` 是给**生成**用的预算，拿它当一次 HTTP 交付的上限等于没上限）。连不上服务端那一档不在这张表里：那种情况走不到交付这一步（`probe()` 已经把「没在跑」判在前面，于是落回 headless 分支）。中间任何一步失败都**如实记 `failed`，不偷偷改走 headless** —— 交付失败要看得见；成功那一档的状态记 `delivered`（见 `docs/state.md` 第 3 章）。
 - **权限不由这一层说了算**：headless 那条路靠子进程环境里那格 `DSH_PERMISSION_MODE=danger-full-access`；走 `/api` 建的会话**权限取 DSH 服务端自己的设置**，本层给不了。DSH 那边若落在 `approval=ask`，无人值守的纪要会卡在等审批 —— 这是走 web 分支要认下的一件事。
 - **鉴权**：`/api` 只认 HMAC 签名的 browser-session cookie，没有它一律 401。这一层用 `~/.dsh/.credentials.yaml` 里 `client-connection/browser-session` 那条记录里的**持久签名密钥**自签一枚（有效期 30 天，与 dsh 默认一致，跨重启有效），不依赖任何一次性进程态。

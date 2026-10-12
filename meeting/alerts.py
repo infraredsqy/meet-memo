@@ -18,7 +18,7 @@
   - 提示级（`transcript.health` 掉档、`backlog_depth() ≥ BACKLOG_HINT_THRESHOLD`）
     进 `alerts.hints`，**同类合并的键是 `(level, source, message)` 三元组**、**上限 3**；
     合并时沿用原有那一条的 `since`、只刷新 `duration_seconds`；超限的键在合并那一刻就从
-    判定器的记账里回收（`hints()` 与记账本恒同长 —— 只截断返回值的写法会让被挤掉的键永远留下）；
+    判定器的登记里回收（`hints()` 与记记录恒同长 —— 只截断返回值的写法会让被挤掉的键永远留下）；
   - 致命级进 `alerts.critical`，**同时只留一条**；
   - `muted` 由服务侧算出：`mute_session` 生效期间 **或** 这一路的上一次 raise 还在
     `alert.alarm_suppress_seconds` 的抑制窗口里 → `true`。抑制窗口按**「哪一路 + 故障类型」**
@@ -244,9 +244,9 @@ class AlertJudge:
     def reset_for_new_session(self) -> None:
         """新一场开场：清空两条计数与全部提示级（会话级状态不复用上一场）。
 
-        **提示级的记账一并清干净**（`_hints` 与 `_hint_started_at` 两份都在
-        `clear_hints()` 里清）：只清其中一份的话，`hints()` 与记账本会有一刻对不上，
-        下一场开场之后旧记账还会影响新一场的合并判据（复审 m3）。
+        **提示级的登记一并清干净**（`_hints` 与 `_hint_started_at` 两份都在
+        `clear_hints()` 里清）：只清其中一份的话，`hints()` 与记记录会有一刻对不上，
+        下一场开场之后旧登记还会影响新一场的合并判据（复审 m3）。
 
         暂停那一格同样复位（上一场停在暂停里结束，不该把「暂停中」带进新一场）。
         """
@@ -437,12 +437,12 @@ class AlertJudge:
     # -- 会中开关某一路（`set_source` 的两处收场点） -------------------------
 
     def reset_source(self, source: str) -> None:
-        """把**这一路**的判定账整个收走（下一条帧当全新一路起算）。
+        """把**这一路**的判定记录整个收走（下一条帧当全新一路起算）。
 
         用在会中开关某一路的两处（`set_source` 关断成功 / 重新打开成功）：关掉之后这一路
-        的电平帧不再进判定（切断落在 runtime 侧的帧入口），账留着没有意义；重开必须当
+        的电平帧不再进判定（切断落在 runtime 侧的帧入口），记录留着没有意义；重开必须当
         **干净开场**——静默 / 恢复两条累计、抑制窗口的锚点、在告警记号一格不留。只收
-        这一路，其余路（含提示级记账）一概不动（与 `reset_for_new_session()` 的整场清空
+        这一路，其余路（含提示级登记）一概不动（与 `reset_for_new_session()` 的整场清空
         分开）。
 
         **为什么重开也要收一遍**：关掉前攒下的静默秒数若留着，重开后的第一帧会拿关掉前
@@ -455,7 +455,7 @@ class AlertJudge:
         """这一路当前在告警的那条事件的原文（没在告警里就是 `None`）。
 
         给「致命级换挂」用（`set_source` 关掉横幅上那一路、而同场还有**别的**路真在
-        `lost` 时）：致命级同时只留一条，被覆盖掉的那条的原文还在这份记账里
+        `lost` 时）：致命级同时只留一条，被覆盖掉的那条的原文还在这份登记里
         （`event_key`），换挂时**原话照搬**，不另造文案。
         """
         track = self._tracks.get(source)
@@ -532,9 +532,9 @@ class AlertJudge:
         **本 Phase 里提示级合并的唯一实现**：同一个键再次出现时不新增条目，`since` 保持首次
         发生时刻，`duration_seconds` 刷新到当下（= 时刻差，从这条提示第一次出现算起）。
 
-        **超出上限的键在合并这一步就回收**（`_evict_over_the_limit()`）：上限是 3，记账里
+        **超出上限的键在合并这一步就回收**（`_evict_over_the_limit()`）：上限是 3，登记里
         因此最多同时留 3 条。只让 `hints()` 截断返回值的话，被挤掉的那条会永远留在
-        `_hints` 里（复审 m4：`hints()` 返回 3 条而记账 4 条，转写回 `normal` 之后仍是 4 条）。
+        `_hints` 里（复审 m4：`hints()` 返回 3 条而登记 4 条，转写回 `normal` 之后仍是 4 条）。
         """
         key = (level, source, message)
         now = self._now()
@@ -559,11 +559,11 @@ class AlertJudge:
         return alert
 
     def _evict_over_the_limit(self) -> None:
-        """把超出上限 `HINT_LIMIT` 的那些提示级**从记账里删掉**（`hints()` 与记账本同长）。
+        """把超出上限 `HINT_LIMIT` 的那些提示级**从登记里删掉**（`hints()` 与记记录同长）。
 
         丢哪一条与 `hints()` 的截断口径**逐条一致**：按 `since` 排序（`since` 的分辨率是秒，
-        同一秒里按进入记账本的先后）留下最早的三条，其余的在记账里删掉 —— 于是
-        `hints()` 恒等于 `_hints.values()` 本身，两边不会再出现「返回 3 条、记账 4 条」。
+        同一秒里按进入记记录的先后）留下最早的三条，其余的在登记里删掉 —— 于是
+        `hints()` 恒等于 `_hints.values()` 本身，两边不会再出现「返回 3 条、登记 4 条」。
         记时表（`_hint_started_at`）同步删，合并那条判据因此不会留下无主的刻度。
         """
         if len(self._hints) <= HINT_LIMIT:
@@ -575,10 +575,10 @@ class AlertJudge:
             _log.warning("提示级超过上限 %s，丢弃：%s", HINT_LIMIT, item.message)
 
     def clear_hints(self) -> None:
-        """清空提示级**与它的两份记账**（新一场开场 / 离开录音与告警态时用）。
+        """清空提示级**与它的两份登记**（新一场开场 / 离开录音与告警态时用）。
 
         `_hints`（条目）与 `_hint_started_at`（`duration_seconds` 的起点）必须一起清：
-        快照与记账、条目与起点，两对都得同进同退。**不改**致命级与两条计数。
+        快照与登记、条目与起点，两对都得同进同退。**不改**致命级与两条计数。
         """
         self._hints.clear()
         self._hint_started_at.clear()
@@ -586,7 +586,7 @@ class AlertJudge:
     def hints(self) -> list[Alert]:
         """当前提示级列表：`since` 最早的三条（超出上限的键已在合并时回收）。
 
-        `_merge_hint()` 那边一超限就把多出来的键从记账里删掉，所以这里的截断通常是空操作；
+        `_merge_hint()` 那边一超限就把多出来的键从登记里删掉，所以这里的截断通常是空操作；
         留着它是为了让「上限 3」这条口径在返回处也成立（判定可算，无空档）。
         """
         ordered = sorted(self._hints.values(), key=lambda item: item.since)

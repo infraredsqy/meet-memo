@@ -31,7 +31,7 @@ export const actionRequestSchema = z
  *
  * - `already_recording`：`{session_id, dir, elapsed_seconds}`；
  * - `draining` **五档**：`{session_id, dir, failed_steps, log_path}`（`start` 那一档）、
- *   `{kind, dir, status_path, reason}`（纪要那一层的账停在 `running`：重复按「直接出纪要」
+ *   `{kind, dir, status_path, reason}`（纪要那一层的状态停在 `running`：重复按「直接出纪要」
  *   拿到的是这一档，见 `docs/contract.md` 4.3）、`{kind, dir, started_at}`（已经有一趟
  *   会后活在跑）、`{top_state, session_id, dir}`（还在录 / 收尾还没落定）、空对象
  *   （`post_stop` 没有在飞的会后可停）—— 五档并起来是这九个键；
@@ -83,7 +83,7 @@ export const ACTION_DETAIL_VARIANTS: Readonly<
     ['source', 'error'],
   ],
   // 照 docs/contract.md 4.4 的五档逐条抄：start 那一档（没有失败步时 failed_steps 是空数组）；
-  // 纪要那一层的账停在 running（重复按「直接出纪要」）；已经有一趟会后活在跑（post_stop
+  // 纪要那一层的状态停在 running（重复按「直接出纪要」）；已经有一趟会后活在跑（post_stop
   // 撞上纪要在飞也是这一档）；还在录 / 收尾还没落定；post_stop 没有在飞的会后可停（空对象）。
   draining: [
     ['session_id', 'dir', 'failed_steps', 'log_path'],
@@ -287,7 +287,7 @@ export const describeFailure = z
     log_path: z.string().optional(),
     // capture_unavailable 第二档（第一版 session.json 写不进去）
     error: z.string().optional(),
-    // capture_unavailable 第三档（采集起不来）与 draining 第二档（纪要那一层的账停在 running）
+    // capture_unavailable 第三档（采集起不来）与 draining 第二档（纪要那一层的状态停在 running）
     // 共用这一格
     reason: z.string().optional(),
     // draining 第二档：这一趟跑的是哪一层、那一层的状态文件落在哪、既有那一版为什么拒跑

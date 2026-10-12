@@ -48,7 +48,7 @@ TRANSCRIBER_HEALTH_INTERVAL_SECONDS = 0.5
 
 
 class RuntimeFactsMixin:
-    """事实摄取 mixin：心跳与帧时钟、电平告警接线、转写刷新与提示级、帧空洞账。"""
+    """事实摄取 mixin：心跳与帧时钟、电平告警接线、转写刷新与提示级、帧空洞记录。"""
 
     # -- 心跳 -------------------------------------------------------------
 
@@ -101,7 +101,7 @@ class RuntimeFactsMixin:
             "capture_gaps": self.capture_gaps_view(),
         }
 
-    # -- 帧空洞账（gil-stall-hole） ---------------------------------------
+    # -- 帧空洞记录（gil-stall-hole） ---------------------------------------
 
     #: 「最近列表」的条数上限（有界：更早的只留在累计数里）
     CAPTURE_GAP_RECENT_LIMIT = 10
@@ -115,8 +115,8 @@ class RuntimeFactsMixin:
           空洞被记录那一刻的墙钟（ISO，解冻后第一拍 ≈ 空洞结束的时刻）。
 
         空洞是**历史事实**，与 `recording_alive`（「现在采不采得到」）语义互不覆盖：
-        恢复之后 `recording_alive` 回 `true`，空洞照旧在账上。任何态都给这个字段，
-        没有空洞时是零账（`{"total_count": 0, "total_seconds": 0.0, "recent": []}`），
+        恢复之后 `recording_alive` 回 `true`，空洞照旧在记录里。任何态都给这个字段，
+        没有空洞时是空记录（`{"total_count": 0, "total_seconds": 0.0, "recent": []}`），
         不给 `null`。
         """
         return {
@@ -129,21 +129,21 @@ class RuntimeFactsMixin:
         }
 
     def _reset_capture_gaps(self) -> None:
-        """本场起场清账（与 `last_frame_ts` 同点调；空洞是「本场」的账）。"""
+        """本场起场清空记录（与 `last_frame_ts` 同点调；空洞是「本场」的记录）。"""
         self._capture_gaps = []
         self._capture_gap_totals = {"count": 0, "seconds": 0.0}
 
     def _apply_frame_gap(self, fact: FrameGap) -> None:
-        """一条帧空洞事实落账：区间重叠的合并为一条（同一空洞回合只算一次）。
+        """一条帧空洞事实落进记录：区间重叠的合并为一条（同一空洞回合只算一次）。
 
-        检测在生产侧（`meeting/capture/gaps.py`），这里只管记账：
+        检测在生产侧（`meeting/capture/gaps.py`），这里只管登记：
         - **区间**：`[detected - seconds, detected]`（发帧线程报的发现时刻与时长，
           均是采集侧单调钟口径 —— 与 `LevelFrame.ts` 同源，不拿墙钟做差）；
-        - **合并**：新区间与账上最后一条重叠（`interval_start <= last_end`）就是同一
+        - **合并**：新区间与记录里最后一条重叠（`interval_start <= last_end`）就是同一
           回合 —— 两路刻度线在同一次整进程冻结里各报一条、或解冻后紧邻的几拍，都在
           这里并成一条，累计秒数只加区间的**增量**；
-        - **不提交**：账只进心跳应答，不进快照 —— `revision` 原地不动、不广播，
-          与 `last_frame_ts` 同一档（心跳域的账不参与状态迁移）。
+        - **不提交**：记录只进心跳应答，不进快照 —— `revision` 原地不动、不广播，
+          与 `last_frame_ts` 同一档（心跳域的记录不参与状态迁移）。
         """
         if self.snapshot.top_state not in ("recording", "alert"):
             return
@@ -513,11 +513,11 @@ class RuntimeFactsMixin:
         return changed
 
     def _clear_hints(self) -> None:
-        """把提示级清成空 —— **快照那一格与判定器那份记账一起清**（唯一入口）。
+        """把提示级清成空 —— **快照那一格与判定器那份登记一起清**（唯一入口）。
 
         三样东西必须同进同退：判定器的条目与记时表（`judge.clear_hints()`）、快照的
-        `alerts.hints`、本类那份键集合记账（`_hint_keys`）。只清其中一两样的话，
-        「快照与记账是同一份真相」这条不变量会有一刻不成立，旧记账还会让下一场的键集合判据
+        `alerts.hints`、本类那份键集合登记（`_hint_keys`）。只清其中一两样的话，
+        「快照与登记是同一份真相」这条不变量会有一刻不成立，旧登记还会让下一场的键集合判据
         误判（复审 m3）。**不改**致命级与两条电平计数。
         """
         self.judge.clear_hints()
@@ -532,7 +532,7 @@ class RuntimeFactsMixin:
 
         **离开 `recording` / `alert` 之后提示级恒为空**（`docs/ui-design.md` 章 2.5 那张表：
         空闲态与结束档的「告警区」不出现）。判定权随状态收口：`top_state ∈ {idle, ended}`
-        时**不把读数交给判定器**，并把已经挂着的那几条连记账一起清掉（`_clear_hints()`，
+        时**不把读数交给判定器**，并把已经挂着的那几条连登记一起清掉（`_clear_hints()`，
         键集合因此算作变了一次、由调用点借既有 `state` 通道提交一次，界面看得见它消失）。
 
         **为什么要收这一道口**：空闲态那个 `health == "stopped"` 报的是「真转写后端还没起过

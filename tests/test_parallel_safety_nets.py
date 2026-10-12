@@ -1,7 +1,7 @@
 """并行档两道安全网的适配（`68927c27` 节点）：看门阈值的环境变量覆盖、xdist 收场复查搬运。
 
 被测逻辑全部住在 `tests/conftest.py`：`case_wall_clock_limit()`（并行档放宽口径，缺省 5.0）、
-`_xdist_report_worker_violations()`（worker 把红账写成上报文件）、
+`_xdist_report_worker_violations()`（worker 把违例记录写成上报文件）、
 `_xdist_collect_worker_reports()`（controller 汇总打红线并整趟判红）、
 `_xdist_dist_active()`（串行趟的零动作判据）。全程不真起并行趟、不碰机主真实家目录 ——
 守卫读数全部造在临时目录里（与 `test_config_isolation.py` 同一口径）。
@@ -43,7 +43,7 @@ class _TeardownReport:
 
 
 class _SegmentReport:
-    """某一段（setup / call / teardown）report 的最小替身（只喂耗时给看门记账）。"""
+    """某一段（setup / call / teardown）report 的最小替身（只喂耗时给看门登记）。"""
 
     def __init__(self, nodeid: str, when: str, duration: float) -> None:
         self.nodeid = nodeid
@@ -126,8 +126,8 @@ def test_watchdog_hook_spares_case_within_parallel_limit(
 
 
 def _make_dsh_guard(ledger: Path, *, claimed: int) -> guard_module.DshGuard:
-    """造一道账本守卫：两行账，`claimed` 之前的那部分算已认领。"""
-    ledger.write_text("一笔已认领的账\n一笔探针迟到的账\n", encoding="utf-8")
+    """造一道记录守卫：两行记录，`claimed` 之前的那部分算已认领。"""
+    ledger.write_text("一笔已认领的记录\n一笔探针迟到的记录\n", encoding="utf-8")
     return guard_module.DshGuard(
         root=ledger.parent,
         ledger=ledger,
@@ -175,7 +175,7 @@ class _FakeSession:
 def test_worker_writes_report_file_for_unclaimed_dsh_ledger(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """worker 侧：DSH 账本多出一笔未认领 → 写上报文件（worker 唯一能让红出场的方式）。"""
+    """worker 侧：DSH 记录多出一笔未认领 → 写上报文件（worker 唯一能让红出场的方式）。"""
     guard = _make_dsh_guard(tmp_path / "dsh-ledger.txt", claimed=1)
     monkeypatch.setattr(guard_module, "_ACTIVE_DSH_GUARD", guard)
     monkeypatch.setattr(guard_module, "_ACTIVE_REAL_HOME_GUARD", None)
@@ -188,7 +188,7 @@ def test_worker_writes_report_file_for_unclaimed_dsh_ledger(
     report_file = shared / "worker-gw3.txt"
     assert report_file.is_file()
     text = report_file.read_text(encoding="utf-8")
-    assert "一笔探针迟到的账" in text, text
+    assert "一笔探针迟到的记录" in text, text
 
 
 def test_worker_writes_report_file_for_real_home_guard(
@@ -216,7 +216,7 @@ def test_worker_writes_nothing_when_guards_are_clean(
 ) -> None:
     """worker 侧：两道守卫都没红 → 不写文件（并行三趟零上报时主终端就该安静）。"""
     ledger = tmp_path / "dsh-ledger.txt"
-    guard = _make_dsh_guard(ledger, claimed=2)  # 两行账全部已认领
+    guard = _make_dsh_guard(ledger, claimed=2)  # 两行记录全部已认领
     config_dir = tmp_path / "config-meeting"
     config_dir.mkdir()
     home_guard = guard_module.RealHomeGuard(
@@ -237,7 +237,7 @@ def test_controller_reds_session_and_prints_worker_reports(tmp_path: Path) -> No
     shared = tmp_path / "shared"
     shared.mkdir()
     (shared / "worker-gw0.txt").write_text(
-        "账本迟到的一笔（gw0 上报）\n", encoding="utf-8"
+        "记录迟到的一笔（gw0 上报）\n", encoding="utf-8"
     )
     (shared / "worker-gw1.txt").write_text(
         "机主家目录 config.json 被建出（gw1 上报）\n", encoding="utf-8"

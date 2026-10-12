@@ -6,13 +6,13 @@
 验的是生产代码这条路径：读线程、写线程、电平刻度、收尾落盘全部是真的，换掉的只有最外面
 那一层声卡库。五块：
 
-  1. 归档对账：两路 PCM 都长起来，字节数按 **32000 字节/秒** 对得上喂进去的块数；
+  1. 归档核对：两路 PCM 都长起来，字节数按 **32000 字节/秒** 对得上喂进去的块数；
   2. 单路死亡：一路的源抛错 → 该路一条 `SourceLost`，**另一路的字节数继续增长**；
   3. `mode` 过滤：`mode="mic"` 时 loopback 不读、不发帧，但**整段时间写静音**
      （两路时间轴等长，`docs/design-intent.md` 第 9 条）；
   4. 暂停与关一路：暂停 = 所有路写数字静音（逐样本为零）、不录内容、段不切段；
      用户主动关一路 = 那一路写静音、**不报 `SourceLost`**，另一路照常；
-  5. 段账与电平刻度：段起止戳、在录时长（内容字节 ÷ 32000）、权威时长 = 各段之和；
+  5. 段记录与电平刻度：段起止戳、在录时长（内容字节 ÷ 32000）、权威时长 = 各段之和；
      每 `frame_interval` 秒**无条件**发一帧（静音时也发），`SourceFacts` 跟着走。
 """
 
@@ -175,7 +175,7 @@ def wait_for(predicate, timeout: float = 3.0) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# ① 归档对账
+# ① 归档核对
 # ---------------------------------------------------------------------------
 
 
@@ -188,7 +188,7 @@ def test_sources_for_mode_is_the_frozen_domain():
 
 
 def test_both_routes_fill_their_own_archive(tmp_path: Path):
-    """两路各自长起来：字节数 = 块数 × 3200（一秒 32000 字节的对账口径）。"""
+    """两路各自长起来：字节数 = 块数 × 3200（一秒 32000 字节的核对口径）。"""
     mic = FakeCaptureSource("mic", chunks=6)
     loop = FakeCaptureSource("loopback", chunks=4)
     session, _facts, _sources = make_session(tmp_path, mic=mic, loopback=loop)
@@ -326,7 +326,7 @@ def test_mic_mode_leaves_the_loopback_route_alone(tmp_path: Path):
     """`mode="mic"`：loopback 不读、不发帧，但**整段时间写静音**（两路时间轴等长）。
 
     「某一路没开」也是「那一路写静音」（`docs/design-intent.md` 第 9 条）：未选那一路的
-    文件不再是 0 字节，落盘的全是数字零，且不记内容账——权威时长只由 mic 那一路的内容
+    文件不再是 0 字节，落盘的全是数字零，且不记入内容量——权威时长只由 mic 那一路的内容
     字节说话。
     """
     mic = FakeCaptureSource("mic", chunks=4)
@@ -340,7 +340,7 @@ def test_mic_mode_leaves_the_loopback_route_alone(tmp_path: Path):
 
     assert loop.reads == 0
     assert loop.fed == 0
-    # 时间轴等长：未选那一路落的全是静音字节，且与它的字节数对上账
+    # 时间轴等长：未选那一路落的全是静音字节，且与它的字节数核对得上
     assert session.bytes_written("loopback") > 0
     assert session.silence_bytes("loopback") == session.bytes_written("loopback")
     assert session.content_bytes("loopback") == 0
@@ -392,10 +392,10 @@ def test_an_unselected_route_gets_only_a_silence_pacer(tmp_path: Path):
 
 
 def test_pause_writes_silence_and_does_not_record_content(tmp_path: Path):
-    """暂停期间两路都写数字零、内容账停住；恢复后内容照录；**段不切段**。
+    """暂停期间两路都写数字零、内容量停住；恢复后内容照录；**段不切段**。
 
-    盘上对账**在收尾结算之后**做（不跟写线程的记账时序赛跑）：内容块全是源给的那一块、
-    静音全是零且总量等于写侧的静音账——两句话合起来就是「暂停 = 写静音，不录内容」。
+    盘上核对**在收尾结算之后**做（不跟写线程的登记时序赛跑）：内容块全是源给的那一块、
+    静音全是零且总量等于写侧的静音量——两句话合起来就是「暂停 = 写静音，不录内容」。
     """
     mic = FakeCaptureSource("mic", chunk=block(900), pace_seconds=0.005)
     loop = FakeCaptureSource("loopback", chunk=block(3100), pace_seconds=0.005)
@@ -415,8 +415,8 @@ def test_pause_writes_silence_and_does_not_record_content(tmp_path: Path):
     assert wait_for(lambda: session.content_bytes("mic") > content_before_pause)
     session.finalize()
 
-    # 盘上对账（**结算后**对，不跟写线程的记账时序赛跑）：内容块都是源给的那一块、
-    # 暂停静音逐样本为零且总量等于静音账——暂停只是把中间那截换成了零
+    # 盘上核对（**结算后**对，不跟写线程的登记时序赛跑）：内容块都是源给的那一块、
+    # 暂停静音逐样本为零且总量等于静音量——暂停只是把中间那截换成了零
     data = (tmp_path / archive_name("mic")).read_bytes()
     content_total = session.content_bytes("mic")
     silence_total = session.silence_bytes("mic")
@@ -426,7 +426,7 @@ def test_pause_writes_silence_and_does_not_record_content(tmp_path: Path):
     assert data.replace(block(900), b"") == bytes(silence_total), (
         "暂停窗口必须逐样本为零（第 8 条的隐私线）"
     )
-    # 账目自洽：总账 = 内容 + 静音；暂停没有把段切开
+    # 记录自洽：总字节数 = 内容 + 静音；暂停没有把段切开
     assert session.bytes_written("mic") == content_total + silence_total
     records = session.segment_records()
     assert len(records) == 1
@@ -444,10 +444,10 @@ def test_pause_writes_silence_and_does_not_record_content(tmp_path: Path):
 
 
 def test_pause_keeps_the_beat_and_records_no_frame_gap(tmp_path: Path):
-    """暂停期间电平帧照发（既有依赖）→ 帧空洞自查账一拍不缺 → **暂停不构成空洞**。
+    """暂停期间电平帧照发（既有依赖）→ 帧空洞自查记录一拍不缺 → **暂停不构成空洞**。
 
-    空洞账（gil-stall-hole）记的是「发帧线程的节拍断了多久」：暂停只把内容换成静音，
-    刻度线一拍不停，所以整段暂停在账上不留痕。恢复之后也不补记 —— 节拍从没断过。
+    空洞记录（gil-stall-hole）记的是「发帧线程的节拍断了多久」：暂停只把内容换成静音，
+    刻度线一拍不停，所以整段暂停在记录里不留痕。恢复之后也不补记 —— 节拍从没断过。
     """
     mic = FakeCaptureSource("mic", chunk=block(900), pace_seconds=0.005)
     session, facts, _sources = make_session(tmp_path, mic=mic, frame_interval=0.05)
@@ -455,7 +455,7 @@ def test_pause_keeps_the_beat_and_records_no_frame_gap(tmp_path: Path):
     assert wait_for(lambda: len(only(facts, LevelFrame)) >= MIN_SILENCE_FRAMES,
                     timeout=FRAME_WAIT_TIMEOUT_SECONDS)
     session.pause()
-    # 暂停窗里打点线程照常发帧（等到若干拍再查账，别跟打点时序赛跑）
+    # 暂停窗里打点线程照常发帧（等到若干拍再核对，别跟打点时序赛跑）
     paused_before = len(only(facts, LevelFrame))
     assert wait_for(
         lambda: len(only(facts, LevelFrame)) >= paused_before + MIN_SILENCE_FRAMES,
@@ -531,7 +531,7 @@ def test_deactivating_a_route_writes_silence_without_source_lost(tmp_path: Path)
 
 
 def test_segment_account_before_finalize_has_no_closing_stamp(tmp_path: Path):
-    """还在录时段账没有终点戳、权威时长为 0（没写完的段没有账可结）。"""
+    """还在录时段记录没有终点戳、权威时长为 0（没写完的段没有尾可收）。"""
     mic = FakeCaptureSource("mic", chunk=block(900), pace_seconds=0.005)
     session, _facts, _sources = make_session(tmp_path, mode="mic", mic=mic)
     session.start()

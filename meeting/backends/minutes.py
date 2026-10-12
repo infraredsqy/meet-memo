@@ -3,14 +3,14 @@
 `registry.resolve_minutes_hook()` 按 `minutes.hook` 找的就是本模块的 `MinutesHook`
 （`DEFAULT_PATHS["minutes.hook"]` 那条约定路径）。**拉起它的地方有两处**：
 `meeting post` 那一趟 `run_session()` 的尾巴（`_announce_minutes()`，三份离线产物与
-状态文件落定之后），以及工作台「直接出纪要」按钮（`post_minutes`）在同步认过账之后的直调。
+状态文件落定之后），以及工作台「直接出纪要」按钮（`post_minutes`）在同步认领在飞标记之后的直调。
 
 ## 契约（与 `meeting/backends/post.py` 同一条）
 
   - `launch(session_dir)` **返回即算启动成功**：活儿交给一条 **daemon 线程**，
     调用方不等它跑完；
   - **隔离闸在一切之前**：`launch()` 的 `deliver` 参数缺省假 —— 非人工发起（测试、脚本、
-    库调用）在 `mark_running()` 之前就安静跳过（返回一份 `skipped` 账、只留主 log 一行），
+    库调用）在 `mark_running()` 之前就安静跳过（返回一份 `skipped` 结果、只留主 log 一行），
     整个项目与 DSH 隔离，只有 `meeting post` 与「直接出纪要」按钮两条人工入口显式传真；
   - **返回之前先把「这一层在飞」落到盘上**：那一版 `meeting_minutes_status.json`
     （`state = "running"`）由 `meeting/minutes/status.py::mark_running()` 同步写，
@@ -98,7 +98,7 @@ class MinutesHook:
         """`meeting post` 的离线尾巴与「直接出纪要」按钮调它，**返回即算启动成功**（不等它跑完）。
 
         `deliver` 是**人工放行标记**（缺省 `False`）：不放行就在 `mark_running()` **之前**
-        当场返回一份 `skipped` 账 —— 不写任何状态文件（绝不留卡在 `running` 的账）、不起线程、
+        当场返回一份 `skipped` 结果 —— 不写任何状态文件（绝不留卡在 `running` 的记录）、不起线程、
         不碰 DSH 一步，只在主 log 留一行「纪要层隔离：本次非人工发起，跳过」。整个项目与 DSH
         隔离：只有 `meeting post`（离线尾巴 / 只补纪要）与工作台「直接出纪要」按钮这两条
         **人工**入口显式传 `deliver=True`；测试、脚本与库调用缺省全部跳过。放行之后本函数
@@ -196,7 +196,7 @@ class MinutesHook:
 
         字段口径只有一份：`meeting/minutes/status.py` 的 `mark_failed()` —— 盘上那一版的
         `mode` / `branch` / `started_at` / `artifacts` / `dsh` 照留，`state` 与 `error`
-        覆盖成这一趟的账。`meeting/service/runtime.py` 的 claim 退回兜底支走的是同一个函数
+        覆盖成这一趟的结果。`meeting/service/runtime.py` 的 claim 退回兜底支走的是同一个函数
         （本方法仍在，是给它 `getattr` 找的那一格：实现带上它时退回直接落在实现上）。
         """
         try:

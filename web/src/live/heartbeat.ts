@@ -51,7 +51,7 @@ export interface HeartbeatState {
   /**
    * 连续多少次读数里 `recording_alive === false`（两拍规则的计数）。
    *
-   * **界面层的单一归并点就是 `applyHeartbeatReading()`**：它在这里记账，冻结判据
+   * **界面层的单一归并点就是 `applyHeartbeatReading()`**：它在这里登记，冻结判据
    * （`App.tsx` 的 `dataStopped`）与横幅判据（`view.ts` 的 `stalled`）都只读这一个数
    * —— 两处各记各的就会漂。任何非 `false` 读数（`true` / `null` / 失联）清零。
    */
@@ -242,8 +242,8 @@ export function captureStalled(
 /**
  * 「本场曾中断」那条提示行的字（gil-stall-hole）。
  *
- * 数据来自心跳的 `capture_gaps`（帧空洞账）：录中整进程冻结解冻后，发帧线程把真实
- * 空洞时长报上来，账按整档粒度记 —— 冻结冻的是整个进程，两路一起丢，提示行因此
+ * 数据来自心跳的 `capture_gaps`（帧空洞记录）：录中整进程冻结解冻后，发帧线程把真实
+ * 空洞时长报上来，记录按整档粒度记 —— 冻结冻的是整个进程，两路一起丢，提示行因此
  * **不点名哪一路**；一路单独断流是另一件事，由致命级横幅在报。
  *
  * 它是**历史事实**的提示，与「采集已停」那一档（`captureStalled`，现在时）分工明确：
@@ -252,7 +252,7 @@ export function captureStalled(
  *
  * 级别 = 提示级（design-intent 第 17 条）：只上一行字，**不出声、不弹红横幅、
  * 不进两拍计数**（`stalledBeats` 只看 `recording_alive`，与这一格无关）。
- * 服务没给这一格（旧服务 / 应答被截断）时按零账处理，null 安全。
+ * 服务没给这一格（旧服务 / 应答被截断）时按空记录处理，null 安全。
  */
 export function captureGapNote(reply: Heartbeat | null): string | null {
   const gaps = reply?.capture_gaps;

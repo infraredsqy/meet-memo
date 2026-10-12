@@ -110,7 +110,7 @@ def settle(runtime, backend: StubTranscriber) -> None:
       - `transcript.health`：`startup()` 那一次读的是配在 `values` 里的 `dev` 替身
         （恒报 `normal`），接上 stub（可能报 `behind` / `stopped`）之后这一格先得刷成真值；
       - 判定器里那几条提示：同上，让 stub 的读数从零开始攒；
-      - 快照的 `alerts.hints` 与运行时那份记账。
+      - 快照的 `alerts.hints` 与运行时那份登记。
     """
     runtime.transcriber_backend = backend
     runtime._refresh_transcript_snapshot()  # noqa: SLF001 - 把 health 刷成 stub 的真值
@@ -278,7 +278,7 @@ def test_hints_cap_of_three_also_counts_as_a_change(tmp_path):
     with recording(tmp_path, backend) as (client, runtime, started):
         assert started is True, "攒了三份读数、开门那一刻就都摆好了：%r" % started
         assert pump(runtime) is False, "开场那一刷已经把这几个键摆好了，键集合没动"
-        keys = runtime._hint_keys  # noqa: SLF001 - 就看这一份记账
+        keys = runtime._hint_keys  # noqa: SLF001 - 就看这一份登记
         assert len(keys) == 2, "健康度 + 积压各一条"
         assert len(snapshot_of(client)["alerts"]["hints"]) == 2
 

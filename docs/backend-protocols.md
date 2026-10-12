@@ -25,7 +25,7 @@
 - `probe()` 用 `sounddevice` 枚举输入端点、用 `soundcard` 枚举 render 端点，按配置与策略挑选，**以 16k 试开并读回一小段样本**（「能打开 ≠ 有波形」那一档就是这一步加出来的），结果如实报成两路 `ready` / `probe_failed`；
 - `start()` 起两路**各自独立**的采集：mic 走 `sd.InputStream` 回调、loopback 走 `soundcard` 的 recorder（专用线程 + `CoInitializeEx`），把 16k / 单声道 / int16 的裸 PCM 写进 `meeting_audio_<source>_<NNN>.pcm`（NNN 三位零填充、从 1 起；**一段 = 一次录制**，段号 = 各路盘上实有最大段号 + 1，续接接着已有段号编新文件、旧段一个字节不碰；`buffering=0` 的截断写，强杀最多丢最后一个块的尾巴），每 `frame_interval` 秒**无条件**发一帧 `LevelFrame`（静音时发 `-120 dBFS` 的那一帧）+ 一条 `SourceFacts`；
 - 两路各有一条写线程（一路卡在磁盘上不会把另一路拖住）；一路的源读崩时该路报一条 `SourceLost`，另一路照常写；
-- 暂停与「关一路」的服务层出口（`6ea32d8d`；不在上面那张协议表里 —— HTTP 动作入口是 `pause` / `resume` / `set_source`，`10770b41`）：`pause()` / `resume()` 让所有路从这一刻起写数字静音（**不录内容**，真音频在写侧被等长替换成数字零），暂停不切段、只记进段账的 `pauses` 区间；`deactivate_source()` 是用户主动关掉某一路 —— 那一路改写静音，**不报 `SourceLost`、不进告警**（与「这一路真死了」是两回事）；`mode` 没选中的那一路整段写静音填充。三种静音都单独记进写侧的 `silence_bytes` 账，两路时间轴始终等长；**同一对动作在转写那一侧还牵一件事** —— 暂停把会中模型放出显存、继续再把它拉回来（可选成员 `acquire_gpu()`，见下面转写那一节 `release_gpu()` 那一条，`10770b41`）；
+- 暂停与「关一路」的服务层出口（`6ea32d8d`；不在上面那张协议表里 —— HTTP 动作入口是 `pause` / `resume` / `set_source`，`10770b41`）：`pause()` / `resume()` 让所有路从这一刻起写数字静音（**不录内容**，真音频在写侧被等长替换成数字零），暂停不切段、只记进段记录的 `pauses` 区间；`deactivate_source()` 是用户主动关掉某一路 —— 那一路改写静音，**不报 `SourceLost`、不进告警**（与「这一路真死了」是两回事）；`mode` 没选中的那一路整段写静音填充。三种静音都单独记进写侧的 `silence_bytes` 计数，两路时间轴始终等长；**同一对动作在转写那一侧还牵一件事** —— 暂停把会中模型放出显存、继续再把它拉回来（可选成员 `acquire_gpu()`，见下面转写那一节 `release_gpu()` 那一条，`10770b41`）；
 - `finalize()` / `transcode()` / `stop()` 见上表；转码成功之后**保留 PCM**（`session.json` 的 `sources[*].archives` 段文件名表声明的是它们）。
 
 后端往里送的事实（**只报原始事实，不判告警、不带阈值语义**）：
@@ -63,13 +63,13 @@
 - `stop()` 关读线程、把 VAD 手上的尾段送进队列，再在**收尾预算**内把队列里剩下的段尽量做完（预算按积压量自适应，公式见 `docs/state.md` 第 1 章）；
 - `health()` 三取值：已经 `stop()` 过、worker 没起来 / 已经停了、模型加载或识别出事 → `stopped`；积压段数压过 `BACKLOG_BEHIND_THRESHOLD`（20 段）→ `behind`；读线程出事、这一段再也不会长出新段也报 `behind`；其余情况 `normal`。**没起过场次时报 `stopped`** —— 快照空闲态那一格就是从它读来的真值；
 - `backlog_depth()` 是段队列里还没处理的段数（队列**无界**，不做 busy-drop），`segment_timeout()` 是配置里的 `asr.timeout_seconds`（默认 `20.0`）；
-- `release_gpu()` 由收尾第 4 步调一次（那一步只做「让会中模型退出显存」这一件事，之后那一格停在 `waiting`；会后离线链与纪要层都由「生成会后精细稿」/「生成纪要」按钮或 `meeting post` 另行拉起），耗时算在 `post` 这一步的记账里。语义四条：**没加载过就 no-op**（一条日志都不写）、**幂等**、等在飞推理有 **5 秒上界**（后端自己的在飞计数 + `Condition`，事件驱动；到点照旧丢引用并记一条 warning）、**丢引用之后**才尽力清一次缓存。它抛错不拖垮整场 —— 调用方如实记一条 log，`post` 那一格照常落 `waiting`。**配对那一半是 `acquire_gpu()`**（`10770b41`）：由动作 `pause` / `resume` 经服务层提交，走**同一条拉起路径**（`_transcriber_or_create()`，同一个 factory、同一把 `_model_lock`）。语义四条：**已经在手就安静 no-op**（不重造第二份权重）、释放之后经同一个 factory 造一份新的并复位释放标记（下一轮释放照样管得着）、**造不出来只记一条 warning** 且这次动作照常（R1 的立场：转写坏了不挡录音）、不碰 `_stopped` 与 `health()`。**权重真正的加载仍在继续之后的第一段转写时**（`GlmAsrTranscriber` 自己那条加载路径）—— 「继续」这一刻拿回来的是识别器。这一处交接的来由与本机数字见 `docs/asr-backends.md`。
+- `release_gpu()` 由收尾第 4 步调一次（那一步只做「让会中模型退出显存」这一件事，之后那一格停在 `waiting`；会后离线链与纪要层都由「生成会后精细稿」/「生成纪要」按钮或 `meeting post` 另行拉起），耗时算在 `post` 这一步的登记里。语义四条：**没加载过就 no-op**（一条日志都不写）、**幂等**、等在飞推理有 **5 秒上界**（后端自己的在飞计数 + `Condition`，事件驱动；到点照旧丢引用并记一条 warning）、**丢引用之后**才尽力清一次缓存。它抛错不拖垮整场 —— 调用方如实记一条 log，`post` 那一格照常落 `waiting`。**配对那一半是 `acquire_gpu()`**（`10770b41`）：由动作 `pause` / `resume` 经服务层提交，走**同一条拉起路径**（`_transcriber_or_create()`，同一个 factory、同一把 `_model_lock`）。语义四条：**已经在手就安静 no-op**（不重造第二份权重）、释放之后经同一个 factory 造一份新的并复位释放标记（下一轮释放照样管得着）、**造不出来只记一条 warning** 且这次动作照常（R1 的立场：转写坏了不挡录音）、不碰 `_stopped` 与 `health()`。**权重真正的加载仍在继续之后的第一段转写时**（`GlmAsrTranscriber` 自己那条加载路径）—— 「继续」这一刻拿回来的是识别器。这一处交接的来由与本机数字见 `docs/asr-backends.md`。
 
 每一段落一份产物：`session_dir/meeting_transcript_<source>.md`，一行 `[HH:MM] 正文`（分钟级时间戳取**采集时刻**，追加写、逐行 flush）。识别失败的段落照落一行，正文是**占位符**（`[[识别失败: 超时 20s]]` 这一形状：双层方括号、裸文本、不带时间戳、不含 `**`）；真后端产出的 `kind` 一律是 `line`，失败段落也是 `line`，靠正文认出来。文件位置、行格式与占位符的几档见 `docs/state.md` 第 3 章，SSE 侧那一行见 `docs/contract.md` 第 3.3 节。
 
 ### `PostProcessHook` —— 会后钩子（解析落点）
 
-真钩子住在 `meeting/backends/post.py`（`7c6952e5` 已落地，`post.hook` 的默认值 `auto` 解析到它）。**本类只是 `post.hook` 的解析落点，不带任何钩子方法**（起 daemon 线程跑会后链的那套 `launch` / `_run` / `_mark_failed` 没有任何产品调用方，已随收尾第 4 步的退场一并删除）：收尾第 4 步不拉起它（那一格做完释放显存就停在 `waiting`），「生成会后精细稿」按钮（`post_offline`）走 `run_session(..., minutes=False)` 那条直路、不经它，`post.hook` 在那一侧只答「这一层接没接」（`null` → 按钮 404 `action_unavailable`）。「跑会后一套」（音频归档补齐 → 离线那一趟 → 等纪要终态 → 汇总）的产品入口只剩 `meeting post` 这一条（`meeting.cli.run_post()`）；会后离线那条链由按钮按需直接跑，跑成什么样由场次目录的 `meeting_offline_status.json` 与逐块账回答（产物契约见 `docs/state.md` 第 3 章）。
+真钩子住在 `meeting/backends/post.py`（`7c6952e5` 已落地，`post.hook` 的默认值 `auto` 解析到它）。**本类只是 `post.hook` 的解析落点，不带任何钩子方法**（起 daemon 线程跑会后链的那套 `launch` / `_run` / `_mark_failed` 没有任何产品调用方，已随收尾第 4 步的退场一并删除）：收尾第 4 步不拉起它（那一格做完释放显存就停在 `waiting`），「生成会后精细稿」按钮（`post_offline`）走 `run_session(..., minutes=False)` 那条直路、不经它，`post.hook` 在那一侧只答「这一层接没接」（`null` → 按钮 404 `action_unavailable`）。「跑会后一套」（音频归档补齐 → 离线那一趟 → 等纪要终态 → 汇总）的产品入口只剩 `meeting post` 这一条（`meeting.cli.run_post()`）；会后离线那条链由按钮按需直接跑，跑成什么样由场次目录的 `meeting_offline_status.json` 与逐块记录回答（产物契约见 `docs/state.md` 第 3 章）。
 
 - `registry.capabilities_of()` 靠类的 `__module__` 把它当本实现、不当替身；它**不带 `finalize` / `transcode`**：那两项是采集后端的能力，这两个键上的闸门不看它。
 
@@ -77,8 +77,8 @@
 
 | 成员 | 语义 |
 |---|---|
-| `claim(session_dir)` | **可选成员**：**同步**把「这一层在飞」落到盘上（真实现里是 `meeting/minutes/status.py` 的 `mark_running()`），盘上已经停着一版 `running` 时当场抛 `AlreadyRunningError`。`post_minutes` 按钮那趟在起线程之前调它同步认账（runtime 用 `getattr` 找它，取不到就跳过同步认账这一步、照旧走线程体那条路） |
-| `launch(session_dir)` | `meeting post` 的离线尾巴与 `post_minutes` 按钮调它，**返回即算启动成功**（不等它跑完）。`minutes.hook = null` 那一档不调它（按钮当场 404，`meeting post` 补纪要那一路安静跳过）。真实现另收两格 keyword-only：`force`（`meeting post --force` 那一趟）—— 盘上已经停着一版 `running` 时**建线程之前**就抛 `AlreadyRunningError`（当场拒跑），带 `force` 时放行；`claimed` —— 按钮那趟在 `claim()` 认过账时带 `claimed=True` 调它（实现若接受 `claim()` 就应接受这个格，缺省 `False`）：这里不再重复认账，重复一次会读到自己刚落下的 `running`、把这一趟自己拒掉 |
+| `claim(session_dir)` | **可选成员**：**同步**把「这一层在飞」落到盘上（真实现里是 `meeting/minutes/status.py` 的 `mark_running()`），盘上已经停着一版 `running` 时当场抛 `AlreadyRunningError`。`post_minutes` 按钮那趟在起线程之前调它同步登记（runtime 用 `getattr` 找它，取不到就跳过同步登记这一步、照旧走线程体那条路） |
+| `launch(session_dir)` | `meeting post` 的离线尾巴与 `post_minutes` 按钮调它，**返回即算启动成功**（不等它跑完）。`minutes.hook = null` 那一档不调它（按钮当场 404，`meeting post` 补纪要那一路安静跳过）。真实现另收两格 keyword-only：`force`（`meeting post --force` 那一趟）—— 盘上已经停着一版 `running` 时**建线程之前**就抛 `AlreadyRunningError`（当场拒跑），带 `force` 时放行；`claimed` —— 按钮那趟在 `claim()` 登记过时带 `claimed=True` 调它（实现若接受 `claim()` 就应接受这个格，缺省 `False`）：这里不再重复登记，重复一次会读到自己刚落下的 `running`、把这一趟自己拒掉 |
 
 真钩子住在 `meeting/backends/minutes.py`（`41465462` 已落地，`minutes.hook` 的默认值 `auto` 解析到它）。它的形状：
 
@@ -103,7 +103,7 @@
 
 转写这一档现在有两层：**默认取值 `auto`** 解析到真转写后端（`meeting.backends.transcribe:TranscriberBackend`，见第 1 章那一节）；`transcriber.backend = null`（或解析失败回退）才是**缺席**那一档 —— `NullTranscriberBackend` 恒 `health = normal`、`backlog_depth() = 0`、`segment_timeout() = 20.0`，收尾预算的输入因此取 `0` 段 / `20.0` 秒这两个缺省值，转写这一侧一行都不产。**缺席档的 `normal` 与真实现空闲态的 `stopped` 各说各的事**：`normal` 说的是「这个构建里没有转写这件事」，`stopped` 说的是「有转写、这一档没在跑」（真实现没起过场次时报的就是它）。
 
-`null` 替身**不长**合成电平或故障注入那类测试逻辑 —— 那是开发替身（`backends/dev.py`）的事。两个会后钩子的缺席占位各有一个：`registry.py` 的 `_AbsentPostHook`（`post.hook = null`）与 `_AbsentMinutesHook`（`minutes.hook = null`），两者的 `launch()` 都抛错，而缺席那一档根本不会被调用（调用方先问 `has_implementation`，是 `false` 就安静跳过：界面上对应的按钮回 404 `action_unavailable`，`meeting post` 补纪要的那一路按缺席档记账）。
+`null` 替身**不长**合成电平或故障注入那类测试逻辑 —— 那是开发替身（`backends/dev.py`）的事。两个会后钩子的缺席占位各有一个：`registry.py` 的 `_AbsentPostHook`（`post.hook = null`）与 `_AbsentMinutesHook`（`minutes.hook = null`），两者的 `launch()` 都抛错，而缺席那一档根本不会被调用（调用方先问 `has_implementation`，是 `false` 就安静跳过：界面上对应的按钮回 404 `action_unavailable`，`meeting post` 补纪要的那一路按缺席档登记）。
 
 ## 3. 后端怎么被找到
 
@@ -182,7 +182,7 @@
 
 `meeting/backends/dev.py` 是**只给开发与测试用的非产品路径，默认关闭**。同一条取值 `dev` 在两个后端键上**按 key 分流**：`capture.backend = dev`（或 `MEETING_CAPTURE=dev`）落 `DevCaptureBackend`，`transcriber.backend = dev` 落 `DevTranscriberBackend`。
 
-`DevCaptureBackend` 报两路 `ready`（`device_name` 是 `dev-mic` / `dev-loopback`），每 100ms 发一帧合成电平，另外接受三档故障注入（`silence` / `stall` / `lost`）。它**不写真实音频**，`finalize()` / `transcode()` 只记账。
+`DevCaptureBackend` 报两路 `ready`（`device_name` 是 `dev-mic` / `dev-loopback`），每 100ms 发一帧合成电平，另外接受三档故障注入（`silence` / `stall` / `lost`）。它**不写真实音频**，`finalize()` / `transcode()` 只登记。
 
 `DevTranscriberBackend` 是一条「会中能看见字幕在动」的替身：起一条线程，开场 2.0 秒后首发、之后每 0.5 秒经 `line_sink` 产一行两路轮换的合成转写（正文形如 `dev 替身合成的一行转写（mic #1）`）。它不读归档、不加载模型、**不写产物文件**，`health()` 恒 `normal`、`backlog_depth()` 恒 `0`、`segment_timeout()` 报 `20.0`；`stop()` 之后线程收队、一行都不再产。**它没有对应的环境变量** —— `MEETING_CAPTURE` 只映射 `capture.backend`，要开转写替身就写配置文件里的 `"transcriber.backend": "dev"`。
 

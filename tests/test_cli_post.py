@@ -17,16 +17,16 @@
 
 **一条真子进程都不起**：参数面走进程内 `pytest.raises(SystemExit)`，编排面一律注入假件
 （假引擎 / 假启动器 / 假转码）。本机 PATH 上真的有 `dsh`，`tests/conftest.py` 的
-`MEETING_MINUTES_CHILD=1` 兜底是第一层网，这里另外把 `resolve_minutes_hook` 换成只记账的
+`MEETING_MINUTES_CHILD=1` 兜底是第一层网，这里另外把 `resolve_minutes_hook` 换成只登记的
 假件；**注入假启动器不再需要摘掉那个兜底标记** —— 假启动器经
 `run_post(..., minutes_launcher=…)` → `run_session(..., minutes_launcher=…)` →
 `_announce_minutes(..., launcher=…)` **一路向下传**（本文件没有一处替换模块全局属性），
 而那道标记是产品路径自己的再入闸、与注入的假件无关。
 
-**注入的假启动器按真启动器的时序记账**：`launch()` 返回即算启动成功，终态由它背后那条链
+**注入的假启动器按真启动器的时序登记**：`launch()` 返回即算启动成功，终态由它背后那条链
 写进 `meeting_minutes_status.json`，因此 `hook == "launched"` 那一档**一律等这一趟新落的
 终态**（等待语义不按「谁拉起的」分叉）。需要「这一趟真的落定」的用例用 `SettlingLauncher`
-（记账 + 照真子会话的收工样子落终态）；本文件的上界夹具 `a_short_minutes_bound` 把
+（登记 + 照真子会话的收工样子落终态）；本文件的上界夹具 `a_short_minutes_bound` 把
 `minutes.timeout_seconds` 的读数压到 0.4 秒，任何一档都不会把用例吊在四小时上。
 """
 
@@ -83,10 +83,10 @@ MINUTES_FINAL_NAME = offline_runner.MINUTES_FINAL_NAME
 
 
 class RecordingLauncher:
-    """假启动器：只记账（被调了几次、每次的场次目录），**什么也不起**。
+    """假启动器：只登记（被调了几次、每次的场次目录），**什么也不起**。
 
     它替的是「把 headless DSH 子会话拉起来」那一步 —— 本文件里一次真拉起都不该发生，
-    因此这份记账就是「这一趟有没有再花一次钱」的权威读法。
+    因此这份登记就是「这一趟有没有再花一次钱」的权威读法。
     """
 
     def __init__(self, *, result: Any = None) -> None:
@@ -99,7 +99,7 @@ class RecordingLauncher:
 
 
 class FakeHook:
-    """假钩子实现（`minutes.hook = auto` 那一格解析出来的东西）：`launch()` 只记账。"""
+    """假钩子实现（`minutes.hook = auto` 那一格解析出来的东西）：`launch()` 只登记。"""
 
     def __init__(self) -> None:
         self.calls: list[str] = []
@@ -123,7 +123,7 @@ class FakeResolution:
 
 
 class RecordingConverter:
-    """假转码器：记账 + 按场景写/不写那份 MP3（真 ffmpeg 在不在场与用例无关）。"""
+    """假转码器：登记 + 按场景写/不写那份 MP3（真 ffmpeg 在不在场与用例无关）。"""
 
     def __init__(self, *, body: bytes = b"fake-mp3", raises: str | None = None) -> None:
         self.calls: list[tuple[str, str]] = []
@@ -139,13 +139,13 @@ class RecordingConverter:
 
 
 class SettlingLauncher(RecordingLauncher):
-    """假启动器：记账之外**照真子会话的收工样子把终态落下来**（`state` 缺省 `done`）。
+    """假启动器：登记之外**照真子会话的收工样子把终态落下来**（`state` 缺省 `done`）。
 
     真的启动器 `launch()` 返回即算启动成功，终态由它背后那条链写进
     `meeting_minutes_status.json`；**拉起不等于落定**，因此 `run_post()` 在
     `hook == "launched"` 那一档一律等这一趟新落的终态（`meeting/cli.py` 的
     `_wait_for_settled_minutes()`）—— 真实现与注入的假件在时序上同形，等待语义不按
-    「谁拉起的」分叉。只记账、一份终态都不落的假件因此会等到上界（真链是四小时，
+    「谁拉起的」分叉。只登记、一份终态都不落的假件因此会等到上界（真链是四小时，
     本文件那一格由上界夹具压到秒级）；本文件需要「这一趟真的落定」的用例一律用它。
     """
 
@@ -198,7 +198,7 @@ class DelayedLauncher(RecordingLauncher):
 
 @pytest.fixture(autouse=True)
 def _no_real_minutes_hook(monkeypatch: pytest.MonkeyPatch) -> FakeHook:
-    """**本文件自己的第二层网**：纪要钩子一律换成只记账的假件。
+    """**本文件自己的第二层网**：纪要钩子一律换成只登记的假件。
 
     `tests/conftest.py` 那道 `MEETING_MINUTES_CHILD=1` 兜底是第一层网（挡住任何真子会话）；
     这里把 `resolve_minutes_hook()` 整个换掉，于**产品路径**那一档（用例不注入假启动器时）
@@ -218,7 +218,7 @@ def a_short_minutes_bound(monkeypatch: pytest.MonkeyPatch) -> float:
 
     真链的缺省是四小时（`meeting/config.py` 的 `DEFAULT_VALUES`），用例不能真等满它。
     `hook == "launched"` 那一档一律等这一趟新落的终态，因此本文件凡是注入假启动器的用例都
-    压到秒级：假件落了终态的当场收工，**只记账不落终态的假件也绝不能挂住**（它在上界内
+    压到秒级：假件落了终态的当场收工，**只登记不落终态的假件也绝不能挂住**（它在上界内
     如实收场，而不是把用例吊死在四小时上）。键本身不新增、取值域不动，只改这一格的**读数**。
     """
     real_get = config_module.get
@@ -699,7 +699,7 @@ def test_run_post_reports_every_layer_with_absolute_paths(tmp_path: Path) -> Non
     """注入假引擎 + 假启动器跑一遍：摘要里每层结论与逐条产物**绝对路径**齐。
 
     这一趟的假启动器**照真子会话的收工样子落终态**（`SettlingLauncher`）：`hook ==
-    "launched"` 那一档一律等这一趟新落的终态，只记账不落终态的假件会等到上界。
+    "launched"` 那一档一律等这一趟新落的终态，只登记不落终态的假件会等到上界。
     """
     session = synth_session(tmp_path / "250919")
     fake_engine = FakeEngine()
@@ -733,7 +733,7 @@ def test_run_post_reports_every_layer_with_absolute_paths(tmp_path: Path) -> Non
     assert any("离线转写" in name for name in artifacts)
     assert any("归档 MP3" in name for name in artifacts)
 
-    # 假启动器被调到一次，它落的终态就是这一趟的账（结论出自这一趟新落的那一版）
+    # 假启动器被调到一次，它落的终态就是这一趟的记录（结论出自这一趟新落的那一版）
     assert launcher.calls == [str(session)]
 
 
@@ -743,7 +743,7 @@ def test_an_injected_launcher_that_settles_is_waited_for(tmp_path: Path) -> None
     盘上先留一份**上一趟**的 `running`；带 `--force` 让这一趟真的重跑纪要那一层。假件照
     真启动器的时序来（`DelayedLauncher`：返回即算启动成功，终态隔一会儿才落），因此拉起
     那一刻盘上还没有这一趟的终态 —— 等到的 `done` 是**这一趟新落的那一版**，
-    `waited_seconds` 也因此量得出「真的等过」，而不是读盘读出来的旧账。
+    `waited_seconds` 也因此量得出「真的等过」，而不是读盘读出来的旧记录。
     """
     session = synth_session(tmp_path / "250919")
     write_minutes_status(session, state="running")
@@ -801,7 +801,7 @@ def test_an_injected_launcher_is_reachable_in_a_child_session(tmp_path: Path) ->
 
     `tests/conftest.py` 的 autouse 兜底立着 `MEETING_MINUTES_CHILD=1`（挡住真 DSH 子会话），
     而注入的替身本来就是「真拉起」这一步的替身、自己什么都不起 —— 它因此照常被调到，
-    用例靠它的调用记账出结论。**注入件不替换任何模块全局属性**：一个进程里两条入口并发时
+    用例靠它的调用登记出结论。**注入件不替换任何模块全局属性**：一个进程里两条入口并发时
     各自拿自己那一份（见 `test_two_entries_can_inject_launchers_at_the_same_time`）。
 
     假件照真子会话的收工样子落终态（`SettlingLauncher`）：拉起那一档要等的是**这一趟新落的
@@ -832,7 +832,7 @@ def test_an_exploding_offline_run_is_recorded_and_re_raised(
 ) -> None:
     """离线那一层整个抛出来时：状态文件补成 `failed`，异常**原样上抛**给调用方。
 
-    上抛是**两条入口各自的账**都要落齐的前提：`meeting post` 接住它按 `EXIT_FAILURE`
+    上抛是**两条入口各自的记录**都要落齐的前提：`meeting post` 接住它按 `EXIT_FAILURE`
     收场（下一条用例），收尾第 4 步的线程体接住它、按既有契约把那一格记成 `failed`
     （`tests/test_post_hook.py` 那两条盯着）。
     """
@@ -860,7 +860,7 @@ def test_an_exploding_offline_run_is_recorded_and_re_raised(
     assert offline_runner._announce_minutes.__module__ == "meeting.offline.minutes_tail"
 
 
-#: 盘上那一版兜底账里那句**更准的原因**（`engine_load_error` 这个词档只在 `runner` 那一版里）。
+#: 盘上那一版兜底记录里那句**更准的原因**（`engine_load_error` 这个词档只在 `runner` 那一版里）。
 #: 用字面量而不是 import 一个常量：这一条要钉的是「这**一句话**别被盖掉」，
 #: 换一份错的原因、或者错在别的档上，都该让这条用例红。
 DISK_SIDE_REASON = "mic：engine_load_error：OSError: 模型快照读不动（合成）"
@@ -869,7 +869,7 @@ DISK_SIDE_REASON = "mic：engine_load_error：OSError: 模型快照读不动（�
 def test_the_callers_ledger_keeps_the_reason_the_runner_wrote_down(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """调用方盖账之后，顶层 `error` 里那个更准的原因**还读得出来**。
+    """调用方改写记录之后，顶层 `error` 里那个更准的原因**还读得出来**。
 
     这一条盯的是本节点 m2 那一档：`run_session` 逃出去之前，离线段自己**已经现场写下**
     一版（`runner._write_failed_status()`），随后 `run_post` 接住异常、调
@@ -879,7 +879,7 @@ def test_the_callers_ledger_keeps_the_reason_the_runner_wrote_down(
     `error`。
 
     `run_session` 换成一条替身（真离线段那两条用例在 `tests/test_offline_runner.py`），
-    它做的正是那一版账：落 `failed` + runner 那句原话，再把异常抛出去。
+    它做的正是那一版记录：落 `failed` + runner 那句原话，再把异常抛出去。
     """
     session = synth_session(tmp_path / "250919")
     status_path = session / OFFLINE_STATUS_NAME
@@ -905,20 +905,20 @@ def test_the_callers_ledger_keeps_the_reason_the_runner_wrote_down(
     written = json.loads(status_path.read_text(encoding="utf-8"))
     assert written["state"] == "failed"
     assert DISK_SIDE_REASON in str(written["error"]), written["error"]
-    # 场次编号 / 开始时刻 / 路清单照读回的那一版（补账不改这几格）
+    # 场次编号 / 开始时刻 / 路清单照读回的那一版（补记录不改这几格）
     assert written["session_id"] == "250919"
     assert written["started_at"] == "2025-09-19T20:00:00"
     assert written["sources"] == ["mic", "loopback"]
-    assert written["finished_at"], "收工时刻这一次补账要写上新的一版"
+    assert written["finished_at"], "收工时刻这一次补记录要写上新的一版"
 
 
 def test_the_callers_ledger_keeps_a_partial_run_as_it_is(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """盘上那一版是 `partial`（一路整条没交回、另一路跑成了）时，补账**不把它翻成 `failed`**。
+    """盘上那一版是 `partial`（一路整条没交回、另一路跑成了）时，补记录**不把它翻成 `failed`**。
 
     顶层 `failed` 那句话是「每一路都没交回」；用在这里会把「另一路跑成了」这件事抹掉，
-    与逐路那一格也自相矛盾。这一条钉住补账只认「盘上已经是终态」这一点，终态是哪一档照它。
+    与逐路那一格也自相矛盾。这一条钉住补记录只认「盘上已经是终态」这一点，终态是哪一档照它。
     """
     session = synth_session(tmp_path / "250919")
     status_path = session / OFFLINE_STATUS_NAME
@@ -950,17 +950,17 @@ def test_the_callers_ledger_keeps_a_partial_run_as_it_is(
     assert written["state"] == "partial", written["state"]
     assert "这一路解不出来" in str(written["error"])
     assert written["artifacts"]["loopback"]["state"] == "done"
-    # 逐路那一格也照读回的那一版（补账只写顶层那几格，逐路一个字不动）
+    # 逐路那一格也照读回的那一版（补记录只写顶层那几格，逐路一个字不动）
     assert written["artifacts"]["mic"]["reason"] == "engine_error"
 
 
 def test_the_callers_ledger_keeps_an_interrupted_run_as_it_is(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """盘上那一版是 `interrupted`（人停在块边界）时，补账照它那一档留着（b1c6a58e）。
+    """盘上那一版是 `interrupted`（人停在块边界）时，补记录照它那一档留着（b1c6a58e）。
 
     打断之后编排函数再接住一个异常（收尾的最后一口气），不许把「人停的」盖成
-    「这一趟失败」—— 补账判据把 `interrupted` 算进已落定的终态。
+    「这一趟失败」—— 补记录判据把 `interrupted` 算进已落定的终态。
     """
     session = synth_session(tmp_path / "250919")
     status_path = session / OFFLINE_STATUS_NAME
@@ -1020,7 +1020,7 @@ def test_run_post_needs_a_session_directory() -> None:
 
 
 def test_the_cli_entry_leaves_the_account_on_disk(tmp_path: Path) -> None:
-    """命令行这一条入口跑完一趟，逐块账上两路各一行（页面读那一场不该说"什么都没跑"）。
+    """命令行这一条入口跑完一趟，逐块记录上两路各一行（页面读那一场不该说"什么都没跑"）。
 
     「每跑完一块就落一次盘」跟着**离线这条链**走，不挑是哪个按钮拉起的：跑完
     离线段收工入口（`meeting/cli.py` 的 `run_post()`，`meeting post` 与会后钩子共用）
@@ -1034,18 +1034,18 @@ def test_the_cli_entry_leaves_the_account_on_disk(tmp_path: Path) -> None:
 
     header, rows = offline_progress.read_progress(offline_progress.ledger_path(session))
     assert summary["offline"]["state"] == "done"
-    assert header is not None, "账的表头该在盘上（这一趟是命令行拉起的）"
+    assert header is not None, "记录的表头该在盘上（这一趟是命令行拉起的）"
     assert header["session_id"] == "250919"
     assert header["sources"] == ["mic", "loopback"]
     assert [row["source"] for row in rows] == ["mic", "loopback"], rows
     assert [row["chunk"] for row in rows] == [1, 1]
     assert {row["state"] for row in rows} == {"transcribed"}
-    assert all(row["text"] for row in rows), "每一块的字都该在账上"
-    assert engine.calls, "这一趟该真的调过引擎（账上的行出自这一趟实跑）"
+    assert all(row["text"] for row in rows), "每一块的字都该在记录里"
+    assert engine.calls, "这一趟该真的调过引擎（记录里的行出自这一趟实跑）"
 
 
 def test_run_post_takes_an_injected_ledger(tmp_path: Path) -> None:
-    """注入的那一份账优先：调用方自己立一份时，落盘落在它身上（下游复用这一格）。"""
+    """注入的那一份记录优先：调用方自己立一份时，落盘落在它身上（下游复用这一格）。"""
     session = synth_session(tmp_path / "250919")
     injected = offline_progress.OfflineProgressLedger(
         session, session_id="250919", sources=["mic", "loopback"]
@@ -1060,7 +1060,7 @@ def test_run_post_takes_an_injected_ledger(tmp_path: Path) -> None:
 
     _header, rows = offline_progress.read_progress(offline_progress.ledger_path(session))
     assert [row["source"] for row in rows] == ["mic", "loopback"]
-    # 现场那一份（注入件自己手里的）就是这一趟的账：跑完收在终态上
+    # 现场那一份（注入件自己手里的）就是这一趟的记录：跑完收在终态上
     assert injected.snapshot()["state"] == "done"
 
 

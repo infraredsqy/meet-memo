@@ -150,7 +150,7 @@ def test_pause_freezes_the_silence_count_however_long_it_lasts():
         frame = j.on_level_frame("mic", ts, -80.0)
         assert frame.alert is None, "暂停区间不该累计静默秒数"
         assert frame.below_threshold is False
-    # 这一段结束时静默账本一个数都没涨
+    # 这一段结束时静默记录一个数都没涨
     assert j._tracks["mic"].silent_seconds == pytest.approx(1.0)
 
 
@@ -375,7 +375,7 @@ def test_transcript_health_drop_produces_one_hint():
 
 
 def test_on_transcript_and_backlog_hints_carry_build_hints_fields():
-    """判定器入口新起的那条与 `build_hint()` **同字段**（复审 #4 的对账）。
+    """判定器入口新起的那条与 `build_hint()` **同字段**（复审 #4 的核对）。
 
     `on_transcript_health()` / `on_backlog_depth()` 都并入 `_merge_hint()`，新起那条
     的组装从那里走 `build_hint()`：字段集到此只有一处写法。`since` 是秒精度的墙钟
@@ -490,9 +490,9 @@ def test_hints_keep_the_earliest_three():
 
 
 def test_the_cap_reclaims_the_evicted_key_from_the_judge_bookkeeping():
-    """上限 3 挤掉的那条**从记账里回收**：`hints()` 与 `_hints` 恒同长（复审 m4）。
+    """上限 3 挤掉的那条**从登记里回收**：`hints()` 与 `_hints` 恒同长（复审 m4）。
 
-    只截断 `hints()` 的返回值、把多出来的键留在 `_hints` 里的话，记账会只增不减
+    只截断 `hints()` 的返回值、把多出来的键留在 `_hints` 里的话，登记会只增不减
     （探针实测：`hints()` 返回 3 条而内部 4 条，转写回 `normal` 之后仍是 4 条）。
     回收之后：两条清除路径能把这类键清干净，同一个键再进来算**新起的那一条**。
     """
@@ -504,9 +504,9 @@ def test_the_cap_reclaims_the_evicted_key_from_the_judge_bookkeeping():
     for index, item in enumerate((first, second, third)):
         item.since = f"2025-09-06T11:00:0{index}+08:00"
 
-    # 第四条（`since` 最晚）进来：三条留下，多出来的那个键离开记账
+    # 第四条（`since` 最晚）进来：三条留下，多出来的那个键离开登记
     evicted = j._merge_hint(level="hint", source="transcript", message="第四条")  # noqa: SLF001
-    assert len(j._hints) == HINT_LIMIT == 3, "记账被上限回收，与 `hints()` 同长"  # noqa: SLF001
+    assert len(j._hints) == HINT_LIMIT == 3, "登记被上限回收，与 `hints()` 同长"  # noqa: SLF001
     assert ("hint", "transcript", "第四条") not in j._hints  # noqa: SLF001
     assert len(j._hint_started_at) == 3, "记时表同步收回，不留无主刻度"  # noqa: SLF001
 
@@ -516,18 +516,18 @@ def test_the_cap_reclaims_the_evicted_key_from_the_judge_bookkeeping():
     assert again.duration_seconds == 0.0
     assert len(j._hints) == HINT_LIMIT  # noqa: SLF001
 
-    # 两条清除路径把剩下的健康度 + 积压提示清干净，一个键都不留在记账里
+    # 两条清除路径把剩下的健康度 + 积压提示清干净，一个键都不留在登记里
     j.on_transcript_health("normal")
     j.on_backlog_depth(0)
     assert j.hints() == []
-    assert j._hints == {}, "健康度与积压这两类清完，记账里没有残留"  # noqa: SLF001
+    assert j._hints == {}, "健康度与积压这两类清完，登记里没有残留"  # noqa: SLF001
     assert j._hint_started_at == {}  # noqa: SLF001
 
 
 def test_reset_for_new_session_clears_the_hint_bookkeeping():
-    """`reset_for_new_session()` 清判定器时，提示级的**两份记账一起清**（复审 m3）。
+    """`reset_for_new_session()` 清判定器时，提示级的**两份登记一起清**（复审 m3）。
 
-    清 `_hints` 而留下 `_hint_started_at`（或反过来）会让「记账与快照是同一份真相」这条
+    清 `_hints` 而留下 `_hint_started_at`（或反过来）会让「登记与快照是同一份真相」这条
     不变量有一刻不成立，下一场开场之后旧刻度还会影响新一场的 `duration_seconds`。
     """
     j = judge()

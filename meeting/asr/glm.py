@@ -140,7 +140,7 @@ def _load_models():
     在各自的后台线程里首次 import transformers，两线程同时首导同一模块时其一可能见到
     半初始化的模块对象（260928-2 实测），进程级锁把两条首导串行化。进程正在退出时
     （`sys.is_finalizing()`）当场抛 `RuntimeError`（本模块加载失败本就以裸异常上抛，
-    由调用链记账），不触任何 import。
+    由调用链登记），不触任何 import。
 
     **这是本模块唯一的模型入口**，也是测试的接缝：
     用例用 `monkeypatch.setattr(meeting.asr.glm, "_load_models", fake)` 打在**同一份模块对象**上

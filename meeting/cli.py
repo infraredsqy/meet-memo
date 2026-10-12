@@ -126,7 +126,7 @@ LAYER_UNKNOWN = "unknown"
 LAYER_PARTIAL = "partial"
 
 #: 离线那一层的**被打断**档（「打断会后」节点 b1c6a58e，`artifacts.STATES` 同值）：
-#: 跑到块边界被人停的**终态**。补账判据把它算进「已落定」（打断之后逃出来的异常不许把
+#: 跑到块边界被人停的**终态**。补记录判据把它算进「已落定」（打断之后逃出来的异常不许把
 #: 它盖成 `failed`），幂等闸**不**把它当 `running` —— 打断之后重按按钮 / 再敲
 #: `meeting post` 从头再跑，不需要 `--force`。
 LAYER_INTERRUPTED = "interrupted"
@@ -712,7 +712,7 @@ def run_post(
          落在 `_announce_minutes()` 的形参上、`progress` 落在逐块落盘那一条链上，都不落在
          模块全局上）。**`announce_minutes=True` 是人工放行那一格**（隔离闸）：离线链拉起
          纪要的开关缺省假，只有 `meeting post` 这条人工入口显式传真。
-         **逐块进度账在这一条入口上也立起来**：`progress` 缺省时本函数按 `runtime._run_post_offline()`
+         **逐块进度记录在这一条入口上也立起来**：`progress` 缺省时本函数按 `runtime._run_post_offline()`
          同一副样子立一份（场次目录 + `runner.session_id_of()` + `runner.declared_sources()`），
          `run_session()` 每跑完一块就往场次目录里那份 `meeting_offline_progress.jsonl` 上补一行
          —— 页面读那一场的会后进度，因此不因「这一趟是命令行拉起的」而空着
@@ -724,7 +724,7 @@ def run_post(
          三条会拉起纪要的路径（首跑 / `--force` / 离线已终态只补纪要）**共用同一处等待**
          （`_wait_for_settled_minutes()`）：判据是「盘上那份状态与**拉起之前**的基线快照
          （`_minutes_baseline()`）不同、并且已经落在终态」，于是上一趟留在盘上的终态不会被
-         当成这一趟的账。结论如实三分：新终态 `done` 且产物过判据 → 成功档；新终态 `failed`、
+         当成这一趟的结果。结论如实三分：新终态 `done` 且产物过判据 → 成功档；新终态 `failed`、
          或 `done` 而产物过不了判据、或读不动 → 如实失败；到上界仍未落定 → 现成的 `timeout`
          那一档（承认它还在跑，既不谎报成功也不写成 `failed`）。
       4. **汇总**：每层的结论 + 逐条产物的**绝对路径** + 退出码，都在返回的摘要里。
@@ -756,7 +756,7 @@ def run_post(
     `runner.run_session` 尾巴上那道 `_announce_minutes()` 拉起纪要，离线段**已完成**时
     由本函数自己经同一道 `_announce_minutes()` 拉起（**缺什么补什么**的那一半不许只对
     注入了假件的路径生效）。用例塞一个假启动器时，它的交回值说明这一趟走到哪一档 ——
-    「这一趟有没有再拉起子会话」于是在用例里留下一份可核对的账。**等待只看那一档、不看是
+    「这一趟有没有再拉起子会话」于是在用例里留下一份可核对的记录。**等待只看那一档、不看是
     谁拉起的**（真启动器与假启动器在时序上同形：`launch()` 返回即算启动成功、终态晚一步才落）：
     被拉到的那一档一律等这一趟新落的终态，一份终态都没落的假件因此等到上界、如实报 `timeout`
     —— 这也正是真机上「子会话还在跑」的现场。
@@ -766,7 +766,7 @@ def run_post(
     **离线那一趟整个抛出来时本函数原样上抛**（抛之前先把 `meeting_offline_status.json`
     补成 `failed`）：`meeting post` 这一条入口自己接住它并按 `EXIT_FAILURE` 收场，
     收尾第 4 步那条入口的线程体接住它、按既有契约把那一格记成 `failed` ——
-    两条入口各自的「如实记账」因此都留在自己的落点上。**别的失败一律在摘要里回答，
+    两条入口各自的「如实登记」因此都留在自己的落点上。**别的失败一律在摘要里回答，
     不抛**：归档转不动、离线某一层落 `failed`、等纪要超时都走 `exit_code` 那一格。
     """
     directory = Path(session_dir) if session_dir else None
@@ -862,14 +862,14 @@ def run_post(
     else:
         # 尾巴上那一道通知（`_announce_minutes()`）的解与注两个参数**向下传**：
         # `run_session` 把它们原样交给那道闸与启动器，本模块不替换任何模块全局属性。
-        # `minutes_launcher` 非空时用一个记账包装把它记下来（这一趟的结论按假件交回的
+        # `minutes_launcher` 非空时用一个登记包装把它记下来（这一趟的结论按假件交回的
         # 结果出）；`force` 这一格是「这一趟该不该无视纪要段的终态」。
         minutes_launcher_lane = (
             _capturing_launcher(minutes_launcher, announced)
             if minutes_launcher is not None
             else None
         )
-        # 逐块进度账（`meeting_offline_progress.jsonl`）：**这一条入口也落**。挂在离线段
+        # 逐块进度记录（`meeting_offline_progress.jsonl`）：**这一条入口也落**。挂在离线段
         # 收工入口这一个落点上，`meeting post`（经 `run_post()`）因此也算数，
         # 落盘跟着链走、不挑是哪个按钮拉起的（`docs/design-intent.md` 第 12 条）。
         # 调用方注入的那一份优先（用例与下游的「拿旧录音全速重跑」都靠这一格）。
@@ -894,7 +894,7 @@ def run_post(
                 pass
             # 上抛的理由：`meeting post` 这一条入口自己接住它（摘要里那一格如实写、这一趟按
             # `EXIT_FAILURE` 收场）。在**上抛之前**把状态文件补一版 `failed`，好让直接调
-            # `run_post()` 的读者也有账可查 —— 那一格不会永远停在 `running`。
+            # `run_post()` 的读者也有记录可查 —— 那一格不会永远停在 `running`。
             _mark_offline_failed(directory, offline_error)
             raise
 
@@ -928,7 +928,7 @@ def _minutes_step_outcome(
     baseline: dict[str, Any],
     force: bool = False,
 ) -> dict[str, Any]:
-    """纪要段这一趟的结论：**谁跑过就用谁的账**，没跑过就按盘上的现状出。
+    """纪要段这一趟的结论：**谁跑过就用谁的记录**，没跑过就按盘上的现状出。
 
     四种情形，按「这一趟有没有经过离线链的尾巴」分开：
 
@@ -938,7 +938,7 @@ def _minutes_step_outcome(
         `_announce_minutes(..., launcher=…)` —— 拉起这一步与离线那一段本来就有各自的闸，
         离线段收工不该连带把纪要段钉住（`--force` 之外，这是「缺什么补什么」的另一半）。
         **注入的假启动器与产品路径都要走这一步**：`launcher` 非空时它被调到一次（用例靠
-        这份记账核「这一趟有没有再花钱」），`launcher` 缺省 `None` 时由 `_announce_minutes()`
+        这份登记核「这一趟有没有再花钱」），`launcher` 缺省 `None` 时由 `_announce_minutes()`
         自己按 `minutes.hook` 解析实现并拉起（其中那道 `MEETING_MINUTES_CHILD=1` 再入闸
         照旧管用）—— 产品路径因此不再只报盘上现状、不再缺一层也不补；
       - **两层都到终态**（`minutes_complete` 为真）：这一格在这一档根本走不到（`run_post()`
@@ -1147,7 +1147,7 @@ def _settled_minutes_outcome(
 
     这一处等待是三条路径（首跑 / `--force` / 离线已终态只补纪要）**共用**的那一处
     （`_wait_for_settled_minutes()`）：判据是「盘上那份状态与拉起之前的 `baseline` 不同、
-    并且已经是一个终态」，于是上一趟留在盘上的终态不会被当成这一趟的账。这一格只做
+    并且已经是一个终态」，于是上一趟留在盘上的终态不会被当成这一趟的结果。这一格只做
     「等到的终态 → 这一层的结论」这一段映射，于是三档各有自己的落点，谁也不写成别人那一档：
 
       - `done` 且产物过判据 → 这一层这一趟真的跑完并交出了产物（成功档）；
@@ -1198,9 +1198,9 @@ def _settled_minutes_outcome(
 def _capturing_launcher(
     launcher: Any, announced: list[dict[str, Any]]
 ) -> Callable[[str], Any]:
-    """把注入的假启动器包一层**只记账**的包装：它交回的那个对象原样记在 `announced` 里。
+    """把注入的假启动器包一层**只登记**的包装：它交回的那个对象原样记在 `announced` 里。
 
-    「这一趟有没有再拉起子会话」因此在用例侧留下一份可核对的账（`launcher.calls`），
+    「这一趟有没有再拉起子会话」因此在用例侧留下一份可核对的记录（`launcher.calls`），
     而编排函数这一侧也拿得到假件的交回值（结论按它出）。**不碰任何模块全局属性**：
     这个包装只是 `run_session(..., minutes_launcher=…)` 的一个实参。
     """
@@ -1403,7 +1403,7 @@ def _mark_offline_failed(directory: Path, error: str) -> None:
     """把 `meeting_offline_status.json` 补成 `failed`（**尽力而为**：补不上只留一条 log）。
 
     字段口径只有一份：`meeting/offline/artifacts.py` 的 `mark_failed_if_unset()` ——
-    先读回上一版，盘上停着终态账（`failed` / `partial` / `interrupted`）就沿用它的
+    先读回上一版，盘上停着终态记录（`failed` / `partial` / `interrupted`）就沿用它的
     `error` 与 `partial` / `silent` / `silent_spans` / `gate`：异常从 `run_session` 逃出来
     之前，离线段自己**已经现场写过**一版（`runner._write_failed_status()` 落 `failed`，
     一路跑成那种场面落 `partial`），那一版里的话比这里收到的通用串准
@@ -1452,7 +1452,7 @@ def sync_archive(
     sources: Iterable[str] | None = None,
     converter: Callable[[Path, Path], bool] | None = None,
 ) -> dict[str, Any]:
-    """按收尾第 2 步同一套判据补齐各路各段的 MP3 归档，交回逐段记账。
+    """按收尾第 2 步同一套判据补齐各路各段的 MP3 归档，交回逐段登记。
 
     **转码实现只有一份**：`meeting/capture/archive.py` 的 `convert_to_mp3()` 与
     `mp3_path_for()`（函数体内 import，与本模块对重依赖的惰性纪律一致），这里只负责
@@ -1472,7 +1472,7 @@ def sync_archive(
         **PCM 一个字节都不动**（不 unlink、不截断）。
 
     **各路各段各自独立判、独立转**：一段转不动不带停别的段（归档这一层的每一段都是
-    自己的账）。`sources` 缺省取 `offline_runner.declared_sources()`（`session.json`
+    自己的一份记录）。`sources` 缺省取 `offline_runner.declared_sources()`（`session.json`
     声明的那几路）；`converter` 是用例的接缝（缺省就是上面那一个真实现）。
     """
     directory = Path(session_dir)
@@ -1530,7 +1530,7 @@ def sync_archive(
                 row.update(outcome=OUTCOME_FAILED, reason=f"{type(exc).__name__}: {exc}")
                 try:
                     _log().error("音频归档补齐失败：%s（%s）", pcm_path, row["reason"])
-                except Exception:  # pragma: no cover - 日志尚未初始化时只留记账
+                except Exception:  # pragma: no cover - 日志尚未初始化时只留登记
                     pass
                 rows.append(row)
                 continue
@@ -1579,7 +1579,7 @@ def _restore_payload(path: Path, payload: bytes | None) -> None:
             path.unlink(missing_ok=True)
         else:
             path.write_bytes(payload)
-    except OSError:  # pragma: no cover - 复原失败时下面的 log 里留着这一路 failed 的账
+    except OSError:  # pragma: no cover - 复原失败时下面的 log 里留着这一路 failed 的记录
         try:
             _log().warning("转码失败后 MP3 的现场没能复原：%s", path, exc_info=True)
         except Exception:
@@ -1709,7 +1709,7 @@ def _minutes_from_launcher(
 ) -> dict[str, Any]:
     """交回值是离线链尾巴（或产品路径）那道通知时，这一层的结论怎么出。
 
-    「这一趟有没有再拉起一次子会话」在这一档是可核对的记账（假启动器自己记），
+    「这一趟有没有再拉起一次子会话」在这一档是可核对的登记（假启动器自己记），
     交回的结果说明这一趟走到哪一档；分档只看拉起这一步自己的档位（`hook`），**不看是谁
     拉起的** —— 真实现与注入的假件在时序上同形（`launch()` 返回即算启动成功，终态由后台
     那条线程或子进程写进 `meeting_minutes_status.json`）：
@@ -1723,7 +1723,7 @@ def _minutes_from_launcher(
       - `failed`：纪要这一层自己抛出异常（没有终态会来，不等）。
 
     交回值里那一格 `state` **不当结论**：拉起那一刻它答不出「落定没有」，而盘上与
-    `baseline` 相同的那一份是**上一趟**的账。这一层的结论只从「等到的这一版」或
+    `baseline` 相同的那一份是**上一趟**的记录。这一层的结论只从「等到的这一版」或
     「闸拦下时读到的这一版」来。
 
     `announce` 缺席（离线那一趟没走到尾钩）时交回 `None` 那一档，由摘要按缺结论报。
@@ -1761,7 +1761,7 @@ def _minutes_from_launcher(
         # 两者的终态都只由盘上那份状态文件回答。因此这一档一律等**这一趟新落的终态**
         # （`_wait_for_settled_minutes()`：判据落在 `baseline` 上），等不到就如实报
         # `timeout`；交回值里那一格 `state` **不**当结论（拉起那一刻它答不出落定没有），
-        # 盘上留下的上一趟终态也不当这一趟的账。
+        # 盘上留下的上一趟终态也不当这一趟的结果。
         waited = _wait_for_settled_minutes(
             directory, baseline=baseline, deadline=deadline
         )
@@ -1873,7 +1873,7 @@ def _minutes_baseline(directory: Path) -> dict[str, Any]:
     三格：文件在不在、这一版落的是什么 `state`、以及这一版自己的标记
     （`_minutes_file_mark()`）。拉起之后等到「标记变了、并且已经是一个终态」就算这一趟
     落定 —— 盘上留着上一趟的终态（`failed`，或 `done` 而产物不在）时，它不会被当成
-    这一趟的账。
+    这一趟的结果。
 
     这一份只读盘、不改任何文件；取的时刻是「离线那一段跑起来之前」（`run_post()` 里
     幂等闸读完现状之后），因此三条路径拿到的都是同一种基线。
@@ -2032,7 +2032,7 @@ def _summarize_run(result: dict[str, Any], *, error: str | None = None) -> dict[
     **退出码与「结论：」那一行分两格判**（复合现场两句话都说得对）：退出码按上面那条先后
     取（拒跑优先），而 `state` 照实写这一趟落在了哪一层 —— 归档转不动 + 某层停在 `running`
     时因此是「退出码 `EXIT_REJECTED` + 结论 `failed`」：终端既点名那个状态文件、给出
-    `--force` 这句话，也不把归档那一层的账吞掉。
+    `--force` 这句话，也不把归档那一层的结果吞掉。
 
     **`EXIT_OK` 的前置是「这一趟要做的都做成了」**：归档 `failed`、纪要缺席 / 没落终态几档
     因此都不会走到 `EXIT_OK`（那一格不再由调用方预先写死，写死过的那两处正是谎报的来源）。

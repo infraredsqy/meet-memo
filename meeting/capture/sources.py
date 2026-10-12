@@ -371,7 +371,7 @@ class SounddeviceMicSource:
     当素材（V2 新增的那一步）。
     """
 
-    #: 这一路的标识（引擎按 `source` 记账）
+    #: 这一路的标识（引擎按 `source` 登记）
     name = "mic"
 
     def __init__(self, endpoint: DeviceEndpoint) -> None:
@@ -411,7 +411,7 @@ class SounddeviceMicSource:
             stream.stop()
             stream.close()
         except Exception:  # noqa: BLE001 - 关流失败不掩盖收尾结论
-            _log.warning("mic 的流停不下来（如实记账，不静默）", exc_info=True)
+            _log.warning("mic 的流停不下来（如实登记，不静默）", exc_info=True)
 
     # -- 读侧 -------------------------------------------------------------
 
@@ -423,7 +423,7 @@ class SounddeviceMicSource:
 
     @property
     def dropped(self) -> int:
-        """写侧跟不上时丢掉的块数（如实记账，`/debug` 与测试看它）。"""
+        """写侧跟不上时丢掉的块数（如实登记，`/debug` 与测试看它）。"""
         return self._reader.dropped
 
     # -- 回调 -------------------------------------------------------------
@@ -461,7 +461,7 @@ class SoundcardLoopbackSource:
     `except: pass` 吞掉，只能从「采到的是全零」倒推出来（`docs/v1-lineage.md` 的坑 C2）。
     """
 
-    #: 这一路的标识（引擎按 `source` 记账）
+    #: 这一路的标识（引擎按 `source` 登记）
     name = "loopback"
 
     def __init__(self, endpoint: DeviceEndpoint) -> None:
@@ -517,7 +517,7 @@ class SoundcardLoopbackSource:
 
     @property
     def dropped(self) -> int:
-        """写侧跟不上时丢掉的块数（如实记账）。"""
+        """写侧跟不上时丢掉的块数（如实登记）。"""
         return self._reader.dropped
 
     # -- 采集线程 ---------------------------------------------------------

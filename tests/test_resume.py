@@ -1,7 +1,7 @@
 """`tests/test_resume.py` —— 续接的端到端验收（spec 完成判定的那一场戏）。
 
 **全程假采集**：`capture.backend = tests._capture_faulty:FaultyCaptureBackend`
-（真后端 + 假端点表 + 带剧本的假源，段账/归档/字节账全真），进程内真
+（真后端 + 假端点表 + 带剧本的假源，段记录/归档/字节数全真），进程内真
 `ServiceRuntime`，不起子进程、不碰真声卡、不放音、不加载任何模型
 （转写与会后钩子显式取 null 替身；断口的产消两半分别在
 `tests/test_asr_pipeline.py` 与既有 SSE/界面链路上验）。
@@ -9,7 +9,7 @@
 一场戏：**录一段、结束，再对同一个工作区接着录一段**——
 
   - 旧段的 PCM 逐字节原样（续接要是截断了旧文件，这里当场红）；
-  - `session.json` 里两段齐：段账按序号升序、权威时长 = 两段之和；
+  - `session.json` 里两段齐：段记录按序号升序、权威时长 = 两段之和；
   - 各路的段文件名表两段都在，收尾转码给两段各产一份 MP3；
   - 界面的取数端点（`GET /api/sessions` 与 `GET /api/sessions/{id}`）看得到两段
     的时长与时间。
@@ -72,7 +72,7 @@ def _read_record(session_dir: Path) -> dict:
 
 
 def test_a_resumed_session_keeps_the_old_segment_and_adds_a_new_one(tmp_path, monkeypatch):
-    """录一段、结束，对同一个工作区再录一段：旧段原样、段账两段、时长是和。"""
+    """录一段、结束，对同一个工作区再录一段：旧段原样、段记录两段、时长是和。"""
     monkeypatch.setenv(PACE_SECONDS_ENV, PACE_SECONDS)
     monkeypatch.setenv(DELIVER_MIC_ENV, str(FIRST_CHUNKS))
     monkeypatch.setenv(DELIVER_LOOPBACK_ENV, str(FIRST_CHUNKS))

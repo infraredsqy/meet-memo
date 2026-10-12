@@ -10,7 +10,7 @@
   - `meeting.minutes.inputs`：找两条转写、写 `working/inputs.json`（这一场有哪几条输入、走哪一档）；
   - `meeting.minutes.status`：`meeting_minutes_status.json` 的读写（与离线那一份并列、互不覆盖）；
   - `meeting.minutes.launch`：headless DSH 子进程的启动器 + 产物四条判据；
-  - `meeting.minutes.runner`：把上面几件串成一次运行（再入闸 → 切块 → 渲染 → 拉起 → 校验 → 记账）；
+  - `meeting.minutes.runner`：把上面几件串成一次运行（再入闸 → 切块 → 渲染 → 拉起 → 校验 → 登记）；
   - `meeting.minutes.__main__`：`python -m meeting.minutes <chunk|prompt|check>` 三个手动入口。
 
 **本包顶层与函数体都不 import 任何重依赖**：`torch` / `transformers` / `numpy` / `av` /

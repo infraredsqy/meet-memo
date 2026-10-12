@@ -8,14 +8,14 @@
 临时文件名**每个写方各不相同**（见 `_tmp_path_for()`）：同一个目标上并发两个写方时，
 共用一个 `<名字>.tmp` 会让先落地的 `os.replace` 把那份临时文件消费掉，另一边的
 `os.replace` 随即抛 `FileNotFoundError` —— 同一份状态文件的两个写方（比如服务侧的
-会后链与另一个进程里 `meeting post` 那一趟的补账，都经 `write_text_atomic()` 落盘）
+会后链与另一个进程里 `meeting post` 那一趟的补记录，都经 `write_text_atomic()` 落盘）
 正是这种并发写方。各写各的临时文件之后，两个写方都能落地，
 目标那一格任何时刻读到的都是一份完整的内容。
 
 Windows 上一份**别人正拿在手里**的文件会让 `os.replace` 抛 `PermissionError`
 （`WinError 32`）：状态文件恰好在收尾那几十秒里被反复重写、又被界面轮询读。
 这一档与上面那种瞬时失败共用同一条短退避（见 `_is_transient_replace_error()`）；
-重试用尽时把异常抛出去，由调用方如实记账。
+重试用尽时把异常抛出去，由调用方如实登记。
 
 纯标准库（`os` / `threading` / `time` / `uuid` / `pathlib`）：`meeting.minutes` 那一包
 从本模块取这份工具，整包的「只用标准库」不变量因此不被碰到。
@@ -57,7 +57,7 @@ def _is_transient_replace_error(exc: OSError) -> bool:
       - `FileNotFoundError`：目标那一格正处在「被换走 / 被删」的瞬间，或者并发写方
         刚把文件名拿在手里 —— 这一类重试一次即可；
       - 别的 `winerror`（`32` / `33` 那些共享与锁冲突）在部分路径上落的是裸 `OSError`。
-    其余异常（磁盘满、路径不存在、只读盘）一次都不重试，原样抛给调用方记账。
+    其余异常（磁盘满、路径不存在、只读盘）一次都不重试，原样抛给调用方登记。
     """
     if isinstance(exc, (PermissionError, FileNotFoundError)):
         return True

@@ -33,7 +33,7 @@
     **不报错、不挡纪要、不改结论**；
   - **写侧谨慎**（与读侧宽容并存，各管各的方向）：文件**在盘上但读不出**（坏 JSON /
     未来主版本）时，改名动作**拒写**（`set_speaker_name()` 抛 `SpeakerNamesError`，
-    动作侧按既有 `invalid_setting` 记账回执）——读不出还整份覆盖，会把用户逐条确认过
+    动作侧按既有 `invalid_setting` 登记回执）——读不出还整份覆盖，会把用户逐条确认过
     的名字无声抹掉，抢救的机会就没了。
 
 纯标准库（`json` / `logging` / `pathlib`）；原子写复用两包共用的
@@ -77,7 +77,7 @@ class SpeakerNamesError(ValueError):
 
     继承 `ValueError`，与 `meeting` 里别的「值不对」错误同档。**读方**（提示词与
     单场状态端点）拿它当「这一份读不出来」的记号，如实降级、不往外抛；
-    **写方**（改名动作）把它原样交给调用方记账。
+    **写方**（改名动作）把它原样交给调用方登记。
     """
 
 
@@ -222,10 +222,10 @@ def set_speaker_name(session_dir: str | Path, key: str, name: str) -> dict[str, 
     表**在盘上但读不出**（坏 JSON / 未来主版本）时**拒写**：旧表里用户逐条确认过的
     名字还在文件里，读不出还整份覆盖就把它们无声抹掉——读侧宽容只管渲染（缺表不挡
     出纪要，d7），写侧不拿这份宽容去覆盖待抢救的数据。拒写抛 `SpeakerNamesError`，
-    改名动作按既有 `invalid_setting` 记账并给回执（review-1 m2）。
+    改名动作按既有 `invalid_setting` 登记并给回执（review-1 m2）。
 
     交回落盘的那一条 `{"key": …, "name": …}`；键的形状不对、名字是空串、或表在盘上
-    读不出，抛 `SpeakerNamesError`，由调用方记账。
+    读不出，抛 `SpeakerNamesError`，由调用方登记。
     """
     clean_key = qualified_key_shape(key)
     clean_name = str(name or "").strip()
@@ -297,7 +297,7 @@ def identity_rows(session_dir: str | Path) -> list[dict[str, Any]]:
 
     每行五格：`key`（限定键）/ `source`（路）/ `label`（人话标签，`SOURCE_LABELS`）/
     `name`（现名，没起过名或表读不出时 `null`）/ `segments`（次数读数，路级身份
-    如实 `null`）。这一格是**给人看的读数**：不校验、不对账、不改任何结论
+    如实 `null`）。这一格是**给人看的读数**：不校验、不核对、不改任何结论
     （`docs/design-intent.md` 第 6 条）。
     """
     session = Path(session_dir)

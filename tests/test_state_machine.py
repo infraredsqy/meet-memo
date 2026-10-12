@@ -627,7 +627,7 @@ def test_finish_drain_failure_branch_keeps_draining(tmp_path, monkeypatch):
     造法（进程内，不起第二个服务）：把 `log` 那一步写**场次日志结束标记**的落点换成一个抛错的
     替身 ——「有实现却抛错 → `failed`」这一档（§3.0 的边界）在收尾四步里由它来演。
     第 4 步 `post` 现在停在 `waiting`（会后一个动作都不自动跑，R26），它不再产生失败步；
-    而失败步的账目形状（`error` 里带可复制命令与 log 路径、`start` 被 409 拒）一个字没变。
+    而失败步的记录形状（`error` 里带可复制命令与 log 路径、`start` 被 409 拒）一个字没变。
     """
     stack, client, runtime = build_live_client(tmp_path, {"capture.backend": "dev"})
     try:
@@ -756,7 +756,7 @@ def test_cancelled_drain_keeps_the_same_face_without_done(tmp_path):
             assert runtime.snapshot.drain_step("post").status == "running"
 
             # 第三个 Phase 的强制打断路径是「先落盘（收尾中 + 已打断）再 cancel()」：
-            # 这里照同一顺序做，然后取消；取消后的记账不许把这一版覆盖掉。
+            # 这里照同一顺序做，然后取消；取消后的登记不许把这一版覆盖掉。
             record_before_cancel = json.loads(
                 (second_dir / "session.json").read_text(encoding="utf-8")
             )

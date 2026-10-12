@@ -269,7 +269,7 @@ export function WorkspaceHome({
   ) ?? null;
   const postJob = sessions?.post_job ?? null;
 
-  /** 一跳读数进来：逐块行按差值追加（首跳把已跑过的补成行；账已重置——重跑那一跳
+  /** 一跳读数进来：逐块行按差值追加（首跳把已跑过的补成行；记录已重置——重跑那一跳
    * ——整段重播，review-2 m2），读数整块替换。 */
   const handleTick = (tick: SessionStatusTick): void => {
     if (tick.kind === 'error') {
@@ -701,7 +701,7 @@ export function WorkspaceHome({
                   <span className="kv__v num">{selected.date}</span>
                 </p>
               )}
-              {/* 各段的时长与时间（续接过的会在这里看得出接过）：盘上段账的原文读数，
+              {/* 各段的时长与时间（续接过的会在这里看得出接过）：盘上段记录的原文读数，
                   合计只数写完的段——权威时长是各段在录时长之和（设计意图第 7 条）。 */}
               {(() => {
                 const segs = segmentsView(selected);

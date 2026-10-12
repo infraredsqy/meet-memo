@@ -7,8 +7,8 @@
   - 两个按钮都不按：结束录音之后**没有任何会后动作被启动**（第 4 步停在 `waiting`）；
   - 「有没有会后精细稿」那一格走 `GET /api/sessions` 的 `has_offline`（R29）。
 
-**全部用假件**：离线段那一趟换成只记账的替身（`tests/_drain_fakes.py` 的手法），
-纪要那一层换成记账替身 —— 不起真模型、不占显卡、不出声、不拉起真 DSH。
+**全部用假件**：离线段那一趟换成只登记的替身（`tests/_drain_fakes.py` 的手法），
+纪要那一层换成登记替身 —— 不起真模型、不占显卡、不出声、不拉起真 DSH。
 """
 
 from __future__ import annotations
@@ -246,7 +246,7 @@ def test_post_minutes_launches_with_the_human_gate_open(tmp_path, monkeypatch) -
     from meeting.backends import registry as registry_module
 
     class RecordingMinutesImplementation:
-        def claim(self, target: str) -> None:  # m2：动作本体先同步认一次在飞的账
+        def claim(self, target: str) -> None:  # m2：动作本体先同步认下在飞的那一笔
             launches.append({"claim": str(target)})
 
         def launch(self, target: str, **kwargs) -> None:
@@ -500,7 +500,7 @@ def test_post_minutes_is_refused_when_the_minutes_layer_is_still_in_flight(
 
     现场（一个真 DSH 子会话都没有，不占显卡、不出声）：先由 `status.mark_running()` 在盘上
     落一版停在 `running` 的 `meeting_minutes_status.json`（第一趟还在飞的现场读数，
-    它落的正是那一版），`meeting.minutes.runner.run` 换成记账 no-op。判据落在**动作本体**上：
+    它落的正是那一版），`meeting.minutes.runner.run` 换成登记 no-op。判据落在**动作本体**上：
     第二个按钮在起线程之前就按 409 拒，`post_job_state()` 因此读不到第二趟。
     """
     from meeting.minutes import status as minutes_status
@@ -538,7 +538,7 @@ def test_post_minutes_is_refused_when_the_minutes_layer_is_still_in_flight(
 
 
 # ---------------------------------------------------------------------------
-# 六之二、m4：线没起来时，刚认下的那一版 claim 要如实退回（盘上不留永远在飞的账）
+# 六之二、m4：线没起来时，刚认下的那一版 claim 要如实退回（盘上不留永远在飞的记录）
 # ---------------------------------------------------------------------------
 
 
@@ -551,7 +551,7 @@ def test_post_minutes_returns_the_claim_when_the_thread_cannot_start(
     动作把异常原样上抛，而**盘上那一版停在 `running`** —— 之后每一次按「直接出纪要」都被
     claim 闸按 409 拒（`--force` 只在命令行那一趟上），界面上没有出路。
     这里先造那一次失败（真 `MinutesHook` + 真 claim 闸，`meeting.minutes.runner.run` 换成
-    记账 no-op、不起真 DSH、不占显卡），再按第二趟证明出路回来了。
+    登记 no-op、不起真 DSH、不占显卡），再按第二趟证明出路回来了。
     """
     import threading
 

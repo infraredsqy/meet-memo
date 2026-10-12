@@ -23,7 +23,7 @@ type Listener = (event: { data: string }) => void;
 class FakeEventSource {
   static instances: FakeEventSource[] = [];
   readonly url: string;
-  /** 替身存的 close 记账：StrictMode 双挂载用例按「曾 open 的、现在还开着」口径判。 */
+  /** 替身存的 close 登记：StrictMode 双挂载用例按「曾 open 的、现在还开着」口径判。 */
   closed = false;
   readonly listeners = new Map<string, Listener[]>();
 

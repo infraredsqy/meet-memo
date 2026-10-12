@@ -486,7 +486,7 @@ def test_engine_load_failure_lands_as_its_own_reason(tmp_path, monkeypatch) -> N
 
     这是本节点第一条 bug 的判据：惰性加载失手时从前会被逐块那个 `except` 折成笼统的
     `engine_error`（「模型压根没起来」与「某一块没跑成」长得一样）。现在按
-    `engine_load_error` 记账，而且**只加载一次、不重试**（第二路不再敲一遍模型）。
+    `engine_load_error` 登记，而且**只加载一次、不重试**（第二路不再敲一遍模型）。
 
     注入接缝用的是 `meeting.offline.engine._load_models`（`engine.py` 自述的那一个，
     全链路只有它一处是模型入口）——真模型一个字节都不加载。
@@ -624,9 +624,9 @@ def test_an_exception_escaping_run_session_still_leaves_a_failed_status(
 ) -> None:
     """从 `run_session` 逃出去的异常：状态文件落 `failed`、写明原因，异常照旧上抛。
 
-    这一档从前是**没有账**的：状态文件停在第 1279 行那版 `running`（更早抛出时压根没有
+    这一档从前是**没有记录**的：状态文件停在第 1279 行那版 `running`（更早抛出时压根没有
     状态文件），读方看到的是「还在跑」。服务按钮那条 daemon 线程只落一条 log、
-    命令行的 `meeting post` 才补账 —— 现在这一层自己兜住，谁拉起这一趟都一样。
+    命令行的 `meeting post` 才补记录 —— 现在这一层自己兜住，谁拉起这一趟都一样。
 
     **两路都没轮到时逐路那一格的词档是 `not_run`**：现开的那一格 `reasons` 空、`error`
     是 `null`（引擎一次都没被喊过），兜成 `engine_error` 会把「压根没跑」说成「引擎跑这一块
@@ -2274,7 +2274,7 @@ def test_the_report_headline_says_the_same_thing_as_the_gate_detail(tmp_path) ->
     """报告开头那一行与逐路 `gate.detail` 说同一件事：跳过几段就写几段，没跳过的不许说跳过。
 
     改前那一行无条件写着「（峰值全零的跳过引擎）」：一次整段都有声的运行（一块都没跳过）
-    照样带着它 —— 这一行是报告的第一句，读的人会以为有段因为没声被丢了，而逐块记账里
+    照样带着它 —— 这一行是报告的第一句，读的人会以为有段因为没声被丢了，而逐块登记里
     一块都没跳过。两档各钉一个**整行**字符串，并把块数与真实的引擎调用次数对上。
     """
     # 1. 三段都有声：那一行里不许出现任何「有段被跳过」的说法
@@ -2563,7 +2563,7 @@ def test_a_corrupted_wall_clock_changes_no_conclusion(tmp_path) -> None:
 
     两份完全相同的场次目录，一份的 `session.json` 墙钟字段与段戳被改成胡话；
     同一引擎各跑一遍，逐字节比较三份产物与状态文件——除此之外任何代码都不许拿
-    墙钟对账（`docs/design-intent.md` 第 6 条；spec 完成判定第 4 条）。
+    墙钟核对（`docs/design-intent.md` 第 6 条；spec 完成判定第 4 条）。
     """
     clean = synth_session(tmp_path / "clean" / "250919")
     corrupt = synth_session(tmp_path / "corrupt" / "250919")
@@ -2630,7 +2630,7 @@ def test_run_session_stops_at_the_next_chunk_boundary_when_the_cancel_flag_fires
 ) -> None:
     """分块跑：旗标在第 1 块中立起 → 第 2 块开跑前收场，整场落 `interrupted`。
 
-    判据逐条对着 spec 的完成判定：状态写「被打断」、不再有下一块、半份材料（逐块账）
+    判据逐条对着 spec 的完成判定：状态写「被打断」、不再有下一块、半份材料（逐块记录）
     还在、缺口读得出（哪一路跑到第几块、哪些路没开跑、正式稿没落）。
     """
     from meeting.offline.progress import OfflineProgressLedger, ledger_path, read_progress
@@ -2668,7 +2668,7 @@ def test_run_session_stops_at_the_next_chunk_boundary_when_the_cancel_flag_fires
     assert loopback_cell["state"] == "interrupted"
     # 顶层 partial 也要立起来（打断场显然缺了区间——落假与缺口注记自相矛盾）
     assert document["partial"] is True
-    # 半份材料 = 逐块账（mic 已跑的那块的字在盘上）；正式稿一份都不落，
+    # 半份材料 = 逐块记录（mic 已跑的那块的字在盘上）；正式稿一份都不落，
     # 报告照落（它也是缺口读数：逐路表带着 interrupted 那一格与缺失区间）。
     header, rows = read_progress(ledger_path(root))
     assert header is not None
@@ -2761,7 +2761,7 @@ def test_an_interrupted_run_never_announces_minutes(tmp_path) -> None:
 
 
 def test_write_interrupted_status_reconciles_a_stale_running_disk(tmp_path) -> None:
-    """启动对账的写点：盘上 `running` + 逐块账 → 补成 `interrupted`（同一形状、缺口照拼）。"""
+    """启动核对的写点：盘上 `running` + 逐块记录 → 补成 `interrupted`（同一形状、缺口照拼）。"""
     from meeting.offline import runner as runner_module
     from meeting.offline.progress import write_progress, ChunkProgress, ledger_path
 
@@ -2799,14 +2799,14 @@ def test_write_interrupted_status_reconciles_a_stale_running_disk(tmp_path) -> N
     assert (
         runner_module.write_interrupted_status(root, reason="再来一次")
         is None
-    ), "interrupted 已落定：对账不许翻掉终态"
+    ), "interrupted 已落定：核对不许翻掉终态"
     assert (
         runner_module.write_interrupted_status(tmp_path / "没跑过", reason="x") is None
     )
 
 
 def test_write_interrupted_status_leaves_a_settled_disk_alone(tmp_path) -> None:
-    """盘上是 `done` / `failed` 时对账一个字节都不写（对账只接「停着 running」那一档）。"""
+    """盘上是 `done` / `failed` 时核对一个字节都不写（核对只接「停着 running」那一档）。"""
     from meeting.offline import runner as runner_module
 
     root = synth_session(tmp_path / "250919", seconds=3.0)
@@ -2821,5 +2821,5 @@ def test_write_interrupted_status_leaves_a_settled_disk_alone(tmp_path) -> None:
     )
     before = (root / artifacts.STATUS_NAME).read_text(encoding="utf-8")
 
-    assert runner_module.write_interrupted_status(root, reason="对账") is None
+    assert runner_module.write_interrupted_status(root, reason="核对") is None
     assert (root / artifacts.STATUS_NAME).read_text(encoding="utf-8") == before

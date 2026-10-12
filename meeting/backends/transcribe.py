@@ -62,7 +62,7 @@ DEFAULT_SEGMENT_TIMEOUT_SECONDS = 20.0
 #: 1 秒那一份照旧留着：它是「预算耗完那一刻 worker 手上还没做完的那一段」（与流水线里
 #: `worker.join(timeout=budget + DRAIN_JOIN_SLACK_SECONDS)` 同一条口径），
 #: 让「预算内该做完的都做完了」这件事落到 log 上，而不是让本方法先一步返回、
-#: 把 `pipeline.stop()` 那句「还有 N 段没做完」的如实记账打断在进程退出里。
+#: 把 `pipeline.stop()` 那句「还有 N 段没做完」的如实登记打断在进程退出里。
 DRAIN_STOP_SLACK_SECONDS = 1.0
 
 #: `release_gpu()` 等在飞推理收干净的上界（秒）。
@@ -225,7 +225,7 @@ class TranscriberBackend:
         try:
             note = previous.stop()
         except Exception:  # noqa: BLE001 - 上一场收场失败不挡这一场
-            _log.exception("上一场转写收尾失败（如实记账，不静默）")
+            _log.exception("上一场转写收尾失败（如实登记，不静默）")
             return
         if note["segments_seen"] or note["unfinished"]:
             _log.info(
@@ -253,7 +253,7 @@ class TranscriberBackend:
         一段」算，复审 m2）、最坏档是 301 + 4 = **305 秒**（两路都在读；`mode=mic` 时读线程
         那一项是一路）。这一条是必须的：本方法是 `transcriber_backend.stop()` 在**生产路径
         上的唯一调用点**（`runtime.shutdown()` 那一条），写死一个小常量（曾经是 5 秒）就等于
-        把流水线里「在 30–300 秒的预算内尽量做完」与那句「还有 N 段没做完」的如实记账
+        把流水线里「在 30–300 秒的预算内尽量做完」与那句「还有 N 段没做完」的如实登记
         **在真关停里打成空头支票** —— 预算还没花完，进程就退了。
 
         `drain_join_seconds` 是**显式的更小上界**（给「必须马上退」的调用方用，例如测试里
@@ -273,7 +273,7 @@ class TranscriberBackend:
             try:
                 note = pipeline.stop()
             except Exception:  # noqa: BLE001 - 收场失败不掩盖别的结论
-                _log.exception("停转写流水线时抛错（如实记账，不静默）")
+                _log.exception("停转写流水线时抛错（如实登记，不静默）")
                 return
             _log.info(
                 "转写收尾：%s（本场共入队 %s 段、处理完 %s 段；失败 %s）",
@@ -285,7 +285,7 @@ class TranscriberBackend:
             # `pipeline.stop()` 那一次收队是**在预算内尽量做完**：预算耗完时 worker 手上可能
             # 还扣着一段，它接着写出来的那一行会让 `_write_line()` 重开产物句柄 ——
             # 那个句柄此后没人关（复审 m4）。等到写行的那条线程真的退出再关一次：
-            # 它退出了就再没有人能重开。等不到时它按自己的记账留着句柄、只记一条 warning。
+            # 它退出了就再没有人能重开。等不到时它按自己的登记留着句柄、只记一条 warning。
             pipeline.close_transcripts_when_drained()
 
         thread = threading.Thread(target=_drain, name="asr-stop", daemon=True)
@@ -345,7 +345,7 @@ class TranscriberBackend:
                 # 没加载过：安静地什么都不做（**连 torch 都不 import**）
                 return False
             if self._gpu_released:
-                # 已经释放过：幂等那一格，不重复记账、不重复清缓存
+                # 已经释放过：幂等那一格，不重复登记、不重复清缓存
                 return False
         started = time.monotonic()
         drained = self._wait_for_inflight_inference()
@@ -404,7 +404,7 @@ class TranscriberBackend:
             self._transcriber_or_create()
         except Exception:  # noqa: BLE001 - 拉不起来不许把「继续」这动作拖失败
             _log.warning(
-                "会中模型没能重新拉起（如实记账，不静默；下一次出段时照旧经同一条路再试一遍）",
+                "会中模型没能重新拉起（如实登记，不静默；下一次出段时照旧经同一条路再试一遍）",
                 exc_info=True,
             )
             return False
@@ -443,7 +443,7 @@ class TranscriberBackend:
                 return True
         _log.warning(
             "会中模型在 %.1fs 内没等到在飞推理收干净（还有 %s 段在跑）：照旧丢掉引用并"
-            "请求清缓存 —— 那一段所在的那一帧可能还握着旧模型，如实记账，不静默也不抛",
+            "请求清缓存 —— 那一段所在的那一帧可能还握着旧模型，如实登记，不静默也不抛",
             float(RELEASE_GPU_WAIT_SECONDS), self._inflight,
         )
         return False
@@ -459,7 +459,7 @@ class TranscriberBackend:
                 try:
                     setattr(model, name, None)
                 except Exception:  # noqa: BLE001 - 只读替身上丢不掉这一格，不影响别的
-                    _log.warning("丢掉模型内部那一格 %s 失败（如实记账，不静默）", name, exc_info=True)
+                    _log.warning("丢掉模型内部那一格 %s 失败（如实登记，不静默）", name, exc_info=True)
                 else:
                     dropped = True
         self._transcriber = None
@@ -477,7 +477,7 @@ class TranscriberBackend:
         try:
             torch.cuda.empty_cache()
         except Exception:  # noqa: BLE001 - 无卡机器上它必须是安全的 no-op
-            _log.warning("torch.cuda.empty_cache() 没做成（如实记账，不静默）", exc_info=True)
+            _log.warning("torch.cuda.empty_cache() 没做成（如实登记，不静默）", exc_info=True)
             return False
         return True
 

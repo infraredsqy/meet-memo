@@ -10,7 +10,7 @@
     用 `docs/v1-lineage.md` A7 的下游正则 match 之后 `spk` 组是 `None`；
   - **噪声段不写行**（连占位符也不写）；
   - **收尾预算**：`30 + n × (timeout + 5)`、下限 30、封顶 300；预算耗完还有剩段时
-    **如实记账**（`caplog` 断言那一行）。
+    **如实登记**（`caplog` 断言那一行）。
 
 **没有一条用例加载真模型、打开真声卡**：模型是注入的替身，VAD 是确定性的能量阈值替身。
 """
@@ -1042,7 +1042,7 @@ def test_drain_budget_matches_the_formula_and_the_cap(session_dir: Path):
 
 
 def test_drain_budget_reports_unfinished_segments_honestly(session_dir: Path):
-    """预算耗完还有剩段 → **如实记账**（log 里那一条要点名「几条没做完 + 音频完整」）。
+    """预算耗完还有剩段 → **如实登记**（log 里那一条要点名「几条没做完 + 音频完整」）。
 
     预算注入成 0.05 秒（真公式的下限是 30 秒，用例不真等它）；worker 被假模型按住，
     队列里剩下的段因此在预算内做不完 —— 这一档正是要验的那一档。
@@ -1082,7 +1082,7 @@ def test_stop_counts_the_segment_still_in_the_workers_hands(session_dir: Path):
     这一条**没有注入任何小预算**：预算走的是真公式，队列那一刻是空的，
     算出来就是下限 `compute_drain_budget(0, 20.0) == 30.0`。
     「没做完」的那一段正是被 worker `get()` 走、还在模型里跑的那一段 ——
-    只看 `qsize()` 的写法在这一幕里报 0，那句「如实记账」的 warning 一个字都不会落
+    只看 `qsize()` 的写法在这一幕里报 0，那句「如实登记」的 warning 一个字都不会落
     （受控破坏自证：把 `unfinished` 还原成 `self.segments.qsize()` → 这条红）。
     """
     model = StopInsideTheModel()
@@ -1095,7 +1095,7 @@ def test_stop_counts_the_segment_still_in_the_workers_hands(session_dir: Path):
     pipeline.stop()  # 幂等：真正的收尾已经在 worker 线程里做过了
 
     note = model.note
-    assert note is not None, "stop() 该把记账字典交回来"
+    assert note is not None, "stop() 该把登记字典交回来"
     assert note["budget"] == compute_drain_budget(0, 20.0), (
         f"这一条走真公式（没有注入小预算）：{note}"
     )
@@ -1136,9 +1136,9 @@ def test_stop_is_idempotent_and_closes_the_transcript_files(session_dir: Path):
 
 
 def test_stop_idempotent_returns_the_first_drain_note_verbatim(session_dir: Path):
-    """第一趟预算耗尽留了未完段时，第二次 `stop()` **原样交回第一趟的记账**。
+    """第一趟预算耗尽留了未完段时，第二次 `stop()` **原样交回第一趟的登记**。
 
-    幂等档不再重算 `budget=0.0 / unfinished=0` 的假账：那一刻 `backlog_depth()` 还
+    幂等档不再重算 `budget=0.0 / unfinished=0` 的假读数：那一刻 `backlog_depth()` 还
     大于 0，与「队列已清空」那句 note 自相矛盾；`last_unfinished_note` 也不该被它覆写。
     """
     blocker = BlockingTranscriber(hold_seconds=3.0)
@@ -1163,15 +1163,15 @@ def test_stop_idempotent_returns_the_first_drain_note_verbatim(session_dir: Path
         pipeline.stop()
 
     assert first["unfinished"] >= 1, f"第一趟预算耗尽该留未完段：{first}"
-    assert second == first, f"幂等档原样交回第一趟的记账，不重算：{second}"
+    assert second == first, f"幂等档原样交回第一趟的登记，不重算：{second}"
     assert second["budget"] == first["budget"] == 0.02, (
-        f"幂等档不该重算成 budget=0.0 的假账：{second}"
+        f"幂等档不该重算成 budget=0.0 的假读数：{second}"
     )
     assert "还有" in second["note"], f"留了未完段，note 不该说「队列已清空」：{second['note']}"
     assert pipeline.last_unfinished_note == note_after_first == first["note"], (
         "幂等档不得覆写 last_unfinished_note"
     )
-    # 假账的对账线：第二趟 stop() 的那一刻 worker 还被按住，队列里确实还有段 ——
+    # 假读数的核对线：第二趟 stop() 的那一刻 worker 还被按住，队列里确实还有段 ——
     # note 的 unfinished 与 backlog_depth() 必须同向（旧实现在这里是 0 对 >0 的矛盾）
     assert pipeline.backlog_depth() > 0, "worker 还被按住，队列里该还有段"
     assert second["unfinished"] > 0

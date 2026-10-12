@@ -11,7 +11,7 @@
   - 读方对**不认识的 `schema_version`**、缺 `state`、`state` 不在四档里一律拒收，**不猜**。
 
 四档状态与 `meeting/backends/post.py` 的 `STATE_RUNNING` / `STATE_DONE` / `STATE_FAILED`
-**同名同义**：一份纪要的生成是一次「跑起来 → 跑完 / 跑砸」的活，与后端的账目对齐，
+**同名同义**：一份纪要的生成是一次「跑起来 → 跑完 / 跑砸」的活，与后端的记录对齐，
 下游（`meeting post` 与界面）因此只有一套词要认。第四档 `delivered` 是 web 分支那一档：
 **这一场已经交付给 DSH web 服务端去生成，后面的活不归这一层管**（用户停不停 DSH 是用户的事）
 —— 它与 `done` 的区别正在这里：`done` 说的是「纪要认真校验过、产物在盘上」，`delivered`
@@ -164,7 +164,7 @@ def build_status(
     """组一份状态（**纯函数**，不碰盘）：写出去与读回来都以它为准。
 
     `mode` 是这一趟的输入档位（`both` / `live_only` / `offline_only` / `none`），
-    `branch` 是**实际走的**启动分支；`dsh` 那一格记子进程的账
+    `branch` 是**实际走的**启动分支；`dsh` 那一格记子进程的结果
     （`executable` / `exit_code` / `seconds`），没拉起子进程时是空对象。
 
     `state` 收四档之外还收 `skipped`：再入闸那一趟（子会话里）**只在返回值里**记这一档，
@@ -273,11 +273,11 @@ def mark_failed(session_dir: str | Path, error: str) -> dict[str, Any]:
     （缺格按缺省补：`none` / `headless` / 现在 / 空 / 空）→ 覆盖 `state = "failed"` 与
     `error`」这段写法，从前在两个调用点逐字各抄一份（`meeting/backends/minutes.py` 的
     线程体兜底、`meeting/service/runtime.py` 的 claim 退回兜底支），现在只有这一份 ——
-    claim 闸与启动对账读的都是这份文件，补账口径因此只能有一处。
+    claim 闸与启动核对读的都是这份文件，补记录口径因此只能有一处。
 
-    读不动盘上那一版（文件不在场、不合契约）时按空账补。这一层没有 offline 那份
-    「已是终态账就沿用」的判据（`meeting/offline/artifacts.py::mark_failed_if_unset`）：
-    纪要这一层的补账只发生在「这一趟整个炸出来」的现场，`state` 如实落 `failed`。
+    读不动盘上那一版（文件不在场、不合契约）时按空记录补。这一层没有 offline 那份
+    「已是终态记录就沿用」的判据（`meeting/offline/artifacts.py::mark_failed_if_unset`）：
+    纪要这一层的补记录只发生在「这一趟整个炸出来」的现场，`state` 如实落 `failed`。
     写盘走 `write_session_status()`（原子替换、过读方契约）；写不下去时异常原样抛给
     调用方，由调用方记 log（不掩盖各自那条更早的异常）。返回写下去的那份状态。
     """
@@ -321,20 +321,20 @@ def mark_running(
     `state = "running"`，于是另一趟（用户随后手敲的 `meeting post` 是另一个进程；
     工作台「直接出纪要」按钮那一趟也在起线程之前经 `claim()` 同步走到这里）当场
     就能看见「上一趟还在跑」，按现成的 `running` 拒跑档收场 —— 拉起与拒跑因此落在同一份
-    账上，谁也漏不掉。
+    记录里，谁也漏不掉。
 
     **读一遍现状 + 写一版 `running` 这件事跨进程原子**：整段由 `LOCK_NAME` 那把
     `O_CREAT | O_EXCL` 的 claim 锁裹住，同一时刻只有一个进程进得来。拿不到锁时先让出
     `LOCK_WAIT_SECONDS` 再读一遍状态文件（那一版 `running` 就在锁里写，最多几十微秒的缝）：
 
-      - 读到的状态停在 `running` —— 另一趟正在飞，抛 `AlreadyRunningError`（**不覆盖它的账**）；
+      - 读到的状态停在 `running` —— 另一趟正在飞，抛 `AlreadyRunningError`（**不覆盖它的记录**）；
       - 读到别的取值（上一趟的 `done` / `failed`、或者压根没有这份文件）—— 上一趟已经收工，
         接着拿锁就行（进程崩在半路时锁会留在盘上，这一段有界等待正是为它准备的）。
 
     `force = True` 时**跳过上面那条在飞判据**：`--force` 的语义就是「无视这一层的现状、
     重跑」（它是本轮唯一会再次花钱的开关），于是同一条在飞判据在 `force` 那一档照常放行，
     这一趟把那一版 `running` 原子覆盖成自己的（`finished_at` 仍是空串，读方看到的还是
-    「正在跑」，只是账换成了这一趟的）。
+    「正在跑」，只是记录换成了这一趟的）。
 
     写出去的形状走现成的 `build_status()` / `write_status()`：四档取值域、四个必填字段、
     原子替换一个字都不动，这一版与 `runner` 线程体随后落的那一版**同形**，因此线程体那一版

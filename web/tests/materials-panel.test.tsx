@@ -44,7 +44,7 @@ interface FakeResponse {
   text: string;
 }
 
-/** 记账替身 fetch：按方法分派应答，逐个请求记账（URL 与 init 都留着给断言）。 */
+/** 登记替身 fetch：按方法分派应答，逐个请求登记（URL 与 init 都留着给断言）。 */
 function spyFetch(options: SpyOptions = {}): {
   fetchImpl: typeof fetch;
   calls: Array<{ url: string; init: RequestInit }>;

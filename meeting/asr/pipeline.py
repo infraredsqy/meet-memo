@@ -456,7 +456,7 @@ class TranscriptionPipeline:
       - `stop()`：关读线程 → flush VAD 的尾段 → **在收尾预算内**把队列里剩下的段尽量做完
         （预算 = `compute_drain_budget(backlog, segment_timeout)`，即
         `30 + 积压段数 × (单段超时 + 5)`，下限 30、封顶 300）；预算耗完还有剩段就
-        **如实记账**（几条没做完、音频归档完整、临时稿缺的是尾巴），不许静默丢。
+        **如实登记**（几条没做完、音频归档完整、临时稿缺的是尾巴），不许静默丢。
 
     出口：每成一行调一次 `line_sink(TranscriptLine(...))`（由 `TranscriberBackend` 交给
     runtime 包好的线程安全出口）。
@@ -487,7 +487,7 @@ class TranscriptionPipeline:
         self._idle_seconds = float(idle_seconds)
         self._archive_poll_seconds = float(archive_poll_seconds)
         #: 收尾预算的算法**照 `compute_drain_budget` 的形状**（同一个函数、同一条公式），
-        #: 这里让它可以被注入：用例要验「预算耗完还有剩段就如实记账」时不必真等 30 秒
+        #: 这里让它可以被注入：用例要验「预算耗完还有剩段就如实登记」时不必真等 30 秒
         self._budget_fn = budget_fn or compute_drain_budget
         self.behind_threshold = int(behind_threshold)
 
@@ -512,13 +512,13 @@ class TranscriptionPipeline:
         self._vads: dict[str, VoiceActivitySegmenter] = {}
         self._handles: dict[str, Any] = {}
         self._sealed = False
-        # 第一趟 `stop()` 算好的记账（幂等档原样交回它，不再重算、不覆写 note）
+        # 第一趟 `stop()` 算好的登记（幂等档原样交回它，不再重算、不覆写 note）
         self._last_drain: dict[str, Any] | None = None
         self._started = False
         self._model_failed = False
         #: 收队 deadline（`stop()` 里设；`worker_alive()` 用它判「还在收尾预算内」）
         self._drain_deadline: float | None = None
-        #: 记账（给 `meeting/backends/transcribe.py` 的 `health()` 与 log 用）
+        #: 登记（给 `meeting/backends/transcribe.py` 的 `health()` 与 log 用）
         self.worker_started = False
         self.reader_errors: dict[str, str] = {}
         self.segments_seen = 0
@@ -609,7 +609,7 @@ class TranscriptionPipeline:
     def _reader_loop(self, source: str) -> None:
         """一路读线程：按段序号游标尾读归档，把新字节喂给这一路的 VAD。
 
-        段列表不问 `session.json`（开场第一版还没有段账，而且元信息不当判据）：按确定的
+        段列表不问 `session.json`（开场第一版还没有段记录，而且元信息不当判据）：按确定的
         命名规则逐序号找盘上的段文件，序号升序接续 = 连续时间轴。起步段号在 `start()`
         里定（开场 1；续接接到本段，旧段一个字节都不重读）。
         """
@@ -700,7 +700,7 @@ class TranscriptionPipeline:
 
         # 噪声预筛命中 → **静音，不写行**（连占位符也不写）：phase1 `glm.py` 的
         # `_is_noise_segment` 把这一档记成 `reason == "noise"`，语义是「这一段落是静音」——
-        # 它按一次成功的「什么都没识别出来」记账，因此既不进失败计数、也不落占位符
+        # 它按一次成功的「什么都没识别出来」登记，因此既不进失败计数、也不落占位符
         if glm_module._is_noise_segment(audio):
             _log.info(
                 "seg %s audio=%.1fs asr=0.0s wait=%.1fs tokens=0 reason=noise（静音，不写行）",
@@ -881,14 +881,14 @@ class TranscriptionPipeline:
             try:
                 handle.close()
             except OSError:  # pragma: no cover - 关不掉不影响收尾结论
-                _log.warning("关转写产物失败（如实记账，不静默）", exc_info=True)
+                _log.warning("关转写产物失败（如实登记，不静默）", exc_info=True)
 
     # -- 停 ---------------------------------------------------------------
 
     def stop(self) -> dict[str, Any]:
         """关读线程 → flush 尾段 → **在收尾预算内**把队列里剩下的段尽量做完。
 
-        返回记账字典（`budget` / `unfinished` / `note` / `segments_seen` / `segments_done`），
+        返回登记字典（`budget` / `unfinished` / `note` / `segments_seen` / `segments_done`），
         供 `meeting/backends/transcribe.py` 复述进 log。
 
         **`unfinished` 算的是「还没做完」而不是「队列里还剩几段」**：worker 是「先 `get()`
@@ -900,10 +900,10 @@ class TranscriptionPipeline:
         """
         with self._lock:
             if self._sealed:
-                # 幂等档：**原样交回第一趟的记账**（不重算、不覆写 note）。第一趟预算耗尽
-                # 留了未完段时，这里再算一遍 `budget=0.0 / unfinished=0` 就是假账 ——
+                # 幂等档：**原样交回第一趟的登记**（不重算、不覆写 note）。第一趟预算耗尽
+                # 留了未完段时，这里再算一遍 `budget=0.0 / unfinished=0` 就是假读数 ——
                 # `backlog_depth()` 还大于 0，与那句「队列已清空」自相矛盾；
-                # `_drain_note()` 还会顺手覆写 `last_unfinished_note`。第一趟没算到记账
+                # `_drain_note()` 还会顺手覆写 `last_unfinished_note`。第一趟没算到登记
                 # 就崩了的残局（`_last_drain is None`）按老口径兜底。
                 if self._last_drain is not None:
                     return self._last_drain
@@ -935,19 +935,19 @@ class TranscriptionPipeline:
         # **「没做完」= 队列里剩下的 + 已经被 worker 取走、还在处理的那一段**。
         # worker 是「先 `get()` 再处理」（`:551-568`），所以在预算耗完那一刻，它手上那一段
         # 早就离开了队列 —— 只看 `qsize()` 的话，真实预算（下限 30 秒）下这一格恒为 0，
-        # `unfinished` 与那句「如实记账」的 warning 在生产路径上永远不出现（空头支票）。
+        # `unfinished` 与那句「如实登记」的 warning 在生产路径上永远不出现（空头支票）。
         # `segments_seen - segments_done` 正好是这两部分的和：入队计数全部 +1、
         # 每处理完一段（`task_done()` 那一格）才 +1，差集就是还没做完的那些。
         with self._lock:
             outstanding = int(self.segments_seen) - int(self.segments_done)
         unfinished = max(self.segments.qsize(), outstanding)
         note = self._drain_note(budget=budget, unfinished=unfinished)
-        # 第一趟的记账存档：之后每一次 `stop()`（幂等档）都原样交回它
+        # 第一趟的登记存档：之后每一次 `stop()`（幂等档）都原样交回它
         self._last_drain = note
         if unfinished:
             _log.warning(
                 "转写收尾预算用尽：还有 %s 段没做完（预算 %.1fs = 30 + %s × (%.1fs + 5)，"
-                "封顶 300s）；音频归档完整、缺的只是临时稿的尾巴 —— 如实记账，不静默丢",
+                "封顶 300s）；音频归档完整、缺的只是临时稿的尾巴 —— 如实登记，不静默丢",
                 unfinished, budget, backlog, self._segment_timeout,
             )
         self._close_handles()
@@ -993,7 +993,7 @@ class TranscriptionPipeline:
     # -- 读数（`TranscriberBackend` 的三态与两个计数） ----------------------
 
     def backlog_depth(self) -> int:
-        """队列里还没处理的段数（**无界队列的 `qsize()`**，不额外记账、不偷偷丢弃）。"""
+        """队列里还没处理的段数（**无界队列的 `qsize()`**，不额外登记、不偷偷丢弃）。"""
         return int(self.segments.qsize())
 
     def worker_alive(self) -> bool:

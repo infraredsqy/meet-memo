@@ -37,7 +37,7 @@ GOOD_BULLETS = (
 
 
 class LedgerClient:
-    """**记账的假总结客户端**（与 `test_summary_action.py` 同一副形状）。"""
+    """**登记的假总结客户端**（与 `test_summary_action.py` 同一副形状）。"""
 
     def __init__(self, *, content: str = GOOD_BULLETS) -> None:
         self.content = content

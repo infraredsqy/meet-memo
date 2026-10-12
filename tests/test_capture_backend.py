@@ -271,7 +271,7 @@ def test_mic_mode_does_not_read_the_loopback_route(
     """`mode=mic` 时不读 loopback：那一路的源连造都不造，归档**整段时间写静音**。
 
     「某一路没开」也是「那一路写静音」（`docs/design-intent.md` 第 9 条）：不再是 0 字节
-    文件——两路时间轴等长，落盘的全是数字零，内容账一格不动。
+    文件——两路时间轴等长，落盘的全是数字零，内容量一格不动。
     """
     factory = SourceFactory(chunks=3)
     backend = make_backend(monkeypatch, factory=factory)

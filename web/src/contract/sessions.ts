@@ -26,7 +26,7 @@ export const sessionSegmentCellSchema = z
     index: z.number().int().nullable(),
     started_at: z.string().nullable(),
     ended_at: z.string().nullable(),
-    /** 这一段的在录时长（不含暂停）；还在录的那段没有账，如实 `null`。 */
+    /** 这一段的在录时长（不含暂停）；还在录的那段没有段记录，如实 `null`。 */
     duration_seconds: z.number().nullable(),
   })
   .strict();
@@ -46,7 +46,7 @@ export const sessionRowSchema = z
     state: z.enum(['recording', 'draining', 'done', 'failed']).nullable(),
     date: z.string().nullable(),
     mode: z.string().nullable(),
-    /** 这场会各段的时长与时间（续接过的会看得出接过）；盘上没有段账时是空数组。 */
+    /** 这场会各段的时长与时间（续接过的会看得出接过）；盘上没有段记录时是空数组。 */
     segments: z.array(sessionSegmentCellSchema),
     /** 这一场有没有会后精细稿（`meeting_offline_transcript_<source>.md` 在不在盘上）。
      *  R29：界面照它渲染「出纪要」按钮上那一格，**不自己猜、不去试文件**。 */
@@ -176,7 +176,7 @@ export const offlineSourceProgressSchema = z
 /** 会后离线的进度读数：`state` 照盘上那份答、`in_process` 另答「本进程在不在跑」。 */
 export const offlineProgressSchema = z
   .object({
-    /** 这一场那份逐块账的文件名（`meeting_offline_progress.jsonl`）。 */
+    /** 这一场那份逐块记录的文件名（`meeting_offline_progress.jsonl`）。 */
     ledger: z.string(),
     /** `interrupted` 是「跑到块边界被人停」那一档的终态（b1c6a58e，R28）：照盘上如实答。 */
     state: z.enum(['running', 'done', 'partial', 'failed', 'interrupted', 'idle', 'ledger']),

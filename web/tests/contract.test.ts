@@ -536,7 +536,7 @@ describe('心跳样本', () => {
     expect(listFixtures('heartbeat')).toEqual([...HEARTBEAT_FIXTURES].sort());
   });
 
-  it('idle 档两字段 null（没有在录的场次，问采集活没活没有意义）、空洞账是零账', () => {
+  it('idle 档两字段 null（没有在录的场次，问采集活没活没有意义）、空洞记录是空记录', () => {
     const beat = heartbeatSchema.parse(readFixture('heartbeat', 'idle'));
     expect(beat.top_state).toBe('idle');
     expect(beat.recording_alive).toBeNull();
@@ -560,7 +560,7 @@ describe('心跳样本', () => {
     expect(beat.seconds_since_last_tick).toBeNull();
   });
 
-  it('capture-gap 档（gil-stall-hole）：空洞账一条、走秒量掩 0、at 走 <iso>，recording_alive 仍为 true', () => {
+  it('capture-gap 档（gil-stall-hole）：空洞记录一条、走秒量掩 0、at 走 <iso>，recording_alive 仍为 true', () => {
     const beat = heartbeatSchema.parse(readFixture('heartbeat', 'capture-gap'));
     expect(beat.top_state).toBe('recording');
     expect(beat.recording_alive).toBe(true); // 空洞是历史事实，当下照常活着
@@ -571,7 +571,7 @@ describe('心跳样本', () => {
     expect(gaps.recent[0]).toEqual({ at: '<iso>', seconds: 0 });
   });
 
-  it('空洞账自身是封闭形状：多一格/超上限都不符合契约', () => {
+  it('空洞记录自身是封闭形状：多一格/超上限都不符合契约', () => {
     const beat = readFixture('heartbeat', 'capture-gap') as Record<string, unknown>;
     const gaps = beat['capture_gaps'] as Record<string, unknown>;
     expect(captureGapsSchema.safeParse({ ...gaps, extra: 1 }).success).toBe(false);
@@ -679,11 +679,11 @@ describe('工作区样本（4.8 / 4.9，会后进度界面节点 52b24392 接的
       'session_id', 'speakers', 'state',
     ]);
     expect(parsed.post).toBeNull();
-    // 段读数与列表同行同源：盘上段账的原文（这一场恰好一段；秒数走掩码落 0）
+    // 段读数与列表同行同源：盘上段记录的原文（这一场恰好一段；秒数走掩码落 0）
     expect(parsed.segments).toEqual([
       { index: 1, started_at: expect.any(String), ended_at: expect.any(String), duration_seconds: 0 },
     ]);
-    // 跨进程读盘那份账：走秒量如实 null，四档计数两路各一份
+    // 跨进程读盘那份记录：走秒量如实 null，四档计数两路各一份
     expect(parsed.offline.in_process).toBe(false);
     expect(parsed.offline.elapsed_seconds).toBeNull();
     expect(parsed.offline.sources.map((road) => road.source)).toEqual(['mic', 'loopback']);

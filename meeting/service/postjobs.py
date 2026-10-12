@@ -3,7 +3,7 @@
 治的是 spec 点名的那条病：**「杀了进程就永远停在在跑」**。`post_job` 是内存里的单槽
 事实（`runtime.post_job_state()`），服务一死它就没了；盘上只剩那份 `running`。本模块
 给服务侧补一格**跨进程事实**：起会后时落一条 `{dir, kind, started_at}`，服务启动时读它
-—— offline 档且盘上状态仍 `running` → 对账成 `interrupted`；minutes 档只清记录 + log
+—— offline 档且盘上状态仍 `running` → 核对成 `interrupted`；minutes 档只清记录 + log
 （纪要那一层有自己的钩子兜底，盘上 running 由它自己收）。
 
 落点在**配置目录**（`config_dir()`，与 `workspaces.json` 并排）：那是「软件自己记的

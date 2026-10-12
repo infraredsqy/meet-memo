@@ -82,7 +82,7 @@ def test_chunk_source_writes_chunks_with_exact_raw_lines(transcript: Path, tmp_p
 
 
 def test_chunk_records_cover_every_line_once(transcript: Path, tmp_path: Path) -> None:
-    """区间表里的账：从第 1 行起、闭区间、逐块接上、总和等于源文件行数。"""
+    """区间表里的记录：从第 1 行起、闭区间、逐块接上、总和等于源文件行数。"""
     report = chunk_source("loopback", transcript, tmp_path / "out", chunk_lines=10)
 
     assert report.total_lines == len(SAMPLE_LINES) == 15
@@ -409,7 +409,7 @@ def test_minutes_package_never_touches_the_config_chain() -> None:
 
 
 def test_chunks_report_as_dict_is_json_serialisable(tmp_path: Path) -> None:
-    """`SourceChunks.as_dict()` 能直接 `json.dumps`（逐份稿各答一份账）。"""
+    """`SourceChunks.as_dict()` 能直接 `json.dumps`（逐份稿各答一份报告）。"""
     _write_session(tmp_path, live=True)
     report = chunk_session(tmp_path, discover_inputs(tmp_path), chunk_lines=10)["loopback"]["live"]
 

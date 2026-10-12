@@ -551,7 +551,7 @@ def test_a_second_launch_on_the_same_session_is_refused(
     """同一场再来一次拉起：**拒跑**（没有第二条线程、没有第二个子会话）。
 
     盘上已经停着一版 `running`（另一趟正在飞）时，`launch()` 当场抛 `AlreadyRunningError`，
-    第一趟那一版账一个字节都不被覆盖。
+    第一趟那一版记录一个字节都不被覆盖。
     """
     session = _session(tmp_path)
     arms: list[str] = []
@@ -823,7 +823,7 @@ def test_the_running_state_is_on_disk_before_the_launcher_is_called(tmp_path: Pa
     assert running["started_at"]
     assert running["mode"] == "none", "输入还没找，档位空着"
     assert running["branch"] == "headless", "实际走的分支在这一份里就记上了"
-    assert running["dsh"] == {}, "这一份还没有子进程的账"
+    assert running["dsh"] == {}, "这一份还没有子进程的记录"
     assert running["artifacts"] == {
         "final": ARTIFACT_FINAL,
         "inputs": ARTIFACT_INPUTS,

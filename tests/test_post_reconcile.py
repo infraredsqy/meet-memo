@@ -1,10 +1,10 @@
-"""启动对账（b1c6a58e 的 d5）：在飞记录 + 盘上 `running` → 补成 `interrupted`。
+"""启动核对（b1c6a58e 的 d5）：在飞记录 + 盘上 `running` → 补成 `interrupted`。
 
 治的是 spec 点名的那条病：「杀了进程就永远停在在跑」。`post_job` 是内存事实、进程一死
 就没；本节点给服务侧补一格跨进程事实（配置目录的 `post_jobs.json`），服务启动时按它
-把「盘上停着 running」的那一场 offline 会后对账成 `interrupted`。
+把「盘上停着 running」的那一场 offline 会后核对成 `interrupted`。
 
-全部用例走**真 `startup()`**（dev 采集替身、`HOME` 指临时目录）：对账是启动序列的一步，
+全部用例走**真 `startup()`**（dev 采集替身、`HOME` 指临时目录）：核对是启动序列的一步，
 这一层要钉的就是「启动那一刻发生了什么」。不扫目录：范围只有记录里点名的那一场。
 """
 
@@ -27,7 +27,7 @@ def _home(tmp_path: Path) -> Path:
 
 
 def _runtime(tmp_path: Path, monkeypatch, **values):
-    """起一台真运行时（`HOME` 指临时目录，启动序列跑到对账那一步）。"""
+    """起一台真运行时（`HOME` 指临时目录，启动序列跑到核对那一步）。"""
     home = _home(tmp_path)
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
@@ -46,7 +46,7 @@ def _runtime(tmp_path: Path, monkeypatch, **values):
 
 
 def _session_dir(tmp_path: Path, *, state: str, session_id: str = "250919") -> Path:
-    """一个带 `session.json` 与指定档状态文件的场次目录（对账的靶子）。"""
+    """一个带 `session.json` 与指定档状态文件的场次目录（核对的靶子）。"""
     root = tmp_path / "sessions" / session_id
     root.mkdir(parents=True, exist_ok=True)
     (root / "session.json").write_text(
@@ -94,7 +94,7 @@ def test_startup_reconciles_an_interrupted_offline_job(tmp_path, monkeypatch) ->
     assert document["started_at"] == "2025-09-19T20:00:00", "开始时刻照盘上那一版"
     assert document["finished_at"]
     assert "服务重启" in (document["error"] or ""), document["error"]
-    assert postjobs.load() == [], "对账完记录清空"
+    assert postjobs.load() == [], "核对完记录清空"
 
 
 def test_startup_only_clears_the_record_when_disk_is_not_running(
@@ -150,7 +150,7 @@ def test_startup_without_records_touches_nothing(tmp_path, monkeypatch) -> None:
 
 
 def test_a_corrupt_record_file_is_read_as_empty(tmp_path, monkeypatch) -> None:
-    """记录文件坏了（半个 JSON）：按空表起、不阻塞启动 —— 对账不许把启动带崩。"""
+    """记录文件坏了（半个 JSON）：按空表起、不阻塞启动 —— 核对不许把启动带崩。"""
     home = _home(tmp_path)
     (Path(home) / "post_jobs.json").write_text('{"kind": "off', encoding="utf-8")
 

@@ -195,7 +195,7 @@ DEFAULT_VALUES: dict[str, Any] = {
     #     JSON 字符串键**承载，空串 = 不并。V2 配置层是点号扁平键名的单层映射、
     #     装载时明确拒收 dict 值，为这一个键放开那条硬约束不值得。
     #   - `summary.deadline_seconds`：一次总结的**墙钟 deadline**（默认 25 秒）。
-    #     它换掉的是 V1「3 次 × 60 秒硬编码超时」那套最坏 180 秒的账。
+    #     它换掉的是 V1「3 次 × 60 秒硬编码超时」那套最坏 180 秒的算法。
     #   - `summary.max_attempts`：尝试次数上限（默认 3）。它是**上限**：真正的刹车是 deadline。
     #   - `summary.default_window`：`args.window` 省略时用的那一档（四档取值，默认 `15m`）。
     "summary.base_url": "https://api.deepseek.com/v1",

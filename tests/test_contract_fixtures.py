@@ -413,10 +413,10 @@ def test_capture_heartbeat_no_first_frame(tmp_path, make_client, contract_regen)
 
 
 def test_capture_heartbeat_capture_gaps(tmp_path, make_client, contract_regen):
-    """「帧空洞留痕」的心跳样本（gil-stall-hole）：`capture_gaps` 带一条合并后的账。
+    """「帧空洞留痕」的心跳样本（gil-stall-hole）：`capture_gaps` 带一条合并后的记录。
 
     采样办法：dev 替身正常开一场（等 `recording_alive is True`，跟 `no-first-frame`
-    那份正好互补 —— 那份是「一帧都没见过」的未知档，这份要帧已经流过、空洞才有账可记），
+    那份正好互补 —— 那份是「一帧都没见过」的未知档，这份要帧已经流过、空洞才有记录可落），
     然后在进程内直调 `runtime.apply_fact()` 打进两条**区间重叠**的 `FrameGap` 事实
     （同一次冻结、两路刻度线各报一条的真实形状），心跳里应合并为一条。
 
@@ -767,7 +767,7 @@ def test_capture_workspace_group(tmp_path, make_client, contract_regen):
     empty_dir.mkdir()
     meeting_dir = place / "meeting_ws"
     meeting_dir.mkdir()
-    # 段账给两段（续接过的形状）：时间戳按 ISO 形状写（掩成 <iso>），
+    # 段记录给两段（续接过的形状）：时间戳按 ISO 形状写（掩成 <iso>），
     # 秒数走掩码（`duration_seconds` 在 ZERO_KEYS 里，落 0）
     (meeting_dir / "session.json").write_text(
         json.dumps(
@@ -885,12 +885,12 @@ def test_capture_session_status_group(tmp_path, make_client, contract_regen) -> 
     """`GET /api/sessions/{id}` 那一份（会后视图的进度区，节点 `a9affaa8`）。
 
     这一份的**来源是真实服务路径上的只读端点**：场次目录里先按真实形状落下那份逐块
-    进度账（`meeting_offline_progress.jsonl`，两路各两块，含一块静音、一块失败）与
+    进度记录（`meeting_offline_progress.jsonl`，两路各两块，含一块静音、一块失败）与
     状态文件，再把这一场登记进工作台、打一次那只端点。
 
     样本记的是**形状**：路径与场次目录名掩成 `<path>` / `<session-id>`，两个墙钟戳
     掩成 `<iso>`，走秒的量（`elapsed_seconds` / `wall_seconds`）掩成 `0`。块号、
-    块数、四档计数、四段文字这些是**确定值**（造出来的账是固定的），原样留着 ——
+    块数、四档计数、四段文字这些是**确定值**（造出来的记录是固定的），原样留着 ——
     它们正是这一份样本要给人看的形状。
     """
     from meeting.offline import artifacts as offline_artifacts
@@ -902,7 +902,7 @@ def test_capture_session_status_group(tmp_path, make_client, contract_regen) -> 
     place.mkdir()
     session_dir = place / "250906"
     session_dir.mkdir()
-    # 段账给一段（形状样本；时间戳按 ISO 形状写、秒数走掩码落 0）
+    # 段记录给一段（形状样本；时间戳按 ISO 形状写、秒数走掩码落 0）
     (session_dir / "session.json").write_text(
         json.dumps(
             {
@@ -927,7 +927,7 @@ def test_capture_session_status_group(tmp_path, make_client, contract_regen) -> 
     (session_dir / "meeting_offline_transcript_mic.md").write_text(
         "[00:00] **S01**: 会后稿的一行\n", encoding="utf-8"
     )
-    # 那一份逐块账：两路各两块，mic 的第 2 块没声跳过、loopback 的第 2 块没跑成
+    # 那一份逐块记录：两路各两块，mic 的第 2 块没声跳过、loopback 的第 2 块没跑成
     offline_progress.write_progress(
         offline_progress.ledger_path(session_dir),
         session_id="250906",
@@ -979,7 +979,7 @@ def test_capture_session_status_interrupted_group(tmp_path, make_client, contrac
     """`GET /api/sessions/{id}` 的**被打断档**（b1c6a58e）：`offline.state` 照盘上答
     `interrupted`。
 
-    采集形状与 `status-after-run` 同一条路：场次目录里落一份逐块账（mic 两块里跑了
+    采集形状与 `status-after-run` 同一条路：场次目录里落一份逐块记录（mic 两块里跑了
     一块、loopback 没跑）与一版 `interrupted` 状态文件，登记进工作台之后打那只端点。
     打断这一档要回答的是「停了、可以重按」：`offline.state` 是盘上自己的终态
     `interrupted`（折档行把它照盘透传，不许折回 `running`）、`in_process` 是 `false`。

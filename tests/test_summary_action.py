@@ -7,7 +7,7 @@
   - **逐档失败**（判定次序固定：判态 → 校验 `window` → 看转写健康 → 看模型端点配置 → 才动手）：
     `not_recording`(409)、`invalid_setting`(400)、`transcript_unavailable`(503)、
     `summary_failed`(502) 的两档 `detail`，逐字与那张表一致；**前面几档没过时一个请求都不发出去、
-    一条记录都不写**（用记账的假客户端读数为 0 钉住）；
+    一条记录都不写**（用登记的假客户端读数为 0 钉住）；
   - **只读**：打一次 `summarize` 前后取两次快照，`revision` 与顶层十键逐字相同（`summary` 键
     一个字都不许进快照）；`GET /api/summaries` 同样不涨 `revision`；
   - **不挡别人**（复审 minor 6）：假客户端在 `complete()` 里原地停住，同一刻另一条
@@ -20,7 +20,7 @@
     `detail.legal` 是四档全集 —— 空串这一格给的是值，「省略」说的是键不在了，**不许**被静默当成缺省档；
   - **出口兜底**（`test_a_missing_injection_is_blocked_at_the_egress_guard`）：故意不注入
     `runtime.summary_client` 时，`tests/conftest.py` 的 `_no_real_model_call` 在会中总结那条
-    HTTP 出口当场拦下那一笔（记账清单里就是配置里那个真地址，而这一趟回的是带着兜底名字的
+    HTTP 出口当场拦下那一笔（登记清单里就是配置里那个真地址，而这一趟回的是带着兜底名字的
     502）—— 判据按目标地址来（本机回环放行，其余一律拦）。
 
 假件都从注入点进（`runtime.summary_client`），**一条真实端点请求都不发**。
@@ -89,7 +89,7 @@ GOOD_BULLETS = json.dumps(
 
 
 class LedgerClient:
-    """**记账的假总结客户端**：`complete()` 只加计数、按脚本答话，一条请求都不发。
+    """**登记的假总结客户端**：`complete()` 只加计数、按脚本答话，一条请求都不发。
 
     `calls` 是用例读的那个数 —— 「判定次序真的拦在前面吗」这条判据就落在**它为 0** 上
     （不是「发出去失败了才报错」）。`messages` 留最近一次的入参，供断言窗口文本用。
@@ -506,7 +506,7 @@ def test_a_missing_injection_is_blocked_at_the_egress_guard(tmp_path, _no_real_m
 
     本条把三半都量出来：
 
-      1. 兜底真的**在出口处拦下了那一笔**（夹具那个记账清单里恰好一条、就是被拦下的地址）；
+      1. 兜底真的**在出口处拦下了那一笔**（夹具那个登记清单里恰好一条、就是被拦下的地址）；
       2. 这一趟总结**没有出门**，而是照既有口径把它报成 `summary_failed`(502)，`message` 与
          `detail.error` 里带着兜底的名字与被拦下的地址（判据是文字，人一眼看得出是**兜底**
          拦的，不是端点真的报错）；
@@ -530,7 +530,7 @@ def test_a_missing_injection_is_blocked_at_the_egress_guard(tmp_path, _no_real_m
         assert "RealModelCallForbidden" in payload["message"]
         assert "api.deepseek.com" in payload["detail"]["error"]
         assert summaries_of(client)["entries"] == [], "被拦下的那一次不算成功产出"
-        # 兜底的记账清单：恰好一笔、就是配置里那个真地址（它**没有**被发出去）
+        # 兜底的登记清单：恰好一笔、就是配置里那个真地址（它**没有**被发出去）
         assert _no_real_model_call == ["https://api.deepseek.com/v1/chat/completions"]
 
     # 判据按目标地址来：本机回环放行（将来接本地假端点不受影响），其余一律拦
@@ -999,5 +999,5 @@ def test_switching_presets_takes_effect_at_once_and_reports_readable_failure(
         assert recorder.url_of(1) == "http://127.0.0.1:9/v1/chat/completions"
         assert recorder.calls[1][1] == "Bearer k-main"
 
-        # ③ 注入的记账假件全程没被用到（这一幕走的一直是生产路径 + 传输替身）
+        # ③ 注入的登记假件全程没被用到（这一幕走的一直是生产路径 + 传输替身）
         assert stub.calls == 0

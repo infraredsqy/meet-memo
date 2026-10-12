@@ -5,7 +5,7 @@
   - `start` **必须显式给目标工作区目录**：缺失 / 不是已存在目录都被 `invalid_setting` 拦下；
     服务侧不建目录、不按日期命名；目录里已有 `session.json` 的那一档**放行**——
     那是续接（同一场会再录一段，`docs/design-intent.md` 第 9 条）；
-  - **续接**：对着录过的目录再 start，旧记录的身份三格与段账原样保留在合并后的
+  - **续接**：对着录过的目录再 start，旧记录的身份三格与段记录原样保留在合并后的
     `session.json` 里，收尾失败那几格从 waiting 重新起算；
   - **段号分配**：`next_segment_number()` 从盘上实有的段文件认号（最大值 + 1），
     认名规则与 `archive_name()` 同一条；
@@ -14,7 +14,7 @@
   - `session.json` 字段全貌、**原子写**（**无 `.tmp` 残骸**、读到的永远是完整 JSON）、
     **每个阶段变更都落盘一次**（四步的 `status` / `detail` 各写一次）；
   - `sources[*].archives` = 段文件名表（`meeting_audio_<source>_<段号:03d>.pcm`），
-    `segments` + `audio_duration_seconds` = 段账（一段 = 一次录制；权威时长 = 各段在录
+    `segments` + `audio_duration_seconds` = 段记录（一段 = 一次录制；权威时长 = 各段在录
     时长之和，写端唯一的自洽式）；
   - `start` 写文件失败 → **不进 `recording`**、只收走本场写入的文件、主 log 有留痕。
 """
@@ -125,7 +125,7 @@ def test_start_action_refuses_a_nonexistent_dir_and_does_not_create_it(tmp_path)
 
 
 def test_start_action_resumes_a_workspace_that_already_has_a_session(tmp_path):
-    """目录里已有 `session.json`：放行 = 续接。旧记录的身份三格与段账原样保留。"""
+    """目录里已有 `session.json`：放行 = 续接。旧记录的身份三格与段记录原样保留。"""
     stack, client, runtime, out_root = build_client(tmp_path)
     try:
         taken = Path(helpers.allocate_start_dir(out_root))
@@ -212,7 +212,7 @@ def test_session_json_has_the_frozen_field_shape(tmp_path):
         assert set(item) == {"id", "device", "archives"}
         # 段文件名形状 = meeting_audio_<source>_<段号:03d>.pcm（一段 = 一次录制，序号从 1 起）
         assert item["archives"] == [f"meeting_audio_{item['id']}_001.pcm"]
-    # 段账：开场第一版还没有段（引擎没起），权威时长为 0
+    # 段记录：开场第一版还没有段（引擎没起），权威时长为 0
     assert record["segments"] == []
     assert record["audio_duration_seconds"] == 0.0
     assert set(record["service"]) == {"pid", "started_at"}
@@ -259,7 +259,7 @@ def test_segment_archive_paths_enumerate_in_ordinal_order(tmp_path):
 
 
 def test_build_session_record_carries_the_segment_ledger():
-    """段账进 `session.json`：段列表 + 权威时长 + 每路的段文件名表。"""
+    """段记录进 `session.json`：段列表 + 权威时长 + 每路的段文件名表。"""
     segments = [
         {
             "index": 1,
@@ -388,7 +388,7 @@ def test_every_phase_change_writes_the_session_file(tmp_path, monkeypatch):
         assert [item["archives"] for item in first["sources"]] == [
             ["meeting_audio_mic_001.pcm"], ["meeting_audio_loopback_001.pcm"],
         ]
-        # 开场第一版：还没有段账（引擎没起），权威时长 0
+        # 开场第一版：还没有段记录（引擎没起），权威时长 0
         assert first["segments"] == []
         assert first["audio_duration_seconds"] == 0.0
 

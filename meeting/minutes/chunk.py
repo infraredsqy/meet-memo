@@ -89,7 +89,7 @@ class ChunkRecord:
 
 @dataclass(frozen=True)
 class SourceChunks:
-    """**一份稿**切完之后的账：哪一路、哪一份稿、转写文件名、总行数、每块的区间、区间表全文。"""
+    """**一份稿**切完之后的结果：哪一路、哪一份稿、转写文件名、总行数、每块的区间、区间表全文。"""
 
     source: str
     kind: str
@@ -118,7 +118,7 @@ class SourceChunks:
         return f"{WORKING_DIR}/{self.source}/{self.kind}"
 
     def as_dict(self) -> dict:
-        """给 `json.dumps()` 用的形状（两条稿的账各答一份，调用方按 source + kind 收）。"""
+        """给 `json.dumps()` 用的形状（两条稿的记录各答一份，调用方按 source + kind 收）。"""
         return {
             "source": self.source,
             "kind": self.kind,
@@ -237,7 +237,7 @@ def chunk_source(
 
     `out_dir` 由调用方给：产品路径是 `working/<source>/<kind>`（见 `chunk_session()`），
     两份稿因此各占一个目录、块文件名不会互撞。`kind` 记进返回值（`SourceChunks.kind`），
-    只影响账目，不影响切法。
+    只影响记录，不影响切法。
     """
     size = _validate_chunk_lines(chunk_lines)
     if kind not in KIND_IDS:

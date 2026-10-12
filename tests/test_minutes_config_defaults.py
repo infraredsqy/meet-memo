@@ -1,10 +1,10 @@
-"""minutes 层配置缺省值的对账用例（只做 import 级比对，不读盘、不起服务）。
+"""minutes 层配置缺省值的核对用例（只做 import 级比对，不读盘、不起服务）。
 
 `meeting.minutes` 各模块把 `minutes.*` 配置键的缺省值以包内常量**另存一份**：`chunk.py`
 的每块行数、`contract.py` 与 `prompt.py` 各一份的分段上限、`runner.py` 的 hook 与墙钟
 超时、`dsh_web.py` 的 DSH web 地址。这份用例把它们逐值钉在 `config.DEFAULT_VALUES` 的
 同一格上，哪一份走样当场报红；chunk 的 MIN / MAX 两档与 `config.INT_LIMITS` 的边界格
-对账。纯 import 比对，**快档**。
+核对。纯 import 比对，**快档**。
 """
 
 from __future__ import annotations

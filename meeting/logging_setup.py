@@ -322,7 +322,7 @@ def detach_session_log() -> None:
     """flush 后摘掉场次级 handler。
 
     写失败时**不许静默吞异常**：抛出 `OSError` 及其子类，**不返回错误对象、不返回布尔值**
-    （phase2 的收尾 `log` 步靠 `except OSError` 记账）。无论成败，handler 都已从 logger 上摘掉。
+    （phase2 的收尾 `log` 步靠 `except OSError` 登记）。无论成败，handler 都已从 logger 上摘掉。
     """
     handler = _state["session_handler"]
     _state["session_handler"] = None

@@ -7,7 +7,7 @@
 四条语义各有独立断言（互不顺带覆盖）：
 
   ① **没加载过就 no-op**：不报错、不 import `torch`、不写日志、不碰 `empty_cache()`；
-  ② **幂等**：连调两次只有第一次真的记账与清缓存，第二次安静地返回；
+  ② **幂等**：连调两次只有第一次真的登记与清缓存，第二次安静地返回；
   ③ **有界等待**：在飞推理收干净时不等满上界；真卡住时到点就照旧丢引用 + 记一条 warning，
      不抛、不静默（上界由用例注入的小值显式钉住）；
   ④ **释放后才 `empty_cache()`**：清缓存的那一刻，模型引用与它内部那两格已经空了。
@@ -193,7 +193,7 @@ def test_release_is_idempotent(monkeypatch):
     """连调两次安全：只有第一次真的丢引用、真的清缓存，第二次安静地返回。
 
     `shutdown()` 之后那条路上还会再走一次释放（`stop()` 的幂等与它不是同一件事），
-    所以第二格要的是一次安静的成功返回：既不重复 `empty_cache()`，也不重复记账。
+    所以第二格要的是一次安静的成功返回：既不重复 `empty_cache()`，也不重复登记。
     """
     fake_torch = FakeTorch()
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
@@ -272,7 +272,7 @@ def test_release_gives_up_at_its_own_small_bound_and_still_drops_the_reference(m
     assert elapsed < CASE_LIMIT_SECONDS, (
         f"上界到点就该放手：注入的上界 {TEST_WAIT_SECONDS}s，实测等了 {elapsed:.3f}s"
     )
-    assert result is True, "等不到也要照旧丢引用（如实记账，不静默）"
+    assert result is True, "等不到也要照旧丢引用（如实登记，不静默）"
     assert backend._transcriber is None and model.processor is None
     warnings = [text for text in written if "没等到在飞推理收干净" in text]
     assert len(warnings) == 1, f"上界到点该记一条 warning：{written}"
@@ -441,7 +441,7 @@ _FAKE_AUDIO = b"\x00\x00" * 1600
 
 
 def test_release_touches_neither_stopped_nor_health(monkeypatch):
-    """释放不碰 `_stopped`，也不动 `health()` 的读数（`post` 之外的记账名一个都不新增）。
+    """释放不碰 `_stopped`，也不动 `health()` 的读数（`post` 之外的登记名一个都不新增）。
 
     收尾期间转写健康度每 0.5 秒一拍：释放若顺手把 `_stopped` 置真，`ended` 阶段的那一拍会
     把 `transcript.health` 推成 `stopped` 并推一次 `revision` —— 那是一个可见行为变化，

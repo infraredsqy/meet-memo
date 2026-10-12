@@ -92,7 +92,7 @@ def segment_archive_paths(
 def segment_numbers(session_dir: Path | str, source: str, *, suffix: str = ".pcm") -> list[int]:
     """这一路盘上实有各段的序号（升序）；目录不存在 / 一个段都没有时交回空表。
 
-    `next_segment_number()` 的底账：序号只从**盘上实有的段文件**认出来
+    `next_segment_number()` 的依据：序号只从**盘上实有的段文件**认出来
     （`segment_archive_paths()` 同一条认名规则），不读 `session.json`——
     元信息不当判据，盘上的段文件才是「这场会录了几段」的现场事实。
     """
@@ -179,7 +179,7 @@ def build_session_record(
     `date` 是**元信息**字段（`docs/design-intent.md` 第 3、6 条）：日期仍是每一场的信息，
     从开场的时刻取，只记录、不参与任何寻址与不参与任何校验。
 
-    段账（本节点的两件套，第 6、7、9 条）：
+    段记录（本节点的两件套，第 6、7、9 条）：
 
       - `segments` 是**段列表**：每段一条（序号、起止、哪几路、段内暂停区间、在录时长）。
         一段 = 一次录制；暂停不切段，段内的暂停靠 `pauses` 区间说话。**未写完的段**
@@ -187,10 +187,10 @@ def build_session_record(
       - `audio_duration_seconds` 是**权威时长** = 实际录到的音频时长（不含暂停），
         写端唯一的自洽式：它 = 各段 `duration_seconds` 之和（未写完的段不计入）。
         除此之外元信息一律不当判据：墙钟跨度、空档时长、段与墙钟的关系，**不校验、
-        不对账、不改结论**（第 6 条）。
+        不核对、不改结论**（第 6 条）。
 
     `archives` 是每一路的段文件名表（序号升序）；不给时按「恰好一段」声明——开场
-    第一版落盘时引擎还没起、此刻还没有段账，段 1 的文件名由命名规则确定。续接
+    第一版落盘时引擎还没起、此刻还没有段记录，段 1 的文件名由命名规则确定。续接
     （同一工作区再录一段）时由 runtime 把旧表与新段名合并进来再传。
     """
     devices = devices or {}
@@ -252,7 +252,7 @@ def resolve_workspace_dir(value: Any) -> str:
 
     目录里**已有** `session.json` 不再拒绝（`docs/design-intent.md` 第 9 条翻案）：
     一个工作区 = 一场会（第 3 条），对着录过的目录按 start 就是**续接**——
-    同一场会再录一段，段账与权威时长由 runtime 合并（`start_session()`）。
+    同一场会再录一段，段记录与权威时长由 runtime 合并（`start_session()`）。
     """
     text = None if value is None else str(value).strip()
     if not text:

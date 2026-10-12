@@ -61,7 +61,7 @@ READ_POLL_SECONDS = 0.05
 #: 收尾 join 的确定上界（秒）——join 有上界，超时留一条 warning，不静默、也不挂住进程
 JOIN_TIMEOUT_SECONDS = 5.0
 
-#: 一路音频每秒的字节数（16k × int16 = 32000；归档对账与时长换算的同一把尺）
+#: 一路音频每秒的字节数（16k × int16 = 32000；归档核对与时长换算的同一把尺）
 BYTES_PER_SECOND = SAMPLE_RATE * SAMPLE_WIDTH
 
 #: 写静音的节拍（秒）：暂停、用户关一路、没开的那一路都按这个节奏往归档里写数字零，
@@ -137,7 +137,7 @@ class _SourceWorker:
         self._user_closed = threading.Event()
         #: 写静音的下一拍（绝对时刻，防漂移）
         self._silence_deadline: float | None = None
-        #: 帧空洞自查账（gil-stall-hole）：发帧线程每次产帧先与上一拍做差，超窗报一次
+        #: 帧空洞自查记录（gil-stall-hole）：发帧线程每次产帧先与上一拍做差，超窗报一次
         #: `FrameGap` 再发帧 —— 整进程冻结解冻后的第一拍就能算出真实空洞时长，留痕
         #: 不依赖判停那一侧（它与采帧一起冻）。窗口与 `recording_alive` 同一把尺。
         self._gap_detector = FrameGapDetector(
@@ -172,7 +172,7 @@ class _SourceWorker:
             try:
                 source.stop()
             except Exception:  # noqa: BLE001 - 停源失败不掩盖收尾结论
-                _log.warning("停 %s 这一路的源失败（如实记账，不静默）", self.source, exc_info=True)
+                _log.warning("停 %s 这一路的源失败（如实登记，不静默）", self.source, exc_info=True)
         for thread in self._threads:
             if thread.is_alive() and thread is not threading.current_thread():
                 thread.join(timeout=timeout)
@@ -305,14 +305,14 @@ class _SourceWorker:
 
         帧节奏由这里保证：与有没有新块无关，静下来时发的是 `-120 dBFS` 的帧。`ts` 用采集侧
         自己的钟（`time.monotonic()`，与 `alerts.py` 做差的口径一致）。发帧前先过一遍
-        帧空洞自查账（`_emit_level()` 的第一步）：与上一拍的间隔超窗就报一次 `FrameGap`
+        帧空洞自查记录（`_emit_level()` 的第一步）：与上一拍的间隔超窗就报一次 `FrameGap`
         —— 暂停期间电平帧照发（既有依赖），所以暂停不构成空洞。
         """
         while not self._stop.wait(self.frame_interval):
             self._emit_level()
 
     def _emit_level(self) -> None:
-        """每 `frame_interval` 秒一帧：先记空洞账（超窗报一次 `FrameGap`），再发电平帧。"""
+        """每 `frame_interval` 秒一帧：先记空洞记录（超窗报一次 `FrameGap`），再发电平帧。"""
         import numpy as np
 
         self._gap_detector.observe()
@@ -338,7 +338,7 @@ class _SourceWorker:
         self._emit_fact(SourceFacts(source=self.source, stream_alive=self.alive))
 
     def _report_gap(self, seconds: float, detected: float) -> None:
-        """空洞自查账的出口：发一条 `FrameGap` 事实（账的合并归服务侧）。"""
+        """空洞自查记录的出口：发一条 `FrameGap` 事实（记录的合并归服务侧）。"""
         self._emit_fact(FrameGap(source=self.source, seconds=seconds, detected=detected))
 
     def _emit_fact(self, fact: Any) -> None:
@@ -362,16 +362,16 @@ class CaptureSession:
         同时落下**本段**的起点戳——一段 = 一次录制（start→finalize，`docs/design-intent.md`
         第 9 条）；
       - `pause()` / `resume()`：暂停与继续。暂停期间所有路写数字静音、不录内容
-        （第 8 条），段**不**切段，暂停区间进段账；
+        （第 8 条），段**不**切段，暂停区间进段记录；
       - `deactivate_source()`：用户主动关掉某一路——那一路改写静音，不报 `SourceLost`；
       - `activate_source()`：用户重新打开某一路——把新开起来的源接回读线程；
       - `finalize()`：停流 + join + 关文件 + `fsync`（收尾第 1 步），落下本段终点戳
-        并结出**在录时长**（实际录到的音频时长，不含暂停；权威数只从写侧的字节账来）；
+        并结出**在录时长**（实际录到的音频时长，不含暂停；权威数只从写侧的字节计数来）；
       - `transcode()`：把各段 PCM 转成 MP3（收尾第 2 步）；转不动**原样上抛**，PCM 留着；
       - `stop()`：幂等收场（进程关停时调；已经收过尾就什么都不做）。
 
-    段账（`segment_records()` / `audio_duration_seconds()`）由服务侧落进 `session.json`；
-    本类只管把它记对，不做任何墙钟对账（第 6 条：元信息除权威时长外一律不当判据）。
+    段记录（`segment_records()` / `audio_duration_seconds()`）由服务侧落进 `session.json`；
+    本类只管把它记对，不做任何墙钟核对（第 6 条：元信息除权威时长外一律不当判据）。
     """
 
     def __init__(
@@ -387,7 +387,7 @@ class CaptureSession:
         self.mode = mode
         self.session_dir = str(session_dir)
         self.frame_interval = float(frame_interval)
-        #: 本场该采的路（`mode` 决定；传 `requested` 是为了让「源没起来的那一路」也如实记账）
+        #: 本场该采的路（`mode` 决定；传 `requested` 是为了让「源没起来的那一路」也如实登记）
         self.requested = tuple(sources_for_mode(mode) if requested is None else requested)
         self._emit = emit
         self._sources = dict(sources)
@@ -411,7 +411,7 @@ class CaptureSession:
         self.workers: dict[str, _SourceWorker] = {}
         # **抛错之前自己拉起来的东西自己收干净**（与 `start()` 同一条纪律，见 `start()`）：
         # 两路逐个 `open()`（建段文件 + 起写线程），第二路抛错时构造原样上抛，已 `open()`
-        # 的第一路写线程与句柄不能没人收 —— 上抛之前先把已记账的 writer 逐个 `close()`
+        # 的第一路写线程与句柄不能没人收 —— 上抛之前先把已登记的 writer 逐个 `close()`
         # （`close()` 幂等、容忍半开状态：句柄开了线程没起的那一档也收得干净）。
         # 收尾自己再抛只记 warning：上抛的主因仍是构造失败的那个原异常。
         try:
@@ -419,7 +419,7 @@ class CaptureSession:
                 writer = PcmArchiveWriter(
                     _archive_path(self.session_dir, source, self.segment_number), label=source
                 )
-                # 先记账再 `open()`：`open()` 半路抛错时它自己也在收尾名单里
+                # 先登记再 `open()`：`open()` 半路抛错时它自己也在收尾名单里
                 self.writers[source] = writer
                 writer.open()
                 self.workers[source] = _SourceWorker(
@@ -449,7 +449,7 @@ class CaptureSession:
         """把某一路的采集源接进来（`start()` 之前由后端调；接进来的这一路随即成为要采的路）。
 
         后端是**先挑设备、再取源、再开会话**的分步形状：挑不出来 / 开不起来的那一路也要如实
-        记账（`mark_lost()`），所以这里允许逐个把源接上。
+        登记（`mark_lost()`），所以这里允许逐个把源接上。
         """
         self._sources[source] = source_impl
         worker = self.workers[source]
@@ -481,7 +481,7 @@ class CaptureSession:
         """暂停本场采集：所有路从这一刻起写数字静音，**不录内容**（第 8 条的隐私线）。
 
         幂等；没在录（没 `start()` 或已 `finalize()`）时什么都不做。段**不**切段：
-        暂停只在本段账上记一条区间。
+        暂停只在本段记录上记一条区间。
         """
         with self._lock:
             if self._pause_event.is_set() or not self._started or self._finalized:
@@ -526,14 +526,14 @@ class CaptureSession:
             return
         worker.reactivate(source_impl)
 
-    # -- 段账 ---------------------------------------------------------------
+    # -- 段记录 ---------------------------------------------------------------
 
     def segment_records(self) -> list[dict[str, Any]]:
-        """本段那一条段账（`session.json` 的 `segments` 那一格的**新增项**）。
+        """本段那一条段记录（`session.json` 的 `segments` 那一格的**新增项**）。
 
         一场会可以有多个段（续接 = 同一工作区再录一段）：本类只交回**自己这一段**，
         与旧段的合并归 runtime（`_session_record()`）。还在录时 `ended_at` 与
-        `duration_seconds` 是 `None`，收尾那一刻由 `finalize()` 结账。
+        `duration_seconds` 是 `None`，收尾那一刻由 `finalize()` 补齐。
         """
         with self._lock:
             pauses = [dict(interval) for interval in self._pause_intervals]
@@ -554,8 +554,8 @@ class CaptureSession:
     def audio_duration_seconds(self) -> float:
         """**本段**的在录时长（实际录到的音频，不含暂停）。
 
-        只数**写完的段**（还在录的那段没有账可结）；每个数的来历是写侧的**内容字节**
-        （`÷ 32000`），与墙钟无关。整场（各段之和）的合计归 runtime 合并段账后另算。
+        只数**写完的段**（还在录的那段还没有数可结）；每个数的来历是写侧的**内容字节**
+        （`÷ 32000`），与墙钟无关。整场（各段之和）的合计归 runtime 合并段记录后另算。
         """
         with self._lock:
             duration = self._segment_duration_seconds
@@ -587,7 +587,7 @@ class CaptureSession:
         with self._lock:
             # 在录时长 = 该段各路「内容字节」最大的那一条 ÷ 每秒字节数：内容字节只由
             # 真正录到的块累加（暂停静音、没开一路的填充都记在 silence 那一格），
-            # 权威数因此从盘上的字节账来，与墙钟无关。
+            # 权威数因此从盘上的字节计数来，与墙钟无关。
             self._segment_ended_at = now_iso()
             self._segment_duration_seconds = max(
                 (
@@ -639,7 +639,7 @@ class CaptureSession:
         return self.writers[source].bytes_written
 
     def content_bytes(self, source: str) -> int:
-        """这一路**录到内容**的字节数（权威时长的账本：不含暂停静音与未选一路的填充）。"""
+        """这一路**录到内容**的字节数（权威时长的记录：不含暂停静音与未选一路的填充）。"""
         return self.writers[source].content_bytes
 
     def silence_bytes(self, source: str) -> int:

@@ -82,7 +82,7 @@
     二者混用会让断言读不到东西）；
   - 只有**纯函数口径**的断言留在进程内（④ 的预算公式与边界、⑤b 对 `_drain_wait()` 等待上限
     本身的两条、⑤h 的四步共享 deadline、⑤i 的强制打断落盘、⑤j 的盘上 `ended_at`、
-    M2 的取消记账、M3 的缺省预算输入），那些断言不起服务、直接调用被断言的对象。
+    M2 的取消登记、M3 的缺省预算输入），那些断言不起服务、直接调用被断言的对象。
 
 **「单条用例 ≤ 5 秒」怎么落（用户硬要求）**：契约点名的 12 个函数各自独立，每个只做自己那一遍
 必需的现场操作（一次 `start` + `stop` 的建场-收尾路径、读一次 log 文件），自造的等待常量贴着
@@ -227,7 +227,7 @@ DRAIN_DEADLINE_STEP_SECONDS = 0.2
 DRAIN_TIGHT_DEADLINE_SECONDS = 0.02
 DRAIN_WIDE_DEADLINE_SECONDS = 0.5
 
-#: ⑤e 条（取消路径真的经 `cancelled=True` 记账）里在飞那一步的阻塞时长与轮询间隔（秒）。
+#: ⑤e 条（取消路径真的经 `cancelled=True` 登记）里在飞那一步的阻塞时长与轮询间隔（秒）。
 #:
 #: 量级与 ⑤b / ⑤c 同档（毫秒到零点几秒），于是「进 `running` 之后取消」这个同步点在
 #: 进程内确定可达（0.3 / 0.005 = 60 次机会），整条用例的墙钟也仍在零点几秒。
@@ -501,8 +501,8 @@ def _wait_any_failed(proc: Any) -> dict[str, Any]:
     """等到**收尾四步全部落定**且其中出现 `failed` 步，再返回那一份快照。
 
     只等「出现 failed 步」会撞上偶发：`flush` 一落 `failed`，后面的 `transcode` / `log` /
-    `post` 还在按顺序记账（失败不中断后续记账），此刻读到的 `log` 可能还停在 `running`。
-    等四步都有终态，读到的才是这一趟的最终记账。
+    `post` 还在按顺序登记（失败不中断后续登记），此刻读到的 `log` 可能还停在 `running`。
+    等四步都有终态，读到的才是这一趟的最终登记。
     """
     return _wait_state(
         proc,
@@ -1536,7 +1536,7 @@ def test_step_over_budget_still_leaves_later_steps_room(tmp_path, monkeypatch):
     """某一步的调用出事之后，**后续步仍能推进并落定**（m1 的收尾编排形态）。
 
     这一条走的是真正的收尾编排（`drain()` 四步），只在过程内把第一步的调用换成「同步
-    可调用对象 + 漏掉 `invoke=True`」这个错法（`_drain_flush()` 的记账照原样照抄：出错
+    可调用对象 + 漏掉 `invoke=True`」这个错法（`_drain_flush()` 的登记照原样照抄：出错
     经 `except` 落 `failed`，**整段 `drain` 不许因此抛出去**）。丢掉了 `invoke=True` 的
     同步步从前会先跑在事件循环上、`_drain_flush()` 于是在整段睡眠里卡住，下面这个 ticker
     一次都跑不到 —— 收尾期间 `/api/state` 与 SSE 也就一起停摆。
@@ -1644,7 +1644,7 @@ def _inprocess_runtime_with_backends(
 
       - 配置由本用例现给（`capture.backend = "dev"`：采集替身在场、`finalize` / `transcode`
         两项能力如实为假），于是 `start_session()` 有一个可用的采集后端（缺它会回 503）；
-      - 走真正的后端解析（`_resolve_backends()`），四条收尾编排因此按 registry 的结论记账 ——
+      - 走真正的后端解析（`_resolve_backends()`），四条收尾编排因此按 registry 的结论登记 ——
         「采集替身 → `flush` / `transcode` 记 `skipped`」这条骨架构建下的面孔是真的走出来的，
         用例自己的假件只要往 `post` 那一格或步骤方法上注入就够了。
 
@@ -1665,7 +1665,7 @@ def _inprocess_runtime_with_backends(
         )
     )
     # 后端解析在真服务里由 `startup()` 的 ④ 步触发（本档不起 lifespan），这里显式走一遍 ——
-    # 于是 `start_session()` 有一个在位的采集替身，四条收尾也按 registry 的结论记账。
+    # 于是 `start_session()` 有一个在位的采集替身，四条收尾也按 registry 的结论登记。
     runtime._resolve_backends()
     return runtime
 
@@ -1680,8 +1680,8 @@ def _inprocess_config(
 
     `post_hook_absent=True`（缺省）时，`post.hook` 在这里显式取 `null`（缺席档）：会后钩子
     （`7c6952e5` phase2 的 `meeting.backends.post:PostProcessHook`）落地之后，产品缺省 `auto`
-    会让收尾第 4 步真的起一条后台线程跑整条会后链 —— 那是会后节点自己的账。本文件里数收尾
-    编排那几步账的用例（⑤b2 那一条逐字断言 `"post": "skipped"`）靠这一格把「缺席」这一档
+    会让收尾第 4 步真的起一条后台线程跑整条会后链 —— 那是会后节点自己的记录。本文件里数收尾
+    编排那几步记录的用例（⑤b2 那一条逐字断言 `"post": "skipped"`）靠这一格把「缺席」这一档
     摆出来，第 4 步按缺席记 `skipped` 才是它们该看到的样子。
 
     `post_hook_absent=False` 时这一格整个不写，`post.hook` 于是取到 `config.DEFAULT_VALUES`
@@ -2176,7 +2176,7 @@ def test_drain_whole_pass_upper_bound_grows_with_the_backlog(tmp_path, monkeypat
 
 
 def test_cancelled_drain_routes_through_the_frozen_accounting(tmp_path, monkeypatch):
-    """收尾被 `cancel()` 时，**取消路径真的经 `cancelled=True` 那条记账机制**（审查问题 M2）。
+    """收尾被 `cancel()` 时，**取消路径真的经 `cancelled=True` 那条登记机制**（审查问题 M2）。
 
     现场（进程内、可控、毫秒级）：把在飞的那一步钉住（假采集后端的 `finalize()` 睡
     `DRAIN_CANCEL_STEP_SECONDS`），等它进入 `running` 之后 `cancel()` 这一趟收尾。三条都断：
@@ -2225,12 +2225,12 @@ def test_cancelled_drain_routes_through_the_frozen_accounting(tmp_path, monkeypa
     assert interrupted_before["interrupted"] is True, interrupted_before
     assert interrupted_before["ended_at"] is None, interrupted_before
 
-    # **记下 `finish_drain_step` / `_finish_drain` 收到的那些关键字**（相2 的记账出口）。
+    # **记下 `finish_drain_step` / `_finish_drain` 收到的那些关键字**（相2 的登记出口）。
     # 补丁打在 **`_settle_step()` 所在模块 `meeting.service.runtime_drain` 的模块级名字**上：
     # 拆分后 `runtime_drain.py` 是 `from meeting.state import finish_drain_step` 这样取
     # 进来的，`_settle_step()` 读的是**它自己模块的那个全局名** —— 改 `meeting.state` 上的
     # 同名属性、或只改聚合壳 `meeting.service.runtime` 的 re-export 绑定，都不会被它看见
-    # （这一步的功夫全下在「补丁打在哪一个命名空间」：全局名挂对了，记账出口才会被记到）。
+    # （这一步的功夫全下在「补丁打在哪一个命名空间」：全局名挂对了，登记出口才会被记到）。
     from meeting.service import runtime_drain as runtime_drain_module
 
     seen: dict[str, Any] = {"finish_drain_step": [], "finish_drain": []}
@@ -2281,7 +2281,7 @@ def test_cancelled_drain_routes_through_the_frozen_accounting(tmp_path, monkeypa
         "finish_drain_step"
     ]
     assert seen["finish_drain"] == [True], seen["finish_drain"]
-    print(f"[M2 证据] 取消路径上的记账调用：{seen['finish_drain_step']}；终态提交：{seen['finish_drain']}")
+    print(f"[M2 证据] 取消路径上的登记调用：{seen['finish_drain_step']}；终态提交：{seen['finish_drain']}")
 
     # ② 在飞那一步照实记 running（不伪造终态）；其余步骤维持原样
     statuses = {step.id: step.status for step in runtime.snapshot.ended.steps}
@@ -2593,7 +2593,7 @@ def test_drain_logs_budget_and_elapsed(service_process, meeting_env):
         ),
         timeout=DRAIN_POLL_TIMEOUT_SECONDS,
     )
-    assert session_log, "场次 log 里该有收尾开始与前三步的账"
+    assert session_log, "场次 log 里该有收尾开始与前三步的记录"
     assert "segment_timeout=" in session_log, "预算的另一个输入也该落在本场那一份里"
 
     # 服务级 log：四步齐备的一份 —— 每步都有开始、结束与耗时，预算的输入与结果也在这
@@ -2617,7 +2617,7 @@ def test_drain_logs_budget_and_elapsed(service_process, meeting_env):
         ),
         timeout=DRAIN_POLL_TIMEOUT_SECONDS,
     )
-    assert service_log, "服务级 log 里该有四步齐备的账"
+    assert service_log, "服务级 log 里该有四步齐备的记录"
 
     # 逐步点名：四步的「开始 / 结束 / 耗时」三样在服务级 log 里逐条查得到（缺哪一步就报哪一步）
     for step_id in DRAIN_STEP_IDS:
@@ -2879,7 +2879,7 @@ def test_all_log_event_categories_findable_before_end_marker(service_process, me
     上一个提交核过 —— `git show 56fcf33:meeting/service/runtime.py` 的 `start_session()` 里
     `_log.info("场次开始：…")` 同样排在 `attach_session_log(session_dir)` 之前；
     `git diff --ignore-cr-at-eol 56fcf33 -- meeting/service/runtime.py` 在这个位置只多了一行
-    「每一路健康迁移」的记账（phase3 补的），**挂载顺序一处没动**（phase3 §1.3 也没把
+    「每一路健康迁移」的登记（phase3 补的），**挂载顺序一处没动**（phase3 §1.3 也没把
     「重排 start 的挂载顺序」列进本 Phase 的动作）。本 Phase 因此照现行的两类 log 联合断言写，
     没有把这一行搬进场次 log。
     """
@@ -2947,7 +2947,7 @@ def test_all_log_event_categories_findable_before_end_marker(service_process, me
     # `git show 56fcf33:meeting/service/runtime.py` 的 `start_session()` 里
     # `_log.info("场次开始：…")` 就已排在 `attach_session_log(session_dir)` 之前；
     # `git diff --ignore-cr-at-eol 56fcf33 -- meeting/service/runtime.py` 在这个位置只多了一行
-    # 「每一路健康迁移」的记账，**挂载顺序一处没改**（phase3 未动）。下面这条联合断言因此
+    # 「每一路健康迁移」的登记，**挂载顺序一处没改**（phase3 未动）。下面这条联合断言因此
     # 照现行顺序写，没有把这一行搬进场次 log（搬了反而会与 phase2 的既成事实对不上）。
     check("场次结束：", "场次结束与目录（本场那一份里的收尾痕迹）")
     check(session_id, "场次 id")
@@ -2982,7 +2982,7 @@ def test_all_log_event_categories_findable_before_end_marker(service_process, me
 
     # 服务级 log 那半边：**「场次开始与目录」落在这里**（理由见上面 session_id 那一段的注释
     # —— 场次 log 是 `start` 成功之后才挂上的，这一行按时间顺序在它之前），加上两路设备探测
-    # 与四步齐备的收尾账。字段级断言：这一行要带**本场的 id 与目录**，与场次 log 里那一半对上。
+    # 与四步齐备的收尾记录。字段级断言：这一行要带**本场的 id 与目录**，与场次 log 里那一半对上。
     service_log = _service_log_text(meeting_env)
     assert "场次开始：" in service_log, "服务级 log 缺「场次开始」"
     assert session_id in service_log, "服务级 log 的「场次开始」该带本场的 id"

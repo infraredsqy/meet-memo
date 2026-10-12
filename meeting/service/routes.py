@@ -12,7 +12,7 @@ b1c6a58e 加 `post_stop` 那只停掉动作；资料节点 285bf58c 加会议资
   - `GET /api/events`（SSE：`snapshot` 先行 + `state` / `levels` / `transcript` 三通道）；
   - `GET /api/heartbeat`（完整版，`service` 字面量必须有）；
   - `POST /api/actions`（信封 + 十六个动作名 + `code` 表；分发走 `_ACTION_HANDLERS`
-    那张「动作名 → 处理器」登记表，并在导入时与 runtime 的 `ACTION_NAMES` 对账 ——
+    那张「动作名 → 处理器」登记表，并在导入时与 runtime 的 `ACTION_NAMES` 核对 ——
     两份名单对不上，服务起不来）；
   - `GET /api/summaries`（本场按过的、成功产出的那几次会中总结；读内存，不落文件）；
   - `GET /api/sessions`（工作区注册表：按路径去重的那一份"我这些会"，读盘上注册表文件）；
@@ -20,7 +20,7 @@ b1c6a58e 加 `post_stop` 那只停掉动作；资料节点 285bf58c 加会议资
     正在跑哪一路、已经跑了多久；`{id}` 是这一场的目录路径，形状见 `docs/contract.md` 4.9）；
   - 会议资料四条（资料节点 285bf58c，`{id}` 同样是 URL 编码的场次目录路径；
     语义见 `docs/contract.md` 4.12）：
-    - `GET /api/sessions/{id}/materials`（清单：目录就是清单，没有 JSON 账本）；
+    - `GET /api/sessions/{id}/materials`（清单：目录就是清单，没有 JSON 记录）；
     - `POST /api/sessions/{id}/materials?name=`（上传：原样字节流式写盘；二进制正文
       装不进 JSON 动作信封，是唯一一组不走 `/api/actions` 的写端点——头哨由中间件
       按端点扩到它们身上，`meeting/service/app.py` 的 `_LocalGuardsMiddleware`）；
@@ -265,7 +265,7 @@ def _materials_missing_error(name: str) -> ActionError:
 def _api_materials_listing(request: Request) -> Response:
     """清单：`{dir, materials_dir, items:[{name, size_bytes, added_at}]}`（**200**）。
 
-    **目录就是清单**（没有 JSON 账本）：只读 `meeting_materials/` 的名目，目录还不在
+    **目录就是清单**（没有 JSON 记录）：只读 `meeting_materials/` 的名目，目录还不在
     （一场还没传过资料）时 `items` 是空数组、目录也不建——「首次上传时由服务创建」
     是上传那一侧的事。与 `GET /api/sessions` 同一档纯读：不提交、不涨 `revision`、
     不广播。寻址失败（目录不在原地 / 两样都不是）按 4.12 的失败口径回 404。
@@ -556,7 +556,7 @@ _ACTION_HANDLERS: dict[str, _ActionHandler] = {
 
 
 def _reconcile_action_registry() -> None:
-    """启动期对账：登记表与 `ACTION_NAMES` 两份名单必须恰好对上，对不上当场炸。
+    """启动期核对：登记表与 `ACTION_NAMES` 两份名单必须恰好对上，对不上当场炸。
 
     `ACTION_NAMES`（runtime 冻结的那一份，`detail.known` 与契约按它答）与分发表的
     名单从前靠纪律同步：给 `ACTION_NAMES` 加名漏加分支时，请求穿过分发链落到函数末尾、
@@ -572,7 +572,7 @@ def _reconcile_action_registry() -> None:
         "动作清单漂移，拒绝启动："
         f"ACTION_NAMES 有而登记表没有：{sorted(frozen - registered)}；"
         f"登记表有而 ACTION_NAMES 没有：{sorted(registered - frozen)}。"
-        "请对账 meeting/service/routes.py 的 `_ACTION_HANDLERS` 与 "
+        "请核对 meeting/service/routes.py 的 `_ACTION_HANDLERS` 与 "
         "meeting/service/runtime.py 的 `ACTION_NAMES`"
     )
 
@@ -584,7 +584,7 @@ async def _api_actions(request: Request) -> Response:
     """动作端点：信封 + 十六个动作名 + `code` 表（中间件已校验两个必需请求头）。
 
     分发走模块顶那张「动作名 → 处理器」登记表（`_ACTION_HANDLERS`）：表是分发的唯一
-    依据，并在本模块导入时与 `ACTION_NAMES` 对过账（`_reconcile_action_registry()`）。
+    依据，并在本模块导入时与 `ACTION_NAMES` 核对过（`_reconcile_action_registry()`）。
     查表查不到的名字在这里**显式失败** —— 从前那条「穿过分发链落到函数末尾、
     什么都不做却回 `ok: true`」的假成功通道，在结构上不存在了。
     """
@@ -622,12 +622,12 @@ async def _api_actions(request: Request) -> Response:
 
     try:
         handler = _ACTION_HANDLERS.get(action)
-        if handler is None:  # pragma: no cover - 导入期对账之后到不了（漂移挡在启动前）
+        if handler is None:  # pragma: no cover - 导入期核对之后到不了（漂移挡在启动前）
             raise ActionError(
                 "invalid_setting",
                 f"动作 {action!r} 在 ACTION_NAMES 里却没有登记处理器"
                 "（runtime 接受而 routes 未实现 = 两份清单漂移）："
-                "请对账 meeting/service/routes.py 的 `_ACTION_HANDLERS` 与 "
+                "请核对 meeting/service/routes.py 的 `_ACTION_HANDLERS` 与 "
                 "meeting/service/runtime.py 的 `ACTION_NAMES`",
                 status=500,
                 detail={"action": action, "known": list(ACTION_NAMES)},

@@ -810,12 +810,12 @@ def test_the_real_template_keeps_the_synchronous_waiting_rule_verbatim() -> None
 
 
 def test_the_real_template_writes_down_the_reconciliation_rule() -> None:
-    """对账口径（R12）写在模板里：不做预先对齐、两份稿同时读、按内容判哪边可信。"""
+    """核对口径（R12）写在模板里：不做预先对齐、两份稿同时读、按内容判哪边可信。"""
     text = DEFAULT_TEMPLATE.read_text(encoding="utf-8")
 
     assert "按内容判哪一边可信" in text
     assert "不做预先的文本对齐" in text
-    assert "对账结果" in text
+    assert "核对结果" in text
     assert "两份稿都读" in text or "两份稿同时读" in text
     # 两份稿在这一段里平级：没有任何一处把它们排成"可信 / 凑数"
     assert "权威" not in text

@@ -62,7 +62,7 @@ export interface LiveView {
   muteLabel: string;
   /** 采集已停那一档；`null` 表示不在这一档。 */
   stalled: CaptureStalledView | null;
-  /** 「本场曾中断」那条提示行（帧空洞账）；没有空洞时是 `null`。 */
+  /** 「本场曾中断」那条提示行（帧空洞记录）；没有空洞时是 `null`。 */
   gapNote: string | null;
   /** 心跳失联：整块告警区收掉（两句话不得同屏）。 */
   alertsHidden: boolean;
@@ -137,7 +137,7 @@ export function liveView(
    * `lost` 管「界面看不见服务」，这条管「服务看得见、采集停了」。
    *
    * 判「停」要**连续两次读数**（de899128）：连续计数住在 `heartbeat.stalledBeats`
-   * 一处（`applyHeartbeatReading()` 记账），这里只读它 —— 开场「还没有第一帧」
+   * 一处（`applyHeartbeatReading()` 登记），这里只读它 —— 开场「还没有第一帧」
    * 服务报 `null`、单次 `false` 都不进这一档，横幅不再被开场竞态误弹。
    *
    * 处置与失联同一套（任务书「边界」第 6 条：照失联横幅的结构写；数据冻结同理）：
@@ -146,7 +146,7 @@ export function liveView(
    * 就是服务最后一次收到帧的墙钟（`captureStalled()` 已经算过同一个数）。
    */
   const stalled = captureStalled(reply, snapshot.top_state, heartbeat.stalledBeats);
-  // 「本场曾中断」提示行：读心跳的帧空洞账（历史事实），与上面那条现在时的判档各管一头
+  // 「本场曾中断」提示行：读心跳的帧空洞记录（历史事实），与上面那条现在时的判档各管一头
   const gapNote = captureGapNote(reply);
   const dataStopped = lost || stalled !== null;
   const frozenStamp = lost

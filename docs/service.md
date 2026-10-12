@@ -293,7 +293,7 @@ python -m pytest -q -n 12 --dist loadfile                   # 全量并行（收
 
 为什么要压得这么死：**这些测试没有 CI**——不存在一条独立运行的流水线在旁边替谁跑测试、
 出报警；测试就跑在机主本机上、跑在 agent 的循环里。execute 跑一遍、review 跑一遍、
-fix 每改一点再跑一遍、发现一个错修完还要再跑一遍——跑测试的时间要**按圈记账**，每跑一圈
+fix 每改一点再跑一遍、发现一个错修完还要再跑一遍——跑测试的时间要**按圈登记**，每跑一圈
 记一笔：快档每慢一秒，整个开发循环就慢「圈数 × 一秒」，而圈数没有上限。
 快档压得越死，agent 的迭代越快；这条与健壮性无关，是循环结构本身的要求。据此：
 
@@ -316,7 +316,7 @@ fix 每改一点再跑一遍、发现一个错修完还要再跑一遍——跑�
 2. `_no_real_audio_capture`：把真采集入口打成「一碰就炸」的桩 —— `sounddevice.InputStream` / `rec` / `check_input_settings` / `soundcard.get_microphone`；异常类 `RealCaptureForbidden` 不继承 `Exception`，不会被生产代码的 `except Exception` 吞掉；只读枚举不禁；
 3. `_no_real_minutes_session`：立起 `MEETING_MINUTES_CHILD=1`，让离线链收尾处那次 `minutes.hook` 通知当场走再入闸 —— 本机 PATH 上真的有 `dsh`，不立这一格，每场跑完整条离线链的用例都会真拉起一个 headless 子会话去跑五阶段；
 4. `_no_real_model_call`：盯**会中总结那条 HTTP 出口**（`meeting/summary/client.py` 的 `_http_post()`），`urllib.request.urlopen` 按目标地址判，本机回环放行、其余当场抛 `RealModelCallForbidden` —— `summary.base_url` 的配置默认值就是真地址，忘了注入假客户端就会真花机主的 token；
-5. **PATH 守卫**（会话级 `_no_real_dsh_on_path` 与用例级 `_no_real_dsh_launch` 两条夹具）：在临时目录里造一件假的 `dsh.cmd`（只往账本追加一行）并前置到测试进程 `PATH` 的最前面，漏网的用例命中的是它、真会话起不来；用例级那一条再拿账本把「这一趟真的叫了它」当场判红（要故意走到可执行文件解析那一步的用例，显式请 opt-out 夹具 `allow_real_dsh_resolution`）；
+5. **PATH 守卫**（会话级 `_no_real_dsh_on_path` 与用例级 `_no_real_dsh_launch` 两条夹具）：在临时目录里造一件假的 `dsh.cmd`（只往记录追加一行）并前置到测试进程 `PATH` 的最前面，漏网的用例命中的是它、真会话起不来；用例级那一条再拿记录把「这一趟真的叫了它」当场判红（要故意走到可执行文件解析那一步的用例，显式请 opt-out 夹具 `allow_real_dsh_resolution`）；
 6. `_no_writes_to_the_real_home`：开工记下机主真实家目录下那个配置目录（`~/.config/meeting`）的文件集合与逐个 sha256，每一条用例收工与整场收场各复查一次，被建出或改过就当场判红并打出差（含收工时那份文件的内容）；
 7. `_no_real_dsh_web_call`：包住 `meeting/minutes/dsh_web.py` 唯一那个 HTTP 出口 `_post_json()` —— 打向用例自己起的那些假端点（本机回环、端口由系统挑）原样放行，打向 3080 那台真服务的一律当场抛 `RealDshWebCallForbidden`：`minutes.dsh_url` 的配置默认值就是那个真地址，少了这道网，一条忘了注入假件的用例会在机主开着 DSH GUI 时往那台服务上建真工作区、真会话、发真提示词。
 
@@ -382,7 +382,7 @@ state_machine / config_isolation / minutes_dsh_web 里「真子进程 / 真阈�
 **能**（细节一律看对应章节，这里不复述实现）：
 
 - 服务本体：起停、启动序列、五档退出码、`Ctrl+C` 两阶段、收尾四步跑到终态（自适应预算、超时如实上报、失败后服务不自杀）、场次 log 的挂摘、配置原子写与热读键、端口与三道本地防线（第 1–6 章）；
-- 端点与动作：`/`（产物或说明页）、`/debug` 自检页、`/api/state`、四事件 SSE、心跳（含帧空洞账 `capture_gaps`）、十六个动作、`GET /api/summaries`、工作区注册表两只读端点与收编两动作、单场状态（第 3 章那张表）；
+- 端点与动作：`/`（产物或说明页）、`/debug` 自检页、`/api/state`、四事件 SSE、心跳（含帧空洞记录 `capture_gaps`）、十六个动作、`GET /api/summaries`、工作区注册表两只读端点与收编两动作、单场状态（第 3 章那张表）；
 - 真采集：两路各自独立、边采边落盘按段命名的裸 PCM、0.5 秒电平帧、对录过的目录续接（同一场再录一段，旧段一个字节不碰）、暂停与「会中关一路」（动作 `pause` / `resume` / `set_source`）、收尾逐段转 64k MP3（PCM 保留）；
 - 真转写：两路各一本会中临时稿（`[HH:MM] 正文`），四层退化防护；防护在本机对 V1 事故素材实测过（读数与口径见下面「防护实测」）；
 - 会后离线：按钮或 `meeting post` 按需拉起，两路各出会后稿与说话人对照表，逐块进度落盘、`GET /api/sessions/{id}` 答跑到哪一块，数字静音门拦全零段，`meeting replay` 重放验证；

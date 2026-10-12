@@ -23,7 +23,7 @@ import type { OfflineSourceProgress, PostJobCell, SessionRow, SessionStatus } fr
  * 四组：
  * 1. 列表行四态（b3：显示层重映射 + `post_job.dir` 联结）；
  * 2. 进度读数（真在跑 / 停着一版 running / 终态 / 没跑过；分母按路各算各的）；
- * 3. 逐块行（每跑完一块落一行；四档归属靠计数差值）与账重置检出（review-2 m2：
+ * 3. 逐块行（每跑完一块落一行；四档归属靠计数差值）与记录重置检出（review-2 m2：
  *    重跑一场逐块行整段重播）；
  * 4. 全局「显卡忙不忙」与「要不要轮询」。
  */
@@ -327,7 +327,7 @@ describe('逐块行（每跑完一块落一行）', () => {
   });
 });
 
-describe('账重置检出（review-2 m2：重跑一场逐块行要整段重播，不接旧账）', () => {
+describe('记录重置检出（review-2 m2：重跑一场逐块行要整段重播，不接旧记录）', () => {
   const OLD_RUN = '2026-09-20T10:00:00+08:00';
   const NEW_RUN = '2026-09-21T22:10:00+08:00';
 
@@ -349,7 +349,7 @@ describe('账重置检出（review-2 m2：重跑一场逐块行要整段重播�
   }
 
   it('before 是旧趟终读、next.started_at 换新 → 检出重置；差值那一档在这里恰好一行不追加', () => {
-    // 新一趟的第一跳：新账 done 从 0 重数（后端每趟新造账、start() 只落表头）
+    // 新一趟的第一跳：新记录 done 从 0 重数（后端每趟新建记录、start() 只落表头）
     const fresh = status({}, {
       state: 'running',
       in_process: true,
@@ -362,7 +362,7 @@ describe('账重置检出（review-2 m2：重跑一场逐块行要整段重播�
     expect(advanceChunkRows([], oldRun(), fresh)).toEqual([]);
   });
 
-  it('started_at 没换但某路 done 回落 / 四档合计回落 → 也算账重置；正常推进不算', () => {
+  it('started_at 没换但某路 done 回落 / 四档合计回落 → 也算记录重置；正常推进不算', () => {
     const before = status({}, {
       started_at: NEW_RUN,
       state: 'running',
@@ -374,7 +374,7 @@ describe('账重置检出（review-2 m2：重跑一场逐块行要整段重播�
       before,
       status({}, { started_at: NEW_RUN, sources: [road({ done: 2, total: 10 })] }),
     )).toBe(true);
-    // 四档合计回落（done 相同、账被换过）
+    // 四档合计回落（done 相同、记录被换过）
     expect(chunkLedgerReset(
       before,
       status({}, {

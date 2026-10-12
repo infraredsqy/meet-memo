@@ -118,7 +118,7 @@ class PcmArchiveWriter:
         由这里给（V1 那个 `join(timeout=2.0)` 不保证线程已退出）；
       - **静音块**（本节点新增）：`feed(..., silence=True)` 投进来的块写的是**数字零**
         （暂停期间、用户主动关掉的那一路、没开的那一路都走这一路），并单独记进
-        `silence_bytes`——「实际录到的音频时长」的账只数 `content_bytes`，
+        `silence_bytes`——「实际录到的音频时长」这一项只数 `content_bytes`，
         `bytes_written` 仍是落盘总字节数（= 时间轴长度）。
     """
 
@@ -232,7 +232,7 @@ class PcmArchiveWriter:
             self._write(handle, *item)
 
     def _write(self, handle, data: bytes, silence: bool = False) -> None:
-        """写一块并记账（句柄已经关掉时不再写：这一支只在 join 超时那条路上会走到）。
+        """写一块并登记（句柄已经关掉时不再写：这一支只在 join 超时那条路上会走到）。
 
         静音块在这里替换成等长数字零：**队列里从不放内容**，替换发生在写线程这一侧，
         暂停期间的真音频到不了盘上（`docs/design-intent.md` 第 8 条的隐私线）。

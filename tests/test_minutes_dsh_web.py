@@ -247,7 +247,7 @@ def test_handoff_walks_the_three_steps_in_order(tmp_path: Path, credentials: Pat
 
 
 def test_handoff_leaves_the_two_on_disk_records(tmp_path: Path, credentials: Path) -> None:
-    """盘上落两份记录：发出去的提示词全文与三步的账（它们是状态文件里声明的那两格）。"""
+    """盘上落两份记录：发出去的提示词全文与三步的记录（它们是状态文件里声明的那两格）。"""
     session = tmp_path / "260927"
     session.mkdir()
 

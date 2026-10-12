@@ -22,7 +22,7 @@
      `duration_seconds` 重新计时**。三档故障都**不动 `top_state` 的迁移路径**——能不能回
      `recording` 由 `alerts.py` 的判定说了算。
 
-它**不写真实音频**，只在 `finalize()` / `transcode()` 里**记账**（音频字节是 `dca4539b` 的活），
+它**不写真实音频**，只在 `finalize()` / `transcode()` 里**登记**（音频字节是 `dca4539b` 的活），
 因此收尾第 1、2 步在它身上记 `skipped`（判据只看 `registry` 的解析结论与实现能力）。
 
 ## 本模块里的第二件替身：`DevTranscriberBackend`（`9e5db89c` phase2 §3.8）
@@ -127,7 +127,7 @@ class DevCaptureBackend:
         self._sources: tuple[str, ...] = ("mic", "loopback")
         self._mode = "both"
         self._session_dir: str | None = None
-        #: 记账（不写真实音频）：两次收尾调用各记一笔
+        #: 登记（不写真实音频）：两次收尾调用各记一笔
         self.finalize_calls = 0
         self.transcode_calls = 0
         self.emitted_frames = 0
@@ -136,9 +136,9 @@ class DevCaptureBackend:
         #: 重建整条序列（单帧 O(tick)、整场累计 O(tick²)）；现在没超过缓存就回前缀、
         #: 超过才从缓存续生，摊还 O(1)。每路独立、只在合成线程推进（照现状）。
         self._level_cache: dict[str, tuple[random.Random, float, list[float]]] = {}
-        #: 帧空洞自查账（gil-stall-hole）：与真引擎同一套（`FrameGapDetector`，窗口同
+        #: 帧空洞自查记录（gil-stall-hole）：与真引擎同一套（`FrameGapDetector`，窗口同
         #: `recording_alive` 那把尺）。dev 的发帧线程只有一条（两路合发），按「这一拍
-        #: 有没有帧出去」记一次账；`stall` / 两路 `lost` 停发的那段在恢复后第一拍算出
+        #: 有没有帧出去」登记一次；`stall` / 两路 `lost` 停发的那段在恢复后第一拍算出
         #: 真实时长；`silence` 发的是零电平**帧**、节拍没断，不算空洞。
         self._gap_detector = FrameGapDetector(
             frame_interval=DEV_FRAME_INTERVAL_SECONDS, on_gap=self._report_gap
@@ -169,7 +169,7 @@ class DevCaptureBackend:
         self._session_dir = session_dir
         self._stop.clear()
         self._frame_index = 0
-        # 新一场从空账起算：跨场的停顿不是本场的空洞（与引擎侧各路刻度线的重立同理）
+        # 新一场从空记录起算：跨场的停顿不是本场的空洞（与引擎侧各路刻度线的重立同理）
         self._gap_detector.reset()
         if self._thread is not None and self._thread.is_alive():
             return
@@ -185,14 +185,14 @@ class DevCaptureBackend:
         self._thread = None
 
     def finalize(self) -> None:
-        """**只记账**（不写真实音频）：音频字节的写入归 `dca4539b`。"""
+        """**只登记**（不写真实音频）：音频字节的写入归 `dca4539b`。"""
         self.finalize_calls += 1
-        _log.info("dev 替身 finalize()：只记账，不写真实音频（session=%s）", self._session_dir)
+        _log.info("dev 替身 finalize()：只登记，不写真实音频（session=%s）", self._session_dir)
 
     def transcode(self) -> None:
-        """**只记账**（没有真实音频可转码）。"""
+        """**只登记**（没有真实音频可转码）。"""
         self.transcode_calls += 1
-        _log.info("dev 替身 transcode()：只记账，不写真实音频")
+        _log.info("dev 替身 transcode()：只登记，不写真实音频")
 
     # -- 故障注入（dev-only 动作的唯一入口） ------------------------------
 
@@ -276,7 +276,7 @@ class DevCaptureBackend:
         是逐帧顺序生成，续生与从种子重算逐值相等，于是返回值与从前「每次整条重建」
         逐帧相同（`level_sequence(src, N) == level_sequence(src, M)[:N]`，M>N）。
         `_run()` 过去每拍重建整条序列只取末位、累计 O(tick²)，现在摊还 O(1)。
-        锁是既有的那把（合并故障注入的记账）：只串行化每路的续生这一步，两路互不牵连。
+        锁是既有的那把（合并故障注入的登记）：只串行化每路的续生这一步，两路互不牵连。
         """
         with self._lock:
             cached = self._level_cache.get(source)
@@ -326,12 +326,12 @@ class DevCaptureBackend:
             if "stall" in faults.values():
                 # `stall` = 两路的事实帧整体停发（HTTP 照常应答；开场窗口内
                 # recording_alive 为 null、超窗才为 false，见 docs/contract.md 第 5 章）。
-                # 这一拍没有任何帧出去，空洞自查账也不记（恢复后第一拍一算就是真实时长）
+                # 这一拍没有任何帧出去，空洞自查记录也不记（恢复后第一拍一算就是真实时长）
                 tick += 1
                 time.sleep(DEV_FRAME_INTERVAL_SECONDS)
                 continue
 
-            # 这一拍有帧要发（`silence` 的零电平帧也是帧）：先记空洞账，再发帧。
+            # 这一拍有帧要发（`silence` 的零电平帧也是帧）：先记空洞记录，再发帧。
             # `lost` 只断一路 —— 另一路的帧照发，「任意存活路」的整档口径下不算空洞
             # （那一路的断流由 `SourceLost` 的致命级在报，两句话不重复）。
             if any(fault != "lost" for fault in faults.values()):
@@ -369,8 +369,8 @@ class DevCaptureBackend:
             time.sleep(DEV_FRAME_INTERVAL_SECONDS)
 
     def _report_gap(self, seconds: float, detected: float) -> None:
-        """空洞自查账的出口：两路各发一条 `FrameGap`（与引擎两路刻度线各报一条同形，
-        服务侧按整档合并成一条账）。"""
+        """空洞自查记录的出口：两路各发一条 `FrameGap`（与引擎两路刻度线各报一条同形，
+        服务侧按整档合并成一条记录）。"""
         for source in self._sources:
             self._emit_fact(FrameGap(source=source, seconds=seconds, detected=detected))
 
@@ -430,7 +430,7 @@ class DevTranscriberBackend:
         self._stop = threading.Event()
         self._mode = "both"
         self._session_dir: str | None = None
-        #: 记账（用例据此断言「产了几行」）
+        #: 登记（用例据此断言「产了几行」）
         self.lines_emitted = 0
 
     # -- 协议 -------------------------------------------------------------

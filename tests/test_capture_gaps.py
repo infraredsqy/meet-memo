@@ -2,11 +2,11 @@
 
 问题（`.work/issues/specs/opening-window-false-capture-alarm.md:52-53` 实测）：录中发生
 GIL 饿死 / 整进程冻结时，采帧与判停的线程**一起冻住**，解冻后服务侧的帧时刻立刻刷新，
-`recording_alive` 全程 `true` —— 内容丢了 2.4s，账面上不留痕。
+`recording_alive` 全程 `true` —— 内容丢了 2.4s，记录上不留痕。
 
 修法（设计已拍板）：**检测点在生产侧** —— 发帧线程每次产帧先与上一拍做差（墙钟不冻，
 解冻后第一拍就得到真实空洞时长），超过既有窗口（`meeting/state.py` 的
-`max(2.0s, 3 × frame_interval)`，公式不新造）记为一次空洞事件，**再**刷新时刻；账走
+`max(2.0s, 3 × frame_interval)`，公式不新造）记为一次空洞事件，**再**刷新时刻；记录走
 心跳应答的新增字段 `capture_gaps`（`recording_alive` 的语义一个字不动）。
 
 覆盖：
@@ -15,12 +15,12 @@ GIL 饿死 / 整进程冻结时，采帧与判停的线程**一起冻住**，解
      超窗报一次；同一回合的后续拍不连记；`reset()` 清基准；窗口就是那把尺。
   ② 引擎刻度线接线（`_SourceWorker._emit_level`）：先报 `FrameGap` 再发电平帧；
      下一拍不连记。
-  ③ 运行时账（`ServiceRuntime._apply_frame_gap`）：两路同回合合并为一条、秒数正确；
+  ③ 运行时记录（`ServiceRuntime._apply_frame_gap`）：两路同回合合并为一条、秒数正确；
      两个回合各算一条；最近列表有界（10 条）而累计数不设界；恢复后
-     `recording_alive == true` 且空洞仍在；新一场清账；录音态之外不记账。
+     `recording_alive == true` 且空洞仍在；新一场清空记录；录音态之外不登记。
   ④ dev 假采集档的区分：`silence`（发零电平**帧**）不构成空洞；单路 `lost`（另一路
      帧照发）不构成空洞；`stall` / 两路真断流才构成 —— 端到端一条（慢档：真实停发
-     3.5s 超过 2.0s 窗口，恢复后账上一条、`recording_alive` 回 `true`）。
+     3.5s 超过 2.0s 窗口，恢复后记录里一条、`recording_alive` 回 `true`）。
 
 快档红线：除慢档那条端到端外，全部用注入时钟 / 直调事实出口，无 sleep、无真子进程。
 """
@@ -42,7 +42,7 @@ from meeting.capture.gaps import FrameGapDetector
 from meeting.state import frame_clock_window
 from tests import _helpers as helpers
 
-#: 空洞账在心跳应答里的键（与 `ServiceRuntime.capture_gaps_view()` 的产出对应）
+#: 空洞记录在心跳应答里的键（与 `ServiceRuntime.capture_gaps_view()` 的产出对应）
 GAP_FIELDS = {"total_count", "total_seconds", "recent"}
 
 
@@ -189,7 +189,7 @@ def test_engine_tick_reports_the_gap_before_the_level_frame(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# ③ 运行时账
+# ③ 运行时记录
 # ---------------------------------------------------------------------------
 
 
@@ -201,7 +201,7 @@ def test_runtime_ledger_records_merges_and_keeps_totals(tmp_path):
                    what="recording_alive == True")
 
         empty = client.get("/api/heartbeat").json()["capture_gaps"]
-        assert empty == {"total_count": 0, "total_seconds": 0.0, "recent": []}, "没报过就是零账"
+        assert empty == {"total_count": 0, "total_seconds": 0.0, "recent": []}, "没报过就是空记录"
 
         # 同一次冻结、两路各报一条（区间重叠）：合并为一条，秒数取区间并集
         #（两条的发现时刻有毫秒级错位，并集比单条长出一点，但不翻倍）
@@ -225,11 +225,11 @@ def test_runtime_ledger_records_merges_and_keeps_totals(tmp_path):
         assert twice["total_seconds"] == pytest.approx(5.4, abs=0.05)
         assert len(twice["recent"]) == 2
 
-        # `recording_alive` 的语义一个字不动：现在采得到就是 true，空洞照旧在账上
+        # `recording_alive` 的语义一个字不动：现在采得到就是 true，空洞照旧在记录里
         beat = client.get("/api/heartbeat").json()
         assert beat["recording_alive"] is True
         assert beat["capture_gaps"]["total_count"] == 2
-        # 账只在心跳域：不进快照、不涨 revision
+        # 记录只在心跳域：不进快照、不涨 revision
         assert "capture_gaps" not in client.get("/api/state").json()
 
 
@@ -253,7 +253,7 @@ def test_runtime_recent_list_is_bounded_but_totals_keep_count(tmp_path):
 
 
 def test_runtime_ignores_gaps_outside_a_recording_session(tmp_path):
-    """③ 录音态之外不记账（空闲态来的空洞事实被事实分派拒绝在账外）。"""
+    """③ 录音态之外不登记（空闲态来的空洞事实被事实分派拒绝在记录外）。"""
     with live(tmp_path) as (client, runtime):
         assert client.get("/api/heartbeat").json()["top_state"] == "idle"
         runtime.apply_fact(FrameGap(source="mic", seconds=9.0, detected=time.monotonic()))
@@ -261,7 +261,7 @@ def test_runtime_ignores_gaps_outside_a_recording_session(tmp_path):
 
 
 def test_runtime_gap_ledger_resets_with_the_session(tmp_path):
-    """③ 新一场清账：空洞是「本场」的账，上一场的不进这一场。"""
+    """③ 新一场清空记录：空洞是「本场」的记录，上一场的不进这一场。"""
     with live(tmp_path) as (client, runtime):
         assert post(client, "start").status_code == 200
         wait_until(lambda: client.get("/api/heartbeat").json()["recording_alive"] is True,
@@ -305,7 +305,7 @@ def test_dev_silence_keeps_the_beat_and_records_no_gap():
 def test_dev_single_route_lost_is_not_a_session_gap():
     """④ 单路 `lost`：另一路的帧照发，「任意存活路」的整档口径下不构成空洞。
 
-    那一路的断流由 `SourceLost` 的致命级在报，空洞账不重复记这句话。
+    那一路的断流由 `SourceLost` 的致命级在报，空洞记录不重复记这句话。
     """
     backend = DevCaptureBackend()
     backend.inject_fault(source="loopback", fault="lost", after_seconds=0.0, duration_seconds=1.0)
@@ -318,7 +318,7 @@ def test_dev_single_route_lost_is_not_a_session_gap():
 
 @pytest.mark.slow
 def test_dev_stall_records_one_merged_gap_end_to_end(tmp_path):
-    """④ 端到端（慢档）：`stall` 停发 3.5s（超 2.0s 窗口）→ 恢复后账上一条。
+    """④ 端到端（慢档）：`stall` 停发 3.5s（超 2.0s 窗口）→ 恢复后记录里一条。
 
     dev 的发帧线程恢复后第一拍把真实空洞时长算出来，两路各报一条、服务侧合并成一条；
     `recording_alive` 回 `true` 且空洞仍在 —— 「留痕」与「现在采不采得到」各管一头。

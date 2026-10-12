@@ -305,7 +305,7 @@ class CaptureBackend:
         try:
             session.stop()
         except Exception:  # noqa: BLE001 - 收场失败不掩盖别的结论
-            _log.warning("停采集时抛错（如实记账，不静默）", exc_info=True)
+            _log.warning("停采集时抛错（如实登记，不静默）", exc_info=True)
 
     def _safe_stop(self, source_impl: Any) -> None:
         """收掉一份刚造出来的源（重开失败那条路用；停不掉也不掩盖真正的原因）。"""
@@ -315,10 +315,10 @@ class CaptureBackend:
         try:
             stop()
         except Exception:  # noqa: BLE001 - 见上
-            _log.warning("收掉重开失败的那一份源时抛错（如实记账）", exc_info=True)
+            _log.warning("收掉重开失败的那一份源时抛错（如实登记）", exc_info=True)
 
     def _select_endpoint(self, source: str) -> devices_module.DeviceEndpoint:
-        """按当下的配置与端点表挑这一路的设备（挑不出来抛错，由调用方如实记账）。"""
+        """按当下的配置与端点表挑这一路的设备（挑不出来抛错，由调用方如实登记）。"""
         configured = self._setting(f"devices.{source}")
         if source == "mic":
             outcome = devices_module.select_microphone(

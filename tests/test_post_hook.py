@@ -197,7 +197,7 @@ def test_the_post_step_stays_waiting_even_without_a_hook(tmp_path: Path, monkeyp
 # `release` 这一项。不用固定 `sleep` 赌时序（项目纪律），也不读源码行号。
 # ---------------------------------------------------------------------------
 
-#: 释放抛异常时写进 log 的那一段（用例按它核实「如实记账、不静默」）
+#: 释放抛异常时写进 log 的那一段（用例按它核实「如实登记、不静默」）
 RELEASE_FAILURE_NOTE = "会中模型退出显存失败"
 
 #: 收尾那几步的 logger（record 直接挂在这一层上；见 `recording_log` 的说明）
@@ -325,7 +325,7 @@ def test_a_raising_release_still_lets_the_post_step_settle(
 ) -> None:
     """释放抛异常**不许把整场拖下水**：如实记一条 log，这一步照旧跑完。
 
-    这一条与 `runtime.py` 相邻几步的既有姿态同源（收尾失败如实记账、别把别的步骤带走）。
+    这一条与 `runtime.py` 相邻几步的既有姿态同源（收尾失败如实登记、别把别的步骤带走）。
     """
     import asyncio
 

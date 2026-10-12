@@ -72,7 +72,7 @@ def test_document_carries_the_contract_fields() -> None:
 
 
 def test_chunk_rows_are_recorded_per_block() -> None:
-    """分块跑时逐块记账落进 `chunks`，失败的那块带着原因（缺段因此查得到出处）。"""
+    """分块跑时逐块登记落进 `chunks`，失败的那块带着原因（缺段因此查得到出处）。"""
     document = _document(
         chunks=[
             {"index": 1, "offset_seconds": 0.0, "seconds": 450.0, "segments": 12, "error": None},
@@ -562,7 +562,7 @@ def test_the_report_headline_only_claims_a_silent_skip_that_happened(tmp_path) -
     """报告开头那一行**只说这一趟真发生的事**：跳过几段就写几段，没跳过的不许说跳过。
 
     改前那一行无条件写着「（峰值全零的跳过引擎）」：一次整段都有声的运行（一块都没跳过）
-    照样带着它 —— 这一行是读报告的人第一眼看到的东西，第一句就与逐块记账对不上。
+    照样带着它 —— 这一行是读报告的人第一眼看到的东西，第一句就与逐块登记对不上。
     三档各钉一个**整行**字符串：一段都没跳过、真跳过一段、判不了那一档（照旧）。
     """
     # 1. 三段都有声：整行里不许出现「有段因为没声被跳过」这种说法
@@ -846,7 +846,7 @@ def test_atomic_write_retries_while_the_target_is_held(tmp_path, monkeypatch) ->
 
 
 def test_atomic_write_gives_up_after_the_retries(tmp_path, monkeypatch) -> None:
-    """一直拿不到就如实抛出去（调用方据此记账，不静默丢一次写盘）。"""
+    """一直拿不到就如实抛出去（调用方据此登记，不静默丢一次写盘）。"""
 
     def always_busy(src, dst):
         raise PermissionError(32, "另一个程序正在使用此文件")
@@ -866,7 +866,7 @@ def test_concurrent_writers_to_one_target_both_succeed(tmp_path) -> None:
     旧写法把临时文件叫 `<名字>.tmp`：两个写方共用它，先落地的 `os.replace` 把它消费掉，
     另一边的 `os.replace` 随即抛 `FileNotFoundError` —— 那条异常逃出了只认
     `PermissionError` 的重试。现场正有这种并发写方：会后主链在写状态文件，另一个进程里
-    `meeting post` 那一趟上抛前的补账（`_mark_offline_failed()` → `mark_failed_if_unset()`）
+    `meeting post` 那一趟上抛前的补记录（`_mark_offline_failed()` → `mark_failed_if_unset()`）
     也在写同一格。
 
     两个写方各写 20 轮（`session_id` 各不相同，好认出最后留下的是谁那一版），收尾断言

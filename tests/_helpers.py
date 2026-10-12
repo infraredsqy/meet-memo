@@ -130,7 +130,7 @@ def _local_client(url: str, kwargs: dict) -> "httpx.Client":
                     timeout=_httpx.Timeout(want),
                     verify=_LOCAL_SSL_CONTEXT,
                 ),
-                # `None`（不设上限）在「取最大值」这件事上就是无穷大，用 0.0 记账
+                # `None`（不设上限）在「取最大值」这件事上就是无穷大，用 0.0 登记
                 "max_timeout": 0.0 if want is None else float(want),
             }
             _LOCAL_GET_CLIENTS[url] = entry
@@ -320,7 +320,7 @@ DEFAULT_CAPTURE_BACKEND = "dev"
 #:
 #: 产品缺省是 `auto`，`7c6952e5` phase2 落地 `meeting/backends/post.py` 之后那一条会解析到真
 #: 实现，收尾第 4 步于是真的起一条**后台线程**跑整条会后链、往这一场的场次目录里落四五份产物。
-#: 对绝大多数用例那是纯粹的噪音：它们数的是收尾编排、采集归档或服务状态的账，
+#: 对绝大多数用例那是纯粹的噪音：它们数的是收尾编排、采集归档或服务状态的记录，
 #: 而后台线程往场次目录里写文件会让「目录里恰好这几份文件」这类断言变成与线程赛跑的断言。
 #: 测试层因此与 `DEFAULT_CAPTURE_BACKEND` 同一个口径 —— 把缺省收成**不产生副作用的那一档**。
 #:

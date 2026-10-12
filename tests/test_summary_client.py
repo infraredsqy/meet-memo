@@ -1,8 +1,8 @@
 """`meeting/summary/client.py` 的契约用例：OpenAI 兼容端点的请求形状与四档错误。
 
 `post` 是这一层的注入点，因此**一条网络请求都不发**：下面那个 `RecordingPost` 三种写法都收
-（`requests` 形状的关键字、单个 `HttpRequest`、以及会把状态码收进记账里），
-记账内容就是断言对象。
+（`requests` 形状的关键字、单个 `HttpRequest`、以及会把状态码收进登记里），
+登记内容就是断言对象。
 
 盯的是五件事：
 

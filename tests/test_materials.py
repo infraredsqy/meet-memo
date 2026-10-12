@@ -8,7 +8,7 @@
     未登记与目录不在原地都拒收（404），且**盘上不落任何新东西**；
   - **活跃场次**：一边录一边传照收——哪怕那一行刚被 `workspace_remove` 摘出清单
     （资料跟着场次走，不跟着清单行走）；
-  - **清单**：目录就是清单（没有 JSON 账本），没传过就是空数组且**不建目录**；
+  - **清单**：目录就是清单（没有 JSON 记录），没传过就是空数组且**不建目录**；
   - **取原文件**：字节原样、`Content-Type` 按扩展名（认不出 `application/octet-stream`）；
   - **删除**：只删那一个文件；重复删除如实 404；
   - **独立于快照 + 流式**：不涨 `revision`、快照九键不动；几 MB 级上传照常落盘；
@@ -154,7 +154,7 @@ def test_upload_stores_bytes_verbatim_and_reports_the_stored_name(
     disk_mtime = datetime.fromtimestamp(stored.stat().st_mtime).astimezone()
     assert abs((stamped - disk_mtime).total_seconds()) <= 1, "added_at 与盘上 mtime 同源"
 
-    # 目录就是清单：没有账本文件，资料目录里只有那一份上传
+    # 目录就是清单：没有记录文件，资料目录里只有那一份上传
     assert {item.name for item in _materials_dir(session).iterdir()} == {"报告.pdf"}
 
 

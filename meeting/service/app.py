@@ -521,7 +521,7 @@ class _LocalGuardsMiddleware:
        改状态的动作集中在这一个信封里）与**会议资料的两条写端点**（`POST
        …/materials` 上传、`DELETE …/materials/{name}` 删除，资料节点 285bf58c）——
        那两条的正文是二进制、装不进 JSON 动作信封，头哨由中间件按端点扩到它们身上：
-       防线还是只守中间件这一处，写语义端点在 `_materials_write_path()` 一张对账表里。
+       防线还是只守中间件这一处，写语义端点在 `_materials_write_path()` 一张核对表里。
        **校验先于路由匹配生效**。
     3. **不开 CORS**：**不发** `Access-Control-Allow-Origin`。
     """
@@ -606,7 +606,7 @@ class _LocalGuardsMiddleware:
 
 
 def _materials_write_path(path: str, method: str) -> bool:
-    """这条请求是不是**会议资料的写端点**（头哨的对账表，与 routes.py 的注册逐条对应）。
+    """这条请求是不是**会议资料的写端点**（头哨的核对表，与 routes.py 的注册逐条对应）。
 
     只认两条：`POST /api/sessions/{dir}/materials`（上传）与
     `DELETE /api/sessions/{dir}/materials/{name}`（删除）。清单与取原文件是纯读，

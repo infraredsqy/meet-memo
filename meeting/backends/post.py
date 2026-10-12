@@ -22,7 +22,7 @@ STATE_DONE = "done"
 STATE_FAILED = "failed"
 #: 一路整条没交回、另一路跑成那一档：产物可用（它是终态），顶层那一格与 `done` 分开写
 STATE_PARTIAL = "partial"
-#: 跑到块边界被人停那一档（b1c6a58e）：也是**终态**。补账判据把它算进「已落定」——
+#: 跑到块边界被人停那一档（b1c6a58e）：也是**终态**。补记录判据把它算进「已落定」——
 #: 打断之后同目录再炸出来的异常不许把 `interrupted` 盖成 `failed`（那一格说的是
 #: 「人停的」，不是「引擎炸了」）。
 STATE_INTERRUPTED = "interrupted"

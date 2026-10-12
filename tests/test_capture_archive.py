@@ -83,7 +83,7 @@ def test_open_pcm_truncates_stale_leftovers(tmp_path: Path):
 
 
 def test_writer_writes_every_fed_chunk(tmp_path: Path):
-    """喂几块就写几块：字节数按 32000 字节/秒对得上（对账口径）。"""
+    """喂几块就写几块：字节数按 32000 字节/秒对得上（核对口径）。"""
     path = tmp_path / "meeting_audio_mic.pcm"
     writer = PcmArchiveWriter(path, label="mic")
     writer.open()
@@ -174,7 +174,7 @@ def test_writer_feed_ignores_empty_chunks(tmp_path: Path):
 
 
 def test_writer_silence_feed_writes_zeros_and_keeps_the_ledger_split(tmp_path: Path):
-    """静音块落盘的是**等长数字零**：内容账与静音账分开记，总账是落盘字节数。
+    """静音块落盘的是**等长数字零**：内容量与静音量分开记，总量是落盘字节数。
 
     「暂停 = 写静音」的隐私线落在写侧这一格：队列里就算投进来真音频，
     `silence=True` 的块到盘上也是零（`docs/design-intent.md` 第 8 条）。

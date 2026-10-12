@@ -21,7 +21,7 @@
   ④ **不把事件循环钉住**：替身把释放 / 拉起各自按住 3 秒，动作本身的墙钟仍是毫秒级。
 
 **没有一条用例加载真模型、碰 GPU 或打开真实录音设备**：模型是注入的假件（`transcriber_factory`
-造一份记账用的替身）、`torch` 是一个记事的假模块、采集走 `dev` 替身（`capture.backend = dev`），
+造一份登记用的替身）、`torch` 是一个记事的假模块、采集走 `dev` 替身（`capture.backend = dev`），
 切段器背后是确定性的振幅 VAD 替身。
 """
 
@@ -621,7 +621,7 @@ class ExplodingModelCalls:
 def test_a_raising_model_call_does_not_fail_the_button(tmp_path, monkeypatch):
     """模型那一侧出事**不许把暂停 / 继续这两个动作拖失败**：状态照常，事故如实进 log。
 
-    与收尾第 4 步释放抛错那一档同姿态（如实记账、不静默、不把别的步骤带走）。
+    与收尾第 4 步释放抛错那一档同姿态（如实登记、不静默、不把别的步骤带走）。
     """
     with live_runtime(tmp_path, monkeypatch) as runtime:
         runtime.transcriber_backend = ExplodingModelCalls()

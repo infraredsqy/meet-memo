@@ -166,10 +166,10 @@ class RuntimeBackendsMixin:
         # ④ 解析三个后端（唯一入口是 registry；失败回退替身 + warning）
         self._resolve_backends()
 
-        # ④b 会后在飞记录的对账（b1c6a58e 的 d5）：上一趟会后被进程死掉截断时，盘上停着
+        # ④b 会后在飞记录的核对（b1c6a58e 的 d5）：上一趟会后被进程死掉截断时，盘上停着
         # running、记录还写着 —— 这里把它补成 `interrupted`（治「杀了进程就永远停在在跑」
         # 那条病）。这是「启动序列不读场次目录」那条口径的**定向例外**：只读记录里点名的
-        # 那一场，不扫任何目录；对账的任何意外只警告，不阻塞启动。
+        # 那一场，不扫任何目录；核对的任何意外只警告，不阻塞启动。
         self._reconcile_interrupted_post_jobs()
 
         # ⑤ 组装初始快照（`top_state: idle`、`session: null`、`sources` 取 probe() 的三态）
@@ -193,9 +193,9 @@ class RuntimeBackendsMixin:
         # 返回值（= `health` 有没有迁移）在这里**有意丢掉**：`startup()` 不做提交。
         self._refresh_transcript_snapshot()
         # 空闲态不发提示级（`docs/ui-design.md` 章 2.5：空闲态告警区不出现）：快照这一格与
-        # 判定器那份记账一起从零开始。`_refresh_transcript_snapshot()` 的收口判据是
+        # 判定器那份登记一起从零开始。`_refresh_transcript_snapshot()` 的收口判据是
         # `top_state ∈ {recording, alert}`，开机这一刻是 `idle`，所以它自己不会写进任何提示；
-        # 这里再显式清一次，是为了让「快照 = 记账」这条不变量从第一帧就成立。
+        # 这里再显式清一次，是为了让「快照 = 登记」这条不变量从第一帧就成立。
         self._clear_hints()
 
         # ⑥ 打开浏览器（尾部；`MEETING_NO_BROWSER=1` 时跳过并落一行日志）
@@ -209,14 +209,14 @@ class RuntimeBackendsMixin:
 
           - **offline 档 + 盘上 `running`** → 走 `runner.write_interrupted_status()`（与
             `run_session` 的打断终态同一形状：十二格、`state = "interrupted"`、缺口注记
-            拼进 `error`，缺口从逐块账读出）。这一格写完，读方（4.9 的 `offline.state`、
+            拼进 `error`，缺口从逐块记录读出）。这一格写完，读方（4.9 的 `offline.state`、
             界面进度区、幂等闸）看到的都是「人停的、可以重按」，而「杀了服务就永远停在
             在跑」从此只剩不到一次服务生命周期的窗口。
           - **minutes 档** → 只清记录 + log：纪要那一层的 `running` 由它自己的钩子兜底
             （`docs/state.md`「进程被杀时钩子把它补成 failed」），这里再补一份就把两层
-            的账搅在一起了。
+            的记录搅在一起了。
           - **盘上不是 `running`**（那趟其实跑完了、或状态文件读不出）→ 只清记录 + log，
-            一个字节都不写 —— 对账不许把已经落定的终态翻掉。
+            一个字节都不写 —— 核对不许把已经落定的终态翻掉。
 
         范围**只有记录里点名的那一场**：记录文件里至多一条（服务单槽），这里读它、处置
         它、清它，不扫任何目录。CLI（`meeting post`）那一趟既不落记录也不被这一步碰 ——
@@ -230,7 +230,7 @@ class RuntimeBackendsMixin:
         try:
             postjobs.clear()
         except Exception:  # pragma: no cover - 清不上只警告：盘上状态处置照旧做
-            _log.warning("启动对账：在飞记录清不掉", exc_info=True)
+            _log.warning("启动核对：在飞记录清不掉", exc_info=True)
         for item in records:
             kind = str(item.get("kind") or "")
             target = str(item.get("dir") or "")
@@ -238,7 +238,7 @@ class RuntimeBackendsMixin:
                 continue
             if kind != "offline":
                 _log.info(
-                    "启动对账：上一趟会后的在飞记录（%s：%s）只清不碰"
+                    "启动核对：上一趟会后的在飞记录（%s：%s）只清不碰"
                     "——纪要那一层有自己的钩子兜底", kind, target,
                 )
                 continue
@@ -251,18 +251,18 @@ class RuntimeBackendsMixin:
                 )
             except Exception:
                 _log.warning(
-                    "启动对账：这一场补 interrupted 没写成（只警告，不阻塞启动）：%s",
+                    "启动核对：这一场补 interrupted 没写成（只警告，不阻塞启动）：%s",
                     target, exc_info=True,
                 )
                 continue
             if written is not None:
                 _log.warning(
-                    "启动对账：上一趟 offline 会后没跑完，盘上状态已补成 interrupted"
+                    "启动核对：上一趟 offline 会后没跑完，盘上状态已补成 interrupted"
                     "（%s）；重按按钮可从头再跑", target,
                 )
             else:
                 _log.info(
-                    "启动对账：在飞记录点名的那一场盘上不是 running（可能已跑完或没有状态"
+                    "启动核对：在飞记录点名的那一场盘上不是 running（可能已跑完或没有状态"
                     "文件），只清记录：%s", target,
                 )
 
@@ -282,7 +282,7 @@ class RuntimeBackendsMixin:
 
         `transcriber_backend.stop()` 在关停路径上一直缺一个调用点：协议里这个方法从 phase1
         就冻结着，而在此之前没有任何一处调它 —— 于是转写的读线程与 worker 会一直挂到进程退出
-        （`9e5db89c` phase2 §7 的那条接线）。它与采集一样**失败只记账、不抛**：关停路径上
+        （`9e5db89c` phase2 §7 的那条接线）。它与采集一样**失败只登记、不抛**：关停路径上
         任何一步出事都不许把进程卡住。
         """
         if self._ticker is not None:
@@ -295,12 +295,12 @@ class RuntimeBackendsMixin:
             if self.capture_backend is not None:
                 self.capture_backend.stop()
         except Exception:
-            _log.exception("关停时停采集失败（如实记账，不静默）")
+            _log.exception("关停时停采集失败（如实登记，不静默）")
         try:
             if self.transcriber_backend is not None:
                 self.transcriber_backend.stop()
         except Exception:
-            _log.exception("关停时停转写失败（如实记账，不静默）")
+            _log.exception("关停时停转写失败（如实登记，不静默）")
         # 收尾四步的执行器**不等**（工作线程是 daemon：第二次 `Ctrl+C` 之后进程不许被在飞的
         # 同步步拖住）——`wait=False` 顺带把已排队的收尾步丢掉，这正是「立即中止」要的形态。
         self._shutdown_drain_executor()
@@ -437,7 +437,7 @@ class RuntimeBackendsMixin:
             sink = self.bind_capture(backend)
             backend.bind(sink, config=view)
         except Exception:
-            _log.exception("采集后端 bind() 失败（如实记账，不静默）")
+            _log.exception("采集后端 bind() 失败（如实登记，不静默）")
 
         # 帧间隔的声明位 = 实例属性 `frame_interval`（读不到或非正数 → 回退并记 warning）
         raw_interval = getattr(backend, "frame_interval", None)
@@ -453,7 +453,7 @@ class RuntimeBackendsMixin:
                 self.transcriber_backend.bind(self.bind_transcriber(self.transcriber_backend),
                                               config=view)
         except Exception:
-            _log.exception("转写后端 bind() 失败（如实记账、不阻塞录音）")
+            _log.exception("转写后端 bind() 失败（如实登记、不阻塞录音）")
 
         self._probe_and_apply(
             reason="设备探测结果写入初始快照",
@@ -471,7 +471,7 @@ class RuntimeBackendsMixin:
             sink = self.bind_capture(backend)
             backend.bind(sink, config=self._config_view())
         except Exception:
-            _log.exception("采集后端 bind() 失败（如实记账，不静默）")
+            _log.exception("采集后端 bind() 失败（如实登记，不静默）")
         return self._probe_and_apply(
             reason="重新探测设备（reprobe）",
             threshold="探针三态（unprobed / ready / probe_failed），本档无阈值",
@@ -497,7 +497,7 @@ class RuntimeBackendsMixin:
         try:
             probes = backend.probe()
         except Exception:
-            _log.exception("采集后端 probe() 失败（如实记账，不静默）")
+            _log.exception("采集后端 probe() 失败（如实登记，不静默）")
             probes = []
         self.probes = list(probes or [])
         self._apply_probe_results(reason=reason, threshold=threshold)

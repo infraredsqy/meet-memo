@@ -16,7 +16,7 @@
     `meeting.backends.dev`），本类的 `__module__` 是 `tests._capture_faulty`，两项收尾能力
     如实为 `True` —— 收尾第 1、2 步因此真的调它。
 
-**可预期样本序列**（对账的根基）：每一路的每一块内容由 `chunk_bytes(source, index)` 一处
+**可预期样本序列**（核对的根基）：每一路的每一块内容由 `chunk_bytes(source, index)` 一处
 定死 —— 样本常值携带**块号**（mic 基值 2000、loopback 基值 12000，避免两路混ReadStream时
 难以分辨），且按「每 5 块（= 0.5 秒电平帧）交替有声区 / 静音区」开关。于是：
 
@@ -74,7 +74,7 @@ def wave_attempt() -> OpenAttempt:
 
 
 # ---------------------------------------------------------------------------
-# 可预期样本序列：一处定死，假源喂什么、对账比什么，都从这几个函数取
+# 可预期样本序列：一处定死，假源喂什么、核对比什么，都从这几个函数取
 # ---------------------------------------------------------------------------
 
 #: 一块 0.1 秒的 16k / 单声道 / int16 样本（3200 字节；与真采集同速）
@@ -97,12 +97,12 @@ def chunk_value(source: str, index: int) -> int:
 
 
 def chunk_bytes(source: str, index: int) -> bytes:
-    """第 `index` 块的字节（对账口径：归档里第 `index` 块就该是这一段）。"""
+    """第 `index` 块的字节（核对口径：归档里第 `index` 块就该是这一段）。"""
     return np.full(CHUNK_FRAMES, chunk_value(source, index), dtype=np.int16).tobytes()
 
 
 def expected_archive_bytes(source: str, fed: int) -> bytes:
-    """喂进 `fed` 块之后，这一路归档**应有的全部字节**（逐字节对账的期望侧）。"""
+    """喂进 `fed` 块之后，这一路归档**应有的全部字节**（逐字节核对的期望侧）。"""
     return b"".join(chunk_bytes(source, index) for index in range(fed))
 
 
@@ -116,7 +116,7 @@ PACE_SECONDS_ENV = "MEETING_TEST_CAPTURE_PACE_SECONDS"
 CHUNKS_ENV = "MEETING_TEST_CAPTURE_CHUNKS"
 #: 交付上限：喂满 N 块之后这一路**继续活着但不再出块**（`read()` 给空）。
 #: 与 `CHUNKS_ENV` 的区别：那个只停喂不封顶（用例收尾时还可能再来块），这个把音频
-#: 的终点钉在**确定的块边界**上 —— 端到端的墙钟对账靠它做到确定性：取墙钟读数之前
+#: 的终点钉在**确定的块边界**上 —— 端到端的墙钟核对靠它做到确定性：取墙钟读数之前
 #: 最后一块已经落定、之后不可能再有块落进来，`|样本数 − 墙钟 × 16000|` 因此稳定地
 #: 落在一个采集块以内，不会随「stop 赶没赶上下一块」翻转。
 DELIVER_MIC_ENV = "MEETING_TEST_CAPTURE_DELIVER_CHUNKS_MIC"
@@ -162,7 +162,7 @@ class ScriptedSource:
     满足 `meeting.capture.engine.CaptureSource` 协议的三个方法；`read()` 的三种回法
     （给块 / 给空「这一拍没有新块」/ 抛错「这一路出事」）与
     `tests/test_capture_engine.py` 的 `FakeCaptureSource` 同形 —— 不直接复用它，是因为
-    本单元的每块内容必须按块号变化（对账要逐字节可比），那一份假源是「每块同一内容」。
+    本单元的每块内容必须按块号变化（核对要逐字节可比），那一份假源是「每块同一内容」。
     """
 
     def __init__(
@@ -253,7 +253,7 @@ class FaultyCaptureBackend(CaptureBackend):
     `start()` 的抛错口径、归档写线程、电平刻度、收尾 `finalize()` / `transcode()` ——
     全是生产代码。
 
-    `created` 记下造出来的每一路假源（`fed` 是对账里「喂进去的块数」的来源）；
+    `created` 记下造出来的每一路假源（`fed` 是核对里「喂进去的块数」的来源）；
     `endpoints` 记下每一路挑到的假端点（对快照 `device_name` 的交叉核对用）。
     """
 
@@ -290,7 +290,7 @@ class FaultyCaptureBackend(CaptureBackend):
     # -- 给用例看的读数 ----------------------------------------------------
 
     def fed_chunks(self, source: str) -> int:
-        """这一路实际喂出去的块数（对账「预期样本数 = 块数 × 每块样本数」的实测侧）。"""
+        """这一路实际喂出去的块数（核对「预期样本数 = 块数 × 每块样本数」的实测侧）。"""
         return self.created[source].fed
 
 

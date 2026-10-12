@@ -12,13 +12,13 @@
   2. **关断即收场**：一路真故障挂着致命横幅，关掉**另一路**横幅不动；关掉横幅上那一路，
      横幅当场清空、胶囊回「录音中」、该路落「已停止」且 `lost_since` 清空。
   3. **重开 = 干净开场**：重开已清掉横幅的那一路，直接回 `capturing`（不回 `lost`）、
-     判定账从零起算——随后注入 `silence`，阈值过半时还没有横幅（旧计数若还在，
+     判定记录从零起算——随后注入 `silence`，阈值过半时还没有横幅（旧计数若还在，
      重开第一拍就会被拉回致命级），攒满阈值才照旧出警。
   4. **真故障照旧 + 换挂**：没被关过的那一路直接 `lost` / `silence` 照旧升致命级；
      两路都真在 `lost` 时关掉横幅上那一路，致命级**换挂**另一路（原文照搬）、顶层停在
      `alert`——真采不到的那一路不许跟着一起从界面上消失。
   5. **已关路的迟到流中断是余波不是故障**：先关掉某一路，再让一条 `SourceLost` 迟到
-     （关掉前后在途的那条线程余波）——它不进告警、不把 `health` 写回 `lost`、判定账里
+     （关掉前后在途的那条线程余波）——它不进告警、不把 `health` 写回 `lost`、判定记录里
      没有这一路（徽标不许被拉回「信号丢失」）。
 
 服务端全走 dev 替身（`capture.backend = dev`，进程内 `live()`），一条真声卡都不碰；
@@ -91,7 +91,7 @@ def test_a_closed_channel_never_raises_the_silence_alert(tmp_path):
         other = _source(waited, "loopback")
         assert other["health"] == "capturing", other
         assert other["level_dbfs"] is not None, other
-        # 判定账里没有这一路：帧没进判定器（切断在帧入口，不是横幅出现后拦一遍）
+        # 判定记录里没有这一路：帧没进判定器（切断在帧入口，不是横幅出现后拦一遍）
         assert "mic" not in runtime.judge._tracks  # noqa: SLF001 - 就为钉「帧没进判定」这一格
 
 
@@ -129,7 +129,7 @@ def test_closing_the_alerting_source_collapses_the_banner(tmp_path):
         closed = _source(snap, "loopback")
         assert closed["health"] == "stopped", closed
         assert closed["lost_since"] is None, closed
-        # 这一路的判定账（在告警记号、静默计数、抑制窗口）一并收场
+        # 这一路的判定记录（在告警记号、静默计数、抑制窗口）一并收场
         assert "loopback" not in runtime.judge._tracks  # noqa: SLF001
 
 
@@ -153,14 +153,14 @@ def test_reopening_a_cleared_source_starts_clean(tmp_path):
         assert post(client, "set_source", {"source": "loopback", "active": False}).status_code == 200
         assert post(client, "set_source", {"source": "loopback", "active": True}).status_code == 200
         snap = snapshot_of(client)
-        # 干净开场：不回 `lost`、横幅不回来；判定账从零起算（重开后帧照常进判定，
-        # 但那是一条全新的账——旧计数若没清，静默秒数还挂在旧账上）
+        # 干净开场：不回 `lost`、横幅不回来；判定记录从零起算（重开后帧照常进判定，
+        # 但那是一条全新的记录——旧计数若没清，静默秒数还挂在旧记录上）
         assert snap["top_state"] == "recording", snap["alerts"]
         assert snap["alerts"]["critical"] is None, snap["alerts"]
         reopened = _source(snap, "loopback")
         assert reopened["health"] == "capturing", reopened
-        # 重开后的第一帧落进判定器时，起的必须是一条全新的账（旧计数若没清，
-        # 静默秒数还挂在旧账上）——帧 0.1s 一条，等它进来再读
+        # 重开后的第一帧落进判定器时，起的必须是一条全新的记录（旧计数若没清，
+        # 静默秒数还挂在旧记录上）——帧 0.1s 一条，等它进来再读
         reopened_track = wait_until(
             lambda: runtime.judge._tracks.get("loopback"),  # noqa: SLF001 - 就为等这一格
             what="重开后的第一帧落进判定器",
@@ -221,7 +221,7 @@ def test_a_late_source_lost_on_a_closed_route_stays_quiet(tmp_path):
         assert waited["alerts"]["critical"] is None, waited["alerts"]
         # 旧行为会把已关路的 `health` 写回 `lost`（徽标回「信号丢失」）——钉死不许
         assert _source(waited, "mic")["health"] == "stopped"
-        # 判定账里没有这一路：这条流中断事实没进判定器
+        # 判定记录里没有这一路：这条流中断事实没进判定器
         assert "mic" not in runtime.judge._tracks  # noqa: SLF001 - 就为钉「事实没进判定」这一格
 
 

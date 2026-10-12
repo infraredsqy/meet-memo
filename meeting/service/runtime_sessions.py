@@ -65,15 +65,15 @@ class RuntimeSessionsMixin:
     ) -> dict[str, Any]:
         """按当前快照组装一份 `session.json` 的内容（盘上那一版的唯一组装点）。
 
-        段账从采集引擎现场取（`segments` / 各路的段文件名表），并**与开场读到的旧记录
-        合并**（`_resumed_record`）：续接（同一工作区再录一段，第 9 条）时旧段的原账
+        段记录从采集引擎现场取（`segments` / 各路的段文件名表），并**与开场读到的旧记录
+        合并**（`_resumed_record`）：续接（同一工作区再录一段，第 9 条）时旧段的原记录
         一个字不动地保留，本段（引擎里那一条）追加在后面；引擎还没起（开场第一版落盘
-        那一刻）时本段还没有账，只把**即将开出的段文件名**按命名规则预告进去
+        那一刻）时本段还没有记录，只把**即将开出的段文件名**按命名规则预告进去
         （`next_segment_number()`——与引擎构造时定的段号同一条算式，盘上状态未变，两处同值）。
 
         `audio_duration_seconds` 是**权威时长**（第 7 条）：= 合并后各段
         `duration_seconds` 之和，**未写完的段不计入**——它是这份文件里唯一被当判据的
-        元信息，按段列表现算而不是沿用旧合计，旧段账残缺时也能自愈。
+        元信息，按段列表现算而不是沿用旧合计，旧段记录残缺时也能自愈。
         场次身份三格（`date` / `created_at` / `started_at` / `mode`）在续接档沿用
         **开场那一次**的值（一场会一个身份；本段自己的起止戳在 `segments` 里），
         新一场取本场的值。除此之外元信息一律不当判据（第 6 条）。
@@ -149,7 +149,7 @@ class RuntimeSessionsMixin:
         """把当前快照写成盘上那一版 `session.json`（**原子的那一处**）。
 
         `interrupted=None`（普通调用点）时沿用盘上已经写着的那一版 —— 于是第三个 Phase 的
-        强制打断路径先落盘的 `interrupted: true` **不会被取消后的记账抹回否**
+        强制打断路径先落盘的 `interrupted: true` **不会被取消后的登记抹回否**
         （phase2 §3.5.6 的「三条不覆盖约束」之一）。
 
         `state=None`（普通调用点、也是绝大多数调用点）时盘上那一档由
@@ -185,9 +185,9 @@ class RuntimeSessionsMixin:
         不按日期命名、没有默认落点**（`docs/design-intent.md` 第 3、4 条）。
 
         目标目录里**已有** `session.json` 时这一场是**续接**（第 9 条：一段 = 一次录制，
-        同一工作区再录一段）：开场先把旧记录读进来（`_resumed_record`），本段的段账与
+        同一工作区再录一段）：开场先把旧记录读进来（`_resumed_record`），本段的段记录与
         旧段合并着写盘；旧段的归档一个字节不碰（采集引擎按下一个段号开**新**文件）。
-        新一场与续接场的差别只在「有没有旧账可合并」，后面的流程一条不分岔。
+        新一场与续接场的差别只在「有没有旧记录可合并」，后面的流程一条不分岔。
         """
         mode = DEFAULT_SESSION_MODE if mode is None else mode
 
@@ -281,8 +281,8 @@ class RuntimeSessionsMixin:
 
         # 盘上第一版已稳，这才把状态推进到 recording
         self.judge.reset_for_new_session()
-        # 新一场从零开始：判定器那份提示级记账已经被上面清掉，快照那一格与本类那份键集合
-        # 记账同步归零（三样一起清，见 `_clear_hints()`）—— 上一场的提示级不许跨场留下，
+        # 新一场从零开始：判定器那份提示级登记已经被上面清掉，快照那一格与本类那份键集合
+        # 登记同步归零（三样一起清，见 `_clear_hints()`）—— 上一场的提示级不许跨场留下，
         # 也不许让本场第一次刷新把它们当成「键集合没变」（复审 m3）。
         self._clear_hints()
         # 会中总结那两样同样从零开始（缓冲与记录表**走同一个入口**清，见
@@ -317,7 +317,7 @@ class RuntimeSessionsMixin:
                     _log.error(
                         "续接失败后旧 %s 写回失败（%s）：%s",
                         SESSION_FILE_NAME, session_dir,
-                        "盘上留着的是本场第一版（含旧段账），旧段归档完好",
+                        "盘上留着的是本场第一版（含旧段记录），旧段归档完好",
                     )
                 for source in SOURCE_IDS:
                     planned = Path(session_dir) / archive_name(source, planned_segment)
@@ -326,7 +326,7 @@ class RuntimeSessionsMixin:
                     except FileNotFoundError:
                         pass
                     except OSError:
-                        _log.warning("续接失败清场：%s 收不走（如实记账）", planned)
+                        _log.warning("续接失败清场：%s 收不走（如实登记）", planned)
                 _log.warning(
                     "已把 %s 的旧记录写回、本轮段文件收走（采集起不来，工作区回到原样）",
                     session_dir,
@@ -369,7 +369,7 @@ class RuntimeSessionsMixin:
 
         self.last_frame_ts = None
         self.session_start_mono = time.monotonic()
-        # 帧空洞账也是「本场」的账：与 `last_frame_ts` 同点清（上一场的空洞不进这一场）
+        # 帧空洞记录也是「本场」的记录：与 `last_frame_ts` 同点清（上一场的空洞不进这一场）
         self._reset_capture_gaps()
         self.commit()
         # 健康度节拍**从这一场开始起**（见 `_ensure_transcriber_health_ticker()` 的说明）
@@ -385,7 +385,7 @@ class RuntimeSessionsMixin:
         self.snapshot.session = None
         self.snapshot.ended = None
         self.snapshot.top_state = "idle"
-        # 撤回空闲态：提示级不再成立（提示条只在 recording / alert 上出现），连记账一起清，
+        # 撤回空闲态：提示级不再成立（提示条只在 recording / alert 上出现），连登记一起清，
         # 于是下面那次提交广播出去的就是「空闲态、告警区不出现」那一份。
         self._clear_hints()
         for item in self.snapshot.sources:
@@ -411,7 +411,7 @@ class RuntimeSessionsMixin:
 
         session = self.snapshot.session
         if session is not None:
-            # 暂停中结束：先把这一段暂停结掉（秒数入时长账），再冻结本场秒数 ——
+            # 暂停中结束：先把这一段暂停结掉（秒数计入时长），再冻结本场秒数 ——
             # 与引擎那一侧 `finalize()` 关掉暂停区间是同一件事的两半。
             if session.paused:
                 self._pause_span(session, moment=time.monotonic())
@@ -462,7 +462,7 @@ class RuntimeSessionsMixin:
         return session
 
     def _pause_span(self, session: SessionInfo, *, moment: float) -> None:
-        """把当前这一段暂停结掉（`resume` 与 `stop` 两处共用）：秒数入账、标记复位。"""
+        """把当前这一段暂停结掉（`resume` 与 `stop` 两处共用）：秒数计入时长、标记复位。"""
         if session.paused_at_monotonic is not None:
             session.paused_seconds += max(0.0, float(moment) - float(session.paused_at_monotonic))
         session.paused_at_monotonic = None
@@ -504,12 +504,12 @@ class RuntimeSessionsMixin:
             try:
                 call()
             except Exception:  # noqa: BLE001 - 后台线程的异常没有别的落点
-                _log.exception("会中模型%s失败（如实记账，不静默）", what)
+                _log.exception("会中模型%s失败（如实登记，不静默）", what)
 
         try:
             self._model_executor_or_create().submit(run)
         except Exception:  # noqa: BLE001 - 排不进后台也不许把按钮动作拖失败
-            _log.exception("会中模型%s没能排进后台（如实记账，不静默）", what)
+            _log.exception("会中模型%s没能排进后台（如实登记，不静默）", what)
 
     def pause_session(self) -> None:
         """`pause`：这一场暂停 —— 归档改写静音、不录内容（第 8 条）。
@@ -563,7 +563,7 @@ class RuntimeSessionsMixin:
         # 继续 = 又要用它了：把会中模型重新拉起来（与暂停那一半配对，第 21 条）。
         # 同样提交到后台：拉起来之后紧接着就是权重的加载，这个动作当场应答。
         self._submit_model_lifecycle("acquire_gpu", what="重新拉起（继续之后接着用）")
-        _log.info("本场已继续：%s 的归档回到录内容（暂停 %ss 已记进时长账）", session.id, round(session.paused_seconds, 3))
+        _log.info("本场已继续：%s 的归档回到录内容（暂停 %ss 已计入时长）", session.id, round(session.paused_seconds, 3))
         self.commit()
 
     def set_source(self, args: dict[str, Any]) -> None:
@@ -634,8 +634,8 @@ class RuntimeSessionsMixin:
                     self.snapshot.alerts.critical = self._resurface_lost_alert(remaining[0].id)
                 elif self.snapshot.top_state == "alert":
                     self.snapshot.top_state = "recording"
-            # 这一路的判定账（静默 / 恢复累计、抑制窗口、在告警记号）一并收场：帧从这一刻
-            # 起不再进判定（切断在 `_apply_level_frame` 的帧入口），旧账留着只会污染重开
+            # 这一路的判定记录（静默 / 恢复累计、抑制窗口、在告警记号）一并收场：帧从这一刻
+            # 起不再进判定（切断在 `_apply_level_frame` 的帧入口），旧记录留着只会污染重开
             # 之后的干净开场。
             self.judge.reset_source(source)
             _log.info("会中关掉 %s 这一路：改写静音（不报故障、不进告警）", source)
@@ -665,7 +665,7 @@ class RuntimeSessionsMixin:
         # **重开 = 干净开场**（机主拍板「恢复即收场」）：直接回 `capturing`，不回 `lost`、
         # 不落「曾中断 / 曾关掉」的残留横幅，静默计数从零起算。旧口径「关掉之前还挂着
         # 致命级时回 `lost` 走自然恢复」随「关断即收场」退场——关断已把这一路的致命级
-        # 清空，重开那一刻不存在「这一路自己的横幅」可恢复；判定账在关断那一刻已收走，
+        # 清空，重开那一刻不存在「这一路自己的横幅」可恢复；判定记录在关断那一刻已收走，
         # 这里再收一道是幂等的（真有信号时的正常恢复读数照给，与此无关）。
         self.judge.reset_source(source)
         item.health = "capturing"
@@ -681,7 +681,7 @@ class RuntimeSessionsMixin:
         """把仍然真在 `lost` 的那一路的致命级重新摆回横幅（**致命级换挂**）。
 
         关掉横幅上那一路时，同场若还有**别的**路真在 `lost`：它的告警对象早被「同时只留
-        一条致命级」覆盖掉了，但原文还在判定器的记账里（`event_message()` 原话照搬）、
+        一条致命级」覆盖掉了，但原文还在判定器的登记里（`event_message()` 原话照搬）、
         出事的时刻还在快照上（`lost_since`）——换挂的一条照这两样如实组装，不另造文案、
         不改「从几点起」。`muted` 只给当下初值，`commit()` 那一次重算说了算。
         """

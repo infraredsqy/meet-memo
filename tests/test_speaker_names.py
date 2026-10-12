@@ -173,7 +173,7 @@ def test_set_speaker_name_refuses_when_the_table_is_on_disk_but_unreadable(
 
     读侧宽容（缺表不挡出纪要，d7）与写侧谨慎（不覆盖用户还没抢救出来的名字）
     并存，各管各的方向（review-1 m2）：这一档原先拿空映射组新文档整份换上去，
-    旧表无声消失——现在拒写，交动作侧按既有 `invalid_setting` 记账回执。
+    旧表无声消失——现在拒写，交动作侧按既有 `invalid_setting` 登记回执。
     """
     path = tmp_path / NAMES_FILE_NAME
     for broken in (

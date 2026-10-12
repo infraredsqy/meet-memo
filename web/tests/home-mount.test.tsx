@@ -22,7 +22,7 @@ import type { DirsResponse, SessionRow, SessionStatus, SessionsResponse } from '
  * （`react-test-renderer`，不给 node 侧开 DOM）。
  *
  * 会后进度界面节点（52b24392）起的轮询也打在同一条边界上：替身里给一只**手动排程**
- * 的轮询器（tick 立刻转手 `fetchSessionStatus`、start/stop 只记账，不挂任何真定时器），
+ * 的轮询器（tick 立刻转手 `fetchSessionStatus`、start/stop 只登记，不挂任何真定时器），
  * 用例因此不必等真实周期。
  */
 

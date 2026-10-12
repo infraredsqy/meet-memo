@@ -31,7 +31,7 @@ export function startWhy(row: SessionRow): string | null {
 /**
  * 那只动作钮在这一行上的名字：盘上还没有段的叫「开始录音」，已经录过的叫「继续录音」。
  *
- * 对着一个录过的目录按 start 就是同一场会再录一段（服务把段账合并着写盘）。名字跟着
+ * 对着一个录过的目录按 start 就是同一场会再录一段（服务把段记录合并着写盘）。名字跟着
  * 这件事走，用的是录音这件事自己的说法 —— 「继续录音」直说接着往下录。
  */
 export function startButtonLabel(row: SessionRow): string {
@@ -76,7 +76,7 @@ function secondsLabel(seconds: number): string {
   return rest > 0 ? `${minutes} 分 ${rest} 秒` : `${minutes} 分`;
 }
 
-/** 盘上段账 → 详情区那几行。没有段账（还没开过会）时交回 `null`。 */
+/** 盘上段记录 → 详情区那几行。没有段记录（还没开过会）时交回 `null`。 */
 export function segmentsView(row: SessionRow): SessionSegmentsView | null {
   if (row.segments.length === 0) return null;
   let finished = 0;

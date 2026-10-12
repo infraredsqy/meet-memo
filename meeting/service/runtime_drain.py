@@ -90,7 +90,7 @@ class DrainLimitExceeded(TimeoutError):
     """某一步超出这一趟收尾的共享预算。
 
     **只表达超时这一件事**：步骤自身抛出的异常不由本异常承载（那些异常原样上抛到该步的
-    `failed` 记账，见 phase3 §3.1 第 5 条与 §3.0 的边界）。
+    `failed` 登记，见 phase3 §3.1 第 5 条与 §3.0 的边界）。
     """
 
 
@@ -103,7 +103,7 @@ def compute_drain_budget(backlog: int, segment_timeout: float) -> float:
 
     **公式本体在 `meeting/asr/pipeline.py`**（积压量是转写域的量，那个模块也用它算
     自己 `stop()` 的收尾预算），这里只做转交：同一趟收尾的两处读数因此永远同源。
-    下面三个常量与那边逐字同值，是**跨 Phase 冻结的名字**（phase3 按它们读账目）。
+    下面三个常量与那边逐字同值，是**跨 Phase 冻结的名字**（phase3 按它们读记录）。
     """
     return asr_pipeline.compute_drain_budget(backlog, segment_timeout)
 
@@ -158,7 +158,7 @@ class RuntimeDrainMixin:
             },
         )
 
-    # -- 收尾编排（三步记账 + 终态判定；预算与失败出路的完整语义归 phase3） --
+    # -- 收尾编排（三步登记 + 终态判定；预算与失败出路的完整语义归 phase3） --
 
     async def drain(self) -> str:
         """收尾协程（**普通协程、持有 task 句柄、可被 `cancel()`**）。
@@ -168,8 +168,8 @@ class RuntimeDrainMixin:
         （已落定的保持原样、未开跑的维持 `waiting`、**不伪造终态**），随后同样走
         `finish_drain()` 这一个出口。
 
-        **取消路径也真的经 `cancelled=True` 那条记账机制**（phase3 §3.5 第 3 条 / §2.4 的
-        「取消时按收尾步骤表落盘」）：取消时的记账与终态提交都带 `cancelled=True` ——
+        **取消路径也真的经 `cancelled=True` 那条登记机制**（phase3 §3.5 第 3 条 / §2.4 的
+        「取消时按收尾步骤表落盘」）：取消时的登记与终态提交都带 `cancelled=True` ——
         `_settle_step(..., cancelled=True)` 把在飞那一步按它**此刻真实的状态**记一笔
         （`running` 就照实写 `running`，不伪造终态、不改已落定的步骤），`_finish_drain(cancelled=True)`
         随后走终态出口。两条都落在 `frozen_ended` / `frozen_interrupted` 上，于是
@@ -195,7 +195,7 @@ class RuntimeDrainMixin:
         return self.snapshot.ended.phase if self.snapshot.ended else "draining"
 
     def _settle_cancelled_step(self) -> bool:
-        """取消时的记账（§3.5 第 3 条）：把**在飞那一步**经 `_settle_step(..., cancelled=True)`
+        """取消时的登记（§3.5 第 3 条）：把**在飞那一步**经 `_settle_step(..., cancelled=True)`
         记一笔，于是「取消时不许覆盖 `interrupted` / `state` / `ended_at`」这三条真的被执行到。
 
         **不伪造终态**是这一笔的关键：在飞那一步此刻的真实状态就是 `running`（它被取消打断、
@@ -223,7 +223,7 @@ class RuntimeDrainMixin:
             return False
         step = in_flight[0]
         _log.warning(
-            "取消时的记账：把在飞那一步 %s 按它此刻真实的状态记一笔（running 照实记 running，"
+            "取消时的登记：把在飞那一步 %s 按它此刻真实的状态记一笔（running 照实记 running，"
             "不伪造终态；已落定的步骤与盘上那一版 interrupted/state/ended_at 都不覆盖）",
             step.id,
         )
@@ -370,7 +370,7 @@ class RuntimeDrainMixin:
         （`call()` 的返回值经 `asyncio.iscoroutine()` 认出来，照样进等待层）。
 
         **本包装层只负责超时**：超出上限抛 `DrainLimitExceeded`（调用方落该步 `failed`）；
-        步骤自身抛出的异常**不加捕获、原样上抛**（于是它照样冒到该步的 `failed` 记账，
+        步骤自身抛出的异常**不加捕获、原样上抛**（于是它照样冒到该步的 `failed` 登记，
         不会被吞成 `skipped`）。返回 `(这一步调用的返回值, 实测耗时秒数)`。
         """
         if not invoke and not inspect.iscoroutinefunction(call):
@@ -520,7 +520,7 @@ class RuntimeDrainMixin:
                 invoke=True,
             )
         except asyncio.CancelledError:
-            # 取消是强制打断路径（§3.5）：记账交回取消路径，这里不吞
+            # 取消是强制打断路径（§3.5）：登记交回取消路径，这里不吞
             raise
         except Exception as exc:
             self._fail_step(step_id, exc, None, "场次日志的 flush / 结束标记 / 摘除失败")
@@ -570,10 +570,10 @@ class RuntimeDrainMixin:
                 # 连同等待一起包进这一步的剩余预算里。
                 await self._drain_wait(step_id, release, deadline=deadline, invoke=True)
             except asyncio.CancelledError:
-                # 取消是强制打断路径（§3.5）：记账交回取消路径，这里不吞
+                # 取消是强制打断路径（§3.5）：登记交回取消路径，这里不吞
                 raise
             except Exception:
-                _log.exception("会中模型退出显存失败（如实记账，不静默）")
+                _log.exception("会中模型退出显存失败（如实登记，不静默）")
         # 这一格**如实停在 `waiting`**（＝界面上那句「等你动手」）：会后那两趟活各有各的按钮，
         # 用户按了哪一个才跑哪一个。落定这一笔照走 `_settle_step()`（写盘 + 提交都在它里面），
         # 于是前端那一条步骤带当场读到「post：waiting」。
@@ -589,7 +589,7 @@ class RuntimeDrainMixin:
             self.snapshot.session.dir if self.snapshot.session else "?",
         )
 
-    # -- 收尾记账（写盘 + 提交都收在这几个方法里） -------------------------
+    # -- 收尾登记（写盘 + 提交都收在这几个方法里） -------------------------
 
     def _begin_step(self, step_id: str, detail: str) -> None:
         _log.info("收尾步骤开始：%s（%s）", step_id, detail)
@@ -598,7 +598,7 @@ class RuntimeDrainMixin:
         try:
             self._write_session()
         except Exception:
-            _log.exception("收尾写盘失败（步骤 %s 进入）：如实记账，不静默", step_id)
+            _log.exception("收尾写盘失败（步骤 %s 进入）：如实登记，不静默", step_id)
         self.commit()
 
     def _settle_step(
@@ -643,7 +643,7 @@ class RuntimeDrainMixin:
                 state="draining" if cancelled else None,
             )
         except Exception:
-            _log.exception("收尾写盘失败（步骤 %s 落定）：如实记账，不静默", step_id)
+            _log.exception("收尾写盘失败（步骤 %s 落定）：如实登记，不静默", step_id)
         self.commit()
         if resolution is not None:
             resolution.mark_run(status != "failed")
@@ -736,7 +736,7 @@ class RuntimeDrainMixin:
         - 只在**四步尚未全部落定**这一档负责盘上最终那一版；四步恰好已全部落定时按终态规则
           由 `finish_drain()` 那一趟落（见 `trigger_shutdown()` 的判据）。
 
-        取消时的记账不覆盖这一版（`_settle_step(cancelled=True)` 与 `_write_session()` 的
+        取消时的登记不覆盖这一版（`_settle_step(cancelled=True)` 与 `_write_session()` 的
         `interrupted=None` 两处都沿用盘上已写着的那一版）。
         """
         session = self.snapshot.session

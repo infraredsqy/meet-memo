@@ -3,7 +3,7 @@
 本文件盯住五件事：
 
   - **跑到一半读得到**：会后的活儿正在飞时打这只端点，读得到「第 N 块 / 共 M 块、
-    正在跑哪一路、已经跑了多久」；跑完之后同一只端点照旧给得出读数（改读盘上那份账）；
+    正在跑哪一路、已经跑了多久」；跑完之后同一只端点照旧给得出读数（改读盘上那份记录）；
   - **两块回答两件事**：`offline.state` 照盘上那份如实答（盘上写 `running` 就答
     `running`，崩在半路那一场因此答 `running`；盘上写 `partial` / `failed` 也照它自己
     那一档答），`offline.in_process` 答「本进程里此刻有没有这一趟活」；
@@ -92,9 +92,9 @@ def _write_session_json(session: Path, document: dict) -> None:
 def _ledger_and_status(
     session: Path, *, status_state: str | None, rows: list | None = None
 ) -> None:
-    """按真实形状落一份逐块账（缺省 mic 一块跑完）与一版状态文件（`None` = 不落状态文件）。
+    """按真实形状落一份逐块记录（缺省 mic 一块跑完）与一版状态文件（`None` = 不落状态文件）。
 
-    进度账的两段文字与块号都是确定值；状态文件那一版由 `status_state` 给
+    进度记录的两段文字与块号都是确定值；状态文件那一版由 `status_state` 给
     （`running` 就是「上一次落的那一版 `running` 还在盘上」那一档）。
     """
     offline_progress.write_progress(
@@ -178,11 +178,11 @@ def test_the_progress_is_readable_while_the_offline_run_is_in_flight(
         _wait_job_done(runtime)
         config_module.set_current(previous)
 
-    # 跑完之后同一只端点照旧给得出读数（改读盘上那份账）：两路各 3 块都跑完
+    # 跑完之后同一只端点照旧给得出读数（改读盘上那份记录）：两路各 3 块都跑完
     after = runtime.session_status_dict(str(session))
     assert after["has_offline"] is True
     assert after["offline"]["state"] == "done"
-    assert after["offline"]["in_process"] is False, "跑完之后这一格翻回假（盘上那份账照读）"
+    assert after["offline"]["in_process"] is False, "跑完之后这一格翻回假（盘上那份记录照读）"
     per_source = {item["source"]: item for item in after["offline"]["sources"]}
     assert (per_source["mic"]["done"], per_source["mic"]["total"]) == (3, 3)
     assert (per_source["loopback"]["done"], per_source["loopback"]["total"]) == (3, 3)
@@ -193,7 +193,7 @@ def test_the_progress_is_readable_while_the_offline_run_is_in_flight(
 def test_the_endpoint_falls_back_to_the_ledger_after_a_process_restart(
     tmp_path, monkeypatch, restore_config
 ) -> None:
-    """服务重启之后（进程里没有现场）读盘上那份账：块数照旧读得到，已跑时长如实交回 `None`。"""
+    """服务重启之后（进程里没有现场）读盘上那份记录：块数照旧读得到，已跑时长如实交回 `None`。"""
     runtime, previous = _runtime(tmp_path, monkeypatch, **{"post.chunk_seconds": CHUNK_SECONDS})
     session = _workspace_with_audio(tmp_path)
     runtime.workspace_open(str(session))
@@ -259,7 +259,7 @@ def test_a_stale_running_status_file_is_answered_as_it_is_on_disk(
 ) -> None:
     """崩在半路那一场：`offline.state` 照盘上那份答 `running`，另立一格答「本进程里没在跑」。
 
-    盘上停着上一次落的那版 `running`、账上只有 mic 的第一块，而这一趟谁都没在跑
+    盘上停着上一次落的那版 `running`、记录里只有 mic 的第一块，而这一趟谁都没在跑
     （进程重启过、命令行跑完退出了）。读数如实分两层：`state` 就是盘上那个 `running`
     （不在这里替它二选一），`in_process` 答 `false` 把「此刻没有东西在跑」说破 ——
     两块合起来读得出「盘上写着在跑、其实没在跑」。被打断是另一档（`b1c6a58e` 落地）：
@@ -351,7 +351,7 @@ def test_an_interrupted_status_file_is_answered_as_interrupted(
 def test_the_ledger_without_a_status_file_is_answered_as_a_ledger(
     tmp_path, monkeypatch, restore_config
 ) -> None:
-    """盘上有账、没有状态文件：`state` 如实答 `ledger`（成没成没人回答），不冒充 `running`。"""
+    """盘上有记录、没有状态文件：`state` 如实答 `ledger`（成没成没人回答），不冒充 `running`。"""
     runtime, previous = _runtime(tmp_path, monkeypatch, **{"post.chunk_seconds": CHUNK_SECONDS})
     session = _workspace_with_audio(tmp_path)
     _ledger_and_status(session, status_state=None)

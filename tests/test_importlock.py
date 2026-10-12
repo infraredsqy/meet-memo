@@ -1,7 +1,7 @@
 """`meeting/importlock.py` 的契约用例：进程级互斥、同线程重入、零重依赖。
 
 全部快档：无 sleep 轮询、无真子进程、无真模型 —— 「假加载段」就是
-`with heavy_imports():` 包住的一段记账代码；线程同步全走事件与屏障。
+`with heavy_imports():` 包住的一段登记代码；线程同步全走事件与屏障。
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ _TIMEOUT = 5.0
 def test_heavy_imports_serializes_concurrent_threads() -> None:
     """两条线程同时进假加载段：第二条必须等第一条**完全退出**临界区才进得去。
 
-    顺序账 `order` 是互斥的决定性证据：锁正确时第二条的进入必然排在
+    顺序记录 `order` 是互斥的决定性证据：锁正确时第二条的进入必然排在
     `first-out` 之后；互斥失效时它会插到中间（两条线程同时在临界区内）。
     """
     order: list[str] = []

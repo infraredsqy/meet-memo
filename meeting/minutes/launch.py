@@ -122,7 +122,7 @@ class LaunchError(RuntimeError):
 
 @dataclass(frozen=True)
 class LaunchResult:
-    """一次拉起的账（成功与三档失败共用同一个形状）。
+    """一次拉起的结果（成功与三档失败共用同一个形状）。
 
     `executable` 是**实际拉起的那个路径**（解析不到时是空字符串），`exit_code` 是子进程的退出码
     （没跑起来时是 `None`），`seconds` 是这一次的墙钟秒数，`log` 是那份 stdout / stderr 的落点，
@@ -498,7 +498,7 @@ def _write_log(
     stderr: str,
     seconds: float | None = None,
 ) -> None:
-    """把这一趟的账写进 `working/minutes-run.log`（**头一行是命令、cwd 与退出码**）。
+    """把这一趟的记录写进 `working/minutes-run.log`（**头一行是命令、cwd 与退出码**）。
 
     头那一行是给事后排查用的：现场出问题时先看的就是「跑的是哪条命令、在哪个目录、
     退出码是多少」。

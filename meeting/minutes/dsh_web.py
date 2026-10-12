@@ -149,7 +149,7 @@ class WebHandoffError(RuntimeError):
 
 @dataclass(frozen=True)
 class HandoffResult:
-    """一次交付的账（成功与各档失败共用同一个形状）。
+    """一次交付的结果（成功与各档失败共用同一个形状）。
 
     `workspace_id` / `workspace_title` / `session_id` 是交付的落点（失败时可能只走到一半，
     前面几步的取值照样带上 —— 排查时最要紧的正是「走到哪儿断的」）。`seconds` 是这一趟的
@@ -437,7 +437,7 @@ def handoff(
     失败都如实交回 `failure`（不偷偷改走 headless —— 交付失败要看得见）。
 
     `write_log=True` 时落两份盘上的记录：`working/run_prompt.md`（发出去的提示词全文）与
-    `working/minutes-run.log`（这一趟三步的账）—— 它们是状态文件 `artifacts` 里声明的那两格，
+    `working/minutes-run.log`（这一趟三步的记录）—— 它们是状态文件 `artifacts` 里声明的那两格，
     不落的话声明就成了空话。
     """
     if not allow_dsh:
@@ -613,7 +613,7 @@ def _write_log(
 ) -> None:
     """落 `working/minutes-run.log`（头几行说清这一趟是怎么交付的、成没成）。
 
-    与 headless 那一版同形（头几行是给人排查用的），只是中间那一段换成三步 RPC 的账：
+    与 headless 那一版同形（头几行是给人排查用的），只是中间那一段换成三步 RPC 的记录：
     没有子进程的 stdout / stderr 可落，落的就是这三步的请求与应答摘要。
     """
     lines = [

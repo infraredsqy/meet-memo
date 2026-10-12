@@ -219,10 +219,10 @@ class ServiceRuntime(
         #: 与 `last_frame_ts` 同点写、同点清（`start_session()` 起场 / `__init__` 起步）。
         self.session_start_mono: float | None = None
 
-        # 帧空洞账（gil-stall-hole）：发帧线程报来的 `FrameGap` 落在这里，只进心跳应答
+        # 帧空洞记录（gil-stall-hole）：发帧线程报来的 `FrameGap` 落在这里，只进心跳应答
         #（`heartbeat_dict()` 的 `capture_gaps`），**不进快照、不涨 revision、不广播** ——
         # 空洞是历史事实，`recording_alive` 只回答「现在采不采得到」，两句话各管一头。
-        # `_capture_gaps` 的条目带区间（`_start` / `_end`，单调钟）供跨路合并，出账时剥掉；
+        # `_capture_gaps` 的条目带区间（`_start` / `_end`，单调钟）供跨路合并，出读数时剥掉；
         # 上限只留给「最近列表」，累计数（`_capture_gap_totals`）不设上限。本场起场清零。
         self._capture_gaps: list[dict[str, Any]] = []
         self._capture_gap_totals: dict[str, float] = {"count": 0, "seconds": 0.0}
@@ -232,18 +232,18 @@ class ServiceRuntime(
         #: 列为**必须落 log** 的事件；基线按路存一份，于是「从什么值到什么值」永远是实测的。
         self._health_logged: dict[str, str] = {item.id: item.health for item in self.snapshot.sources}
 
-        #: **快照 `alerts.hints` 里眼下摆着哪几条**（按 `(level, source, message)` 记账，有序）。
+        #: **快照 `alerts.hints` 里眼下摆着哪几条**（按 `(level, source, message)` 登记，有序）。
         #: 它是「提示级的键集合有没有变」的判据：`_sync_transcript_hints()` 拿它跟判定器刚算出来的
         #: 那几条比，只有键集合真的动了才返回「有变化」、才让调用点走一次 `commit()`。
         #: 同一个键集合里 `duration_seconds` 的刷新因此不给 `revision` 投票（契约第 3.3 节：
         #: 转写通道不参与状态迁移，0.5 秒的节拍不许把它抖起来）。
-        #: **清提示级时它与判定器那份记账一起清**（唯一入口 `_clear_hints()`）：只清一边的话，
-        #: 两者会有一刻对不上、旧记账还会影响下一场的键集合判据（复审 m3）。
+        #: **清提示级时它与判定器那份登记一起清**（唯一入口 `_clear_hints()`）：只清一边的话，
+        #: 两者会有一刻对不上、旧登记还会影响下一场的键集合判据（复审 m3）。
         self._hint_keys: tuple[tuple[str, str, str], ...] = ()
 
         #: 本场开场读到的**旧场次记录**（`None` = 新场；有值 = 续接，`start_session()` 写、
-        #: `_session_record()` 读）：旧段的段账、各路旧段文件名表与场次身份三格从它合并，
-        #: 让续接那一场落盘的每一版 `session.json` 都带着前几段的完整账（第 9 条）。
+        #: `_session_record()` 读）：旧段的段记录、各路旧段文件名表与场次身份三格从它合并，
+        #: 让续接那一场落盘的每一版 `session.json` 都带着前几段的完整记录（第 9 条）。
         self._resumed_record: dict[str, Any] | None = None
 
         # 收尾 task 句柄（属性名冻结；启动时赋值、走完含被取消那趟后置空）
@@ -287,7 +287,7 @@ class ServiceRuntime(
         #     只记成功的那几次 —— 失败没有「那几条」可记。`GET /api/summaries` 读的就是它。
         #
         # `summary_client` 是**可注入的总结客户端**（`ModelClient` 或同形的假件）：不给就由
-        # `run_summary()` 按 `SummarySettings` 现造一个真客户端。用例从这里塞记账用的假件。
+        # `run_summary()` 按 `SummarySettings` 现造一个真客户端。用例从这里塞登记用的假件。
         #
         # `summary_client` 那一次 `complete()` 是一条**同步**调用：`summarize()` 经
         # `_summary_wait()` 把它提交到下面这台池的工作线程，事件循环因此在总结期间照旧转
@@ -324,7 +324,7 @@ class ServiceRuntime(
     ) -> float:
         """这一场**录到的**秒数：墙钟跨度扣掉暂停的那几段（`docs/design-intent.md` 第 7 条）。
 
-        权威长度是实际录到的音频时长（写侧的内容字节账，落 `session.json`）；快照这一格是
+        权威长度是实际录到的音频时长（写侧的内容字节计数，落 `session.json`）；快照这一格是
         它在界面上的读数，暂停期间因此不往前走 —— 否则「已录 12:30」会把休息的十分钟也算进
         这一场，按第 7 条那是附注、按第 8 条那段时间根本没录。
         """

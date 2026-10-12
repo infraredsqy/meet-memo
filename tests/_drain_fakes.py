@@ -387,7 +387,7 @@ class FakeCaptureBackend:
     def start(self, mode: str, session_dir: str) -> None:
         self.started = True
         self.session_dir = str(session_dir)
-        _log.info("假采集后端 start()：仅记账（mode=%s）", mode)
+        _log.info("假采集后端 start()：仅登记（mode=%s）", mode)
 
     def stop(self) -> None:
         self.stopped = True

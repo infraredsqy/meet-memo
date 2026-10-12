@@ -13,7 +13,7 @@
   3. **DSH 触达点自守**：`dsh_web.probe()` / `dsh_web.handoff()` / `launch_headless()` /
      `minutes.runner.run()` 各自默认拒绝（`DeliveryForbidden`），放行标记逐层下传。
 
-外加**接线完整性**：两条人工路径各自的「传 True」用替身的调用记账钉死 —— 人工链路已验证过
+外加**接线完整性**：两条人工路径各自的「传 True」用替身的调用登记钉死 —— 人工链路已验证过
 无数次，不重新端到端，但必须保证它还是通的。
 
 全部用例走替身 / 假件：不起真 DSH、不发真网络请求、不加载真模型。
@@ -64,7 +64,7 @@ def _transcripts(session: Path) -> Path:
 
 
 class RecordingCall:
-    """DSH 触达点的记账替身（探针 / 交付 / headless 拉起各用一份）。"""
+    """DSH 触达点的登记替身（探针 / 交付 / headless 拉起各用一份）。"""
 
     def __init__(self, *, outcome: Any = None) -> None:
         self.calls: list[dict[str, Any]] = []
@@ -76,7 +76,7 @@ class RecordingCall:
 
 
 def _headless_ok() -> LaunchResult:
-    """一份「跑成了」的启动器账（与 `RecordingLauncher` 交回的那个同形）。"""
+    """一份「跑成了」的启动器记录（与 `RecordingLauncher` 交回的那个同形）。"""
     return LaunchResult(
         ok=True,
         branch="headless",
@@ -196,14 +196,14 @@ def test_the_conftest_delivery_guard_stubs_are_in_place() -> None:
 
 
 def test_the_conftest_guard_stubs_record_and_raise(_no_real_dsh_delivery) -> None:
-    """桩的行为：记账 + 抛 `RealDshDeliveryForbidden`（就算带了放行参数也拦）。
+    """桩的行为：登记 + 抛 `RealDshDeliveryForbidden`（就算带了放行参数也拦）。
 
-    本条是守卫自己的自证：它**故意**碰一次桩，随后把账上那一笔当场认领（清掉）——
+    本条是守卫自己的自证：它**故意**碰一次桩，随后把记录里那一笔当场认领（清掉）——
     不认领的话，收场复查会把这条自证用例自己判红。
     """
     with pytest.raises(RealDshDeliveryForbidden, match="DSH 触达原语"):
         dsh_web.probe("http://127.0.0.1:9", allow_dsh=True)
-    assert len(_no_real_dsh_delivery) == 1, "这一笔该被记进账本"
+    assert len(_no_real_dsh_delivery) == 1, "这一笔该被记进记录"
     assert "dsh_web.probe" in _no_real_dsh_delivery[0]
     _no_real_dsh_delivery.clear()
 
@@ -379,9 +379,9 @@ def test_offline_tail_without_the_human_flag_stays_quiet(tmp_path) -> None:
 def test_meeting_post_passes_the_human_flag_on_both_paths(tmp_path, monkeypatch) -> None:
     """**接线钉死（命令路径）**：`meeting post` 首跑与「只补纪要」两条路都把 True 递进尾巴。
 
-    换掉 `_announce_minutes` 记账：首跑那一趟经 `run_session(announce_minutes=True)` 的
+    换掉 `_announce_minutes` 登记：首跑那一趟经 `run_session(announce_minutes=True)` 的
     尾巴进来，「离线段已终态、只补纪要」那一趟经 `_launch_minutes_on_the_product_path()`
-    进来 —— 两笔账都必须带着 `announce_minutes=True`。少传的哪一条路，闸一开就全哑。
+    进来 —— 两笔登记都必须带着 `announce_minutes=True`。少传的哪一条路，闸一开就全哑。
     """
     session = synth_session(tmp_path / "250919")
     calls: list[dict[str, Any]] = []

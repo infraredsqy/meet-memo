@@ -9,11 +9,11 @@ registry 的既有口径）把假端点表与带剧本的假源挂进真后端�
 
 三场戏：
 
-  1. **一场正常会，逐帧对账**：收尾 phase 走到 `done`（第 4 步 `post` 按 R26 停
+  1. **一场正常会，逐帧核对**：收尾 phase 走到 `done`（第 4 步 `post` 按 R26 停
      `waiting`，会后等你按按钮）；场次目录里两路 `.pcm` + 两个
      `.mp3` 都在；两路样本数与「喂进去的块数 × 每块样本数」相符、与「start 到 stop
      之间的墙钟秒数 × 16000」偏差在一个采集块以内、字节数为偶；归档字节与假源的
-     喂块账**逐字节一致**（丢 0 秒）；按 0.5 秒重跑电平换算，帧序号连续无空洞，
+     喂块记录**逐字节一致**（丢 0 秒）；按 0.5 秒重跑电平换算，帧序号连续无空洞，
      「有声帧 / 静音帧」两个计数落进证据（`-s` 可见）；两个 MP3 用 `ffprobe` 读出的
      时长与对应 PCM 时长相符。
   2. **半路掉一路**：loopback 真跑起来、喂满 10 块之后才抛错 → 该路 `lost`、
@@ -66,7 +66,7 @@ E2E_POLL_TIMEOUT_SECONDS = 15.0
 #: 「两路先攒出这么多块再收尾」（1.6 秒：3 个整 0.5 秒帧 + 尾数，MP3 时长也有得比）
 RECORD_CHUNKS = 16
 
-#: 两路的固定次序（对账循环与段账断言共用）
+#: 两路的固定次序（核对循环与段记录断言共用）
 SOURCE_ORDER = ("mic", "loopback")
 
 #: MP3 与 PCM 的时长容差（秒）。MP3 按帧编解码（16k 下一帧 576 样本 ≈ 36ms），编码器
@@ -112,21 +112,21 @@ def _wait_for_done(client) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# ① 一场正常会：逐帧对账 + MP3 能解 + 帧序号连续
+# ① 一场正常会：逐帧核对 + MP3 能解 + 帧序号连续
 # ---------------------------------------------------------------------------
 
 
 def test_a_full_session_reconciles_frame_by_frame(tmp_path: Path, monkeypatch):
     """假源的一场正常会：收尾四步 `done`，两路归档逐字节、逐帧、逐样本全部对上。
 
-    墙钟对账的确定性手段：两路的交付上限都钉在 `RECORD_CHUNKS`（喂满之后活着但不再
+    墙钟核对的确定性手段：两路的交付上限都钉在 `RECORD_CHUNKS`（喂满之后活着但不再
     出块）。于是「取墙钟读数」的那一刻，最后一块已经落定、之后不可能再有块进来 ——
     偏差不会随「stop 赶没赶上下一块」翻转（旋钮的说明见 `tests/_capture_faulty.py`）。
     """
     monkeypatch.setenv(PACE_SECONDS_ENV, "0.1")
     monkeypatch.setenv(DELIVER_MIC_ENV, str(RECORD_CHUNKS))
     monkeypatch.setenv(DELIVER_LOOPBACK_ENV, str(RECORD_CHUNKS))
-    # 这一场只验采集侧的账：`transcriber.backend` 显式取 `null` 替身。
+    # 这一场只验采集侧的记录：`transcriber.backend` 显式取 `null` 替身。
     # 不写这一项的话产品缺省 `auto` 会解析到 `meeting.backends.transcribe:TranscriberBackend`
     # （`9e5db89c` phase2 落地之后它就在场了），而这一场喂进去的是**真音频**——
     # 于是那条流水线会真的去加载 GLM 权重（实测把本用例拖到 7 秒，越过单条用例的 5 秒看门，
@@ -135,8 +135,8 @@ def test_a_full_session_reconciles_frame_by_frame(tmp_path: Path, monkeypatch):
     # `post.hook` 同样显式取 `null`：会后钩子（`7c6952e5` phase2 的
     # `meeting.backends.post:PostProcessHook`）落地之后，产品缺省 `auto` 会让收尾第 4 步
     # 真的去起一条后台线程跑整条会后链、往这个场次目录里多落四五份产物 —— 那既不是本用例
-    # 要验的账，也会让下面「场次目录里恰好这几份文件」那条断言变成一条与后台线程赛跑的断言。
-    # 会后链自己的账在 `tests/test_post_hook.py` 与 `tests/test_offline_runner.py` 里验。
+    # 要验的记录，也会让下面「场次目录里恰好这几份文件」那条断言变成一条与后台线程赛跑的断言。
+    # 会后链自己的记录在 `tests/test_post_hook.py` 与 `tests/test_offline_runner.py` 里验。
     with live(
         tmp_path,
         {
@@ -201,7 +201,7 @@ def test_a_full_session_reconciles_frame_by_frame(tmp_path: Path, monkeypatch):
             # 样本数 = 喂进去的块数 × 每块样本数；与墙钟的偏差在一个采集块以内
             assert audit.sample_gap == 0
             assert samples_within_one_block(audit.samples, wall_seconds)
-            # 字节完整：与假源的喂块账逐字节一致（丢 0 秒），且为偶数字节
+            # 字节完整：与假源的喂块记录逐字节一致（丢 0 秒），且为偶数字节
             assert audit.even_bytes and audit.trailing_bytes == 0
             assert audit.byte_match is True
             # 逐帧：0.5 秒一帧重跑电平，帧序号连续、没有空洞
@@ -233,7 +233,7 @@ def test_a_full_session_reconciles_frame_by_frame(tmp_path: Path, monkeypatch):
         assert [item["archives"] for item in record["sources"]] == [
             [archive_name("mic")], [archive_name("loopback")],
         ]
-        # 段账：一场恰好一段，段起止、在录时长都落了；权威时长 = 在录时长之和
+        # 段记录：一场恰好一段，段起止、在录时长都落了；权威时长 = 在录时长之和
         assert len(record["segments"]) == 1
         segment = record["segments"][0]
         assert segment["index"] == 1
@@ -260,7 +260,7 @@ def test_a_route_dying_midrun_leaves_the_other_route_intact(tmp_path: Path, monk
     monkeypatch.setenv(PACE_SECONDS_ENV, "0.1")
     monkeypatch.setenv(ERROR_AT_LOOPBACK_ENV, "10")
     # 同 ①：这一场喂的是**真音频**，转写显式取 `null` 替身，别让那条流水线去加载真模型；
-    # 会后钩子也取 `null`（同 ① 的理由：这一场只验采集侧的账）。
+    # 会后钩子也取 `null`（同 ① 的理由：这一场只验采集侧的记录）。
     with live(
         tmp_path,
         {

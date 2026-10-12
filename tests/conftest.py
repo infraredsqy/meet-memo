@@ -98,7 +98,7 @@ pytest **父进程**里 `meeting.service.app.webbrowser` 就是**标准库那个
 那样会让 ASGI 门户的收场抛一个空消息的 `CancelledError`，把真正有用的信号盖住）。
 
 自证用 `tests/test_summary_action.py::test_a_missing_injection_is_blocked_at_the_egress_guard`：
-那一条**故意不注入** `runtime.summary_client`（配置里就是真地址），断言夹具的记账清单里
+那一条**故意不注入** `runtime.summary_client`（配置里就是真地址），断言夹具的登记清单里
 恰好一笔、就是那个地址，而这一趟总结回的是带着兜底名字的 502 —— 它**没有出门**。
 
 ## DSH 子会话兜底（安全要求，autouse，第五道）
@@ -114,18 +114,18 @@ pytest **父进程**里 `meeting.service.app.webbrowser` 就是**标准库那个
 `raising=False` 现造死属性 → 那层「一碰就抛」的网落空 → 65 个真子会话、243 个真模型回合）。
 **一道不依赖任何单条用例是否记得装替身的网必须落在夹具这一层**，这就是本道守卫：
 
-  - `_no_real_dsh_on_path`（会话级）：在临时目录里写一件假的 `dsh.cmd`（只往账本追加一行
+  - `_no_real_dsh_on_path`（会话级）：在临时目录里写一件假的 `dsh.cmd`（只往记录追加一行
     「时刻 + 全部 argv + 当前工作目录」，然后**以非 0 退出、什么都不执行**），把那个目录
     **前置**到测试进程 `os.environ["PATH"]` 最前面 —— `shutil.which("dsh")` 从此命中的是它，
     漏网的用例再也起不来真会话；收场时还原 `PATH` 并删掉临时目录。这道守卫只写文件 + 改
     `os.environ`（不起任何进程、不用 `Start-Process`）；
-  - `_no_real_dsh_launch`（用例级）：每条用例开始时记下账本行数，结束时**新增了就当场判红**，
-    话术里带着被叫起的 argv 与 cwd；用例收场之后才落进账本的那一笔由下一条用例的开工复查
+  - `_no_real_dsh_launch`（用例级）：每条用例开始时记下记录行数，结束时**新增了就当场判红**，
+    话术里带着被叫起的 argv 与 cwd；用例收场之后才落进记录的那一笔由下一条用例的开工复查
     与 `pytest_sessionfinish` 兜住，**不存在「安静地跑过去」这一档**。
 
 要走到「找可执行文件」那一步**并故意让 PATH 上那件假 `dsh` 被叫起**的用例，显式请
 `allow_real_dsh_resolution` 那道 opt-out 夹具（名字写清「这条用例故意允许走到可执行文件
-解析」）；**没有别的关掉账本断言的办法**。
+解析」）；**没有别的关掉记录断言的办法**。
 """
 
 from __future__ import annotations
@@ -327,10 +327,10 @@ def _no_real_minutes_session(monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
 #
 # 这一道与上面四道同一族，但要挡住的事故更贵：真的起一个 headless DSH 子会话 = 一次真模型
 # 回合（本节点实测过 65 个子会话 / 243 个模型回合）。**它不依赖任何单条用例是否记得装替身**：
-# 会话级把假 `dsh` 前置到 PATH 最前面，用例级拿账本把漏网当场判红。
+# 会话级把假 `dsh` 前置到 PATH 最前面，用例级拿记录把漏网当场判红。
 # ---------------------------------------------------------------------------
 
-#: 假 `dsh` 的落点与账本名（都在会话级的临时目录里；那个目录被前置到 `PATH` 最前面）
+#: 假 `dsh` 的落点与记录名（都在会话级的临时目录里；那个目录被前置到 `PATH` 最前面）
 DSH_GUARD_SHIM_NAME = "dsh.cmd"
 DSH_GUARD_LEDGER_NAME = "dsh-calls.log"
 
@@ -341,7 +341,7 @@ DSH_GUARD_EXIT_CODE = 97
 #: （假 `dsh` 什么都不做、当场退非 0，那条线程正常在百毫秒级收工）
 DSH_GUARD_THREAD_WAIT_SECONDS = 2.0
 
-#: 假 `dsh` 的全文：**只用 cmd 内建**，把「时刻 + 全部 argv + 当前工作目录」追加进账本，
+#: 假 `dsh` 的全文：**只用 cmd 内建**，把「时刻 + 全部 argv + 当前工作目录」追加进记录，
 #: 然后以非 0 退出 —— **什么都不执行**（不 import、不起进程、不碰网络、不写产物）。
 _FAKE_DSH_SOURCE = (
     "@echo off\r\n"
@@ -349,7 +349,7 @@ _FAKE_DSH_SOURCE = (
     "exit /b {exit_code}\r\n"
 )
 
-#: 账本断言的话术（用例看到它就是「这一趟在叫 PATH 上那件假 `dsh`」）
+#: 记录断言的话术（用例看到它就是「这一趟在叫 PATH 上那件假 `dsh`」）
 DSH_GUARD_VIOLATION_MESSAGE = (
     "假 `dsh` 被调用了：测试进程去叫了 `PATH` 上那件 `dsh`（`tests/conftest.py` 装的假件，"
     "什么都没执行、当场退非 0）。真子会话因此起不来、一分钱都花不出去，但这条用例要么该注入"
@@ -360,26 +360,26 @@ DSH_GUARD_VIOLATION_MESSAGE = (
 
 @dataclass
 class DshGuard:
-    """这道 PATH 守卫的读数：假 `dsh` 的落点、账本、以及被换下来的那一段 `PATH`。"""
+    """这道 PATH 守卫的读数：假 `dsh` 的落点、记录、以及被换下来的那一段 `PATH`。"""
 
     root: Path
     ledger: Path
     shim: Path
     previous_path: str
-    #: 已经被某条用例「认领」过的账本行数（迟到的那些靠它认出来）
+    #: 已经被某条用例「认领」过的记录行数（迟到的那些靠它认出来）
     claimed: int = 0
     #: 上一次认领的用例（迟到的那一笔属于它）
     claimed_by: str = ""
 
     def lines(self) -> list[str]:
-        """账本里现有的行（一行 = 假 `dsh` 被叫起一次）。"""
+        """记录里现有的行（一行 = 假 `dsh` 被叫起一次）。"""
         if not self.ledger.is_file():
             return []
         text = _decode_ledger(self.ledger.read_bytes())
         return [line for line in text.splitlines() if line.strip()]
 
     def unreported(self) -> list[str]:
-        """已经落进账本、但还没有任何一条用例认领过的那些行。"""
+        """已经落进记录、但还没有任何一条用例认领过的那些行。"""
         return self.lines()[self.claimed :]
 
 
@@ -388,7 +388,7 @@ _ACTIVE_DSH_GUARD: DshGuard | None = None
 
 
 def _decode_ledger(raw: bytes) -> str:
-    """账本的字节 → 文本（`cmd` 的 `echo` 按当前代码页写：UTF-8 与本地代码页都认）。"""
+    """记录的字节 → 文本（`cmd` 的 `echo` 按当前代码页写：UTF-8 与本地代码页都认）。"""
     for encoding in ("utf-8", "gbk", "latin-1"):
         try:
             return raw.decode(encoding)
@@ -398,10 +398,10 @@ def _decode_ledger(raw: bytes) -> str:
 
 
 def _dsh_guard_violation(guard: DshGuard, lines: list[str], *, when: str) -> str:
-    """账本断言的话术：谁被叫起、argv 与 cwd 是什么、这条用例该做什么。"""
+    """记录断言的话术：谁被叫起、argv 与 cwd 是什么、这条用例该做什么。"""
     return (
         f"{DSH_GUARD_VIOLATION_MESSAGE}\n"
-        f"账本：{guard.ledger}（新增 {len(lines)} 笔；归属用例 {when}）\n"
+        f"记录：{guard.ledger}（新增 {len(lines)} 笔；归属用例 {when}）\n"
         + "\n".join(f"  {line}" for line in lines)
     )
 
@@ -415,8 +415,8 @@ def _wait_for_the_minutes_thread() -> None:
     """等产品那条「起线程就返回」的 daemon 线程收工（**join，不轮询、不空转**）。
 
     为什么必须有这一步：真拉起点住在一条 daemon 线程上（`meeting/backends/minutes.py` 的
-    `MinutesHook.launch()` 起完线程就返回），子进程因此可能**晚于**用例收场才落账 —— 不等的
-    话，一次真漏网会写在账本上却没人读（用例级的复查已经读完了）。线程名取产品那个常量
+    `MinutesHook.launch()` 起完线程就返回），子进程因此可能**晚于**用例收场才落记录 —— 不等的
+    话，一次真漏网会写在记录上却没人读（用例级的复查已经读完了）。线程名取产品那个常量
     （`meeting.backends.minutes.THREAD_NAME`）；**那条线程不存在时这一步零成本**（只扫一遍
     当前线程表）。上界见 `DSH_GUARD_THREAD_WAIT_SECONDS`。
     """
@@ -441,7 +441,7 @@ def _no_real_dsh_on_path() -> Iterator[DshGuard]:
     headless DSH 的（`shutil.which("dsh")`），而本机 PATH 上真的有 npm 装的那件真 `dsh`。
     `_no_real_minutes_session` 那道再入闸只挡产品代码里那条路，**挡不住「用例摘掉再入闸、
     又忘了注入假启动器」**这一档 —— 那一档本节点已经真实发生过（65 个真子会话 / 243 个真
-    模型回合）。因此这里造一件假的 `dsh.cmd`（内容见 `_FAKE_DSH_SOURCE`：往账本追加一行
+    模型回合）。因此这里造一件假的 `dsh.cmd`（内容见 `_FAKE_DSH_SOURCE`：往记录追加一行
     「时刻 + 全部 argv + 当前工作目录」，然后以非 0 退出、**什么都不执行**），把它所在目录
     前置到 `os.environ["PATH"]` 最前面：漏网的用例命中的是这件假件，**花钱这件事变成不可能**。
 
@@ -481,11 +481,11 @@ def _no_real_dsh_launch(
 
     两个读数一起看：
 
-      - **开工复查**：账本上还有没有被认领的笔数？有 —— 说明上一轮**用例收场之后**才落进来
+      - **开工复查**：记录上还有没有被认领的笔数？有 —— 说明上一轮**用例收场之后**才落进来
         （真拉起点住在一条 daemon 线程上：`MinutesHook.launch()` 起线程就返回，子进程可能晚
-        于那条用例的收场落账）。这一笔也当场判红，话术里点名它属于哪一条用例；
+        于那条用例的收场落记录）。这一笔也当场判红，话术里点名它属于哪一条用例；
       - **收场复查**：先把产品那条「纪要生成」daemon 线程 join 掉（`_wait_for_the_minutes_thread()`：
-        真拉起点起完线程就返回，不 join 就会读到一个还没落账的账本），再比这条用例开工到收场
+        真拉起点起完线程就返回，不 join 就会读到一个还没落定的记录），再比这条用例开工到收场
         之间新增的行 = 这一趟漏到 PATH 上那件假 `dsh` 上了 —— `pytest.fail` 把这条用例判红，
         消息里逐笔列出 argv 与 cwd。
 
@@ -516,9 +516,9 @@ def _no_real_dsh_launch(
 def allow_real_dsh_resolution() -> Iterator[None]:
     """**显式 opt-out**：这一条用例**故意允许**走到「找可执行文件」那一步。
 
-    请了它，账本断言就不把「PATH 上那件假 `dsh` 被叫起」算在这条用例头上 —— 那道**结构性**
+    请了它，记录断言就不把「PATH 上那件假 `dsh` 被叫起」算在这条用例头上 —— 那道**结构性**
     守卫一个字都不动（`PATH` 上的假件照旧在岗，真会话照旧起不来），放开的只是「这一条用例
-    的账本判红」。只有**真的**要验「可执行文件解析 / 拉起动作」这一层、且没法靠自己注入
+    的记录判红」。只有**真的**要验「可执行文件解析 / 拉起动作」这一层、且没法靠自己注入
     `which=` / `executable=` / `launcher=` 的用例才该请它。
 
     **当前全仓 0 处引用（如实记一笔，别读成「有人靠它放行过」）**：现有的用例都能靠注入
@@ -673,13 +673,13 @@ def _no_writes_to_the_real_home_case(
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
-    """收场复查两本账：假 `dsh` 的账本，以及机主真实家目录下那份配置。
+    """收场复查两处：假 `dsh` 的记录，以及机主真实家目录下那份配置。
 
     PATH 守卫这一半兜的是「漏网那一笔落在最后一条用例收场之后」那一档：用例级的复查已经
     没有下一条用例可挂了，只有会话收场这一步还在。真家目录守卫这一半兜的是同一件事
     （最后一条用例收场之后才写进去的那一笔也算）。并行档（`pytest-xdist`）下这两道守卫只在
     各 worker 进程里成立，本函数在 controller 上对它们空转 —— 那一半由
-    `_xdist_sessionfinish_bridge()` 搬运：worker 的红账写成 run 级共享文件、controller 汇总
+    `_xdist_sessionfinish_bridge()` 搬运：worker 的违例记录写成 run 级共享文件、controller 汇总
     打红线并整趟判红（红线必须到主终端）。
     """
     reporter = session.config.pluginmanager.get_plugin("terminalreporter")
@@ -695,7 +695,7 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         leftovers = guard.unreported()
         if leftovers:
             session.exitstatus = pytest.ExitCode.TESTS_FAILED
-            report(_dsh_guard_violation(guard, leftovers, when="（用例收场之后才落进账本）"))
+            report(_dsh_guard_violation(guard, leftovers, when="（用例收场之后才落进记录）"))
 
     home_guard = _ACTIVE_REAL_HOME_GUARD
     if home_guard is not None:
@@ -716,7 +716,7 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
 # `pytest_sessionfinish` 的收场复查因此在 controller 上空转；worker 里查出的红只到得了
 # worker 自己的终端、改的也是 worker 自己的 `session.exitstatus`（定不了整趟退出码）——
 # 正是「红而不可见」。搬运的办法：controller 开趟时建一个 run 级共享目录（临时目录，
-# 环境变量传给各 worker），worker 的收场复查查出红账就往里写一份上报文件；controller 的
+# 环境变量传给各 worker），worker 的收场复查查出违例就往里写一份上报文件；controller 的
 # 收场复查把上报文件逐份打红线并把整趟判红。**串行趟不建目录、环境变量不存在，这一整块
 # 零动作**，行为与从前逐字节一致。目录名带 `MEETING_` 前缀只是习惯：`service_env()` 按名单
 # 剔除本服务变量，这份它不认——但它只是个临时目录路径，子进程拿到也无语义。
@@ -772,14 +772,14 @@ def _xdist_sessionfinish_bridge(session: pytest.Session) -> None:
 
 
 def _xdist_worker_violation_messages() -> list[str]:
-    """本进程两道会话级守卫的红账（各一段完整话术；没红就空列表）。"""
+    """本进程两道会话级守卫的违例记录（各一段完整话术；没红就空列表）。"""
     messages: list[str] = []
     guard = _ACTIVE_DSH_GUARD
     if guard is not None:
         leftovers = guard.unreported()
         if leftovers:
             messages.append(
-                _dsh_guard_violation(guard, leftovers, when="（用例收场之后才落进账本）")
+                _dsh_guard_violation(guard, leftovers, when="（用例收场之后才落进记录）")
             )
     home_guard = _ACTIVE_REAL_HOME_GUARD
     if home_guard is not None:
@@ -790,10 +790,10 @@ def _xdist_worker_violation_messages() -> list[str]:
 
 
 def _xdist_report_worker_violations(shared: Path) -> bool:
-    """worker 侧：红账写成上报文件（红到不了主终端，落盘给 controller 汇总）。
+    """worker 侧：违例记录写成上报文件（红到不了主终端，落盘给 controller 汇总）。
 
     文件名带 worker 名（`PYTEST_XDIST_WORKER`，缺席时退 `worker`），一个 worker 一份、
-    互不覆盖。交回 `True` = 写了红账（给探针与单测一个明确的读数）。
+    互不覆盖。交回 `True` = 写了违例记录（给探针与单测一个明确的读数）。
     """
     messages = _xdist_worker_violation_messages()
     if not messages:
@@ -865,7 +865,7 @@ class RealModelCallForbidden(RuntimeError):
         `TestClient` 收场干净。
 
     于是这一档选后者：**拦下外发**这件事两条路都做到了，而「报出来」这件事只有后者干净。
-    替身的记账清单（夹具的返回值）是「拦下了哪几笔」的权威读法，用例读它就不必依赖异常
+    替身的登记清单（夹具的返回值）是「拦下了哪几笔」的权威读法，用例读它就不必依赖异常
     怎么冒泡。
     """
 
@@ -907,7 +907,7 @@ def _no_real_model_call(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
     `ModelClient`**（那是生产路径该有的行为），而 `summary.base_url` 的配置默认值就是真地址
     —— 一份「端点配齐了、忘了注入假件」的用例会真的把窗口文本 POST 出去。用例一律从
     `runtime.summary_client` 注入假件（`tests/_drain_fakes.py` 那一档同源），这一道是**网**：
-    谁忘了，红在出口处，机主的账单一个字都不动。
+    谁忘了，红在出口处，机主的付费记录一个字都不动。
 
     返回值是被拦下的目标地址清单（`blocked`），用例要断言「拦的是哪一个」时读它。
     """
@@ -1029,8 +1029,8 @@ def _no_real_dsh_delivery(
 
     打桩落在三个**模块属性**上（`meeting.minutes.dsh_web.probe` / `.handoff` 与
     `meeting.minutes.launch.launch_headless`）：`runner.run()` 在调用那一刻才按模块属性取
-    它们，桩因此与导入次序无关。桩做两件事 —— 把这一次调用（原语名 + 参数）记进账本并抛
-    `RealDshDeliveryForbidden` 截断流程；用例收场时账本上有新笔迹、而这条用例没有显式请
+    它们，桩因此与导入次序无关。桩做两件事 —— 把这一次调用（原语名 + 参数）记进记录并抛
+    `RealDshDeliveryForbidden` 截断流程；用例收场时记录上有新笔迹、而这条用例没有显式请
     `allow_dsh_protocol_stubs` 夹具，就 `pytest.fail` 判红（异常被 `except Exception` 兜掉
     的那几条漏网路径由这一步兜住）。收场之前先把产品那条「纪要生成」daemon 线程 join 掉
     （与第五道守卫同一个理由：真拉起点起完线程就返回）。
@@ -1077,7 +1077,7 @@ def _no_real_dsh_delivery(
 def allow_dsh_protocol_stubs() -> Iterator[None]:
     """**显式 opt-out**：这一条用例专门测交付协议 / 拉起机制（假服务器 / 假桩，不碰真端口）。
 
-    请了它，第八道守卫就不打桩、收场也不判红 —— 放开的只是「这一条用例的触达记账」；
+    请了它，第八道守卫就不打桩、收场也不判红 —— 放开的只是「这一条用例的触达登记」；
     产品侧那道 `DeliveryForbidden` 默认拒绝闸一个字不动（这些用例按新契约显式传
     `allow_dsh=True`），真端口那一侧由第七道守卫兜着。谁请了它，谁的名字就出现在那条
     用例的源码里，审计一眼可见。
@@ -1182,7 +1182,7 @@ def _drop_pending_isolated_homes() -> None:
     """会话收场：先关掉还开着的服务级日志句柄（文件锁随之释放），再把待删的删干净。
 
     只在本会话真的留下过删不掉的家目录时才动手，且吞掉一切异常 —— 收场清理失败不该
-    改变这一趟的测试结论（真正要看的是上面两本账）。
+    改变这一趟的测试结论（真正要看的是上面两道守卫）。
     """
     if not _PENDING_ISOLATED_HOMES:
         return

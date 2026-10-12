@@ -18,7 +18,7 @@ import { MATERIALS_FIXTURES, readFixture, readFixtureText } from './fixtures';
  * 分几档、golden 样本过得了过不了 schema。`fetch` 全部注入，不起服务、不发真请求。
  */
 
-/** 记账用的替身 fetch：按入队的应答逐个交，请求原样记账。 */
+/** 登记用的替身 fetch：按入队的应答逐个交，请求原样登记。 */
 function makeFetch(...responses: Array<{ status: number; text: string }>): {
   fetch: typeof fetch;
   calls: Array<{ url: string; init: RequestInit }>;

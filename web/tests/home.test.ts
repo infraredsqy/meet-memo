@@ -92,7 +92,7 @@ describe('「开始 / 继续录音」在这一行上能不能按', () => {
 });
 
 describe('详情区的段读数（续接过的会看得出接过）', () => {
-  it('盘上段账原文 → 每段一行 + 合计（合计只数写完的段，第 7 条）', () => {
+  it('盘上段记录原文 → 每段一行 + 合计（合计只数写完的段，第 7 条）', () => {
     const view = segmentsView(
       row({
         state: 'done',
@@ -123,7 +123,7 @@ describe('详情区的段读数（续接过的会看得出接过）', () => {
     expect(view?.lines[1]).toMatchObject({ time: '11:30 起', seconds: '没写完' });
   });
 
-  it('没有段账（还没开过会）时交回 null，详情区不摆这一格', () => {
+  it('没有段记录（还没开过会）时交回 null，详情区不摆这一格', () => {
     expect(segmentsView(row({ kind: 'empty', state: null }))).toBeNull();
   });
 });

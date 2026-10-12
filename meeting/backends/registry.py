@@ -16,7 +16,7 @@
 **无参实例化**（后端构造函数不许有必填参数，运行期依赖一律走 `bind()`）；导入失败、
 找不到、不可调用、无参实例化失败 → **回退替身 + 一条 warning**。
 
-`BackendResolution` 分开回答两个问题（**收尾账目的唯一依据**）：
+`BackendResolution` 分开回答两个问题（**收尾记录的唯一依据**）：
 
   - `has_implementation`（`bool`）—— 这个构建里**有没有**可执行实现：`true` = 解析到了实现
     （含采集替身的 `null` / `dev` 那一类）；`false` = **缺席**（转写后端缺席、会后钩子缺席、
@@ -297,7 +297,7 @@ class _AbsentMinutesHook:
 
 
 def capabilities_of(implementation: Any) -> dict[str, bool]:
-    """一个采集实现声明的能力（收尾账目的输入）。
+    """一个采集实现声明的能力（收尾记录的输入）。
 
     `finalize` / `transcode` 两项按实现在场与否单独回答：`null` / `dev` 这一类不写真实音频的
     采集替身不具备这两项能力，于是收尾第 1、2 步记 `skipped`。

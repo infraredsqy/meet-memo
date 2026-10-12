@@ -401,7 +401,7 @@ class ScheduledSource:
     用途在两条端到端用例上（`test_a_held_model_never_touches_the_real_capture_path` 与
     `test_a_raising_model_keeps_the_archive_and_the_service_alive`）：它们要一段**确定的**
     「语音 → 静默」，好让切段的那一刻可预测（`tests/_capture_faulty.py` 的假源是为电平
-    对账设计的常量样本，真 `webrtcvad` 在它上面判定不稳）。采集引擎、写线程、无缓冲追加
+    核对设计的常量样本，真 `webrtcvad` 在它上面判定不稳）。采集引擎、写线程、无缓冲追加
     写盘全是生产代码。
     """
 

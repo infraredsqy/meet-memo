@@ -158,11 +158,11 @@ def test_action_names_and_codes_are_the_frozen_ones():
 
 
 def test_action_registry_is_reconciled_with_action_names():
-    """分发的登记表与 `ACTION_NAMES` 一字不差地对上（routes 的启动期对账把两边钉死）。
+    """分发的登记表与 `ACTION_NAMES` 一字不差地对上（routes 的启动期核对把两边钉死）。
 
     从前动作名有两份清单：`ACTION_NAMES` 与 routes 里那条 if/elif 链，靠纪律同步 ——
     加名漏加分支时请求穿过分发链落到函数末尾，什么都不做却回 `ok: true`。现在分发只认
-    `_ACTION_HANDLERS` 那张表，且本用例导入 `meeting.service.routes` 那一刻对账就已经
+    `_ACTION_HANDLERS` 那张表，且本用例导入 `meeting.service.routes` 那一刻核对就已经
     跑过（对不上，导入当场炸）；这里再把结论摆到明面上钉一次。
     """
     from meeting.service import routes as routes_module
@@ -172,7 +172,7 @@ def test_action_registry_is_reconciled_with_action_names():
 
 
 def test_action_registry_reconciliation_rejects_drift(monkeypatch):
-    """对账器按字面意思执法：任何一边多一个名、少一个名，都当场炸，报哪个名字漂了。"""
+    """核对器按字面意思执法：任何一边多一个名、少一个名，都当场炸，报哪个名字漂了。"""
     from meeting.service import routes as routes_module
 
     original = dict(routes_module._ACTION_HANDLERS)
@@ -412,7 +412,7 @@ def test_mute_session_flips_muted_and_resets_on_the_next_session(tmp_path):
         # 新一场起来之后这条告警本身必须已经撤掉：`mute_session` 复位带走的是会话级静音，
         # 而**这一场**还没有任何一路出事，所以致命级与提示级都该是空的
         # （提示级只在 `recording` / `alert` 两态可能有条目，这一场刚进 `recording`，
-        # 上一场那条「转写停了」的记账已经随离开录音态一起清掉了）。
+        # 上一场那条「转写停了」的登记已经随离开录音态一起清掉了）。
         snapshot = snapshot_of(client)
         assert snapshot["alerts"]["critical"] is None
         assert snapshot["alerts"]["hints"] == []

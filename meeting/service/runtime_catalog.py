@@ -20,9 +20,9 @@ _log = logging.getLogger("meeting.service.runtime")
 
 
 def _post_job_progress(job: PostJob | None, directory: str) -> Any:
-    """会后那条线程手里的逐块进度账（**是这一场、是离线那一趟**时才有）。
+    """会后那条线程手里的逐块进度记录（**是这一场、是离线那一趟**时才有）。
 
-    三样都对上才交回它：这一趟的路是 `offline`、跑的是这一场、账已经立起来。否则
+    三样都对上才交回它：这一趟的路是 `offline`、跑的是这一场、记录已经立起来。否则
     `None` —— 调用方据此退回读盘那条路。前两样（是 dict、`dir` 相等）走
     `_job_matches()` 这一处公共判据；`kind` 档位判据留在这里。
     """
@@ -243,7 +243,7 @@ class RuntimeCatalogMixin:
         """盘上 `session.json` 的**段读数**（界面上「两段的时长与时间」的来源）。
 
         每段四格：`index` / `started_at` / `ended_at` / `duration_seconds`——
-        段账里给人看的就这四样（`pauses` / `sources` 是对账用的格子，不进界面）。
+        段记录里给人看的就这四样（`pauses` / `sources` 是核对用的格子，不进界面）。
         盘上形状不对的那一条如实跳过；这一格只是把盘上的读数端出来给人看（第 6 条）。
         状态文件不在场时交回空表。
         """
@@ -352,7 +352,7 @@ class RuntimeCatalogMixin:
         界面那格全局「显卡忙不忙」的会后一半读数（另一半「本机正在录」从快照状态读，
         不走这里）；**每行十二键**，这一格在应答体顶层、不进任何一行，快照九键
         一个字不动。行里的 `segments` 是这场会**各段的时长与时间**（续接节点加上去的
-        读数，盘上段账原文四格，两段的会看得出接过）。
+        读数，盘上段记录原文四格，两段的会看得出接过）。
         """
         rows: list[dict[str, Any]] = []
         for entry in self.registry.entries():
@@ -436,7 +436,7 @@ class RuntimeCatalogMixin:
         路径要过与那只清单端点同一套判据（规范化后的绝对路径比对）：目录已不在原地、
         或不在工作台清单里，都按 404 如实回一句（见 `_session_status_error()`）。
 
-        `segments` 那一格与清单端点同一来源（`_disk_segment_cells()`，盘上段账原文），
+        `segments` 那一格与清单端点同一来源（`_disk_segment_cells()`，盘上段记录原文），
         界面在详情区摆「各段的时长与时间」。
 
         `speakers` 那一格是**这一场盘上的身份集**（人名节点 `91b6752e`）：每个身份一行
@@ -454,7 +454,7 @@ class RuntimeCatalogMixin:
           - **这一趟正在本进程里跑** → 用会后那条线程手里的现场（`post_job['progress']`），
             「已经跑了多久」由它按单调钟当场算；
           - **本进程没在跑这一趟**（服务重启过、命令行跑的那一趟、跑完很久了）→ 读场次
-            目录里那份 `meeting_offline_progress.jsonl` 账，起点与终点问状态文件。
+            目录里那份 `meeting_offline_progress.jsonl` 记录，起点与终点问状态文件。
             跨进程算不出单调钟的差值，那一格如实交回 `null`（它本来就只作附注，
             见 `docs/design-intent.md` 第 6、7 条）。
 
@@ -504,19 +504,19 @@ class RuntimeCatalogMixin:
         }
 
     def _offline_progress_for(self, directory: str) -> dict[str, Any]:
-        """这一场的会后离线进度读数（现场优先，落盘那份账兜底）。见 `session_status_dict()`。
+        """这一场的会后离线进度读数（现场优先，落盘那份记录兜底）。见 `session_status_dict()`。
 
         **两块分开说，别混**：
 
           - `offline.state` 照**盘上那份**如实答（契约 4.9：`running` / `done` / `partial` /
-            `failed` / `interrupted` / `idle`，外加「盘上有账、而这一趟既不在飞、也没有状态文件回答」那一档
+            `failed` / `interrupted` / `idle`，外加「盘上有记录、而这一趟既不在飞、也没有状态文件回答」那一档
             `ledger`）。状态文件写着 `done` / `partial` / `failed` / `interrupted` 就照它自己那一档答，
             写着 `running` 也照它自己那一档答；**进程崩在半路的那一场因此如实答
             `running`**，不在这里替盘上的话做二次解读；
           - `offline.in_process` 另立一格答「**本进程里此刻有没有这一趟活**」，判据取
             `_offline_job_running()`（这一趟的路是 `offline`、跑的是这一场、那条线程还活着
             —— 与「这一趟在不在飞」同一套现场）。**跑完那一刻它翻回 `false`**：活着的现场
-            与盘上那份账因此各按各的判据出（跑完再读这一场，读的是盘上那份账）。
+            与盘上那份记录因此各按各的判据出（跑完再读这一场，读的是盘上那份记录）。
 
         两块合起来才读得清崩在半路那一档：`state: "running"` 说的是盘上停着的那版状态，
         `in_process: false` 说的是此刻没有任何东西在跑。**`interrupted` 是盘上自己的

@@ -323,9 +323,9 @@ def run_replay(
     """对一份已有场次跑一遍重放，交回可读读数（`meeting replay` 与用例共用）。
 
     七步：目录核对 → 上限换算（`cap_to_seconds()`）→ 备料（截断复制进 `work_dir`，
-    缺省 `default_work_dir()`）→ 立逐块进度账（注入 `OfflineProgressLedger`）→
+    缺省 `default_work_dir()`）→ 立逐块进度记录（注入 `OfflineProgressLedger`）→
     **直调 `run_session(work_dir, ..., minutes=False)`**（不传 `announce_minutes`，
-    纪要层零启动）→ 从盘上那份进度账读回逐块行 → 拼读数（实时率 = 墙钟 ÷ 盘上实测
+    纪要层零启动）→ 从盘上那份进度记录读回逐块行 → 拼读数（实时率 = 墙钟 ÷ 盘上实测
     音频时长）。
 
     `engine` / `config` 照 `run_session()` 的口径透传（用例注入假件用）。
@@ -376,7 +376,7 @@ def _build_reading(
     summary: dict[str, Any],
     rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """把一次重放的账拼成读数 dict（打印交给 `format_reading()`）。"""
+    """把一次重放的结果拼成读数 dict（打印交给 `format_reading()`）。"""
     total_wall = float(summary.get("total_wall_seconds") or 0.0)
     measured = staged.total_seconds
     counts: dict[str, int] = {name: 0 for name in CHUNK_STATES}
@@ -464,7 +464,7 @@ def format_reading(reading: dict[str, Any]) -> str:
                 f"{row.get('wall_seconds')} s（{row.get('seconds')} s，{row.get('state')}{note}）"
             )
     else:
-        lines.append("每块耗时：（进度账上没有逐块行——整场一块都没跑成）")
+        lines.append("每块耗时：（进度记录上没有逐块行——整场一块都没跑成）")
     counts: dict[str, int] = reading.get("counts") or {}
     lines.append(
         "失败原因分布："

@@ -419,7 +419,7 @@ def expected_lines_from_chunks(chunks: Mapping[str, Any]) -> dict[str, dict[str,
     """从 `chunk_session()` 的返回值里取「每一路每一份稿的真实行数」。
 
     `chunk_session()` 的返回值形状是 `{source: {kind: SourceChunks}}`（两份稿各一套块），
-    交回来的账因此也逐份回答：`{"mic": {"live": 25, "offline": 22}}`。
+    交回来的结果因此也逐份回答：`{"mic": {"live": 25, "offline": 22}}`。
     「真实行数」只有一种取法（`SourceChunks.total_lines`，也就是 `lines.count_lines()` 的数法）。
 
     划段那一层用的分母是**会中稿**那一份（提示词的阶段 2 写着这一条）；

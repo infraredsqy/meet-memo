@@ -143,7 +143,7 @@ class SessionInfo:
     """快照 `session`（`id` 是场次目录名，`dir` 是场次目录路径）。
 
     `paused` 是这一场此刻是不是暂停中（第 8 条的读法）；`paused_seconds` 与
-    `paused_at_monotonic` 是**算时长用的内部账**（暂停的那几段不进 `elapsed_seconds`，
+    `paused_at_monotonic` 是**算时长用的内部计数**（暂停的那几段不进 `elapsed_seconds`，
     第 7 条：权威长度是实际录到的音频时长，不含暂停），它们不上快照。
     """
 
@@ -156,7 +156,7 @@ class SessionInfo:
     frozen: bool = False
     #: 本场是否正处在暂停中（动作 `pause` / `resume` 翻它；顶层四态一个字不动）
     paused: bool = False
-    #: 已经关掉的那几段暂停加起来多少秒（`resume` 时结账；只进内存，不落 `session.json`）
+    #: 已经关掉的那几段暂停加起来多少秒（`resume` 时结清；只进内存，不落 `session.json`）
     paused_seconds: float = 0.0
     #: 当前这一段暂停的起点（`time.monotonic()`）；不在暂停中时是 `None`
     paused_at_monotonic: float | None = None
@@ -680,14 +680,14 @@ def finish_drain_step(
     frozen_ended: bool = False,
     frozen_interrupted: bool = False,
 ) -> DrainStep:
-    """落该步的记账（`status` 取 `done` / `failed` / `skipped`，外加 `post` 那一格的 `waiting`）。
+    """落该步的登记（`status` 取 `done` / `failed` / `skipped`，外加 `post` 那一格的 `waiting`）。
 
-    `frozen_*` 两个关键字是**取消路径的记账约束**（phase2 §3.5.6 的「三条不覆盖约束」，
+    `frozen_*` 两个关键字是**取消路径的登记约束**（phase2 §3.5.6 的「三条不覆盖约束」，
     第三个 Phase 的强制打断路径依赖它们），普通调用点一律不传：
 
       - `frozen_ended=True`：**不许**把 `ended` 的 `phase` / `error` 改掉（先落盘那一步
         已经写下的「收尾中 + 已打断」由此保住）；
-      - `frozen_interrupted=True`：步骤表里已落定的步骤保持原样（取消时的记账只补状态）。
+      - `frozen_interrupted=True`：步骤表里已落定的步骤保持原样（取消时的登记只补状态）。
 
     **`waiting` 是 `post` 那一格的专有终态**（R26 / `docs/design-intent.md` 第 10 条）：
     按「结束录音」之后会后一个动作都不自动跑，那一步做完它该做的（释放会中模型）就如实
@@ -728,7 +728,7 @@ def finish_drain(snapshot: Snapshot | None = None, *, cancelled: bool = False) -
 
     `cancelled` 是**取消路径**那一趟的读数（`ServiceRuntime._finish_drain(cancelled=True)`
     传进来）：被取消的收尾没有跑完，终态该是 `draining`。它在取消那一刻能把在飞那一步
-    记成 `running`（照实记账，不伪造终态），因此下面那一条"只差 `post` 停在 `running`"
+    记成 `running`（照实登记，不伪造终态），因此下面那一条"只差 `post` 停在 `running`"
     必须让开这一趟 —— 否则取消会被误判成"收尾走完了"。
 
     ## 为什么 `post` 空着也算收尾走完
