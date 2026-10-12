@@ -57,7 +57,7 @@ from tests.test_capture_accounting import (
 )
 from tests.test_capture_engine import FakeCaptureSource
 
-#: 慢档标记：`pytest.mark.slow` 的归位判据与实测数据见 `docs/service.md` 第 7 章。
+#: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md` 第 7 章。
 pytestmark = pytest.mark.slow
 
 #: 进程内用例的轮询超时（收尾四步跑在收尾线程池里；与既有端到端同档）

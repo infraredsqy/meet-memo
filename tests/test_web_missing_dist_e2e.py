@@ -16,7 +16,7 @@
 ## 为什么落在慢档
 
 判据 ①（真服务子进程）与判据 ②（真墙钟等待）两条都成立：这个文件起一个真子进程、读它的
-真墙钟。归位判据与实测数据见 `docs/service.md` 第 7 章；文件头这一行 `pytestmark` 是它进慢档
+真墙钟。归位判据见 `docs/service.md` 第 7 章；文件头这一行 `pytestmark` 是它进慢档
 的唯一落点（**不塞进任何已有的快档文件**：那会让那个文件的单文件耗时越过 10 秒红线）。
 
 ## 为什么不删 `web/dist`
@@ -45,7 +45,7 @@ from meeting.cli import EXIT_OK
 from meeting.service.app import DIST_MISSING_MESSAGE
 from tests._service import SERVICE_ID
 
-#: 慢档标记：`pytest.mark.slow` 的归位判据与实测数据见 `docs/service.md` 第 7 章。
+#: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md` 第 7 章。
 pytestmark = pytest.mark.slow
 
 #: 本用例那份不存在的产物目录名（落在临时家目录下，与仓库里的 `web/dist` 无关）

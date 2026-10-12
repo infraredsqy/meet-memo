@@ -53,7 +53,7 @@ from meeting.service.runtime import compute_drain_budget
 from meeting.session import archive_name
 from tests import _helpers as helpers
 
-#: 慢档标记：`pytest.mark.slow` 的归位判据与实测数据见 `docs/service.md` 第 7 章。
+#: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md` 第 7 章。
 pytestmark = pytest.mark.slow
 
 # ---------------------------------------------------------------------------

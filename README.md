@@ -46,10 +46,7 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
   把端口设成 `0` 时由系统挑一个空闲端口，选中的端口照常打印在终端并落 log。
 - **端口被占就拒绝启动**，两种情形的话不一样（退出码 `2`）：
   - 占用者是本服务：`已经有一个 meeting 服务在跑：http://127.0.0.1:8765（当前空闲）`
-    —— 这句话的**形状**是 phase1 冻结的（`meeting/service/app.py` 的端口策略那一处），而括号
-    里的内容在当前实现里是**字面写死的「当前空闲」**：它还没接上「那一场已录多久」这个值
-    （`session.elapsed_seconds` 那一侧由 phase2 提供，端口探针这一处**尚未取用**）。所以现在
-    无论那个实例在录还是空着，你看到的都是这四个字；**本节点不承诺它将来会变成别的样子**。
+    —— 括号里眼下是字面写死的「当前空闲」，还没有接上「那一场已录多久」这个值。
   - 占用者是别的程序：`端口 8765 被别的程序占着，没法起服务。换一个端口再来，
     例如：MEETING_PORT=8766 meeting web`。
 - 起服务时会**打开浏览器**；`MEETING_NO_BROWSER=1` 关掉这一步（测试与无头场景一律设它）。
@@ -61,13 +58,12 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
   一个子进程都不产生（终端打一句「无待办」）；只差一层就只补那一层；任一层停在 `running`
   （上一趟还在跑，或崩在半路）就**拒跑**并点名那个状态文件，让确认之后再 `meeting post <场次目录> --force`。
   被打断的那一场（状态 `interrupted`）是终态但不拦闸：下一趟**从头再跑**，不需要 `--force`。
-  `--force` 是**唯一**会再次花钱的开关：它无视两层的终态、把离线段与纪要段都重跑一遍。
-- **`meeting replay <场次目录> [--seconds N | --chunks N] [--out 目录]` 是重放验证工具**（`a3b684bd`）：
+  `--force` 是**唯一**会再次花钱的开关。
+- **`meeting replay <场次目录> [--seconds N | --chunks N] [--out 目录]` 是重放验证工具**：
   把那一场的素材**截断复制**进 `--out` 指定的目录（缺省落系统临时目录，每遍给一个新目录；
   原目录一个字节不动），在拷贝上全速重跑会后离线转写链，跑完打印实时率（墙钟 ÷ 盘上实测
-  音频时长）、每块耗时与失败原因分布（`transcribed` / `silent` / `failed` / `unjudged` 四档）。
-  上限两种给其一：`--seconds N` 只跑前 N 秒、`--chunks N` 只跑每路前 N 块（按生效的
-  `post.chunk_seconds` 换算，该值 `<= 0` 时这一档拒跑），都不给就是整场，同给两个拒绝。
+  音频时长）、每块耗时与失败原因分布。上限两种给其一（`--seconds N` 只跑前 N 秒、
+  `--chunks N` 只跑每路前 N 块），都不给就是整场，同给两个拒绝。
   它**只验证离线链、绝不拉纪要**，那一场的产物一个字节不动。
 
 启动成功后终端上会打两样东西（同样的两行也进服务级 log）：
@@ -101,7 +97,7 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 续接开场要是没起来（设备被占之类），旧记录原样保留、本轮段文件收走，工作区回到按下去之前的样子。
 
 录哪一路用哪个设备由两个配置键定（`devices.mic` / `devices.loopback`，不配就按默认策略挑）。
-页面上那个「设置」抽屉就能换（`311f84f5`）：清单来自只读的 `GET /api/devices`（只枚举、
+页面上那个「设置」抽屉就能换：清单来自只读的 `GET /api/devices`（只枚举、
 不开设备），选完写进 config、当场生效，空闲态再打一次 `reprobe` 就按新设备挑（会中
 不换设备，那两格禁用）。**配置是「你的意图」，快照 `sources[*].device_name` 是「实际落到
 的那个设备」** —— 配了却没命中时不会报错，只按回退顺序挑一条并在主 log 留一行 `WARNING`。
@@ -117,20 +113,13 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 没起名的编号照旧由模型推断；改名字不改已生成的纪要。
 纪要的产物是**场次目录根**的 `meeting_final.md`
 （纪要正文 + 说话人附录，附录里写清每个人名的依据与把握，猜不出的单列一节），
-状态在 `meeting_minutes_status.json`（`running` / `done` / `failed` / `delivered` + 原因 + 档位 +
-实际走的启动分支），中间产物与那一次运行的账在 `working/` 下（`inputs.json`、
-`<source>/<kind>/chunks/`、`run_prompt.md`、`minutes-run.log`）。这一层跑砸了不影响离线那几份产物。
-`minutes.hook` 决定这一层**由哪个实现接**（`auto` / `dev` / `module:Class`；写成 `null` 时
-「生成纪要」那个按钮当场回 404，如实说这台机器上没接这一层）；每块行数、分段上限、
-一次运行的墙钟上限与那一台 `dsh web` 服务端的地址分别由 `minutes.chunk_lines` /
-`minutes.max_segments` / `minutes.timeout_seconds` / `minutes.dsh_url` 定
-（五个键都收在 `settings_update` 的 `pending_restart` 那一档里）。
-拉起之前先探一次 `minutes.dsh_url`（默认 `http://127.0.0.1:3080`，就是 `dsh web` 的默认地址）：
-**在跑**就把这一场交付给它 —— 经 `/api` 在场次目录对应的那个工作区里建会话、把提示词全文送进去，
-**投递成功即算交付完成**，状态记 `delivered`，后面的活不归这一层管（它不等 DSH 那边写完、
-也不校验产物；产物在 DSH 界面的那条会话里看得见）；**没在跑**才落回 headless 那一趟 ——
-`dsh --profile headless` 的回合结束进程就退出，那一趟会等子进程退出、再按四条判据校验产物
-（纪要存在、带附录、附录里真有数据行），验不过就记 `failed`，验过了才是 `done`。
+状态在 `meeting_minutes_status.json`，中间产物在 `working/` 下；这一层跑砸了不影响离线那几份产物。
+这一层由 `minutes.*` 配置键接（`minutes.hook` 写 `null` 时「生成纪要」按钮当场回 404；
+键与默认值见 `docs/service.md` 第 4 章）。拉起之前先探一次 `minutes.dsh_url`
+（默认 `http://127.0.0.1:3080`，就是 `dsh web` 的默认地址）：**在跑**就把这一场交付给它，
+投递成功即算交付完成，状态记 `delivered`，后面的活不归这一层管（产物在 DSH 界面的那条会话里
+看得见）；**没在跑**才落回 headless 子进程，那一趟会等子进程退出、按产物判据校验，
+验不过就记 `failed`，验过了才是 `done`。
 它吃什么、经哪几步出一份纪要、怎么手动跑一遍（`python -m meeting.minutes chunk|prompt|check`），
 见 `docs/minutes.md`。
 
@@ -138,12 +127,9 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 刚才在讲什么 / 讲到哪儿了 / 丢掉了什么。范围由人挑四档（最近 5 / 15 / 30 分钟、整场，缺省 15 分钟），
 读的是**内存里那份实时临时稿**（不读盘、也不动快照），结果是一过性的：关掉即消失、不落文件。
 本场按过的、成功产出的那几次可以从 `GET /api/summaries` 取回来回看（记录只活在内存里，
-新的一场 `start` 清空）。模型端点由九个 `summary.*` 键配：多套预设整装在 `summary.presets_json`
-（一段 JSON 数组串，每套 `name` + 端点四件套），`summary.active_preset` 指名当前用哪一套 ——
-设置抽屉的「快速总结模型」下拉**会中就能换**，写盘即生效不必重启；不配预设就走平铺四键
-（存量配置零迁移）。缺省档 `summary.default_window` 同样写完即生效，其余六键改完要重启。
-密钥那一格可以走环境变量 `MEETING_SUMMARY_API_KEY`（压的是平铺那一格；预设用它自己的密钥）；
-没配齐就当场说清缺哪几个键。
+新的一场 `start` 清空）。模型端点由 `summary.*` 配置键定：多套预设可整装一个键，
+设置抽屉的「快速总结模型」下拉**会中就能换**，写盘即生效不必重启（键的取值与生效档位见
+`docs/summary.md` 与 `docs/service.md` 第 4 章）。
 这一层怎么切窗口、提示词与模型输出是什么形状、超时与重试的预算落在哪，见 `docs/summary.md`。
 
 ---
@@ -156,8 +142,7 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 | 场次级 | `<场次目录>/meeting.log` | `start` 时挂上、收尾 `log` 步 flush 后摘掉 —— **按场查** |
 
 - 轮转按两个配置键的生效值构造：`log.max_bytes`（默认 **5 MiB**）、`log.backup_count`
-  （默认 **3** 份）；**整份旧文件保留**（V1 那种「超限保留后半、删掉前半」已经改掉）。
-  这两个键都在「改完要重启」那一组里。
+  （默认 **3** 份，整份旧文件保留）；这两个键都在「改完要重启」那一组里。
 - **主 log 不可写 → 拒绝启动**（退出码 `3`），不静默降级。
 - **场次级 log 写失败不中断录音**（录音是唯一不可再生的东西），但会如实上报：
   收尾 `log` 那一步落 `failed`、状态里看得见、主 log 里留一条。
@@ -167,34 +152,19 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 
 ---
 
-## 3. 热读键有哪些
+## 3. 哪些配置改完要重启
 
-**`asr.*` 那五个键每段重新读，`alarm.sound` 勾选那一刻就生效；设置抽屉那四项
-（`311f84f5`：两个设备键位、`heartbeat.interval_seconds`、`summary.default_window`）
-与会中切模型两键（`summary.presets_json` / `summary.active_preset`）
-写盘那一刻快照就换新值 —— 这十二个合起来是热读键**：
-
-    alarm.sound / heartbeat.interval_seconds / summary.default_window
-    devices.mic / devices.loopback
-    summary.presets_json / summary.active_preset
-    asr.max_segment_seconds / asr.timeout_seconds / asr.max_new_tokens /
-    asr.repeat_max_unit / asr.repeat_min_coverage
-
-`alarm.sound`（本场出不出声的持久化开关）收在热读档，是为了让钩子上的「出声开关」勾选即生效：
-`settings_update` 写盘成功那一刻快照里的 `settings.alarm_sound` 就换过去了。
-设置抽屉那四项同理：设备写完 `reprobe` 按新值挑，心跳与缺省档的快照格当场换。
-预设两键同理：设置抽屉换一套模型当场生效，会中也能切（每次总结都是现读配置、现造客户端）。
-
-其余键（`web.*` / `log.*` / `alert.*` / `capture.*` / `transcriber.*` / `post.*` / `minutes.*`
-与其余六个 `summary.*`）**改完要重启**。两档的划分以
-`meeting/config.py` 的 `SETTING_KEY_GROUPS` 为准（热读 12 键 + 重启 28 键 = 键全集 40）。**没有 `output.root` 键**：一场会放哪由它的工作区目录给
-（start 显式传 `args.dir`），配置清空也照样能开会。
+**设置抽屉里能改的都是热读键**：写盘那一刻就生效，不必重启（设备改完空闲态打一次 `reprobe`
+按新值挑；出声开关勾选那一刻就换；换一套总结模型会中当场走新的）。
+其余配置键（`web.*` / `log.*` / `alert.*` / `capture.*` / `transcriber.*` / `post.*` /
+`minutes.*` 与其余 `summary.*`）**改完要重启**。逐键的分档以 `meeting/config.py` 的
+`SETTING_KEY_GROUPS` 为准，口径见 `docs/service.md` 第 4 章。**没有 `output.root` 键**：
+一场会放哪由它的工作区目录给（start 显式传 `args.dir`），配置清空也照样能开会。
 
 **环境变量一律在启动时求值**，改了不会热生效。本服务的环境变量一共四个：
 `MEETING_PORT` / `MEETING_LOG_DIR` / `MEETING_CAPTURE` /
 `MEETING_NO_BROWSER`；另有 `MEETING_SUMMARY_API_KEY` 单独映射会中总结那一格的密钥
-（它不改变哪几个键生效，只是给 `summary.api_key` 供一个不进配置文件的来源；预设模式走
-预设里那一格密钥，这一格不参与）。
+（给 `summary.api_key` 供一个不进配置文件的来源；预设模式走预设里那一格密钥，这一格不参与）。
 
 ---
 
@@ -213,44 +183,25 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
      "args": {"source": "loopback", "fault": "silence|stall|lost", "after_seconds": 0}}
 
 - `silence`：这一路电平落到 −80 dBFS 以下并保持；
-- `stall`：两路事实帧整体停发（HTTP 照常应答，于是 `/api/heartbeat` 的 `recording_alive` 变 `false`；
-  开场一帧都还没见到时先报 `null`，过了开场窗口仍无帧才落 `false`；恢复之后心跳的 `capture_gaps`
-  会记下一条空洞、秒数就是停发了多久 —— 停发的这段内容确实没记上，gil-stall-hole）；
+- `stall`：两路事实帧整体停发（HTTP 照常应答，`/api/heartbeat` 的 `recording_alive` 随之变 `false`；
+  恢复之后心跳的 `capture_gaps` 会记下一条空洞、秒数就是停发了多久 —— 停发的这段内容确实没记上）；
 - `lost`：直接来一条 `SourceLost`。
+
+三档故障到点生效、到点自动恢复；注入的语义与恢复口径见 `docs/state.md` 第 7 章。
 
 采集后端不是 dev 时，这个动作回 `action_unavailable`（`404`）。
 另有自检页 `GET /debug`（骨架自检，不是产品界面）。
 
 ---
 
-## 5. 退出码表
+## 5. 退出码
 
-| 退出码 | 什么时候 |
-|---|---|
-| `0` | 空闲态按 `Ctrl+C`；或者收尾干净（前三步走到 `done` / `skipped`，`post` 那一格停 `waiting` 也算收尾干净） |
-| `1` | **收尾有步骤 `failed`**（这时终端上会打 log 路径与最后几行）；或者 **`meeting post` 那一趟没做成**（音频转不动、离线那一层 `failed`、纪要落 `failed` 或等它落终态等过了 `minutes.timeout_seconds`）；或者 **`meeting replay` 那一趟没做成**（整场落在 `failed`，或重放路上抛异常）；或者**服务起步这一步出意外**（组装应用 / 构造服务器对象的路上抛异常，终端上会打一行「服务起步失败」与 log 路径） |
-| `2` | 端口被占（已有 meeting 服务 / 别的程序占着）；用法错误；配置值非法 |
-| `3` | 启动前提不成立（`config.json` 损坏、主 log 不可写） |
-| `130` | **收尾中途第二次 `Ctrl+C`**：立即中止，盘上 `interrupted: true`、**绝不写 `done`** |
-
-纪要那一层落在 `failed` 才算 `1`；落在 **`delivered`**（已经交付给 DSH web 服务端）按成功算 ——
-交付这一步做成了，后面的活不归这一层管。
-
-`Ctrl+C` 的两阶段语义：第一次收尾（与 `stop` 同一条路径，页面看得见「收尾中」），
-收尾落定后关停；第二次立即中止（先落盘、再 `cancel()` 收尾协程）。
-
-按下第一次落在哪一档，看的是**这一刻有没有收尾在跑**：
-
-- **正在录（`recording` / `alert`）**：起收尾、等它落定 → `0`（收尾有步骤 `failed` → `1`）；
-- **刚起、还没开过任何一场（`idle`）**：直接退出 → `0`（启动也不读别的场次目录：盘上没走完
-  收尾的那一场不被这次关停改写，也不再拦新场次 —— 场次的登记与"最近一场"由收编节点
-  落在工作区注册表里，界面经 `GET /api/sessions` 读）；
-- **已经停在收尾中 / 收尾失败的现场**（`ended` 里还有收尾在跑，或收尾失败后停着）：
-  第一次按下就等同第二次 → `130`。
-
-**收尾有步骤 `failed` 时服务不自杀**：进程继续活着、页面还能看、
-新的「开始录音」一律回 `409 draining`（带上失败那一步与 log 路径），
-出路是 `meeting post <场次目录>` 或看清现场后重启服务。
+五个退出码：`0` 正常收场（空闲态按 `Ctrl+C`，或收尾干净）；`1` 收尾有步骤 `failed`
+（或 `meeting post` / `meeting replay` 那一趟没做成、服务起步出意外）；`2` 端口被占、
+用法错误、配置值非法；`3` 启动前提不成立（`config.json` 损坏、主 log 不可写）；
+`130` 收尾中途第二次 `Ctrl+C`（立即中止，盘上绝不写 `done`）。
+逐档触发条件、`Ctrl+C` 两阶段语义与「收尾失败后服务不自杀」的出路见 `docs/service.md` 第 2、6 章；
+纪要那一层落在 `delivered`（已交付 DSH）按成功算。
 
 ---
 
@@ -269,10 +220,10 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
     python -m pytest -q                 # 全量：提交前、或改了核心代码之后
 
 **三档怎么选**：改文案、纯函数、离线产物这类用例走快档（一分钟上下）；动了模型调用、采集、
-转写、服务运行时的代码，跑慢档那一批（`pytestmark = pytest.mark.slow` 的文件级标记，现在 24 个文件）；
+转写、服务运行时的代码，跑慢档那一批（`pytestmark = pytest.mark.slow` 的文件级标记）；
 拿不准就跑全量（两分半上下，不加 `-m` 时默认就是
 它）。慢档比快档慢在真子进程与真墙钟等待上，跳过它不等于跳过覆盖率 —— 但**被测代码落在慢档
-文件里时必须跑全量**。归位判据（一条用例什么时候算慢）与慢档文件的清单在
+文件里时必须跑全量**。归位判据（一条用例什么时候算慢）与慢档清单的现算命令在
 `docs/service.md` 第 7 章「快慢分档」，标记 `slow` 注册在 `pyproject.toml` 的
 `[tool.pytest.ini_options]`（带 `--strict-markers`：代码里 `pytest.mark.xxx` 用到的标记名
 必须先在 `markers` 里注册，没注册就当场报 unknown mark）。
@@ -318,10 +269,10 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 自检：
 
     cd web
-    npm test           # vitest run，21 个文件 511 个用例
+    npm test           # vitest run
     npm run typecheck  # 两条 tsc --noEmit -p，各查各的 project
 
-`npm run build` 里已经含 `npm run typecheck`，所以构建过一次就不必再单独跑；只改类型不看产物时跑 `typecheck` 更快。契约正文在 `docs/contract.md`，可机读基准（41 个 golden 样本与掩码规则）在 `contract/`，前端工程的五个脚本（`dev` / `typecheck` / `build` / `preview` / `test`）与其余说明在 `web/README.md`。
+`npm run build` 里已经含 `npm run typecheck`，所以构建过一次就不必再单独跑；只改类型不看产物时跑 `typecheck` 更快。契约正文在 `docs/contract.md`，可机读基准（golden 样本与掩码规则）在 `contract/`，前端工程的五个脚本（`dev` / `typecheck` / `build` / `preview` / `test`）与其余说明在 `web/README.md`。
 
 ---
 
@@ -329,10 +280,9 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 
 - **界面心跳**（`heartbeat.interval_seconds`，可配 1–60 秒，默认 10 秒）管**失联横幅**：
   界面按这个周期问一次服务，问不着就挂横幅。
-- **服务侧采集帧心跳**（`max(2.0s, 3 × frame_interval)` = **2.0 秒**）管 **`recording_alive`**：
-  它看的是采集帧还在不在来，用来报出「HTTP 通着但录音停了」。刚按「开始录音」的那一小段
-  （开场窗口，自本场开始起算、取同一只窗口）第一帧还没到时先报 `null`（还不知道，不算停），
-  窗口过了仍一帧没有才如实报 `false`；界面上判「采集已停止」还要**连续两次**读到 `false`
-  才弹横幅，单次读数不弹 —— 刚开场的那一阵不会再误报。
+- **服务侧采集帧心跳**（2.0 秒窗口）管 **`recording_alive`**：看的是采集帧还在不在来，
+  用来报出「HTTP 通着但录音停了」。刚按「开始录音」的那一小段（开场窗口）第一帧还没到时
+  先报 `null`（还不知道，不算停），窗口过了仍一帧没有才如实报 `false`；界面上判
+  「采集已停止」还要**连续两次**读到 `false` 才弹横幅，单次读数不弹。
 
-两者互不参与对方的计算：收尾预算也不拿这两个周期做任何计算。
+两者互不参与对方的计算：收尾预算也不拿这两个周期做任何计算。判据细节见 `docs/state.md` 第 4 章。

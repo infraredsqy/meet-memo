@@ -39,7 +39,7 @@ from meeting import cli as cli_module
 from meeting.cli import EXIT_OK, EXIT_REJECTED
 from meeting.service import app as service_app
 
-#: 慢档标记：`pytest.mark.slow` 的归位判据与实测数据见 `docs/service.md` 第 7 章。
+#: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md` 第 7 章。
 pytestmark = pytest.mark.slow
 
 DEFAULT_PORT = 8765

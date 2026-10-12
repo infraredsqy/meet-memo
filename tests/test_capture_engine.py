@@ -35,7 +35,7 @@ from meeting.capture.engine import (
 )
 from meeting.session import archive_name
 
-#: 慢档标记：`pytest.mark.slow` 的归位判据与实测数据见 `docs/service.md` 第 7 章。
+#: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md` 第 7 章。
 pytestmark = pytest.mark.slow
 
 #: 一块 0.1 秒的 16k / 单声道 / int16 样本（3200 字节；一秒 32000 字节的由来）

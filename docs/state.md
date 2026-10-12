@@ -135,7 +135,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 - `summary_default_window`（`311f84f5`）是快速总结的缺省档：四档取值 `5m` / `15m` / `30m` / `full`，界面的默认预选随它走 —— 服务是唯一来源，前端不自造第二份。
 - `summary_preset_names` / `summary_active_preset`（会中切模型）是预设名单与当前指针：名单是配置 `summary.presets_json` 里每套预设的 `name`（按配置里的次序）；指针是**生效值**，指向的名字不在名单里时报空串（读的一侧回落平铺四键，存量配置零迁移）。每套预设的端点与密钥**不进快照** —— 界面换哪一套只看名字。
 - `devices` 的两个子键 `mic` / `loopback`（`dca4539b` 定名）与配置键 `devices.mic` / `devices.loopback` 逐字同名（去掉前缀），取当前生效值：值为**设备名字符串**，没配就是 `null`（按默认策略挑：mic 先挡掉 `CABLE Output` 这类抓取型虚拟端点，再拿**系统默认输入端点**的名字凑同名候选、按 host API 排序试开；loopback 优先 `CABLE Input` 且不含 `16ch`）。空值形状两端一致 —— 配置文件里也写 `null`。
-- **这两个子键说的是「用户配的意图」，`sources[*].device_name` 说的是「探测实际落到的那个设备」**（`dca4539b` 的契约陈述，同一段也写在 `docs/contract.md` 第 2 章与 `docs/service.md` 第 8 章）：配了却没命中任何端点时**不报错、也不改写快照里的名字**，按「精确名 → `CABLE Input`（不含 `16ch`）→ 系统默认输出」这条回退顺序走，主 log 一行 `WARNING`（V1 就是这个行为，见 `meeting/capture/devices.py` 的 `loopback_candidates()`）。想知道这一场到底在录哪个设备，看 `sources[*].device_name`。
+- **这两个子键说的是「用户配的意图」，`sources[*].device_name` 说的是「探测实际落到的那个设备」**（`dca4539b` 的契约陈述，同一段也写在 `docs/contract.md` 的 settings 那一段）：配了却没命中任何端点时**不报错、也不改写快照里的名字**，按「精确名 → `CABLE Input`（不含 `16ch`）→ 系统默认输出」这条回退顺序走，主 log 一行 `WARNING`（V1 就是这个行为，见 `meeting/capture/devices.py` 的 `loopback_candidates()`）。想知道这一场到底在录哪个设备，看 `sources[*].device_name`。
 - 这里读到的是**运行期生效值**。`pending_restart` 那一档的键改了要重启才在快照里可见；热读键写盘那一刻就换过来 —— `alarm.sound`、`asr.*` 五个，设置抽屉那四项（两个设备键位、`heartbeat.interval_seconds`、`summary.default_window`，`311f84f5`），加上会中切模型两键（`summary.presets_json` / `summary.active_preset`），详见 `docs/service.md` 第 4 章的键态两分。
 
 `transcript` 的语义（四格都由转写后端刷新，判定权收在 `meeting/service/runtime_facts.py` 的 `_refresh_transcript_snapshot()` 一处）：
@@ -433,5 +433,5 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 - 会中与会后两套模型的选型、四个 `post.*` 键的取值依据与本机实测：`docs/asr-backends.md`
 - 界面怎么画这四态：`docs/ui-design.md`
 - 前端工程怎么跑、怎么构建：`web/README.md`
-- 契约的可机读基准（41 个 golden 样本与掩码规则）：`contract/README.md`
+- 契约的可机读基准（golden 样本与掩码规则）：`contract/README.md`
 - 索引：`docs/spec.md`

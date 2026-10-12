@@ -7,4 +7,15 @@
 > 测试档：full
 
 节点验收用全量档：服务端走 `python -m pytest -q`（含慢档），前端走 `cd web && npm test` 与
-`npm run typecheck`，`npm run build` 收尾。选型依据见 README 第 6 节的快/慢/全三档纪律。
+`npm run typecheck`，`npm run build` 收尾。选型依据见 README「默认位置与回归入口」一节的快/慢/全三档纪律。
+
+## 文档纪律
+
+- **文档只写现状与判据，不写过程物**：按节点逐条追加的变更史、「本轮实测」读数、完成标记一律
+  不进 md——git 是日志。能现算的数不存档：测试数用 `pytest --collect-only` 现算、契约样本数
+  现数、慢档清单用 `docs/service.md` 第 7 章那条命令现算。
+- **一处事实只住一处**：改一处不用动第二处。镜像与速查一律改成指向正本的指针——契约样本与
+  掩码的正本在 `contract/README.md`，界面口径的正本在 `docs/ui-design.md`，配置键的正本在
+  `docs/service.md` 第 4 章，心跳判据的正本在 `docs/state.md` 第 4 章。
+- **指针存种子不存坐标**：跨文档只指到文件；条款级引用只用稳定编号（设计意图条号、R 号、
+  V1 格子号），不写「第 X 章 / 第 X 节」。存量章节号引用随改随修，不专项翻新。

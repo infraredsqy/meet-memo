@@ -6,7 +6,7 @@
 >
 > 代码落点：路由只在 `meeting/service/routes.py` 注册一次；快照的唯一产出形态是 `meeting/state.py` 的 `Snapshot.to_dict()`；SSE 帧由 `meeting/service/hub.py` 编码；动作与 `code`/`detail` 在 `meeting/service/runtime.py`（`ServiceRuntime` 的方法体按职责拆在各 `runtime_*.py` mixin 模块里，`runtime.py` 只留构造、状态权威核心与 re-export）；三道本地防线在 `meeting/service/app.py` 的 `_LocalGuardsMiddleware`；golden 样本与掩码在 `contract/fixtures/` 与 `tests/_contract.py`。
 >
-> **这本册子的编号**：要求落在第 1–7 章（总则、快照 schema、SSE、动作、心跳、客户端义务、保留登记）；后面接了三章 —— 第 8 章讲 fixtures 与掩码、第 9 章讲复核手法、第 10 章回指索引。**第 8、9 两章是附录**（读契约正文用不上），第 10 章与其余分册的「相关文档」同形。**第 7 章登记表里还剩下的那几条一律没有实现**，界面按「能力还没进来」处理；会中总结那两样（`summarize` 动作、`GET /api/summaries`）已经落地，正文在第 4 章，登记表里只留一句「不做」与去处；**单场状态 `GET /api/sessions/{id}` 也已落地**（会后进度读数节点 `a9affaa8`），正文在第 4.9 节、登记表里不再列它。
+> **这本册子的编号**：要求落在第 1–7 章（总则、快照 schema、SSE、动作、心跳、客户端义务、保留登记）；后面接了三章 —— 第 8 章讲 fixtures 与掩码、第 9 章讲复核手法、第 10 章回指索引。**第 8、9 两章是附录**（读契约正文用不上），第 10 章与其余分册的「相关文档」同形。**第 7 章登记表里还剩下的那几条一律没有实现**，界面按「能力还没进来」处理；会中总结那两样（`summarize` 动作、`GET /api/summaries`）与单场状态 `GET /api/sessions/{id}` 已经落地，正文在第 4 章，登记表里只留一句「不做」与去处。
 
 ## 章节目录
 
@@ -27,7 +27,7 @@
 
 **单一契约声明**：服务对外只有**一个**契约面，就是这一份。`GET /api/state` 的 body、SSE 的 `snapshot` 帧、SSE 的 `state` 帧**三者是同一个函数出的同一份东西**（`ServiceRuntime.to_dict()` → `Snapshot.to_dict()`），不存在「快照有两套形状」这回事。界面拿到哪一份都可以按第 2 章逐键读。
 
-**口径一句话**：**十三条 `/api/*` + `/debug` + 静态挂载**（`sessions` / `dirs` 两只读端点来自工作台收编节点 e2f6166b，单场状态 `sessions/{id}` 来自会后进度读数节点 `a9affaa8`，设备清单 `devices` 来自设置抽屉节点 `311f84f5`，形状分别在 4.8、4.9 与 4.10；会议资料四条来自资料节点 285bf58c，形状在 4.12）。
+**口径一句话**：**十三条 `/api/*` + `/debug` + 静态挂载**（`sessions` / `sessions/{id}` / `dirs` / `devices` 的形状分别在 4.8、4.9 与 4.10；会议资料四条在 4.12）。
 
 | 路径 | 方法 | 给什么 |
 |---|---|---|
@@ -71,7 +71,7 @@
 
 **排障说明（`[::1]` 的 403）**：这条规则是**有意为之**的现状，行为符合预期。浏览器打 `http://127.0.0.1:8765` 或 `http://localhost:8765` 都会给出允许的 `Host`；只有手工指定 `http://[::1]:8765` 才会撞上 403。撞上时的正确处置是**换成 `127.0.0.1` 或 `localhost` 再访问**，不要去改 Host 校验的允许集合 —— 服务只绑在 IPv4 回环上，`[::1]` 本来也连不上这个监听 socket。
 
-**这一档的 fixtures**：`contract/fixtures/snapshot/*.json`（五档快照）、`contract/fixtures/sse/*.json`（五帧）、`contract/fixtures/actions/*.json`（十七个：成功七档 `start-ok` / `stop-ok` / `mute-session-ok` / `settings-update-ok` / `summarize-ok` / `workspace-open-ok` / `workspace-remove-ok`；失败十档 = 九个 `code` 各一 + 未知动作名那一档，其中 `summary_failed` 这份是**缺键**那一档）、`contract/fixtures/heartbeat/*.json`（两个）、`contract/fixtures/summaries/*.json`（一个）、`contract/fixtures/sessions/*.json`（四个）、`contract/fixtures/devices/*.json`（一个）、`contract/fixtures/materials/*.json`（四个，第 4.12 章）。
+**这一档的 fixtures**：`contract/fixtures/` 下的样本，逐档清单、采集路径与再生成办法见 `contract/README.md`。
 
 ## 2. 快照 schema
 
@@ -303,7 +303,7 @@ X-Meeting-Service: 1
 | `post_stop` | **停掉正在跑的「生成会后精细稿」**（R28 / b1c6a58e）：**立起取消旗标即回**（受理即回，不等块边界）——那条线程在当前块跑完、下一块开跑前收场，盘上状态由 `run_session` 写成 `interrupted`（终态写入只归它）。正在跑的那一块不掐（引擎是同步推理）；「状态立刻写成被打断」在块边界语义下是「当前块收尾后立刻」。成功体与两个按钮同一信封（`post` 键），多一格 `stopping: true`。范围只有 offline 一档：在飞的是纪要那一趟时**如实拒**（机制两样——那「在跑」的可能是 DSH 侧的会话或 headless 子进程） | `dir`：**可省** —— 停哪一场（在飞的永远只有一场，省略即停它）；给了但指到另一场 → `invalid_setting`(400) |
 | `speaker_rename` | **给一个说话人编号起名**（R10 第四条 / R30）：把 `{key: 名字}` 这一对写进**这一场目录根的人名表** `meeting_speaker_names.json`（形状见 4.11）。**只写这一份表**：不拉离线、不拉纪要、不改已生成的 `meeting_final.md`、不动快照（不提交、不涨 `revision`、不广播）。**任何状态下都可用**——但 `dir` 那一场盘上 `state` 是 `recording` / `draining` 时照 `post_offline` 那套判据按 `invalid_setting`(400) 拒（会中不提供改名，入口只在工作台详情的会后区） | `dir`：**必给**（这一场；校验同 `post_offline` 给 `dir` 那一支，**没有省略语义**）；`key`：**必给**，盘上身份集里的一个键——`mic` / `loopback`，或 `mic:S01` 这种带路前缀的限定名（两路的「1 号」写不出同一个键）；`name`：**必给**，非空字符串（跳过 = 不起名，空名字不落任何状态；重名合法——编号是分开的） |
 
-**`pause` / `resume` / `set_source` / `speaker_rename` 四个动作都没有 golden 样本**：照 `dev_inject` / `reprobe` 的先例，`contract/fixtures/actions/` 里只放成功七档与九个 `code` 的失败档，这四个动作的语义由 `tests/test_pause_actions.py` 与 `tests/test_speaker_names.py` 逐条实测。
+**`pause` / `resume` / `set_source` / `speaker_rename` 四个动作都没有 golden 样本**：照 `dev_inject` / `reprobe` 的先例，`contract/fixtures/actions/` 里只放成功七档与九个 `code` 的失败档，这四个动作的语义由既有测试逐条实测（`tests/test_capture_engine.py` / `tests/test_api_actions.py` / `tests/test_set_source_alerts.py` / `tests/test_speaker_names.py`）。
 
 
 **这两个会后动作的三档拒绝**（都落在既有的 `code` 上，不加新 `code`）：
@@ -395,7 +395,7 @@ X-Meeting-Service: 1
 
 `settings_update` 写的是配置文件，与「这一场录到哪儿」无关，因此**任何状态下都可用**。`mute_session` 只在本场收尾之前可用 —— 收尾完成后本场已无可静音，复位发生在下一场 `start`。`reprobe` 只在**没有场次在跑**的时候可用（`recording` / `alert` 两态回 `already_recording`）：设备在开场前定下来，会中换设备是明文不做的那一档。`summarize` 只在**有场次在跑**的时候可用（它读的是这一场的实时转写），两档失败 503 / 502 的判据见 4.7。会后那两个按钮反过来，只在**这一场收完了**的时候可用：判据不是 `ended.phase` 而是「收尾四步是否都落定」（`post` 停 `waiting` 算落定），因为收尾里有失败步时 `phase` 停在 `draining`、而那一场的会后照样该由人按 —— 拒绝档见 4.3 末尾那张三档清单。`speaker_rename` 与清单维护那两只同档：改的只是这一场目录里的记录，不碰快照、不碰在飞的任何东西，判据落在 `dir` 那一场自己的盘上 `state`（`recording` / `draining` 拒，见 4.11）。
 
-### 4.6 `settings_update`：38 键清单与两档
+### 4.6 `settings_update`：40 键清单与两档
 
 请求的 `args` 就是**「配置点号键名 → 值」的扁平映射**，只有这一层、不按键前缀分组：
 
@@ -768,28 +768,11 @@ R10 第四条 / R30：名字要能改、并且记住。这一只动作 + 4.9 的
 
 **`recording_alive === false` 在界面上要连续两次读数才判「采集已停」**（两拍规则，de899128，只在界面层）：单次 `false` 可能是竞态窗口里的误读，连续计数由界面单一归并点记账（`web/src/live/heartbeat.ts` 的 `applyHeartbeatReading()`），任何非 `false` 读数（`true` / `null` / 失联）把计数清零；冻结判据与横幅判据都只读这一个数。连续计数**不参与服务侧任何计算**（上一段的口径不动），发声判据也不看它 —— 出声照旧只由失联档与快照上的致命级驱动。
 
-### 客户端轮询口径（从 `docs/ui-design.md` 4.5 搬来的原口径）
+### 客户端轮询口径
 
-心跳由**界面**按固定频率（**默认 10 秒，可配 1–60 秒**）向服务要一次应答。应答必须**带服务侧时间戳与录音存活字段** —— 只看「HTTP 通不通」会漏掉「服务还活着、录音线程已卡死」这一类。
+心跳由**界面**按配置周期（默认 10 秒，可配 1–60 秒，见第 6 章第 5 条）向服务要一次应答；应答带服务侧时间戳与录音存活字段，只看「HTTP 通不通」会漏掉「服务还活着、录音线程已卡死」这一类。界面侧的四级本地态（`正常` / `迟到` / `失联` / `已恢复`）及其判据、失联时界面的处置（电平冻结压灰、读数退成 `—`、不把估出来的数据画成在动）、两条「出事了」的话不得同屏、服务重启后的自洽 —— 这些口径的**正本在 `docs/ui-design.md` 的心跳一节**，此处不再各写一份。
 
-| 名字 | 取值 | 判据 |
-|---|---|---|
-| `心跳状态` | `正常` / `迟到` / `失联` / `已恢复` | 按应答里的**服务侧时间戳**（也就是 `server_time`）与本地时钟的时间差算 |
-
-- `正常`：时间差 < 1 个周期。不显示任何东西。
-- `迟到`：时间差 ≥ 1 个周期且 < 2 个周期。弱提示，一行字：`心跳迟到 · 8 秒没收到应答`。**不出声、无横幅。**
-- `失联`：时间差 ≥ 2 个周期。**全局横幅 + 出声**（若开关打开）。
-- `已恢复`：横幅自动消失，状态区旁留一条短记录 30 秒：`已恢复，中断 42 秒`。
-
-**心跳优先级**：失联横幅**盖在任何状态之上**，包括空闲与已结束。
-
-**失联时界面必须做的三件事**（这是口径，照做）：两路电平**冻结 + 压灰**、健康位写 `数据已停`、读数退成 `—`（估出来的那个数字不再顶着）；包络时间戳停在服务最后一次应答的时刻；时长标签改 `最后读数`。**不把估出来的数据继续画成在动** —— 录音已经死掉时界面还在忽悠人，是本项目最不能犯的错。
-
-**两条「出事了」的话不得同屏**：失联横幅说的是「界面看不见服务、整场录音已经中断」，致命级告警横幅说的是「服务还在、某一路没了」。心跳失联下**整块告警区（含致命横幅与它上面的按钮）不出现**，屏幕上关于「出事了」的话只有全屏横幅这一处。
-
-**服务重启后的自洽**：服务重启后界面重新打开时向服务取状态；服务侧**没有**正在进行的会话，界面上工作台首页列出注册表里的那些会并选中 `recent` 那一场（最近一场只从注册表读，`docs/design-intent.md` 第 4 条；未注册的目录一概不上列表）。**界面不自己记状态、不从浏览器本地存储里恢复任何东西**（第 6 章）。
-
-**这一档的 fixtures**：`contract/fixtures/heartbeat/idle.json`（两字段 `null`、空洞账零账）、`contract/fixtures/heartbeat/recording.json`（`recording_alive` 为 `true`、`seconds_since_last_tick` 掩码 0）、`contract/fixtures/heartbeat/no-first-frame.json`（**还没有第一帧**：`top_state` 为 `recording` 而两字段都是 `null` —— 未知档有它自己的样本，界面不再把它等同于「停止」，de899128）、`contract/fixtures/heartbeat/capture-gap.json`（**帧空洞留痕**：`recording_alive` 仍为 `true` 而空洞账有一条 —— 历史事实与当下读数各管一头，gil-stall-hole）。
+**这一档的 fixtures**：`contract/fixtures/heartbeat/idle.json`（两字段 `null`、空洞账零账）、`contract/fixtures/heartbeat/recording.json`（`recording_alive` 为 `true`、`seconds_since_last_tick` 掩码 0）、`contract/fixtures/heartbeat/no-first-frame.json`（**还没有第一帧**：`top_state` 为 `recording` 而两字段都是 `null` —— 未知档有它自己的样本，界面不再把它等同于「停止」）、`contract/fixtures/heartbeat/capture-gap.json`（**帧空洞留痕**：`recording_alive` 仍为 `true` 而空洞账有一条 —— 历史事实与当下读数各管一头）。
 
 ## 6. 客户端义务
 
@@ -799,7 +782,7 @@ R10 第四条 / R30：名字要能改、并且记住。这一只动作 + 4.9 的
 2. **不用浏览器本地存储（`localStorage` / `sessionStorage` / IndexedDB / Cookie）保存会中状态。** 会中状态（哪一态、时长、告警、静音、转写）一律从服务取；刷新、重开、多开看到的都是同一份。界面自己持久化的只能是**纯界面偏好**（例如心跳周期、面板展开与否这一类与服务无关的东西）。
 3. **SSE 重连后以快照重同步**：服务**不重放**断开期间的事件（没有 `Last-Event-ID` 机制），重连后拿到的第一帧必然是完整 `snapshot`，界面据此**整块替换**。收到 `resync: true` 那一帧同样整块替换。
 4. **写请求带必需头**：`POST /api/actions` 必须带 `Content-Type: application/json` **且** `X-Meeting-Service: 1`；会议资料的两条写端点（`POST …/materials` 上传、`DELETE …/materials/{name}` 删除，4.12）必须带 `X-Meeting-Service: 1`。缺了服务回 403 且**不带失败信封**（它没走到端点）。界面的 403 处理要与第 4.2 节的失败块分开。
-5. **心跳按配置周期轮询**：默认 10 秒、可配 1–60 秒（`settings.heartbeat_interval_seconds`）。判定用应答里的 `server_time` 作基准；失联按 5 章的处置做（冻结 + 压灰 + 横幅）。
+5. **心跳按配置周期轮询**：默认 10 秒、可配 1–60 秒（`settings.heartbeat_interval_seconds`）。判定用应答里的 `server_time` 作基准；失联时的界面处置见 `docs/ui-design.md` 的心跳一节（冻结 + 压灰 + 横幅）。
 6. **不自己造派生数据**：包络（`envelope`）与 `bar` 由服务算好推过来，界面**不许自己造**；告警的 `muted` 由服务判定，界面**不算任何抑制窗口**、只按布尔值决定响不响。`recording_alive === false` 的连续两次判停计数（第 5 章的两拍规则）是**对数据字段的确认计数**，与声音无关：响不响照旧只读 `settings.alarm_sound` 与 `alerts.*.muted` 两个布尔（de899128）。
 7. **按 `code` 分派失败画法、按 `detail` 有哪个键显示哪个键**：九个 `code` 固定、`detail` 的档位（尤其是 `capture_unavailable` 四档与 `invalid_setting` 四档）以第 4.4 节为准，**不按 `message` 做字符串匹配**。
 8. **决定响不响的时候，持久化开关与本条告警的 `muted` 一起读。** 这两个字段各管一件事，缺一条读法就会读错：
@@ -813,78 +796,23 @@ R10 第四条 / R30：名字要能改、并且记住。这一只动作 + 4.9 的
 
 ## 7. 保留登记：定名但未实现
 
-**这一章列的东西一个都没有实现。** 它们已经**定名**（名字与形状在节点里讨论过、被引用过），但服务侧眼下没有任何端点、动作或字段承载它们。列在这里的目的有两个：界面与验收脚本知道**将来会有什么、名字叫什么**；以及复核时能一眼确认**这一轮没有顺手实现**。
+**这一章列的东西一个都没有实现。** 它们已经**定名**（名字与形状讨论过、被引用过），但服务侧眼下没有任何端点、动作或字段承载它们。列在这里的目的有两个：界面与验收脚本知道**将来会有什么、名字叫什么**；以及复核时能一眼确认**没有顺手实现**。
 
-**处理方式**：界面与脚本按「能力还没进来」处理 —— 不要探测、不要留死代码分支、不要按这些形状写解析器。等各自归属的节点落地之后，它们**先做进代码、再回写进本文件第 1–6 章**（这一章只管「还没做的」）。
+**处理方式**：界面与脚本按「能力还没进来」处理 —— 不要探测、不要留死代码分支、不要按这些形状写解析器。哪一条落地了，就**先做进代码、再回写进本文件第 1–6 章**（这一章只管「还没做的」）。曾经登记过、后来落地的条目各有去处：会中总结两样（`summarize`、`GET /api/summaries`）在 4.7；单场状态 `GET /api/sessions/{id}` 在 4.9；说话人起名与改名（`speaker_rename`）在 4.11。
 
-**会中总结那两样已经从这一章搬走了**（`1987cb20` phase2）：动作 `summarize` 与 `GET /api/summaries` 在代码里、正文搬进了第 4.7 节，这一章不再列它们。同一轮里**快照键 `summary` 改写成「不做」**：它不再是「将来会有的东西」，而是**明文不做的裁定**，理由与去处见下表那一行。
+| 定名的东西 | 形状（草案） | 现状 |
+|---|---|---|
+| 快照键 `summary` | **不做**：会中总结的结果**不进快照**，结果走 `summarize` 动作的应答体、记录走 `GET /api/summaries`（正文见 4.7） | **明确不做，也不留位**：结果是一过性的视图产物（关掉即消失、不落文件），而快照是**会议的**权威状态；前端契约层的两道硬门（`.strict()` 与「顶层恰好九键」）正是照这条口径立的。`to_dict()` 不产出这个键，顶层键集合恰好是第 2 章那张表 |
+| 转写历史回看 | 中途订阅能不能拿到已经出过的转写行 | **现状是拿不到**：`transcript` 通道只发「订上之后新出的行」，连接时的首帧 `snapshot` 也不带转写正文（`transcript.last_line_at` 只是个时间戳、`buffered_lines` 是计数）。界面在会话中途打开时，**只能显示从那一刻起的新行**，拿不到已有行。会中这些行落在场次目录的 `meeting_transcript_<source>.md` 里，会后那份带说话人编号的稿也住在同一个目录，两样都没有读它们的端点 |
+| 说话人「跳过编号」 | 标记「这个编号不认领」 | **仍在这一章**：跳过 = 不起名，界面上如实显示「待确认」，服务侧没有任何状态承载「不认领」这个标记（尺寸就是「一个小弹窗 + 一处写回 + 一份表」）。起名与改名的那一半已落地，见 4.11 |
 
-**单场状态那一行也搬走了**（会后进度读数节点 `a9affaa8`）：`GET /api/sessions/{id}` 已经做进代码（路由 `/api/sessions/{dir:path}`）、正文搬进了第 4.9 节，这一章的表里不再列它。这一轮同时改对了下面那句「会后产物没有 HTTP 端点」—— 会后那五份产物（四份产物 + 一份逐块账）**仍然住在文件上**，而「这一场跑到哪一档、会后离线跑到第几块」现在由这只只读端点回答。
+**会后产物不在本契约里**：会后离线转写与说话人聚类已经落地，产物住在**场次目录里的文件**上 —— 四份产物：`meeting_offline_transcript_<source>.md`（每路一份的会后精细稿，一行 `[HH:MM] **S01**: 正文`）、`meeting_offline_speakers_<source>.json`（类编号与区间对照表）、`meeting_offline_report.md`、`meeting_offline_status.json`；另一份是**逐块进度账** `meeting_offline_progress.jsonl`（名字与 `meeting_offline_transcript_` 那个前缀对不上，与那四份产物并列平放）。**它们没有各自的 HTTP 端点，快照里也没有对应字段**（要看这一场跑到哪一档、会后离线跑到第几块，读 4.9 那只单场状态端点），本契约的端点口径、快照 schema 与 SSE 帧形状都管不到；要读产物本身，就按场次目录里的文件读，四份产物的字段契约正文在 `meeting/offline/artifacts.py` 的模块说明里、逐块账的在 `meeting/offline/progress.py` 的模块说明里。**两路各落一份、两路不合并**（文件名与限定名 `mic:S01` 里始终带着 `source`）。这一场跑成什么样由 `meeting_offline_status.json` 回答：会后离线由「生成会后精细稿」按钮或 `meeting post` 拉起，跑不跑得成、缺没缺一段写在状态文件与运行报告里。
 
-**说话人名字那一行搬走了一半**（人名节点 `91b6752e`）：起名与改名做进代码（动作 `speaker_rename`、这一场目录根的人名表 `meeting_speaker_names.json`、4.9 的 `speakers` 一格），正文搬进了第 4.11 节；这一行里剩下的「跳过编号」仍列在下面——跳过 = 不起名，界面上如实显示「待确认」，服务侧没有任何状态承载「不认领」这个标记。
-
-| 定名的东西 | 形状（草案） | 归属节点 | 现状 |
-|---|---|---|---|
-| 快照键 `summary` | **不做**：会中总结的结果**不进快照**，结果走 `summarize` 动作的应答体、记录走 `GET /api/summaries`（正文见 4.7） | 手动总结节点（`1987cb20`，已定论） | **明确不做，也不留位**。理由有两条：结果是一过性的视图产物（设计章 2.3「关掉即消失、不落文件」），而快照是**会议的**权威状态；前端契约层的两道硬门（`web/src/contract/snapshot.ts` 的 `.strict()` 与 `contract.test.ts` 的「顶层恰好九键、不许多 `summary`」）正是照这条口径立的。`to_dict()` 不产出这个键，顶层键集合恰好是第 2 章那张表 |
-| `GET /api/sessions` | **已落地**（工作台收编节点 e2f6166b）：形状与现行口径在 4.8 —— 载的是工作区注册表；会后视图的会议选择器建立在这只端点之上，不再把它列作未实现 | 本节点（会后节点沿用，不另开形状） | **路由已注册**：`GET /api/sessions` 在 `all_routes()` 里；`?dir=` 的现场形状也是 4.8 |
-| 转写历史回看 | 中途订阅能不能拿到已经出过的转写行 | **待下游决断（`9e5db89c` / `070b31e0`）** | **现状是拿不到**：`transcript` 通道只发「订上之后新出的行」，连接时的首帧 `snapshot` 也不带转写正文（`transcript.last_line_at` 只是个时间戳、`buffered_lines` 是计数）。界面在会话中途打开时，**只能显示从那一刻起的新行**，拿不到已有行。会中这些行落在场次目录的 `meeting_transcript_<source>.md` 里，会后那份带说话人编号的稿也住在同一个目录，两样都没有读它们的端点 |
-| 说话人名字落盘 / 跳过编号 | 用户给某个编号起名、或标记「这个编号不认领」 | **会后管线（`41465462` / `7c6952e5`）**；名字那一半已由人名节点（`91b6752e`）落地 | **起名与改名已经做进代码、正文搬进了第 4.11 节**（动作 `speaker_rename` + 人名表 `meeting_speaker_names.json` + 4.9 的 `speakers` 一格），这一行里剩下的「跳过编号（记下『这个编号不认领』）」仍在这一章：跳过 = 不起名，界面上如实显示「待确认」，服务侧没有任何状态承载「不认领」这个标记（spec 的尺寸就是「一个小弹窗 + 一处写回 + 一份表」）。会后离线那一层（`7c6952e5`）的对照表照旧只有类编号与每段的起止秒数，名字住在人名表里 |
-
-**会后产物不在本契约里**：会后离线转写与说话人聚类（`7c6952e5`）已经落地，产物住在**场次目录里的文件**上 —— 四份产物：`meeting_offline_transcript_<source>.md`（每路一份的会后精细稿，一行 `[HH:MM] **S01**: 正文`）、`meeting_offline_speakers_<source>.json`（类编号与区间对照表）、`meeting_offline_report.md`、`meeting_offline_status.json`；另一份是**逐块进度账** `meeting_offline_progress.jsonl`（`a9affaa8` 落地的读数文件，名字与 `meeting_offline_transcript_` 那个前缀对不上，与那四份产物并列平放）。**它们没有各自的 HTTP 端点，快照里也没有对应字段**（要看这一场跑到哪一档、会后离线跑到第几块，读 4.9 那只单场状态端点；那条路走的是那份逐块账与状态文件的起止时刻），本契约的端点口径、快照 schema 与 SSE 帧形状都管不到；要读产物本身，就按场次目录里的文件读，四份产物的字段契约正文在 `meeting/offline/artifacts.py` 的模块说明里、逐块账的在 `meeting/offline/progress.py` 的模块说明里。**两路各落一份、两路不合并**（文件名与限定名 `mic:S01` 里始终带着 `source`）。这一场跑成什么样由 `meeting_offline_status.json` 回答：收尾第 4 步的 `post` 不再拉起会后钩子，做完释放显存就如实停在 `waiting`（＝等你动手）；会后离线由「生成会后精细稿」按钮或 `meeting post` 拉起，跑不跑得成、缺没缺一段写在状态文件与运行报告里。
-
-**「暂停」的动作面已经进了契约**（`10770b41`）。R24 / R25（`docs/design-intent.md` 第 8、9 条）要的暂停与「段只表达录了几次」由 `6ea32d8d` 把机制做进引擎：暂停期间写数字静音、**不录内容**、不切段（暂停只进 `session.json` 段账的 `pauses` 区间），会中关掉某一路写静音、**不报 `SourceLost`**。本节点把动作面接上：`pause` / `resume` / `set_source` 三个动作（正文见 4.3 / 4.4 / 4.5）、快照 `session` 的第七子键 `paused`（第 2 章）、fixtures 已随之重生（第 8 章），会中界面那两个入口见 `docs/ui-design.md`。**会中的音频源切换照旧不做**：要录哪几路在开始前定（`mode`），录音期间不切 —— 会中能做的只有「关掉本场在采的那一路」与「把它重新打开」，`set_source` 对不在 `mode` 里的那一路回 `invalid_setting`(400)。
+**会中的音频源切换不做**：要录哪几路在开始前定（`mode`），录音期间不切 —— 会中能做的只有「关掉本场在采的那一路」与「把它重新打开」（`set_source`，4.3），`set_source` 对不在 `mode` 里的那一路回 `invalid_setting`(400)。
 
 ## 8. fixtures 与掩码（附录）
 
-契约的**可机读基准**是 `contract/fixtures/` 下的 41 个 golden 样本。它们一律**出自真实服务路径**，不是手写的。规则、出处与再生成办法写在 `contract/README.md`；这里给读者一份速查。
-
-| 目录 | 样本 | 对应本文件 |
-|---|---|---|
-| `snapshot/` | `idle` / `recording` / `alert` / `ended-done` / `ended-draining`（**5**） | 第 2 章 |
-| `sse/` | `first-snapshot` / `state` / `levels` / `transcript` / `resync-snapshot`（**5**） | 第 3 章 |
-| `actions/` | 成功七档 `start-ok` / `stop-ok` / `mute-session-ok` / `settings-update-ok` / `summarize-ok` / `workspace-open-ok` / `workspace-remove-ok`；失败十档 = 九个 `code` 各一 + 未知动作名那一档，其中 `summary_failed` 这份是**缺键**那一档（预算用尽那一档要一个真等满预算的假端点，由 `tests/test_summary_action.py` 实测）（**17**） | 第 4 章 |
-| `summaries/` | `after-one`（按过一次之后的本场总结记录，**1**） | 第 4.7 节 |
-| `sessions/` | `empty`（空注册表） / `after-open`（登记三档目录之后的清单 + `recent`） / `status-after-run`（单场状态：两份块账 + 状态文件落好之后的那一读） / `status-interrupted`（单场状态的**被打断档**：盘上落 `interrupted` 的那一读，b1c6a58e）（**4**） | 第 4.8 / 4.9 节 |
-| `devices/` | `all`（两路各一份候选端点表；枚举走假件，名字与 `is_default` 是确定值）（**1**） | 第 4.10 节 |
-| `materials/` | `upload-ok` / `after-upload` / `delete-ok` / `missing`（会议资料四条端点：上传成功体、清单三格、删除成功体、取不到的 404 `material_missing`；名字、字节数与 `revision` 是确定值，`added_at` 走 `<iso>`、路径走 `<path>`，资料节点 285bf58c）（**4**） | 第 4.12 节 |
-| `heartbeat/` | `idle` / `recording` / `no-first-frame`（**还没有第一帧**的未知档：`top_state` 为 `recording` 而 `recording_alive` 与 `seconds_since_last_tick` 同为 `null`，de899128）/ `capture-gap`（**帧空洞留痕**：`recording_alive` 为 `true` 而空洞账 `total_count` 为 1，gil-stall-hole）（**4**） | 第 5 章 |
-
-**掩码（`tests/_contract.py` 的 `normalize()`）**：fixtures 由真实服务采集，采集里的墙钟、路径、端口、电平每次都不同，落盘前一律换成**自描述占位符**：
-
-| 掩码的对象 | 占位符 / 处理 |
-|---|---|
-| ISO 时间戳（`started_at` / `since` / `lost_since` / `last_line_at` / `server_time` …） | `<iso>` |
-| 路径（`log_path` / `dir` / `session_dir` / `materials_dir`，以及自由文本里内嵌的绝对路径） | `<path>` |
-| **场次目录名**（`session.id` 与动作失败 `detail.session_id` 的工作区目录名，形状任意） | **`<session-id>`** |
-| 端口 | `<port>` |
-| 服务 URL | `<url>` |
-| 电平（`level_dbfs` / `peak_dbfs` / `dbfs` / `peak` / `bar`） | `<dbfs>` |
-| `envelope` 数组 | **只保结构与长度**：长度不变、逐根换 `<dbfs>`（`bar == envelope[-1]` 的结构断言仍成立） |
-| `elapsed_seconds` 与 `duration_seconds` / `seconds_since_last_tick` / `wall_seconds` / `total_seconds` / `seconds`（走秒的量，含会中总结那次实测耗时、会后逐块的墙钟与帧空洞账的秒数） | `0` |
-| 自由文本里内嵌的 Windows 绝对路径 | 就地替换成 `<path>`（见下例） |
-| **`revision`**（含 SSE 帧级的 `id:`） | **保留真实值** —— 它由固定的迁移与提交次数决定，同样确定 |
-
-场次目录名与路径**分成两个占位符**：`session.id` 在真服务里是**裸目录名**（`260921`），早先它与 `dir` 同掩成 `<path>`，于是「掩码通过」冒充了「真值通过」（前端 schema 曾按路径形状收这一格，线上 `recording` / `alert` / `ended` 三态整份快照解析失败）。占位符现在各说各的形状：读 fixtures 的人从 `<session-id>` 就知道这一格该长什么样，前端契约层也按这个形状收（`sessionIdSchema`）。
-
-有两处**逐字保留**，别当成漏掩码：`sources[*].id`（`mic` / `loopback`）与 `sources[*].label`（`本地` / `远端`）是取值域字面量，掩掉就看不出形状了；`alert.message` / `DrainStep.detail` / 失败 `message` 是给人看的整句，只掩其中的路径，句式原样留着。
-
-**掩码在自由文本里的样子**（真实样本 `actions/fail-draining.json` 的 `error`）：
-
-```
-会后流程启动失败：RuntimeError: 假会后钩子按要求抛错；可复制命令：meeting post <path>；log 路径：<path>
-```
-
-**占位符是自描述的**：带尖括号、看得出是被人换掉的；**真值里不可能出现 `<iso>` / `<path>` 这样的串**，因此比对时不会把占位符和真值混淆。`null` 与 `false` / `true` 一律**不掩码**（它们是语义值），空数组与空对象也不掩码。
-
-**再生成**：改了服务行为之后，跑
-
-```powershell
-python -m pytest tests/test_contract_fixtures.py --regen-contract -q
-```
-
-重写 fixtures（默认模式是逐文件比对、不一致即红）。**掩码的全部目的就是确定性**：同一份代码连跑两次 `--regen-contract` 落盘的字节必须逐字相同。
-
-**默认模式就是漂移测试**：`python -m pytest tests/test_contract_fixtures.py -q` 会重走一遍真实服务路径采集样本，与盘上 fixtures 逐文件比对；服务侧形状一漂移（键改名、字段增删、`detail` 换档）就红，报出「fixtures 是什么、实时采集是什么」。**改了服务行为就重跑 `--regen-contract` 并复核差异** —— fixtures 的 diff 就是契约的 diff。
+契约的**可机读基准**是 `contract/fixtures/` 下的 golden 样本，一律**出自真实服务路径**，不是手写的。样本按目录分档、每档对应本文件哪一章、掩码占位符（`<iso>` / `<path>` / `<session-id>` / `<port>` / `<url>` / `<dbfs>`；`revision` 与取值域字面量逐字保留）与再生成 / 漂移比对的规则与出处，**全部只写在 `contract/README.md` 一处**，这里不再复制一份。速记两条：默认模式（`python -m pytest tests/test_contract_fixtures.py -q`）就是漂移测试 —— 重走真实服务路径采集样本与盘上 fixtures 逐文件比对，服务侧形状一漂移就红；改了服务行为就重跑 `--regen-contract` 并复核差异，fixtures 的 diff 就是契约的 diff。
 
 ## 9. 复核手法
 
@@ -893,14 +821,14 @@ python -m pytest tests/test_contract_fixtures.py --regen-contract -q
 1. **抽一个快照 fixtures 与 `Snapshot.to_dict()` 逐字段对照**：`meeting/state.py` 的 `to_dict()` 是唯一产出形态，顶层九键、`settings` 七键、`session` 七子键、`sources` 九键、`DrainStep` 四键都能逐行对上。`ended` / `session` 两个 `null` 档都能在 `idle` 样本里看一次。
 2. **故意改坏一个键名跑比对测试，确认会红**（验完还原）：例如把 `contract/fixtures/snapshot/recording.json` 里的 `"top_state"` 改成 `"topState"`，`python -m pytest tests/test_contract_fixtures.py -q` 应当报出「与实时采集不一致」。
 3. **任选两条 `detail` 与 `meeting/service/runtime_drain.py` 的实际路径对照**：`already_recording` 三键在 `_already_recording_error()`、`draining` 四键在 `_draining_error()` / `_draining_error_for_dir()`（后者从盘上那一版读 `failed_steps`）。
-4. **确认保留登记章里没有任何端点被顺手实现**：`python -c "from meeting.service.routes import all_routes; print([r.path for r in all_routes()])"` 应当只打出十四条路径（十三条 `/api/*` + `/debug`：`/api/state` / `/api/events` / `/api/heartbeat` / `/api/actions` / `/api/summaries` / `/api/sessions` / `/api/sessions/{dir:path}/materials`（同名两条：GET 清单与 POST 上传） / `/api/sessions/{dir:path}/materials/{name}`（同名两条：GET 取原文件与 DELETE 删除） / `/api/sessions/{dir:path}` / `/api/dirs` / `/api/devices` / `/debug`）；`ACTION_NAMES` 应当有十六个名字（`start` / `stop` / `mute_session` / `settings_update` / `reprobe` / `dev_inject` / `summarize` / `workspace_open` / `workspace_remove` / `post_offline` / `post_minutes` / `post_stop` / `pause` / `resume` / `set_source` / `speaker_rename`），会中总结那一个的正文在第 4.7 节、工作台那三个在第 4.8 节、会后两个按钮与停掉那一趟在第 4.3 节、单场状态那一只在第 4.9 节、设备清单那一只在第 4.10 节、暂停与逐路开关那三个在第 4.3 节、说话人改名那一只在第 4.11 节、会议资料那四条在 4.12 节（它们不是动作、不在 `ACTION_NAMES` 里）。
+4. **确认保留登记章里没有任何端点被顺手实现**：`python -c "from meeting.service.routes import all_routes; print([r.path for r in all_routes()])"` 应当只打出十四条路径（十三条 `/api/*` + `/debug`）；`ACTION_NAMES` 应当有十六个名字（清单见 4.3；会议资料那四条不是动作、不在其中）。
 
 ## 10. 相关文档
 
 - 索引与分册清单：`docs/spec.md`
 - HTTP 面速查（端点、动作表、`code` 表、端口与防线）：`docs/api.md`
 - 状态与推送的现状叙述（四态与迁移、收尾四步与共享预算、`session.json`、告警判定、dev 替身）：`docs/state.md`
-- 界面设计的唯一权威说明（四态、告警分级、心跳本地态、交互清单）：`docs/ui-design.md`（第 4.5 章心跳口径、第 5 章交互清单）
+- 界面设计的唯一权威说明（四态、告警分级、心跳本地态、交互清单）：`docs/ui-design.md`
 - 怎么起服务、配置键、log、退出码、跑测试：`docs/service.md`
 - 后端协议与解析入口：`docs/backend-protocols.md`
 - golden 样本的出处、掩码规则与再生成办法：`contract/README.md`

@@ -1,12 +1,12 @@
 # contract/ —— 双端契约的 golden 样本
 
-> 这个目录是**服务与界面之间那份契约的可机读基准**：`fixtures/` 下的 41 个 JSON 样本一律出自真实服务路径，`tests/test_contract_fixtures.py` 每次跑测试都重走一遍采集、与盘上样本逐字比对，服务侧形状一漂移就红。
+> 这个目录是**服务与界面之间那份契约的可机读基准**：`fixtures/` 下的 JSON 样本一律出自真实服务路径，`tests/test_contract_fixtures.py` 每次跑测试都重走一遍采集、与盘上样本逐字比对，服务侧形状一漂移就红。
 >
 > 契约正文在 `docs/contract.md`（端点口径、快照 schema、SSE 帧形状、动作信封与 `code`/`detail` 表、心跳语义、客户端义务、保留登记）。这个 README 只讲三件事：**样本从哪儿来、掩码怎么打、怎么再生成**。
 >
 > 代码落点：掩码与采集辅助在 `tests/_contract.py`；比对与再生成在 `tests/test_contract_fixtures.py`；再生成开关 `--regen-contract` 注册在 `tests/conftest.py` 的 `pytest_addoption`。
 
-## 1. 样本清单（41 个）
+## 1. 样本清单
 
 | 目录 | 文件 | 采集路径 | 固定的是什么 |
 |---|---|---|---|
