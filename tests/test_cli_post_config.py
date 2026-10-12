@@ -77,6 +77,7 @@ from meeting.cli import (
     EXIT_STARTUP_UNMET,
     post,
 )
+from meeting.offline import minutes_tail as minutes_tail_module
 from meeting.offline import runner as offline_runner
 from meeting.offline.engine import OfflineSegment
 
@@ -296,6 +297,10 @@ def a_minutes_ledger(monkeypatch: pytest.MonkeyPatch) -> MinutesLedger:
 
     ledger.launch_point = spy_launch
     monkeypatch.setattr(registry_module, "resolve_minutes_hook", spy_resolve)
+    # 拆分后真拉起点在 `minutes_tail`（`_announce_minutes` 的函数体在那里解析这个名字），
+    # `offline_runner` 上那格是 re-export 的同一函数 —— 两处一并打桩：net 真拦得住，
+    # 下面的自检（`offline_runner._launch_minutes_implementation is …`）也照旧绿。
+    monkeypatch.setattr(minutes_tail_module, "_launch_minutes_implementation", spy_launch)
     monkeypatch.setattr(offline_runner, "_launch_minutes_implementation", spy_launch)
     return ledger
 

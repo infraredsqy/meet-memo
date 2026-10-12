@@ -856,10 +856,11 @@ def test_an_exploding_offline_run_is_recorded_and_re_raised(
     assert "离线段炸了" in str(written["error"])
     # 离线那一趟没走到尾钩：注入的假启动器一次都没被调到
     assert launcher.calls == []
-    # 注入的假启动器**不落在模块全局上**：`_announce_minutes` 始终是模块自己那一个函数，
-    # 于是一个进程里两条入口并发时谁都不会把对方的替身当成原函数
+    # 注入的假启动器**不落在模块全局上**：`_announce_minutes` 始终是模块自己那一个函数
+    # （定义在 meeting.offline.minutes_tail，runner re-import 的同一对象），于是一个进程里
+    # 两条入口并发时谁都不会把对方的替身当成原函数
     assert offline_runner._announce_minutes.__qualname__ == "_announce_minutes"
-    assert offline_runner._announce_minutes.__module__ == "meeting.offline.runner"
+    assert offline_runner._announce_minutes.__module__ == "meeting.offline.minutes_tail"
 
 
 #: 盘上那一版兜底账里那句**更准的原因**（`engine_load_error` 这个词档只在 `runner` 那一版里）。

@@ -802,7 +802,7 @@ def test_the_offline_runner_keeps_its_own_announce_function(
     )
 
     assert offline_runner._announce_minutes is before
-    assert before.__module__ == "meeting.offline.runner"
+    assert before.__module__ == "meeting.offline.minutes_tail"
     assert before.__qualname__ == "_announce_minutes"
 
 
