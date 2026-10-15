@@ -534,6 +534,86 @@ def test_envelope_bar_equals_the_max_peak_of_its_window():
     assert len(item.envelope) == ENVELOPE_BAR_COUNT
 
 
+def assert_levels_frame_matches_frontend_judge(frame: dict) -> None:
+    """`web/src/contract/sse.ts` 的同一份判据：包络长度恰满、`bar == envelope[-1]`。"""
+    assert len(frame["envelope"]) == ENVELOPE_BAR_COUNT
+    assert frame["bar"] == frame["envelope"][-1]
+
+
+def test_sample_levels_fills_silence_envelope_before_the_first_frame():
+    """开场那一瞬（第一帧电平未到）推出的帧也是合法形状：包络补齐成 15 根静音柱（-100 档）。"""
+    from meeting.state import SessionInfo, sample_levels
+
+    snapshot = new_snapshot()
+    start_recording(
+        snapshot,
+        session=SessionInfo(id="1", dir="d", started_at="t", mode="both"),
+        mode="both",
+    )
+    for frame in sample_levels(snapshot).values():
+        assert_levels_frame_matches_frontend_judge(frame)
+        assert frame["envelope"] == [-100.0] * ENVELOPE_BAR_COUNT, "补的是静音档（bar_default 同一口径）"
+        assert frame["dbfs"] is None and frame["peak"] is None, "瞬时值仍如实报 null"
+    # alert 态同门：活循环在 recording / alert 两态都广播，丢帧的那一路同样补齐
+    snapshot.top_state = "alert"
+    for frame in sample_levels(snapshot).values():
+        assert_levels_frame_matches_frontend_judge(frame)
+
+
+def test_sample_levels_single_channel_off_path_is_legal_at_every_sample():
+    """单路整场：没在录的那一路每个取样点都是合法形状；在录的那一路照常长柱，不按静音处理。"""
+    from meeting.state import SessionInfo, sample_levels
+
+    snapshot = new_snapshot()
+    start_recording(
+        snapshot,
+        session=SessionInfo(id="1", dir="d", started_at="t", mode="mic"),
+        mode="mic",
+    )
+    mic = snapshot.source("mic")
+    frames = {}
+    for second in range(35):  # 跨过窗口滚动，覆盖整场的每个取样点
+        mic.push_level(float(second), dbfs=-30.0, peak=-20.0)
+        frames = sample_levels(snapshot)
+        assert_levels_frame_matches_frontend_judge(frames["mic"])
+        assert_levels_frame_matches_frontend_judge(frames["loopback"])
+        assert frames["loopback"]["envelope"] == [-100.0] * ENVELOPE_BAR_COUNT
+    assert frames["mic"]["envelope"][-1] == -20.0, "逐路判：在录的那一路不补静音"
+
+
+def test_sample_levels_second_session_opening_beat_is_legal():
+    """同一进程连开两场：第二场开场那一拍推出的帧也是合法形状。"""
+    from meeting.state import SessionInfo, sample_levels
+
+    snapshot = new_snapshot()
+    start_recording(
+        snapshot,
+        session=SessionInfo(id="1", dir="d", started_at="t", mode="both"),
+        mode="both",
+    )
+    snapshot.source("mic").push_level(0.0, dbfs=-30.0, peak=-20.0)
+    snapshot.top_state = "ended"  # 第一场收场（stop 落定的终态）
+    # 第二场开场：`start_recording` 把两路包络与柱窗口整组清零，第一帧未到
+    start_recording(
+        snapshot,
+        session=SessionInfo(id="2", dir="d2", started_at="t2", mode="both"),
+        mode="both",
+    )
+    for frame in sample_levels(snapshot).values():
+        assert_levels_frame_matches_frontend_judge(frame)
+        assert frame["envelope"] == [-100.0] * ENVELOPE_BAR_COUNT
+
+
+def test_sample_levels_idle_keeps_the_empty_envelope():
+    """空闲态（还没有场次）：空包络照旧合法，不许被填成满格。"""
+    from meeting.state import sample_levels
+
+    frames = sample_levels(new_snapshot())
+    for frame in frames.values():
+        assert frame["envelope"] == []
+        assert frame["bar"] is None
+
+
 # ---------------------------------------------------------------------------
 # 收尾闭环（成功分支 + 失败分支 + 取消分支）
 # ---------------------------------------------------------------------------

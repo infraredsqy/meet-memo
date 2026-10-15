@@ -773,15 +773,25 @@ def elapsed_seconds(session: SessionInfo, *, monotonic_now: float) -> float:
 
 
 def sample_levels(snapshot: Snapshot) -> dict[str, Any]:
-    """`levels` 帧的 `frames` 部分（4Hz 抽帧的载荷，两路合在一帧里）。"""
+    """`levels` 帧的 `frames` 部分（4Hz 抽帧的载荷，两路合在一帧里）。
+
+    场次在录（`recording` / `alert`）而某一路还没收到过电平帧（开场第一帧未到、
+    单路模式下没在录的那一路）时，该路按「左边没有柱时沿用 `bar_default`」的同一条
+    编码口径补成 15 根静音柱 —— 形状契约（包络长度恰满、`bar == envelope[-1]`）
+    在任何时刻都成立，补齐只发生在产出这一侧；空闲态的空包络照旧原样推出。
+    """
+    active = snapshot.top_state in ("recording", "alert")
     frames: dict[str, Any] = {}
     for item in snapshot.sources:
+        envelope = item.envelope
+        if active and not envelope:
+            envelope = _encode_envelope([None] * ENVELOPE_BAR_COUNT, item.bar_default)
         frames[item.id] = {
             "ts": None,
             "dbfs": item.level_dbfs,
             "peak": item.peak_dbfs,
-            "bar": item.envelope[-1] if item.envelope else None,
-            "envelope": list(item.envelope),
+            "bar": envelope[-1] if envelope else None,
+            "envelope": list(envelope),
         }
     return frames
 
