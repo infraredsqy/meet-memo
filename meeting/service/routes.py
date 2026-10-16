@@ -1,10 +1,12 @@
-"""十五条路由的**唯一注册点**（十四条 `/api/*` + `/debug`；phase2 §3.7 / §3.8 / §3.9 / §3.11 / §3.12；`1987cb20` phase2 加 `summaries`；
+"""十六条路由的**唯一注册点**（十五条 `/api/*` + `/debug`；phase2 §3.7 / §3.8 / §3.9 / §3.11 / §3.12；`1987cb20` phase2 加 `summaries`；
 工作台收编节点 e2f6166b 加 `sessions` / `dirs` 两只读端点与 `workspace_open` / `workspace_remove` 两动作；
 会后进度读数节点 `a9affaa8` 加 `sessions/{dir}` 那只单场状态端点；设置抽屉节点 `311f84f5` 加
 `devices` 那只设备清单端点；人名节点 `91b6752e` 加 `speaker_rename` 那只改名动作；打断会后的
 b1c6a58e 加 `post_stop` 那只停掉动作；资料节点 285bf58c 加会议资料的四条端点
 ——清单 / 上传 / 取原文件 / 删除，都在 `/api/sessions/{dir:path}` 之后那两层路径上，
-注册在单场状态那条**之前**（`{dir:path}` 收得下斜杠，注册在后会抢走资料那几条）。
+注册在单场状态那条**之前**（`{dir:path}` 收得下斜杠，注册在后会抢走资料那几条）；
+本节点（38817ecf）加 `sessions/{dir}/transcripts` 那只稿子正文端点，同一批、同样
+注册在单场状态那条之前。
 
 全应用只在这里注册一次：
 
@@ -18,6 +20,8 @@ b1c6a58e 加 `post_stop` 那只停掉动作；资料节点 285bf58c 加会议资
   - `GET /api/sessions`（工作区注册表：按路径去重的那一份"我这些会"，读盘上注册表文件）；
   - `GET /api/sessions/{id}`（单场状态：这一场此刻跑到哪一档、会后离线跑过几块 / 共几块、
     正在跑哪一路、已经跑了多久；`{id}` 是这一场的目录路径，形状见 `docs/contract.md` 4.9）；
+  - `GET /api/sessions/{id}/transcripts`（稿子正文：两份稿 × 两路各一份，在的给
+    `text`、不在的给 `reason`；寻址与失败口径跟单场状态同一套）；
   - 会议资料四条（资料节点 285bf58c，`{id}` 同样是 URL 编码的场次目录路径；
     语义见 `docs/contract.md` 4.12）：
     - `GET /api/sessions/{id}/materials`（清单：目录就是清单，没有 JSON 记录）；
@@ -206,6 +210,25 @@ def _api_session_status(request: Request) -> Response:
     runtime.bind_from_scope(request.scope)
     try:
         return JSONResponse(runtime.session_status_dict(request.path_params.get("dir")))
+    except ActionError as exc:
+        return _error_response(exc)
+
+
+def _api_session_transcripts(request: Request) -> Response:
+    """这一场的稿子正文：`GET /api/sessions/{id}/transcripts`（会后区的两份稿）。
+
+    两份稿（会中稿 / 会后稿，`docs/design-intent.md` 第 11 条：平级）× 本地 / 远端
+    两路各一份；文件在的那一路给 `text`（正文原样），不在的那一路给 `reason`
+    （缺稿的那一档，缺稿话归界面翻）。`{id}` 与失败口径跟单场状态那一只同一套
+    （404 两档）。与 `GET /api/sessions` 同一档**纯读**：不提交、不涨 `revision`、
+    不广播。
+    """
+    runtime = _runtime_of(request)
+    if runtime is None:  # pragma: no cover - 应用未装配
+        return JSONResponse({"error": "runtime 未装配"}, status_code=500)
+    runtime.bind_from_scope(request.scope)
+    try:
+        return JSONResponse(runtime.session_transcripts_dict(request.path_params.get("dir")))
     except ActionError as exc:
         return _error_response(exc)
 
@@ -721,7 +744,7 @@ async def _debug_page(request: Request) -> Response:
 
 
 def api_routes() -> list[Route]:
-    """十四条 `/api/*` 路由（`/debug` 在 `debug_routes()` 里，同一个模块）。"""
+    """十五条 `/api/*` 路由（`/debug` 在 `debug_routes()` 里，同一个模块）。"""
     return [
         Route("/api/state", _api_state, methods=["GET"]),
         Route("/api/events", _api_events, methods=["GET"]),
@@ -741,6 +764,14 @@ def api_routes() -> list[Route]:
             _api_materials_delete,
             methods=["DELETE"],
         ),
+        # 稿子正文（本节点）：与资料四条同一批、注册在单场状态那条**之前** ——
+        # `{dir:path}` 收得下斜杠，排在前面会把 `/transcripts` 那层路径整个吃进
+        # `{dir}` 里。
+        Route(
+            "/api/sessions/{dir:path}/transcripts",
+            _api_session_transcripts,
+            methods=["GET"],
+        ),
         # 单场状态（会后视图的进度区）：`{dir:path}` 是为了收下 URL 编码的绝对路径
         # ——Windows 上的 `C:\会议\250906` 里那两段反斜杠过不了默认的路径段匹配。
         # 注册在资料四条之后：星形路由按注册顺序匹配，资料那几条先吃自己的路径。
@@ -759,7 +790,7 @@ def debug_routes() -> list[Route]:
 
 
 def all_routes() -> list[Route]:
-    """十五条路由一次给全（十四条 `/api/*` + `/debug`；装配模块只负责把它们挂上应用）。"""
+    """十六条路由一次给全（十五条 `/api/*` + `/debug`；装配模块只负责把它们挂上应用）。"""
     return api_routes() + debug_routes()
 
 

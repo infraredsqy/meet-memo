@@ -11,6 +11,11 @@ import {
 } from '../src/api/sessions';
 import type { OfflineSourceProgress, SessionRow, SessionStatus } from '../src/contract';
 
+/** 一格「没跑过」的纪要读数（`minutes` 格的空档形状，38817ecf）。 */
+function minutesIdle(): SessionStatus['minutes'] {
+  return { state: 'idle', started_at: null, finished_at: null, error: null };
+}
+
 /** 一格「没跑过」的转码工序读数（`transcode` 格的空档形状）。 */
 function transcodeIdle(): SessionStatus['transcode'] {
   return {
@@ -53,6 +58,8 @@ vi.mock('../src/api/sessions', async (importOriginal) => {
     fetchSessions: vi.fn(),
     browseDirs: vi.fn(),
     fetchSessionStatus,
+    // 稿子那一跳（38817ecf）：本文件的用例核的是进度区与逐块行，替身给空应答、不摸真 fetch。
+    fetchSessionTranscripts: vi.fn(async () => ({ dir: '', kinds: [] })),
     // 每只轮询器都是新造的：替身的 start/stop 登记互不串场（用例各拿各的那只）。
     createSessionStatusPoller: vi.fn((registered: unknown) => {
       onTick = registered as (tick: unknown) => void;
@@ -142,6 +149,7 @@ function status(
     has_offline: false,
     post,
     transcode: transcodeIdle(),
+    minutes: minutesIdle(),
     speakers: [],
     offline: {
       ledger: 'meeting_offline_progress.jsonl',

@@ -7,6 +7,11 @@ import {
 } from '../src/home/names';
 import type { SessionStatus } from '../src/contract';
 
+/** 一格「没跑过」的纪要读数（`minutes` 格的空档形状，38817ecf）。 */
+function minutesIdle(): SessionStatus['minutes'] {
+  return { state: 'idle', started_at: null, finished_at: null, error: null };
+}
+
 /** 一格「没跑过」的转码工序读数（`transcode` 格的空档形状）。 */
 function transcodeIdle(): SessionStatus['transcode'] {
   return {
@@ -39,6 +44,7 @@ function statusWith(speakers: SessionStatus['speakers']): SessionStatus {
     has_offline: false,
     post: [],
     transcode: transcodeIdle(),
+    minutes: minutesIdle(),
     offline: {
       ledger: 'meeting_offline_progress.jsonl',
       state: 'idle',

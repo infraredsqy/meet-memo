@@ -2,11 +2,28 @@ import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest';
 import { createElement } from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
 import { WorkspaceHome } from '../src/home/WorkspaceHome';
-import { fetchSessions, browseDirs, fetchSessionStatus } from '../src/api/sessions';
+import {
+  fetchSessions,
+  browseDirs,
+  fetchSessionStatus,
+  fetchSessionTranscripts,
+} from '../src/api/sessions';
 import { postAction } from '../src/api';
 // 这一条**不经 `../src/api`**（那个模块在本文件里被 mock 掉了，类拿到的会是替身）
 import { ActionFailedError } from '../src/api/actions';
-import type { DirsResponse, Ended, SessionRow, SessionStatus, SessionsResponse } from '../src/contract';
+import type {
+  DirsResponse,
+  Ended,
+  SessionRow,
+  SessionStatus,
+  SessionTranscripts,
+  SessionsResponse,
+} from '../src/contract';
+
+/** 一格「没跑过」的纪要读数（`minutes` 格的空档形状，38817ecf）。 */
+function minutesIdle(): SessionStatus['minutes'] {
+  return { state: 'idle', started_at: null, finished_at: null, error: null };
+}
 
 /** 一格「没跑过」的转码工序读数（`transcode` 格的空档形状）。 */
 function transcodeIdle(): SessionStatus['transcode'] {
@@ -65,6 +82,9 @@ vi.mock('../src/api/sessions', async (importOriginal) => {
     fetchSessions: vi.fn(),
     browseDirs: vi.fn(),
     fetchSessionStatus,
+    // 稿子那一跳（38817ecf）：本文件的用例不核它的内容，替身给一份「两份稿都缺」的
+    // 空应答，别让挂载用例摸真 fetch。
+    fetchSessionTranscripts: vi.fn(async () => ({ dir: '', kinds: [] })),
     createSessionStatusPoller: vi.fn((registered: unknown) => {
       onTick = registered as (tick: unknown) => void;
       return poller;
@@ -89,6 +109,7 @@ vi.mock('../src/api/materials', async (importOriginal) => {
 const fetchSessionsMock = vi.mocked(fetchSessions);
 const browseDirsMock = vi.mocked(browseDirs);
 const fetchSessionStatusMock = vi.mocked(fetchSessionStatus);
+const fetchSessionTranscriptsMock = vi.mocked(fetchSessionTranscripts);
 const postActionMock = vi.mocked(postAction);
 
 /** 造一行注册表（空缺全给 null / 无害值）。 */
@@ -127,6 +148,7 @@ export function neverRunStatus(dir: string): SessionStatus {
     has_offline: false,
     post: [],
     transcode: transcodeIdle(),
+    minutes: minutesIdle(),
     speakers: [],
     offline: {
       ledger: 'meeting_offline_progress.jsonl',
@@ -167,12 +189,15 @@ afterEach(() => {
   fetchSessionsMock.mockReset();
   browseDirsMock.mockReset();
   fetchSessionStatusMock.mockReset();
+  fetchSessionTranscriptsMock.mockReset();
   postActionMock.mockReset();
 });
 
 beforeEach(() => {
   // 进度区那一跳的缺省替身：按请求的 dir 给「没跑过会后」的读数；要特定读数自己覆盖。
   fetchSessionStatusMock.mockImplementation(async (dir: string) => neverRunStatus(dir));
+  // 稿子那一跳的缺省替身：给一份「两份稿都缺」的空应答（要特定读数自己覆盖）。
+  fetchSessionTranscriptsMock.mockResolvedValue({ dir: '', kinds: [] });
 });
 
 describe('挂载即取列表（review-2 C1/m2）', () => {
@@ -1166,6 +1191,179 @@ describe('落盘那一小块（d61829f1，ui-design 4.2 二）', () => {
 
     const blocks = renderer.root.findAll((node) => node.props['aria-label'] === '落盘进度');
     expect(textOf(blocks[0] as TestRenderer.ReactTestInstance)).toContain('录音已落盘');
+    await act(async () => {
+      renderer.unmount();
+    });
+  });
+});
+
+
+
+// ---------------------------------------------------------------------------
+// 稿子正文与事后工序链（38817ecf）：默认会中稿、切换换正文、缺稿给那一句；
+// 链上四段与「能不能走」那一行。mount 级接线：取数打在 api/sessions 边界的替身上。
+// ---------------------------------------------------------------------------
+
+/** 一份「录音已结束」的单场读数（链与稿子两块的门槛读数）。 */
+function endedStatus(dir: string): SessionStatus {
+  return {
+    ...neverRunStatus(dir),
+    session_id: '这一场',
+    kind: 'meeting',
+    state: 'ended',
+    date: '2025-09-06',
+    mode: 'both',
+  };
+}
+
+/** 两路正文都在场的稿子应答体（形状照契约 4.13）。 */
+function bothRoads(dir: string): SessionTranscripts {
+  return {
+    dir,
+    kinds: [
+      {
+        kind: 'live',
+        sources: [
+          { source: 'mic', text: '[20:01] 本地一行\n' },
+          { source: 'loopback', text: '[20:02] 远端一行\n' },
+        ],
+      },
+      {
+        kind: 'offline',
+        sources: [
+          { source: 'mic', text: '[00:00] 会后本地一行\n' },
+          { source: 'loopback', reason: 'absent' },
+        ],
+      },
+    ],
+  };
+}
+
+/** 那一块「稿子」（aria-label 定位）的全文。 */
+function srcText(renderer: TestRenderer.ReactTestRenderer): string {
+  const blocks = renderer.root.findAll((node) => node.props['aria-label'] === '稿子');
+  expect(blocks, '界面上该有「稿子」那一块').toHaveLength(1);
+  return textOf(blocks[0] as TestRenderer.ReactTestInstance);
+}
+
+describe('稿子正文与事后工序链（38817ecf）', () => {
+  const dir = 'C:\会议\这一场';
+
+  function mountEnded(transcripts: SessionTranscripts): Promise<TestRenderer.ReactTestRenderer> {
+    fetchSessionsMock.mockResolvedValue(
+      list({ sessions: [row({ dir, state: 'ended', session_id: '这一场' })], recent: dir }),
+    );
+    fetchSessionStatusMock.mockImplementation(async (asked: string) => endedStatus(asked));
+    fetchSessionTranscriptsMock.mockResolvedValue(transcripts);
+    return mountHome();
+  }
+
+  it('默认落在会中稿、两路正文都在场；点「会后稿」之后正文换掉', async () => {
+    const renderer = await mountEnded(bothRoads(dir));
+
+    const first = srcText(renderer);
+    expect(first).toContain('会中稿');
+    expect(first).toContain('[20:01] 本地一行');
+    expect(first).toContain('[20:02] 远端一行');
+    expect(first).not.toContain('会后本地一行');
+
+    await click(renderer, buttonByText(renderer, '会后稿'));
+    const second = srcText(renderer);
+    expect(second).toContain('会后稿');
+    expect(second).toContain('[00:00] 会后本地一行');
+    expect(second).not.toContain('[20:01] 本地一行');
+    // 缺的那一路照常占位，给那句读得懂的缺稿话
+    expect(second).toContain('会后稿还没有远端这一路：按「生成会后精细稿」之后才有。');
+    await act(async () => {
+      renderer.unmount();
+    });
+  });
+
+  it('缺一路（unrecorded）：缺稿那一档照常给出「没有」这一句', async () => {
+    const renderer = await mountEnded({
+      dir,
+      kinds: [
+        {
+          kind: 'live',
+          sources: [
+            { source: 'mic', text: '[20:01] 本地一行\n' },
+            { source: 'loopback', reason: 'unrecorded' },
+          ],
+        },
+        { kind: 'offline', sources: [] },
+      ],
+    });
+
+    const text = srcText(renderer);
+    expect(text).toContain('这一场没有采远端这一路，没有它的会中稿。');
+    await act(async () => {
+      renderer.unmount();
+    });
+  });
+
+  it('工序链：已结束的场次摆出四段与「能不能走」那一行；稿子取失败只在那一块里说', async () => {
+    fetchSessionsMock.mockResolvedValue(
+      list({ sessions: [row({ dir, state: 'ended', session_id: '这一场' })], recent: dir }),
+    );
+    fetchSessionStatusMock.mockImplementation(async (asked: string) => endedStatus(asked));
+    fetchSessionTranscriptsMock.mockRejectedValue(new Error('取不到这一场的稿子：服务没应答'));
+    const renderer = await mountHome();
+
+    const chains = renderer.root.findAll((node) => node.props['aria-label'] === '事后工序');
+    expect(chains).toHaveLength(1);
+    const chainText = textOf(chains[0] as TestRenderer.ReactTestInstance);
+    expect(chainText).toContain('可以走了：这一场眼下没有在跑的活。');
+    expect(chainText).toContain('落盘');
+    expect(chainText).toContain('转码');
+    expect(chainText).toContain('会后转写');
+    expect(chainText).toContain('纪要');
+    // 取稿失败只在稿子那一块里如实说，不顶掉首页的失败块
+    expect(srcText(renderer)).toContain('取不到这一场的稿子');
+    expect(renderer.root.findAll((node) => node.props.className === 'fail')).toHaveLength(0);
+    await act(async () => {
+      renderer.unmount();
+    });
+  });
+
+  it('转码在飞：链上那一段给出「暂停」，点了发出 transcode_pause 并带上 dir', async () => {
+    fetchSessionsMock.mockResolvedValue(
+      list({ sessions: [row({ dir, state: 'ended', session_id: '这一场' })], recent: dir }),
+    );
+    fetchSessionStatusMock.mockImplementation(async (asked: string) => ({
+      ...endedStatus(asked),
+      transcode: {
+        state: 'running' as const,
+        in_process: true,
+        started_at: '2025-09-06T22:01:00',
+        finished_at: null,
+        elapsed_seconds: 3.2,
+        current_source: 'mic' as const,
+        sources: [{ source: 'mic' as const, done: 1, total: 8, remaining: 7, current_segment: 2 }],
+      },
+    }));
+    fetchSessionTranscriptsMock.mockResolvedValue(bothRoads(dir));
+    postActionMock.mockResolvedValue({ kind: 'transcode', ok: true, revision: 9, transcode: { kind: 'transcode', dir, pausing: true } });
+    const renderer = await mountHome();
+
+    await click(renderer, buttonByText(renderer, '暂停'));
+    expect(postActionMock).toHaveBeenLastCalledWith('transcode_pause', { dir });
+    await act(async () => {
+      renderer.unmount();
+    });
+  });
+
+  it('还在录的那一场：链与稿子两块都不摆（会后的事还没开始）', async () => {
+    fetchSessionsMock.mockResolvedValue(
+      list({ sessions: [row({ dir, state: 'recording', session_id: '这一场' })], recent: dir }),
+    );
+    fetchSessionStatusMock.mockImplementation(
+      async (asked: string) => ({ ...endedStatus(asked), state: 'recording' as const }),
+    );
+    fetchSessionTranscriptsMock.mockResolvedValue(bothRoads(dir));
+    const renderer = await mountHome();
+
+    expect(renderer.root.findAll((node) => node.props['aria-label'] === '事后工序')).toHaveLength(0);
+    expect(renderer.root.findAll((node) => node.props['aria-label'] === '稿子')).toHaveLength(0);
     await act(async () => {
       renderer.unmount();
     });

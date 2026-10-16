@@ -3,12 +3,14 @@ import {
   dirCreateOkSchema,
   dirsResponseSchema,
   sessionStatusSchema,
+  sessionTranscriptsSchema,
   sessionsResponseSchema,
   type DirCreateOk,
   type DirKind,
   type DirsResponse,
-  type SessionsResponse,
   type SessionStatus,
+  type SessionTranscripts,
+  type SessionsResponse,
 } from '../contract/index';
 import { clampHeartbeatInterval } from './heartbeat';
 
@@ -334,6 +336,72 @@ export async function fetchSessionStatus(
 export type SessionStatusTick =
   | { kind: 'status'; dir: string; status: SessionStatus }
   | { kind: 'error'; dir: string; error: Error };
+
+// ---------------------------------------------------------------------------
+// 稿子正文（4.13）：会后区两份稿的取数（38817ecf）
+// ---------------------------------------------------------------------------
+
+/** 稿子正文那一档服务回的错误（404 两档：目录不在原地 / 不在清单里；失败体是通用信封）。 */
+export class SessionTranscriptsHttpError extends Error {
+  readonly status: number;
+  readonly code: string | null;
+
+  constructor(status: number, code: string | null, raw: string) {
+    super(
+      code !== null
+        ? `取不到这一场的稿子：HTTP ${status} · ${code}`
+        : `取不到这一场的稿子：HTTP ${status}`,
+    );
+    this.name = 'SessionTranscriptsHttpError';
+    this.status = status;
+    this.code = code;
+    this.raw = raw;
+  }
+
+  readonly raw: string;
+}
+
+export interface FetchSessionTranscriptsOptions {
+  fetchImpl?: typeof fetch;
+}
+
+/**
+ * 取一份这一场的稿子正文（4.13；`{id}` 是这一场的目录路径，URL 编码后原样指到这一场）。
+ *
+ * 失败分两档：网络层失败 / 形状不对照 `fetchSessions` 同一套；HTTP 非 200（4.13 的
+ * 两档 404，与单场状态同一套失败口径）回 `SessionTranscriptsHttpError`，`code` 从
+ * 失败信封里读、读不出信封就是 `null` —— 界面按「有没有 `code`」分两句写。
+ */
+export async function fetchSessionTranscripts(
+  dir: string,
+  options: FetchSessionTranscriptsOptions = {},
+): Promise<SessionTranscripts> {
+  const doFetch = options.fetchImpl ?? fetch;
+  const url = `${SESSIONS_URL}/${encodeURIComponent(dir)}/transcripts`;
+  let response: Response;
+  try {
+    response = await doFetch(url, { method: 'GET' });
+  } catch (cause) {
+    throw new SessionsUnavailableError('这一场的稿子', cause);
+  }
+  const text = await response.text();
+  if (!response.ok) {
+    let code: string | null = null;
+    try {
+      const body = JSON.parse(text) as { code?: unknown };
+      if (typeof body?.code === 'string') code = body.code;
+    } catch {
+      // 失败体读不出信封：code 保持 null，只报 HTTP 状态。
+    }
+    throw new SessionTranscriptsHttpError(response.status, code, text);
+  }
+  const raw = parseOk('这一场的稿子')(response, text);
+  const parsed = sessionTranscriptsSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new SessionsProtocolError('这一场的稿子', response.status, text, parsed.error);
+  }
+  return parsed.data;
+}
 
 export interface SessionStatusPollerOptions {
   fetchImpl?: typeof fetch;

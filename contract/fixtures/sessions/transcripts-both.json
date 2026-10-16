@@ -1,0 +1,36 @@
+{
+  "method": "GET",
+  "dir": "<path>",
+  "status": 200,
+  "body": {
+    "dir": "<path>",
+    "kinds": [
+      {
+        "kind": "live",
+        "sources": [
+          {
+            "source": "mic",
+            "text": "[20:01] 大家先过一下上周的结论\n[20:03] 行，那就这么定\n"
+          },
+          {
+            "source": "loopback",
+            "text": "[20:02] 远端这一句\n"
+          }
+        ]
+      },
+      {
+        "kind": "offline",
+        "sources": [
+          {
+            "source": "mic",
+            "text": "[00:00] **S01**: 会后稿本地的一行\n"
+          },
+          {
+            "source": "loopback",
+            "text": "[00:01] **S01**: 会后稿远端的一行\n"
+          }
+        ]
+      }
+    ]
+  }
+}

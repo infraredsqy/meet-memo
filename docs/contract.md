@@ -27,7 +27,7 @@
 
 **单一契约声明**：服务对外只有**一个**契约面，就是这一份。`GET /api/state` 的 body、SSE 的 `snapshot` 帧、SSE 的 `state` 帧**三者是同一个函数出的同一份东西**（`ServiceRuntime.to_dict()` → `Snapshot.to_dict()`），不存在「快照有两套形状」这回事。界面拿到哪一份都可以按第 2 章逐键读。
 
-**口径一句话**：**十四条 `/api/*` + `/debug` + 静态挂载**（`sessions` / `sessions/{id}` / `dirs` / `devices` 的形状分别在 4.8、4.9 与 4.10；会议资料四条在 4.12）。
+**口径一句话**：**十五条 `/api/*` + `/debug` + 静态挂载**（`sessions` / `sessions/{id}` / `dirs` / `devices` 的形状分别在 4.8、4.9 与 4.10；会议资料四条在 4.12；稿子正文在 4.13）。
 
 | 路径 | 方法 | 给什么 |
 |---|---|---|
@@ -38,6 +38,7 @@
 | `/api/summaries` | GET | 本场总结记录（第 4.7 章），**任何状态下都 200** |
 | `/api/sessions` | GET | 工作区注册表（第 4.8 章），**任何状态下都 200** |
 | `/api/sessions/{id}` | GET | 单场状态：这一场此刻跑到哪一档、会后离线跑到第几块（第 4.9 章），**任何状态下都 200**；路径打不到已登记的工作区时 404 |
+| `/api/sessions/{id}/transcripts` | GET | 这一场的稿子正文：两份稿 × 两路各一份（第 4.13 章），**任何状态下都 200**；寻址失败 404（与 4.9 同一套口径） |
 | `/api/dirs` | GET | 目录选择器的一层现场（第 4.8 章），**任何状态下都 200** |
 | `/api/dirs` | POST | 目录选择器里新建目录（第 4.8 章）：在正在浏览的这一层里就地建一个用户起名的目录。**不走动作信封的写端点**，头哨见第 6 章第 4 条 |
 | `/api/devices` | GET | 两路各自的候选设备端点表（第 4.10 章），**任何状态下都 200** |
@@ -623,6 +624,9 @@ POST /api/dirs?dir=<父层路径>&name=<新目录名>
                "current_source": "mic|loopback|null",
                "sources": [{"source": "mic", "done": 1, "total": 2, "remaining": 1,
                             "current_segment": 2}]},
+ "minutes": {"state": "running|done|failed|delivered|idle",
+             "started_at": "<iso>|null", "finished_at": "<iso>|null",
+             "error": "<string>|null"},
  "offline": {"ledger": "meeting_offline_progress.jsonl",
              "state": "running|done|partial|failed|interrupted|idle|ledger", "in_process": false,
              "started_at": "<iso>|null", "finished_at": "<iso>|null",
@@ -663,6 +667,10 @@ POST /api/dirs?dir=<父层路径>&name=<新目录名>
   - `in_process` 另答「**本进程里此刻有没有这道工序**」（`(种类, 场次)` 那一格还活着），与 `offline.in_process` 同一套读法；`elapsed_seconds` 只在本进程在飞时给（跨进程算不出单调钟的差值，如实 `null`）。
   - `sources` 按路各一份：`done`（凭据认账的段数，转好的与空段的和）/ `total`（这一路共几段）/ `remaining` / `current_segment`（此刻在转第几段）。分母是**这一路**的段数（一段 = 一次录制），两路各算各的。
   - **完成判据是逐段凭据**（`meeting_transcode_<source>_<NNN>.json`）：产物文件在那儿不算完成，半截产物没有凭据必被重做；「这段写完了」谁说了算，正本在 `docs/state.md` 第 1 章的转码独立工序那一节。
+- **`minutes`** = **纪要那一层的盘上读数**（38817ecf；判据与读法都在 `meeting/minutes/status.py` 一处，与 `transcode` 那一格同一套「判据读盘、重启后照旧」）：
+  - `state` 照盘上那份状态文件（`meeting_minutes_status.json`）如实答：`running` / `done` / `failed` / `delivered`；状态文件不在、读不动或形状不合契约时如实答 `idle`（这一格是给人看的读数，读不出就不认为有，不挡这只端点，`docs/design-intent.md` 第 6 条）。`delivered` 是「已交付 DSH web 服务端生成」那一档——投递成功即算交付，产物没（或不会）经这一层校验；`done` 说的是「纪要认真校验过、产物在盘上」，两档各说各的。
+  - **「本进程里此刻有没有这一趟」不另立一格**：`post` 清单里 `kind: "minutes"` 的那一项带着 `running`，两处合起来才分得清「真的在跑」与「盘上停着一版 `running`、其实谁都没在跑」（服务重启过那一档）。
+  - `started_at` / `finished_at` 照盘答；盘上 `running` 那一版落的是**空串**收尾戳（`mark_running()` 的口径），这里折成 `null`——应答体里不摆没有数的空格。`error` 是失败原因原话（没失败是 `null`）。
 - **`speakers`** = **这一场盘上的身份集**（人名节点 `91b6752e`，形状正文在 4.11）：每个身份一行，恰好五格 —— `key`（限定键：`mic` / `loopback`，或 `mic:S01` 这种带路前缀的限定名，两路的「1 号」写不出同一个键）、`source`（路）、`label`（人话标签，服务给原文）、`name`（现名；没起过名或人名表读不出时 `null`）、`segments`（离线对照表里这一号出现的段数；路级身份如实 `null`）。**读侧只做结构解析**：人名表缺席或坏了就当作「没有确认过的名字」（名字一格 `null`），不报错、不挡这只端点（`docs/design-intent.md` 第 6 条）。它同样是**给人看的读数**：不作核对判据、不改任何结论，改名走 4.11 的 `speaker_rename`。
 - **读数来自哪里**：这一趟正在本进程里跑 → 用会后那条线程手里的现场（「已经跑了多久」按单调钟当场算）；本进程没在跑这一趟（服务重启过、命令行跑的那一趟、跑完很久了）→ 读场次目录里那份逐块记录。跨进程算不出单调钟的差值，**`elapsed_seconds` 那一格在这种情况下如实给 `null`**。
 - **它是给人看的读数，不带校验性质的含义**：块数、已跑时长这一类错了就错了，任何代码不许拿它们核对、报错、改结论（`docs/design-intent.md` 第 6、7 条；唯一权威是实际录到的音频时长）。这一场跑成什么样**仍由 `meeting_offline_status.json` 与那四份产物回答**，这张应答不替它们下结论。
@@ -766,6 +774,41 @@ R10 第四条 / R30：名字要能改、并且记住。这一只动作 + 4.9 的
 **独立于四态快照**：四条端点都是纯读写文件——不提交、不涨 `revision`、不广播（spec 点名的最小口径）；成功信封里的 `revision` 只是当前版本号（先例是 4.7 的 `summarize`）。快照九键、列表十二键、4.9 的应答体一个字不动。
 
 **这一档的 fixtures**：`contract/fixtures/materials/{upload-ok,after-upload,delete-ok,missing}.json`（四份；形状与出处见 `contract/README.md` 第 1 章）。语义与失败档由 `tests/test_materials.py` 实测（上传 / 重名 / 清洗 / 目录校验拒绝 / 清单 / 取原文件 / 删除 / 流式大文件 / 头哨 / 快照独立）。
+
+### 4.13 稿子正文：`GET /api/sessions/{id}/transcripts`
+
+会后区那两份稿的取数（38817ecf）。**任何状态下都 200**（寻址失败除外）；纯读：不提交、不涨 `revision`、不广播（与 4.7 / 4.8 / 4.9 同一档）。`{id}` 与失败口径跟 4.9 同一套（`{id}` 是 URL 编码的场次目录路径；**404** + 通用失败信封，`code` 表与 4.9 那张完全同表：`session_dir_missing` / `invalid_setting`）。
+
+**两份稿 × 两路各一份**，文件名是上游冻结的契约（`meeting/minutes/chunk.py` 同一套模板，服务按名字找、不猜）：会中稿 `meeting_transcript_<source>.md`（会中那条链逐行追加的临时稿）、会后稿 `meeting_offline_transcript_<source>.md`（会后整段重跑的产物）。两份**平级**（`docs/design-intent.md` 第 11 条——谁也不叫"权威"，实测并不保证哪一份更好），`kinds` 的次序 `live → offline` 与每份里 `sources` 的次序 `mic → loopback` 都是契约。
+
+```json
+{"dir": "<path>",
+ "kinds": [
+   {"kind": "live",
+    "sources": [{"source": "mic", "text": "[20:01] 大家先过一下上周的结论\n…"},
+                {"source": "loopback", "reason": "unrecorded"}]},
+   {"kind": "offline",
+    "sources": [{"source": "mic", "text": "[00:00] **S01**: …"},
+                {"source": "loopback", "reason": "absent"}]}]}
+```
+
+- **每一路只回答两件事之一**（服务不摆没有数的空格，先例是 4.8 的 `workspace` 键）：
+  - **文件在** → 那一格恰好 `source` + `text` 两格，`text` 是正文**原样**（`utf-8` +
+    `errors="replace"`，与纪要切块读稿同一口径——半个坏字节折成替换字符，不让一份稿把
+    整只端点带走）；
+  - **文件不在** → 那一格是 `source` + `reason`：`unrecorded`（这一场 `session.json` 的
+    `mode` 没采这一路——那一截音频从没录过，缺这份稿是天经地义）或 `absent`（采了这一路
+    但盘上没有这一份：会中稿被清 / 会后稿还没生成过 / 那一路没跑成）。`session.json` 都
+    不在的疑似目录按两路全集答（缺稿落 `absent`，不落 `unrecorded`——判不出的事不猜）。
+- **缺稿话归界面翻**（契约章 6：句子归界面，服务只给档位）：`unrecorded` →
+  「这一场没有采远端这一路，没有它的会后稿。」；`absent` → 会后稿「会后稿还没有远端这一路：按『生成会后精细稿』之后才有。」、会中稿「会中稿里没有远端这一路。」。
+- **不筛路、不切页**：一次给全四份（在场的正文一起交），界面上每一份里两路都显示、在
+  会中稿与会后稿之间就地切——正文至多几 MB（本地盘读），一次拿全让切换零等待。
+- **目录读不动（无权限等）与「文件不在」同一档**：按缺稿如实答，不把端点带走（先例是
+  `has_offline_transcript()` 的「读不出来就是不认为有」）。
+- **它不带校验性质的含义**：正文是盘上原文的转手，界面按它显示，不改任何结论。
+
+**这一档的 fixtures**：`contract/fixtures/sessions/transcripts-{both,one-missing,none,dir-missing}.json`（spec 完成判定的四档：两路都有 / 缺一路 / 两路都缺 / 目录不在；形状与出处见 `contract/README.md` 第 1 章）。语义与失败档由 `tests/test_session_transcripts.py` 实测。
 
 ## 5. 心跳
 
@@ -884,7 +927,7 @@ R10 第四条 / R30：名字要能改、并且记住。这一只动作 + 4.9 的
 1. **抽一个快照 fixtures 与 `Snapshot.to_dict()` 逐字段对照**：`meeting/state.py` 的 `to_dict()` 是唯一产出形态，顶层九键、`settings` 七键、`session` 七子键、`sources` 九键、`DrainStep` 四键都能逐行对上。`ended` / `session` 两个 `null` 档都能在 `idle` 样本里看一次。
 2. **故意改坏一个键名跑比对测试，确认会红**（验完还原）：例如把 `contract/fixtures/snapshot/recording.json` 里的 `"top_state"` 改成 `"topState"`，`python -m pytest tests/test_contract_fixtures.py -q` 应当报出「与实时采集不一致」。
 3. **任选两条 `detail` 与 `meeting/service/runtime_drain.py` 的实际路径对照**：`already_recording` 三键在 `_already_recording_error()`、`draining` 四键在 `_draining_error()`。
-4. **确认保留登记章里没有任何端点被顺手实现**：`python -c "from meeting.service.routes import all_routes; print([r.path for r in all_routes()])"` 应当只打出十五条路径（十四条 `/api/*` + `/debug`）；`ACTION_NAMES` 应当有十九个名字（清单见 4.3；会议资料那四条与新建目录那一条不是动作、不在其中）。
+4. **确认保留登记章里没有任何端点被顺手实现**：`python -c "from meeting.service.routes import all_routes; print([r.path for r in all_routes()])"` 应当只打出十六条路径（十五条 `/api/*` + `/debug`）；`ACTION_NAMES` 应当有十九个名字（清单见 4.3；会议资料那四条与新建目录那一条不是动作、不在其中）。
 
 ## 10. 相关文档
 

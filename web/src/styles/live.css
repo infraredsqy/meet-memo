@@ -2211,6 +2211,170 @@ input[type="checkbox"] {
   color: var(--t-alert-ink);
 }
 
+/* 6.7 事后工序链（38817ecf）：落盘 → 转码 → 会后转写 → 纪要，一段一格横向排开；
+   「我现在能不能走」收成链上的一行。家务进度不用告警带或致命色（章 4 的分级只留给
+   「采不到了」级）：失败段只是叉形 + 原话，字与形状两条通道，颜色只是冗余的那一半。 */
+.wschain {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: var(--size-divider) solid var(--t-rule-hair);
+}
+
+.wschain__walk {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--t-ink-mid);
+  font-size: var(--size-small);
+  line-height: var(--line-snug);
+}
+
+.wschain__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wschain__seg {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-1) var(--space-3);
+  border: var(--size-divider) solid var(--t-rule-hair);
+  background: var(--t-sunk);
+}
+
+/* 当前在跑的那一段看得见：左沿一道实心的信号色条（形状之外的冗余通道） */
+.wschain__seg[data-running='true'] {
+  border-color: color-mix(in srgb, var(--t-signal) 45%, transparent);
+  box-shadow: inset 3px 0 0 var(--t-signal);
+}
+
+.wschain__seg[data-failed='true'] .wschain__line {
+  color: var(--t-ink);
+}
+
+.wschain__name {
+  flex: none;
+  color: var(--t-ink-faint);
+  font-size: var(--size-micro);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+}
+
+.wschain__line {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--t-ink-mid);
+  font-size: var(--size-small);
+  line-height: var(--line-snug);
+}
+
+.wschain__act {
+  align-self: center;
+}
+
+/* 6.8 稿子正文（38817ecf，契约 4.13）：两份稿平级（会中稿 / 会后稿），每一份里
+   两路都显示。标签只走字（当前那一份的实心底是选中态的既有语言），两路的正文
+   各一块「亮槽」，缺的那一路照常占位、给一句缺稿话。 */
+.wssrc {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: var(--size-divider) solid var(--t-rule-hair);
+}
+
+.wssrc__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.wssrc__title {
+  flex: none;
+  font-size: var(--size-micro);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+  color: var(--t-ink-faint);
+}
+
+.wssrc__tabs {
+  display: inline-flex;
+  gap: var(--space-1);
+}
+
+.wssrc__tab {
+  padding: 0 var(--space-3);
+  height: var(--size-control-small);
+  border: var(--size-divider) solid var(--t-rule-hair);
+  background: transparent;
+  color: var(--t-ink-mid);
+  font-size: var(--size-small);
+  cursor: pointer;
+}
+
+.wssrc__tab--on {
+  background: var(--t-sunk);
+  color: var(--t-ink);
+  border-color: var(--t-rule-strong);
+}
+
+.wssrc__road {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.wssrc__roadname {
+  margin: 0;
+  color: var(--t-ink-quiet);
+  font-size: var(--size-caption);
+}
+
+.wssrc__text {
+  margin: 0;
+  max-height: 18rem;
+  overflow-y: auto;
+  padding: var(--space-3);
+  background: var(--t-sunk);
+  border: var(--size-divider) solid var(--t-rule-hair);
+  color: var(--t-ink-mid);
+  font-family: var(--t-font-mono);
+  font-size: var(--size-caption);
+  line-height: var(--line-snug);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-variant-numeric: var(--t-num);
+}
+
+.wssrc__note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--t-ink-faint);
+  font-size: var(--size-small);
+  line-height: var(--line-normal);
+}
+
+.wssrc__bad {
+  margin: 0;
+  color: var(--t-alert-ink);
+  font-size: var(--size-small);
+  line-height: var(--line-normal);
+}
+
 /* 6.6 全局「显卡忙不忙」（R31）：全站只有这一格忙/闲，没有全局进度条。
    骨架照 `.m-health`（徽标）：字 + 图形两条通道，颜色只是冗余的那一半。 */
 .gpucell {

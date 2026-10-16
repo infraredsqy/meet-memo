@@ -61,6 +61,12 @@
     "current_source": null,
     "sources": []
   },
+  "minutes": {
+    "state": "idle",
+    "started_at": null,
+    "finished_at": null,
+    "error": null
+  },
   "speakers": [
     {
       "key": "mic",

@@ -114,15 +114,20 @@ export const HEARTBEAT_FIXTURES = ['capture-gap', 'idle', 'no-first-frame', 'rec
 export const DEVICES_FIXTURES = ['all'] as const;
 
 /**
- * 工作区四份样本（4.8 / 4.9）：空注册表、登记三档目录之后的清单 + `recent`、
+ * 工作区样本（4.8 / 4.9 / 4.13）：空注册表、登记三档目录之后的清单 + `recent`、
  * 单场状态（两路逐块进度记录 + 状态文件落好之后的那一读）、单场状态的**被打断档**
- * （b1c6a58e：盘上落 `interrupted` 的那一读）。
+ * （b1c6a58e：盘上落 `interrupted` 的那一读）、稿子正文的四档样本（4.13，38817ecf：
+ * 两路都有 / 缺一路 / 两路都缺 / 目录不在）。
  */
 export const SESSIONS_FIXTURES = [
   'empty',
   'after-open',
   'status-after-run',
   'status-interrupted',
+  'transcripts-both',
+  'transcripts-dir-missing',
+  'transcripts-none',
+  'transcripts-one-missing',
 ] as const;
 
 /**

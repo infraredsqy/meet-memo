@@ -21,10 +21,17 @@ import { postAction } from '../api';
 import { ConfirmDialog } from '../dialogs';
 import { MaterialsPanel } from '../materials/MaterialsPanel';
 import { WorkspaceRail } from './WorkspaceRail';
+import { chainView } from './chain';
 import { drainStripView } from './drain';
+import {
+  DEFAULT_TRANSCRIPT_KIND,
+  kindViewOf,
+  type TranscriptKind,
+} from './transcripts';
 import {
   createSessionStatusPoller,
   fetchSessions,
+  fetchSessionTranscripts,
   SessionStatusHttpError,
   type SessionStatusTick,
 } from '../api/sessions';
@@ -53,7 +60,13 @@ import {
 import { SPEAKER_RENAME_ACTION, duplicateNameHolders, namesRows, type NamesRowView } from './names';
 import { failureFrom, type ActionFailureView } from '../failure';
 import { FailureBlock } from '../failure-ui';
-import type { Ended, SessionRow, SessionStatus, SessionsResponse } from '../contract';
+import type {
+  Ended,
+  SessionRow,
+  SessionStatus,
+  SessionTranscripts,
+  SessionsResponse,
+} from '../contract';
 
 // ---------------------------------------------------------------------------
 // 小料
@@ -233,6 +246,13 @@ export function WorkspaceHome(props: {
   const [chunkRows, setChunkRows] = useState<ChunkRow[]>([]);
   /** 进度区展开没有（纯界面偏好，只活在这一页的内存里，不落本地存储）。 */
   const [progOpen, setProgOpen] = useState(true);
+  // -- 稿子正文（本节点）：两份稿的读数与切在哪一份 -------------------------
+  /** 这一场的稿子正文（`GET /api/sessions/{id}/transcripts`；换选中就清零）。 */
+  const [transcripts, setTranscripts] = useState<SessionTranscripts | null>(null);
+  /** 取稿失败那一行（如实画在稿子那一块里，不顶掉首页的失败块）。 */
+  const [transcriptsError, setTranscriptsError] = useState<string | null>(null);
+  /** 切在哪一份稿（默认会中稿 —— 它一定有；换选中回默认，不落本地存储）。 */
+  const [srcKind, setSrcKind] = useState<TranscriptKind>(DEFAULT_TRANSCRIPT_KIND);
   /** 上一份读数（逐块行按两次读数的差值追加）与「此刻选中的目录」。 */
   const prevStatusRef = useRef<SessionStatus | null>(null);
   const selectionRef = useRef<string | null>(null);
@@ -242,6 +262,29 @@ export function WorkspaceHome(props: {
   if (pollerRef.current === null) {
     pollerRef.current = createSessionStatusPoller((tick) => handleTickRef.current(tick));
   }
+
+  /**
+   * 稿子取数（本节点）：选中那一场的 `GET /api/sessions/{id}/transcripts` 一跳。
+   * 走 ref 转手，effect 与回调闭包永远拿最新的一份逻辑；换场之后的迟到应答不顶掉
+   * 新场那一块（`selectionRef` 判场）。
+   */
+  const loadTranscriptsRef = useRef<(dir: string) => void>(() => undefined);
+  loadTranscriptsRef.current = (dir: string): void => {
+    void fetchSessionTranscripts(dir).then(
+      (data) => {
+        if (selectionRef.current !== dir) return;
+        setTranscripts(data);
+        setTranscriptsError(null);
+      },
+      (error) => {
+        if (selectionRef.current !== dir) return;
+        setTranscripts(null);
+        setTranscriptsError(error instanceof Error ? error.message : String(error));
+      },
+    );
+  };
+  /** 上一跳的会后在飞记号（翻假的那一跳重取稿子——会后稿刚落盘就读得到）。 */
+  const offlineFlyingRef = useRef(false);
 
   // -- 取数 ---------------------------------------------------------------
 
@@ -316,6 +359,12 @@ export function WorkspaceHome(props: {
     }
     prevStatusRef.current = tick.status;
     setStatus(tick.status);
+    // 会后转写从「在飞」翻「收工」的那一跳重取稿子：会后稿刚落盘就读得到（本节点）。
+    const flying = tick.status.offline.in_process;
+    if (offlineFlyingRef.current && !flying) {
+      loadTranscriptsRef.current(tick.status.dir);
+    }
+    offlineFlyingRef.current = flying;
   };
   handleTickRef.current = handleTick;
 
@@ -325,10 +374,16 @@ export function WorkspaceHome(props: {
     selectionRef.current = selected?.dir ?? null;
     prevStatusRef.current = null;
     statusFatalRef.current = false;
+    offlineFlyingRef.current = false;
     setStatus(null);
     setStatusError(null);
     setChunkRows([]);
+    // 稿子那一块跟着换场清零、回到默认（会中稿），并按新场重取一跳。
+    setTranscripts(null);
+    setTranscriptsError(null);
+    setSrcKind(DEFAULT_TRANSCRIPT_KIND);
     if (selected !== null) {
+      loadTranscriptsRef.current(selected.dir);
       void pollerRef.current?.tick(selected.dir);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -438,6 +493,27 @@ export function WorkspaceHome(props: {
       .then(() => {
         setBusy(false);
         reloadAfterAction();
+      });
+  };
+
+  /**
+   * 转码那一段的暂停 / 继续（本节点，工序链上的小钮）：各打一只 `transcode_pause` /
+   * `transcode_resume`，受理即回 —— 暂停在段边界落定、继续摘旗接着前进，链上那一段
+   * 照轮询翻面。失败画在首页的失败块（`draining`：没有在跑的工序可暂停那一档）。
+   */
+  const transcodeAct = (action: 'transcode_pause' | 'transcode_resume'): void => {
+    if (selection === null) return;
+    setFailure(null);
+    setBusy(true);
+    void postAction(action, { dir: selection })
+      .then(
+        () => undefined,
+        (error) => setFailure(failureFrom(error)),
+      )
+      .then(() => {
+        setBusy(false);
+        const dir = selectionRef.current;
+        if (dir !== null) void pollerRef.current?.tick(dir);
       });
   };
 
@@ -576,6 +652,20 @@ export function WorkspaceHome(props: {
   const progMark = prog === null ? null : phaseMark(prog.phase);
   /** 停止入口（R28 / b1c6a58e）：这一场的 offline 在飞时出现在进度区头行。 */
   const stop = postStopView(postJobs, selected?.dir ?? null);
+
+  /**
+   * 事后工序链（本节点）：录音结束过的那一场才摆（链上四段说的都是会后的事）；
+   * 读数要等到单场读数到手、且它说的正是选中这一场 —— 缺一样就先不摆，不编。
+   */
+  const chain =
+    selected !== null &&
+    selected.state === 'ended' &&
+    status !== null &&
+    status.dir === selected.dir
+      ? chainView({ drain, status, selectedDir: selected.dir })
+      : null;
+  /** 稿子那一块的读数（切在哪一份就给哪一份的；取数没回来时是 `null`）。 */
+  const srcView = transcripts === null ? null : kindViewOf(transcripts, srcKind);
 
   /** 一场都没有：右栏让给那张空态（左栏照旧留着「添加工作区」）。 */
   const isEmpty = sessions !== null && sessions.sessions.length === 0;
@@ -777,6 +867,110 @@ export function WorkspaceHome(props: {
               </div>
 
               <div className="wspane__work">
+              {/* 事后工序链（本节点）：落盘 → 转码 → 会后转写 → 纪要，每段一格现状 +
+                  读数，当前在跑的那一段看得见；「我现在能不能走」收成链上的一行。
+                  家务进度不用告警带或致命色（章 4 的分级只留给「采不到了」级）——
+                  失败段只是叉形 + 原话，命令与 log 仍在失败块与落盘那一小块里。 */}
+              {chain !== null && (
+                <div className="wschain" aria-label="事后工序">
+                  <p className="wschain__walk">
+                    <span className={`glyph ${chain.walk.mark}`} aria-hidden="true" />
+                    {chain.walk.line}
+                  </p>
+                  <ol className="wschain__list">
+                    {chain.segments.map((segment) => (
+                      <li
+                        className="wschain__seg"
+                        key={segment.id}
+                        data-seg={segment.id}
+                        data-running={segment.running ? 'true' : undefined}
+                        data-failed={segment.failed ? 'true' : undefined}
+                      >
+                        <span className="wschain__name">{segment.name}</span>
+                        <span className="wschain__line">
+                          {segment.mark === null ? (
+                            <span className="spinner" aria-hidden="true" />
+                          ) : (
+                            <span className={`glyph ${segment.mark}`} aria-hidden="true" />
+                          )}
+                          {segment.line}
+                        </span>
+                        {segment.pause !== null &&
+                         (segment.pause.canPause || segment.pause.canResume) && (
+                          <button
+                            className="btn btn--small btn--ghost wschain__act"
+                            type="button"
+                            disabled={busy}
+                            title={
+                              segment.pause.canPause
+                                ? '在当前段结束后暂停；已转好的段凭凭据保留'
+                                : '从凭据记下的那一段接着转'
+                            }
+                            onClick={() =>
+                              transcodeAct(
+                                segment.pause?.canPause ? 'transcode_pause' : 'transcode_resume',
+                              )
+                            }
+                          >
+                            {segment.pause?.canPause ? '暂停' : '继续'}
+                          </button>
+                        )}
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              )}
+
+              {/* 稿子正文（本节点，契约 4.13）：两份稿平级（会中稿 / 会后稿），每一份里
+                  两路都显示、不做按路筛选；默认会中稿（它一定有），两份都在时可以切。
+                  缺的那一路照常占位，给一句读得懂的缺稿话（服务给 `reason`，句子在这里翻）。 */}
+              {selected.state === 'ended' && (
+                <div className="wssrc" aria-label="稿子">
+                  <div className="wssrc__head">
+                    <span className="wssrc__title">稿子</span>
+                    <div className="wssrc__tabs" role="tablist" aria-label="两份稿切换">
+                      {(['live', 'offline'] as const).map((kind) => (
+                        <button
+                          className={`wssrc__tab${srcKind === kind ? ' wssrc__tab--on' : ''}`}
+                          type="button"
+                          role="tab"
+                          aria-selected={srcKind === kind}
+                          key={kind}
+                          onClick={() => setSrcKind(kind)}
+                        >
+                          {kind === 'live' ? '会中稿' : '会后稿'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {transcriptsError !== null && <p className="wssrc__bad">{transcriptsError}</p>}
+                  {srcView === null ? (
+                    transcriptsError === null && (
+                      <p className="wssrc__note">
+                        <span className="spinner" aria-hidden="true" />
+                        正在取这一场的稿子。
+                      </p>
+                    )
+                  ) : (
+                    <>
+                      {srcView.headline !== null && (
+                        <p className="wssrc__note">{srcView.headline}</p>
+                      )}
+                      {srcView.roads.map((road) => (
+                        <div className="wssrc__road" key={road.source} data-road={road.source}>
+                          <p className="wssrc__roadname">{road.label}</p>
+                          {road.present ? (
+                            <pre className="wssrc__text">{road.text}</pre>
+                          ) : (
+                            <p className="wssrc__note">{road.note}</p>
+                          )}
+                        </div>
+                      ))}
+                    </>
+                  )}
+                </div>
+              )}
+
               {/* 会后进度区（R27）：可展开收缩；展开是逐块行往下刷 + 每路一条的进度条。
                   读数是 `GET /api/sessions/{id}` 那只纯读端点的原文，轮询只在有活动时开。
                   「停着一版 running」按 `in_process` 分层如实画，不替盘上的话下结论。 */}

@@ -11,8 +11,83 @@
 <style>
 /* 本页自带的一点点收口，不构成第二份样式表：
    ① 状态切换的显隐钩子（会后 6 个状态，见 ui-design.md 章 4.5 第二张表）
-   ② 无脚本时的那一条说明
+   ② 工序链与稿子两块的骨架（38817ecf 随新屏改写；与实现 `web/src/styles/live.css`
+     的 `wschain` / `wssrc` 两族同一副语言，这里按 tokens.css 的变量名重抄一遍——
+     设计稿不进构建，变量名按本目录那份 tokens.css 走）
+   ③ 无脚本时的那一条说明
    颜色与字体一律走 token 变量，不写裸 hex、不写裸 font-family。 */
+/* 目录里一场会都没有时，「这是哪场会」这一段没有内容可写，整条带子收起 */
+.is-no-meetings .band--picker { display: none; }
+
+/* 没有场次时，工序链、纪要、附录、稿子都没有对象，整条带子收起 */
+.is-no-meetings .band--progress,
+.is-no-meetings .band--minutes,
+.is-no-meetings .band--appendix,
+.is-no-meetings .band--srcs { display: none; }
+
+/* 工序链（wschain 族）：链上四段一段一格横向排开，「能不能走」收成一行。
+   家务进度不用告警带或致命色——失败段只是叉形 + 原话（章 3.3 的口径）。 */
+.wschain { display: grid; gap: var(--space-2); }
+.wschain__walk {
+  display: flex; align-items: center; gap: var(--space-2); margin: 0;
+  color: var(--color-ink-mid); font-size: var(--size-small); line-height: var(--line-snug);
+}
+.wschain__list {
+  display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4);
+  margin: 0; padding: 0; list-style: none;
+}
+.wschain__seg {
+  display: inline-flex; align-items: baseline; gap: var(--space-2); min-width: 0;
+  padding: var(--space-1) var(--space-3);
+  border: var(--size-divider) solid var(--color-rule-hairline);
+  background: var(--color-sunk);
+}
+.wschain__seg--run {
+  border-color: color-mix(in srgb, var(--color-signal) 45%, transparent);
+  box-shadow: inset 3px 0 0 var(--color-signal);
+}
+.wschain__name {
+  flex: none; color: var(--color-ink-faint); font-size: var(--size-micro);
+  letter-spacing: var(--track-caps); text-transform: uppercase;
+}
+.wschain__line {
+  display: inline-flex; align-items: baseline; gap: var(--space-2); min-width: 0;
+  color: var(--color-ink-mid); font-size: var(--size-small); line-height: var(--line-snug);
+}
+.wschain__act { align-self: center; }
+
+/* 稿子（wssrc 族）：两份稿平级（会中稿 / 会后稿），每一份里两路都显示；
+   当前那一份的实心底是选中态的既有语言，两路的正文各一块亮槽。 */
+.wssrc { display: grid; gap: var(--space-2); }
+.wssrc__head { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
+.wssrc__tabs { display: inline-flex; gap: var(--space-1); }
+.wssrc__tab {
+  padding: 0 var(--space-3); height: var(--size-control-small);
+  border: var(--size-divider) solid var(--color-rule-hairline);
+  background: transparent; color: var(--color-ink-mid);
+  font-size: var(--size-small); cursor: pointer;
+}
+.wssrc__tab--on {
+  background: var(--color-sunk); color: var(--color-ink);
+  border-color: var(--color-rule-strong);
+}
+.wssrc__road { display: grid; gap: var(--space-1); min-width: 0; }
+.wssrc__roadname { margin: 0; color: var(--color-ink-quiet); font-size: var(--size-caption); }
+.wssrc__text {
+  margin: 0; max-height: 18rem; overflow-y: auto; padding: var(--space-3);
+  background: var(--color-sunk); border: var(--size-divider) solid var(--color-rule-hairline);
+  color: var(--color-ink-mid); font-family: var(--font-data); font-size: var(--size-caption);
+  line-height: var(--line-snug); white-space: pre-wrap; word-break: break-word;
+  font-variant-numeric: tabular-nums;
+}
+.wssrc__note {
+  display: flex; align-items: center; gap: var(--space-2); margin: 0;
+  color: var(--color-ink-faint); font-size: var(--size-small); line-height: var(--line-normal);
+}
+
+/* 状态切换的显隐钩子（会后 6 个状态）：放在族样式之后——`.wschain { display: grid }`
+   与 `.state-block { display: none }` 同优先级，靠后取胜；现身那一下对 wschain 给回
+   grid，别让它掉回 block。 */
 .state-block { display: none; }
 .is-running    .state-block--running,
 .is-not-started .state-block--not-started,
@@ -20,15 +95,11 @@
 .is-empty      .state-block--empty,
 .is-failed     .state-block--failed,
 .is-no-meetings .state-block--no-meetings { display: block; }
-
-/* 目录里一场会都没有时，「这是哪场会」这一段没有内容可写，整条带子收起 */
-.is-no-meetings .band--picker { display: none; }
-
-/* 没有场次时，进度、纪要、附录、两条转写都没有对象，整条带子收起 */
-.is-no-meetings .band--progress,
-.is-no-meetings .band--minutes,
-.is-no-meetings .band--appendix,
-.is-no-meetings .band--srcs { display: none; }
+.is-running     .wschain.state-block--running,
+.is-not-started .wschain.state-block--not-started,
+.is-done        .wschain.state-block--done,
+.is-empty       .wschain.state-block--empty,
+.is-failed      .wschain.state-block--failed { display: grid; }
 
 /* 顶栏那句状态说明在 390 下排不下（会绕到刷新按钮旁边去），窄屏收掉；
    状态名与它下面的整页内容已经把这件事说清了 */
@@ -123,68 +194,75 @@
     </section>
 
     <!-- ====================================================================
-         进度：固定五步，顺序即流程顺序（主位第 2 项：能不能去睡觉的答案）
+         事后工序链（38817ecf 随新屏改写）：落盘 → 转码 → 会后转写 → 纪要，
+         一段一格横向排开，每段给现状与读数（说人话，不摆机器对），当前在跑的
+         那一段看得见（左沿一道实心的信号色条）；「我现在能不能走」收成链上的
+         一行。链下那一块细读数（逐块行、每路的进度条）住在工作台详情的会后
+         进度区（wsprog 族，章 3.3），这里不重复。
          ==================================================================== -->
     <section class="band band--progress">
       <div class="band__head">
-        <h2 class="band__title" id="progress-title">跑到哪一步了</h2>
-        <span class="band__note" id="progress-note">整场会后已跑 1 小时 50 分</span>
+        <h2 class="band__title" id="progress-title">这一场的事后工序</h2>
+        <span class="band__note" id="progress-note">落盘 → 转码 → 会后转写 → 纪要</span>
       </div>
       <div class="band__body">
 
-        <!-- 五步：等待 / 进行中 / 已完成 / 失败 / 待你处理 -->
-        <!-- 四格之间不留空白文本节点：.step 是 grid，空白会变成匿名的格子占位，
-             真的那一格就被挤到下一行去（下面每一行都紧凑成一行写完） -->
+        <!-- 进行中：转码与转写都已收工、纪要正在生成；链上「能不能走」点名先别关机 -->
+        <div class="wschain state-block state-block--running">
+          <p class="wschain__walk"><span class="glyph glyph--rec" aria-hidden="true"></span>先别关机：还有活没跑完；关掉页面不影响，服务照跑。</p>
+          <ol class="wschain__list">
+            <li class="wschain__seg"><span class="wschain__name">落盘</span><span class="wschain__line"><span class="glyph glyph--done" aria-hidden="true"></span>录音已落盘</span></li>
+            <li class="wschain__seg"><span class="wschain__name">转码</span><span class="wschain__line"><span class="glyph glyph--done" aria-hidden="true"></span>已完成</span></li>
+            <li class="wschain__seg"><span class="wschain__name">会后转写</span><span class="wschain__line"><span class="glyph glyph--done" aria-hidden="true"></span>已完成</span></li>
+            <li class="wschain__seg wschain__seg--run"><span class="wschain__name">纪要</span><span class="wschain__line"><span class="spinner" aria-hidden="true"></span>正在生成</span></li>
+          </ol>
+        </div>
 
-        <!-- 进行中用的是这一份：前三步到齐、第三步正在跑、后两步等着 -->
-        <ol class="steps state-block state-block--running">
-          <li class="step step--done"><span class="glyph glyph--check" aria-hidden="true"></span><span class="step__name">离线转写</span><span class="step__state">已完成</span><span class="step__time">38 分</span></li>
-          <li class="step step--done"><span class="glyph glyph--check" aria-hidden="true"></span><span class="step__name">说话人聚类</span><span class="step__state">已完成 · 聚出 4 个编号</span><span class="step__time">16 分</span></li>
-          <li class="step step--run"><span class="spinner" aria-hidden="true"></span><span class="step__name">纪要生成</span><span class="step__state">进行中 · 已跑 1 小时 12 分</span><span class="step__time">—</span></li>
-          <li class="step step--wait"><span class="glyph glyph--idle" aria-hidden="true"></span><span class="step__name">名字确认</span><span class="step__state">等待</span><span class="step__time">写完纪要才轮到它</span></li>
-          <li class="step step--wait"><span class="glyph glyph--idle" aria-hidden="true"></span><span class="step__name">收尾</span><span class="step__state">等待</span><span class="step__time">—</span></li>
-        </ol>
+        <!-- 还没开始：只有落盘收了场，后面三段把各自的入口写在句子里 -->
+        <div class="wschain state-block state-block--not-started">
+          <p class="wschain__walk"><span class="glyph glyph--idle" aria-hidden="true"></span>可以走了：这一场眼下没有在跑的活。</p>
+          <ol class="wschain__list">
+            <li class="wschain__seg"><span class="wschain__name">落盘</span><span class="wschain__line"><span class="glyph glyph--done" aria-hidden="true"></span>录音已落盘</span></li>
+            <li class="wschain__seg"><span class="wschain__name">转码</span><span class="wschain__line"><span class="glyph glyph--idle" aria-hidden="true"></span>还没跑过</span></li>
+            <li class="wschain__seg"><span class="wschain__name">会后转写</span><span class="wschain__line"><span class="glyph glyph--idle" aria-hidden="true"></span>还没跑过（按「生成会后精细稿」起）</span></li>
+            <li class="wschain__seg"><span class="wschain__name">纪要</span><span class="wschain__line"><span class="glyph glyph--idle" aria-hidden="true"></span>还没跑过（按「生成纪要」起）</span></li>
+          </ol>
+        </div>
 
-        <!-- 会后还没开始：五步全停在等待，标题换成起点态那句 -->
-        <ol class="steps state-block state-block--not-started">
-          <li class="step step--wait"><span class="glyph glyph--idle" aria-hidden="true"></span><span class="step__name">离线转写</span><span class="step__state">等待</span><span class="step__time">—</span></li>
-          <li class="step step--wait"><span class="glyph glyph--idle" aria-hidden="true"></span><span class="step__name">说话人聚类</span><span class="step__state">等待</span><span class="step__time">—</span></li>
-          <li class="step step--wait"><span class="glyph glyph--idle" aria-hidden="true"></span><span class="step__name">纪要生成</span><span class="step__state">等待</span><span class="step__time">—</span></li>
-          <li class="step step--wait"><span class="glyph glyph--idle" aria-hidden="true"></span><span class="step__name">名字确认</span><span class="step__state">等待</span><span class="step__time">—</span></li>
-          <li class="step step--wait"><span class="glyph glyph--idle" aria-hidden="true"></span><span class="step__name">收尾</span><span class="step__state">等待</span><span class="step__time">—</span></li>
-        </ol>
+        <!-- 已完成：四段全勾 -->
+        <div class="wschain state-block state-block--done">
+          <p class="wschain__walk"><span class="glyph glyph--idle" aria-hidden="true"></span>可以走了：这一场眼下没有在跑的活。</p>
+          <ol class="wschain__list">
+            <li class="wschain__seg"><span class="wschain__name">落盘</span><span class="wschain__line"><span class="glyph glyph--done" aria-hidden="true"></span>录音已落盘</span></li>
+            <li class="wschain__seg"><span class="wschain__name">转码</span><span class="wschain__line"><span class="glyph glyph--done" aria-hidden="true"></span>已完成</span></li>
+            <li class="wschain__seg"><span class="wschain__name">会后转写</span><span class="wschain__line"><span class="glyph glyph--done" aria-hidden="true"></span>已完成</span></li>
+            <li class="wschain__seg"><span class="wschain__name">纪要</span><span class="wschain__line"><span class="glyph glyph--done" aria-hidden="true"></span>已完成</span></li>
+          </ol>
+        </div>
 
-        <!-- 失败态：失败那一步打叉 + 原因，后面几步停在等待并写明为什么 -->
-        <ol class="steps state-block state-block--failed">
-          <li class="step step--fail"><span class="glyph glyph--alert" aria-hidden="true"></span><span class="step__name">离线转写</span><span class="step__state">失败 · 音频文件被截断</span><span class="step__time">跑了 38 分</span></li>
-          <li class="step step--wait"><span class="glyph glyph--idle" aria-hidden="true"></span><span class="step__name">说话人聚类</span><span class="step__state">等待 · 上一步失败，先修它</span><span class="step__time">—</span></li>
-          <li class="step step--wait"><span class="glyph glyph--idle" aria-hidden="true"></span><span class="step__name">纪要生成</span><span class="step__state">等待 · 上一步失败，先修它</span><span class="step__time">—</span></li>
-          <li class="step step--wait"><span class="glyph glyph--idle" aria-hidden="true"></span><span class="step__name">名字确认</span><span class="step__state">等待 · 上一步失败，先修它</span><span class="step__time">—</span></li>
-          <li class="step step--wait"><span class="glyph glyph--idle" aria-hidden="true"></span><span class="step__name">收尾</span><span class="step__state">等待 · 上一步失败，先修它</span><span class="step__time">—</span></li>
-        </ol>
+        <!-- 空态：与"已完成"同一副样子（这一场跑完了，只是没留下能出纪要的东西） -->
+        <div class="wschain state-block state-block--empty">
+          <p class="wschain__walk"><span class="glyph glyph--idle" aria-hidden="true"></span>可以走了：这一场眼下没有在跑的活。</p>
+          <ol class="wschain__list">
+            <li class="wschain__seg"><span class="wschain__name">落盘</span><span class="wschain__line"><span class="glyph glyph--done" aria-hidden="true"></span>录音已落盘</span></li>
+            <li class="wschain__seg"><span class="wschain__name">转码</span><span class="wschain__line"><span class="glyph glyph--done" aria-hidden="true"></span>已完成</span></li>
+            <li class="wschain__seg"><span class="wschain__name">会后转写</span><span class="wschain__line"><span class="glyph glyph--done" aria-hidden="true"></span>已完成</span></li>
+            <li class="wschain__seg"><span class="wschain__name">纪要</span><span class="wschain__line"><span class="glyph glyph--done" aria-hidden="true"></span>已完成 · 没产出内容</span></li>
+          </ol>
+        </div>
 
-        <!-- 已完成：五步全勾，一步一格耗时 -->
-        <ol class="steps state-block state-block--done">
-          <li class="step step--done"><span class="glyph glyph--check" aria-hidden="true"></span><span class="step__name">离线转写</span><span class="step__state">已完成</span><span class="step__time">38 分</span></li>
-          <li class="step step--done"><span class="glyph glyph--check" aria-hidden="true"></span><span class="step__name">说话人聚类</span><span class="step__state">已完成 · 聚出 4 个编号</span><span class="step__time">16 分</span></li>
-          <li class="step step--done"><span class="glyph glyph--check" aria-hidden="true"></span><span class="step__name">纪要生成</span><span class="step__state">已完成</span><span class="step__time">1 小时 12 分</span></li>
-          <li class="step step--done"><span class="glyph glyph--check" aria-hidden="true"></span><span class="step__name">名字确认</span><span class="step__state">已完成 · 4 个编号都有名字</span><span class="step__time">2 分</span></li>
-          <li class="step step--done"><span class="glyph glyph--check" aria-hidden="true"></span><span class="step__name">收尾</span><span class="step__state">已完成</span><span class="step__time">18 分</span></li>
-        </ol>
+        <!-- 失败：失败那一段叉形 + 原话；后面那一段的句子把「为什么还没跑」写全。
+             失败不拦人走：家务事的失败不用告警色，原因与命令在下面的失败块里 -->
+        <div class="wschain state-block state-block--failed">
+          <p class="wschain__walk"><span class="glyph glyph--idle" aria-hidden="true"></span>可以走了：这一场眼下没有在跑的活。</p>
+          <ol class="wschain__list">
+            <li class="wschain__seg"><span class="wschain__name">落盘</span><span class="wschain__line"><span class="glyph glyph--done" aria-hidden="true"></span>录音已落盘</span></li>
+            <li class="wschain__seg"><span class="wschain__name">转码</span><span class="wschain__line"><span class="glyph glyph--done" aria-hidden="true"></span>已完成</span></li>
+            <li class="wschain__seg"><span class="wschain__name">会后转写</span><span class="wschain__line"><span class="glyph glyph--cross" aria-hidden="true"></span>失败</span></li>
+            <li class="wschain__seg"><span class="wschain__name">纪要</span><span class="wschain__line"><span class="glyph glyph--idle" aria-hidden="true"></span>还没跑过（按「生成纪要」起）</span></li>
+          </ol>
+        </div>
 
-        <!-- 空态：进度与"进行中"同一副样子（五步全勾的那份是"已完成"） -->
-        <ol class="steps state-block state-block--empty">
-          <li class="step step--done"><span class="glyph glyph--check" aria-hidden="true"></span><span class="step__name">离线转写</span><span class="step__state">已完成</span><span class="step__time">38 分</span></li>
-          <li class="step step--done"><span class="glyph glyph--check" aria-hidden="true"></span><span class="step__name">说话人聚类</span><span class="step__state">已完成 · 没聚出编号</span><span class="step__time">16 分</span></li>
-          <li class="step step--done"><span class="glyph glyph--check" aria-hidden="true"></span><span class="step__name">纪要生成</span><span class="step__state">已完成 · 没产出内容</span><span class="step__time">1 小时 12 分</span></li>
-          <li class="step step--wait"><span class="glyph glyph--idle" aria-hidden="true"></span><span class="step__name">名字确认</span><span class="step__state">没有需要确认的编号</span><span class="step__time">—</span></li>
-          <li class="step step--done"><span class="glyph glyph--check" aria-hidden="true"></span><span class="step__name">收尾</span><span class="step__state">已完成</span><span class="step__time">18 分</span></li>
-        </ol>
-
-        <p class="band__foot hint state-block state-block--running state-block--empty" style="display: flex">
-          <span>关掉页面不影响，服务照跑。</span>
-          <span>刷新页面看到的进度与关掉前一致——状态在服务那边。</span>
-        </p>
       </div>
     </section>
 
@@ -243,7 +321,7 @@
 
         <!-- empty：会中总结为空（会中总结那一路 39 字节那类），三格给空文案 -->
         <div class="state-block state-block--empty">
-          <p class="empty" style="margin-bottom: var(--space-6)">这场没有会中总结。会后纪要不依赖它——两条转写都在下面。</p>
+          <p class="empty" style="margin-bottom: var(--space-6)">这场没有会中总结。会后纪要不依赖它——两份稿都在「稿子」那一块里。</p>
           <div class="minutes">
             <section class="minute">
               <h3 class="minute__title">
@@ -398,71 +476,54 @@
     </section>
 
     <!-- ====================================================================
-         两条转写（次位：可展开的原始材料，两份平级、谁也不叫"权威"）
+         稿子正文（38817ecf 随新屏改写，契约 4.13）：两份稿平级——标签就叫
+         「会中稿 / 会后稿」，谁也不叫"权威"；每一份里两路都显示、不做按路筛选；
+         默认落在会中稿（它一定有），两份都在时可以在两份之间就地切。
+         缺的那一路照常占位，给一句读得懂的缺稿话（empty 那一档看的 250919
+         只采了远端一路：会中稿本地缺的是「没采这一路」那句，会后稿整份还没有）。
          ==================================================================== -->
     <section class="band band--srcs">
       <div class="band__head">
-        <h2 class="band__title">两条转写</h2>
-        <span class="band__note">会中稿与会后稿平级，两份一起交给 DSH</span>
+        <h2 class="band__title">稿子</h2>
+        <span class="band__note">两份稿平级，两份一起交给 DSH 对拍</span>
       </div>
       <div class="band__body">
-        <div class="srcs">
+        <div class="wssrc">
+          <div class="wssrc__head">
+            <div class="wssrc__tabs" role="tablist" aria-label="两份稿切换">
+              <button class="wssrc__tab wssrc__tab--on" id="tab-live" type="button" role="tab" aria-selected="true">会中稿</button>
+              <button class="wssrc__tab" id="tab-offline" type="button" role="tab" aria-selected="false">会后稿</button>
+            </div>
+          </div>
 
-          <!-- 两条标签都用字 + 图形，不靠颜色 -->
-          <section class="src">
-            <div class="src__tag">
-              <span class="glyph glyph--rec" aria-hidden="true"></span>
-              会后转写 · 会后稿
+          <!-- 会中稿（默认这一份）：两路的正文各一块亮槽；缺的那一路给缺稿话 -->
+          <div id="pane-live">
+            <div class="wssrc__road">
+              <p class="wssrc__roadname">本地</p>
+              <pre class="wssrc__text" id="live-mic">[20:01] 那我们先过一下上一场留下的那两个问题。
+[20:03] 那我先把这段落盘的顺序定下来，远端走同一条路。</pre>
             </div>
-            <div class="src__body">
-              <p class="hint" style="margin-bottom: var(--space-4)">
-                <span class="num">412 行</span> · 时间跨度 <span class="num">20:01–22:19</span> · 约 <span class="num">3.1 万字</span>
-              </p>
-              <div class="transcript">
-                <p class="transcript__line">
-                  <span class="transcript__time">[20:01]</span>
-                  <span class="transcript__route">本地</span>
-                  <span class="transcript__text">那我们先过一下上一场留下的那两个问题。</span>
-                </p>
-                <p class="transcript__line">
-                  <span class="transcript__time">[20:03]</span>
-                  <span class="transcript__route">本地</span>
-                  <span class="transcript__text">那我先把这段落盘的顺序定下来，远端走同一条路。</span>
-                </p>
-                <p class="transcript__line">
-                  <span class="transcript__time">[20:04]</span>
-                  <span class="transcript__route">远端</span>
-                  <span class="transcript__text">行，文件名里带上路名，免得两路的"1 号"撞在一起。</span>
-                </p>
-                <p class="transcript__line">
-                  <span class="transcript__time">[21:14]</span>
-                  <span class="transcript__route">远端</span>
-                  <span class="transcript__text">我这边听到的是另一套说法，名字确认该放到纪要之前。</span>
-                </p>
-              </div>
-              <p class="transcript__jump">
-                <button class="btn btn--ghost btn--small" type="button">回到最新</button>
-              </p>
+            <div class="wssrc__road">
+              <p class="wssrc__roadname">远端</p>
+              <pre class="wssrc__text" id="live-loopback">[20:04] 行，文件名里带上路名，免得两路的"1 号"撞在一起。
+[21:14] 我这边听到的是另一套说法，名字确认该放到纪要之前。</pre>
             </div>
-          </section>
+            <p class="wssrc__note" id="live-mic-note" hidden>这一场没有采本地这一路，没有它的会中稿。</p>
+          </div>
 
-          <!-- 会中那条：展开时它给的是「会中总结那一路留下了什么」——
-               大多数场次留下的是一份正式的会中总结，而空态样本 250919 只留下
-               一个 39 字节的占位文件。所以这一格在 done 这一档也把空态那张脸
-               摆在页面上（章 3.3 的「空态」、章 10.1 第 14 行）。
-               两个状态类都挂着：`.state-block--done` 让它在 done 这一档现身
-               （`.src__body` 的 `display: flex` 与页面自带那条放行规则的优先
-               级相同，靠页面 `<style>` 排在后面取胜），`.state-block--empty`
-               让它在空态那一档现身 —— 两档都显示它，这就是这一格的本意 -->
-          <section class="src">
-            <div class="src__tag">
-              会中转写 · 会中稿
-              <span class="hint">（点开看正文）</span>
+          <!-- 会后稿：切换之后正文换掉；缺的那一路给那句「按了按钮之后才有」 -->
+          <div id="pane-offline" hidden>
+            <div class="wssrc__road">
+              <p class="wssrc__roadname">本地</p>
+              <pre class="wssrc__text" id="offline-mic">[00:00] **S01**: 我们先把落盘的顺序定下来，本地那一路先走通。
+[00:02] **S02**: 行，告警那条也照三分钟的门槛定了。</pre>
             </div>
-            <div class="src__body state-block state-block--done state-block--empty">
-              <p class="empty">会中总结这条转写，空态样本那一场（<span class="num">250919</span>）只留下一个 39 字节的 <span class="num">meeting_notes.md</span>，正文一个字都没有。会后纪要不依赖它——上面那条会后转写就是全部材料。</p>
+            <div class="wssrc__road">
+              <p class="wssrc__roadname">远端</p>
+              <pre class="wssrc__text" id="offline-loopback">[00:01] **S01**: 文件名里带上路名，两路的编号就不会撞。</pre>
             </div>
-          </section>
+            <p class="wssrc__note" id="offline-loopback-note" hidden>会后稿还没有远端这一路：按「生成会后精细稿」之后才有。</p>
+          </div>
 
         </div>
       </div>
@@ -570,32 +631,38 @@
   glyph.className = 'glyph ' + byState[state][0];
   glyph.title = byState[state][1];
 
-  /* 会后还没开始时，进度区的标题按章 3.3 的起点态写 */
-  if (state === 'not-started') {
-    document.getElementById('progress-title').textContent = '会后还没开始 · 等这场会收尾';
-    document.getElementById('progress-note').textContent = '整场会后还没开始跑';
+  /* 稿子那一块（38817ecf）：默认会中稿；两份之间就地切。
+     空态样本 250919 只采了远端一路——会中稿本地那一格给「没采这一路」那句，
+     会后稿整份还没有，给「按了按钮之后才有」那句（契约 4.13 的缺稿话由界面翻）。 */
+  var tabLive = document.getElementById('tab-live');
+  var tabOffline = document.getElementById('tab-offline');
+  var paneLive = document.getElementById('pane-live');
+  var paneOffline = document.getElementById('pane-offline');
+  function showPane(kind) {
+    var live = (kind === 'live');
+    tabLive.classList.toggle('wssrc__tab--on', live);
+    tabOffline.classList.toggle('wssrc__tab--on', !live);
+    tabLive.setAttribute('aria-selected', live ? 'true' : 'false');
+    tabOffline.setAttribute('aria-selected', live ? 'false' : 'true');
+    paneLive.hidden = !live;
+    paneOffline.hidden = live;
   }
-  if (state === 'failed') {
-    document.getElementById('progress-note').textContent = '整场会后跑了 38 分，停在离线转写';
-  }
-  if (state === 'done') {
-    document.getElementById('progress-note').textContent = '整场会后跑了 3 小时 26 分';
-  }
-  /* 名字确认这一步：有人手填的名单时写"待你处理"，这正是它该出现的时候 */
-  if (state === 'running' || state === 'empty') {
-    var allSteps = document.querySelectorAll('.state-block--' + state + ' .step');
-    Array.prototype.forEach.call(allSteps, function (li) {
-      if (li.querySelector('.step__name').textContent === '名字确认') {
-        li.querySelector('.step__state').textContent = '待你处理 · 2 个编号还没有名字';
-        li.querySelector('.step__time').textContent = '2 条待确认';
-      }
-    });
-  }
-  if (state === 'empty') {
-    document.getElementById('appendix-note').textContent = '这一场只有 loopback 一路，编号只有一个前缀';
-  }
-  if (state === 'running') {
-    document.getElementById('appendix-note').textContent = '聚类已经跑完，纪要走完这一步这里才展开';
+  tabLive.addEventListener('click', function () { showPane('live'); });
+  tabOffline.addEventListener('click', function () { showPane('offline'); });
+
+  if (session === '250919') {
+    /* 250919：仅远端。会中稿：本地那一格换成缺稿话、正文收起来；
+       会后稿：两路都没有， pane 里给一句整块的话。 */
+    document.getElementById('live-mic').hidden = true;
+    document.getElementById('live-mic-note').hidden = false;
+    document.getElementById('live-mic-note').textContent = '这一场没有采本地这一路，没有它的会中稿。';
+    document.getElementById('offline-mic').hidden = true;
+    document.getElementById('offline-loopback').hidden = true;
+    var offlineEmpty = document.createElement('p');
+    offlineEmpty.className = 'wssrc__note';
+    offlineEmpty.textContent = '会后稿还没有：按「生成会后精细稿」之后才有。';
+    document.getElementById('offline-loopback-note').parentNode.insertBefore(offlineEmpty, document.getElementById('offline-loopback-note'));
+    document.getElementById('offline-loopback-note').hidden = true;
   }
 
   /* 脚本起来了，那条"没有脚本"的说明就不必再占位置 */

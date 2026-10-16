@@ -1,0 +1,36 @@
+{
+  "method": "GET",
+  "dir": "<path>",
+  "status": 200,
+  "body": {
+    "dir": "<path>",
+    "kinds": [
+      {
+        "kind": "live",
+        "sources": [
+          {
+            "source": "mic",
+            "reason": "absent"
+          },
+          {
+            "source": "loopback",
+            "reason": "absent"
+          }
+        ]
+      },
+      {
+        "kind": "offline",
+        "sources": [
+          {
+            "source": "mic",
+            "reason": "absent"
+          },
+          {
+            "source": "loopback",
+            "reason": "absent"
+          }
+        ]
+      }
+    ]
+  }
+}

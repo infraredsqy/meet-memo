@@ -22,12 +22,14 @@ import {
   createSessionStatusPoller,
   fetchDevices,
   fetchSessionStatus,
+  fetchSessionTranscripts,
   fetchSessions,
   fetchSummaries,
   judgeHeartbeat,
   lateHeartbeatText,
   postAction,
 } from '../src/api';
+import { SessionTranscriptsHttpError } from '../src/api/sessions';
 import { recoveredNoteText } from '../src/live/heartbeat';
 import { readFixture } from './fixtures';
 import { heartbeatSchema } from '../src/contract';
@@ -365,6 +367,63 @@ describe('fetchSessionStatus 的读法（会后进度界面节点 52b24392）', 
     }) as unknown as typeof fetch;
 
     await expect(fetchSessionStatus('C:\\x', { fetchImpl })).rejects.toBeInstanceOf(
+      SessionsUnavailableError,
+    );
+  });
+});
+
+describe('fetchSessionTranscripts 的读法（稿子正文，38817ecf）', () => {
+  it('取稿子那一条：dir URL 编码后进路径（带 /transcripts 层）、GET、应答体逐键交回来', async () => {
+    const sample = readFixture('sessions', 'transcripts-both') as { body: unknown };
+    const fetchImpl = vi.fn(async () => jsonResponse(200, sample.body)) as unknown as typeof fetch;
+
+    const parsed = await fetchSessionTranscripts('C:\\会议\\跟老王聊周会', { fetchImpl });
+
+    expect(parsed.kinds.map((item) => item.kind)).toEqual(['live', 'offline']);
+    const [url, init] = (fetchImpl as unknown as { mock: { calls: [string, RequestInit][] } }).mock
+      .calls[0] as [string, RequestInit];
+    expect(url).toBe(`/api/sessions/${encodeURIComponent('C:\\会议\\跟老王聊周会')}/transcripts`);
+    expect(init.method).toBe('GET');
+  });
+
+  it('404 失败信封里的 code 原样转手：SessionTranscriptsHttpError 带 status 与 code', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse(404, {
+        ok: false,
+        code: 'session_dir_missing',
+        message: '这一场的目录已不在原地',
+        detail: { dir: '<path>', kind: 'missing' },
+      }),
+    ) as unknown as typeof fetch;
+
+    const error = await fetchSessionTranscripts('C:\\x', { fetchImpl }).then(
+      () => null,
+      (caught: unknown) => caught,
+    );
+    expect(error).toBeInstanceOf(SessionTranscriptsHttpError);
+    expect((error as SessionTranscriptsHttpError).status).toBe(404);
+    expect((error as SessionTranscriptsHttpError).code).toBe('session_dir_missing');
+  });
+
+  it('形状不对抛 SessionsProtocolError', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse(200, { dir: 'C:\\x', kinds: '不对' }),
+    ) as unknown as typeof fetch;
+
+    const error = await fetchSessionTranscripts('C:\\x', { fetchImpl }).then(
+      () => null,
+      (caught: unknown) => caught,
+    );
+    expect(error).toBeInstanceOf(SessionsProtocolError);
+    expect((error as SessionsProtocolError).message).toContain('这一场的稿子');
+  });
+
+  it('连接层失败抛 SessionsUnavailableError', async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new Error('连接断了');
+    }) as unknown as typeof fetch;
+
+    await expect(fetchSessionTranscripts('C:\\x', { fetchImpl })).rejects.toBeInstanceOf(
       SessionsUnavailableError,
     );
   });

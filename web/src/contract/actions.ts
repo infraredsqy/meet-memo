@@ -212,6 +212,29 @@ export const postOkSchema = z
   .strict();
 
 /**
+ * 转码三动作（`transcode_run` / `transcode_pause` / `transcode_resume`）的成功体：
+ * 通用信封 + 一个 `transcode` 键（4.3）。回执只说「起没起 / 暂停了 / 继续了」——
+ * `started` / `pausing` / `resumed` 是三档各自的旗标（继续从盘上凭据接着做那一档
+ * 走补跑同一条路，落 `started`），哪个在就是哪一档；服务不摆没有数的空格。
+ * 跑成什么样由场次目录里的 `meeting_transcode_status.json` 回答（4.9 的 `transcode` 格）。
+ */
+export const transcodeOkSchema = z
+  .object({
+    ok: z.literal(true),
+    revision: z.number().int(),
+    transcode: z
+      .object({
+        kind: z.literal('transcode'),
+        dir: z.string(),
+        started: z.boolean().optional(),
+        pausing: z.boolean().optional(),
+        resumed: z.boolean().optional(),
+      })
+      .strict(),
+  })
+  .strict();
+
+/**
  * 说话人改名（`speaker_rename`，4.11）的成功体：通用信封 + 一个 `speaker` 键。
  *
  * 回执写的是「写了哪一场、哪一个键、现在叫什么」。`revision` 保持现值——这只动作
@@ -341,6 +364,7 @@ export const actionBodySchema = z.union([
   summarizeOkSchema,
   workspaceOkSchema,
   postOkSchema,
+  transcodeOkSchema,
   speakerOkSchema,
   settingsUpdateOkSchema,
   actionOkSchema,
@@ -363,6 +387,7 @@ export const actionFixtureSchema = z
 export type ActionRequest = z.infer<typeof actionRequestSchema>;
 export type ActionOk = z.infer<typeof actionOkSchema>;
 export type PostOk = z.infer<typeof postOkSchema>;
+export type TranscodeOk = z.infer<typeof transcodeOkSchema>;
 export type SpeakerOk = z.infer<typeof speakerOkSchema>;
 export type SettingsUpdateOk = z.infer<typeof settingsUpdateOkSchema>;
 export type SummarySections = z.infer<typeof summarySectionsSchema>;

@@ -266,7 +266,59 @@ export const transcodeProgressSchema = z
   .strict();
 
 /**
- * `GET /api/sessions/{id}` 的应答体（4.9）：前八格与列表同一行同源，后四格回答
+ * 纪要那一层的盘上读数（4.9 的 `minutes` 格，38817ecf）：与 `transcode` 同一套读法 ——
+ * **判据读盘**（`meeting_minutes_status.json`，读方逐字段校验），服务重启之后照旧读得到。
+ * 「本进程里此刻有没有这一趟」不另立一格：`post` 清单里 `kind: 'minutes'` 的那一项带着
+ * `running`，两处合起来才分得清「真的在跑」与「盘上停着一版 `running`」。状态文件不在、
+ * 读不动或形状不合契约时服务如实答 `idle`（给人看的读数，读不出就不认为有）。
+ */
+export const minutesProgressSchema = z
+  .object({
+    /** `delivered` 是「已交付 DSH web 服务端生成」那一档（`done` 说的是产物校验过、在盘上）。 */
+    state: z.enum(['running', 'done', 'failed', 'delivered', 'idle']),
+    started_at: isoStringSchema.nullable(),
+    finished_at: isoStringSchema.nullable(),
+    /** 盘上 `running` 那一版落的是空串收尾戳，服务折成 `null`（不摆没有数的空格）。 */
+    error: z.string().nullable(),
+  })
+  .strict();
+
+/**
+ * 一路的一份稿（`GET /api/sessions/{id}/transcripts`，4.13）：**只回答两件事之一** ——
+ * 文件在 → `text` 带正文原样；文件不在 → `reason` 带缺稿的那一档（缺稿话由界面按它翻）。
+ * `unrecorded` = 这一场没采这一路（那一截音频从没录过）；`absent` = 采了这一路但盘上
+ * 没有这一份（会中稿被清 / 会后稿还没生成过）。
+ */
+export const transcriptSourceCellSchema = z
+  .object({
+    source: z.enum(['mic', 'loopback']),
+    text: z.string().optional(),
+    reason: z.enum(['unrecorded', 'absent']).optional(),
+  })
+  .strict();
+
+/** 一份稿（会中稿 / 会后稿）里两路各一格的清单。 */
+export const transcriptKindCellSchema = z
+  .object({
+    /** `live` = 会中稿（会中逐行追加那条）、`offline` = 会后稿（整段重跑那条）——两份**平级**。 */
+    kind: z.enum(['live', 'offline']),
+    sources: z.array(transcriptSourceCellSchema),
+  })
+  .strict();
+
+/**
+ * `GET /api/sessions/{id}/transcripts` 的应答体（4.13）：两份稿 × 两路各一份，
+ * 在的给 `text`、不在的给 `reason`。**纯读**：不涨 `revision`、不广播、不写任何东西。
+ */
+export const sessionTranscriptsSchema = z
+  .object({
+    dir: z.string(),
+    kinds: z.array(transcriptKindCellSchema),
+  })
+  .strict();
+
+/**
+ * `GET /api/sessions/{id}` 的应答体（4.9）：前八格与列表同一行同源，后五格回答
  * 「这一场此刻跑到哪儿了、这一场的说话人有谁」。**它不进快照、也不进列表行** ——
  * 快照九键与行十二键两道 `.strict()` 硬门一个字没动。
  */
@@ -285,6 +337,7 @@ export const sessionStatusSchema = z
     post: z.array(sessionPostViewSchema),
     offline: offlineProgressSchema,
     transcode: transcodeProgressSchema,
+    minutes: minutesProgressSchema,
     speakers: z.array(speakerIdentitySchema),
   })
   .strict();
@@ -302,5 +355,9 @@ export type PostJobCell = z.infer<typeof postJobCellSchema>;
 export type SessionPostView = z.infer<typeof sessionPostViewSchema>;
 export type OfflineSourceProgress = z.infer<typeof offlineSourceProgressSchema>;
 export type OfflineProgress = z.infer<typeof offlineProgressSchema>;
+export type MinutesProgress = z.infer<typeof minutesProgressSchema>;
+export type TranscriptSourceCell = z.infer<typeof transcriptSourceCellSchema>;
+export type TranscriptKindCell = z.infer<typeof transcriptKindCellSchema>;
+export type SessionTranscripts = z.infer<typeof sessionTranscriptsSchema>;
 export type SpeakerIdentity = z.infer<typeof speakerIdentitySchema>;
 export type SessionStatus = z.infer<typeof sessionStatusSchema>;

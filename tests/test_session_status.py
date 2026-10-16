@@ -497,3 +497,75 @@ def test_the_list_carries_the_post_job_cell_at_the_top_level(
     done = runtime.sessions_dict()
     assert done["post_jobs"] == [], "跑完那一刻这一格退回空数组"
     assert {row["dir"]: row for row in done["sessions"]}[str(session)]["state"] == "ended"
+
+
+# ---------------------------------------------------------------------------
+# `minutes` 那一格（38817ecf）：纪要那一层的盘上读数（判据读盘，重启后照旧）
+# ---------------------------------------------------------------------------
+
+
+def _minutes_cell(tmp_path, monkeypatch, restore_config, session: Path) -> dict:
+    runtime, previous = _runtime(tmp_path, monkeypatch)
+    try:
+        runtime.workspace_open(str(session))
+        return runtime.session_status_dict(str(session))["minutes"]
+    finally:
+        config_module.set_current(previous)
+
+
+def test_the_minutes_cell_is_idle_without_a_status_file(
+    tmp_path, monkeypatch, restore_config
+) -> None:
+    """盘上没有那份状态文件 → 如实 `idle`（纪要那一格是给人看的读数，读不出就不认为有）。"""
+    session = _workspace_with_audio(tmp_path)
+    cell = _minutes_cell(tmp_path, monkeypatch, restore_config, session)
+    assert cell == {"state": "idle", "started_at": None, "finished_at": None, "error": None}
+
+
+def test_the_minutes_cell_reads_the_disk_states(
+    tmp_path, monkeypatch, restore_config
+) -> None:
+    """盘上那几档照它自己那一档答：`running` 的空串收尾戳折成 `null`，`failed` 带原因。"""
+    from meeting.minutes import status as minutes_status
+
+    session = _workspace_with_audio(tmp_path)
+    minutes_status.write_session_status(
+        session,
+        state=minutes_status.STATE_RUNNING,
+        mode="none",
+        branch="headless",
+        started_at="2025-09-06T21:00:00",
+        finished_at="",
+    )
+    cell = _minutes_cell(tmp_path, monkeypatch, restore_config, session)
+    assert cell["state"] == "running"
+    assert cell["started_at"] == "2025-09-06T21:00:00"
+    assert cell["finished_at"] is None, "在飞那一版的空串收尾戳折成 null，不摆没有数的空格"
+    assert cell["error"] is None
+
+    minutes_status.write_session_status(
+        session,
+        state=minutes_status.STATE_FAILED,
+        mode="live_only",
+        branch="headless",
+        started_at="2025-09-06T21:00:00",
+        finished_at="2025-09-06T21:05:00",
+        error="DSH 没应答",
+    )
+    cell = _minutes_cell(tmp_path, monkeypatch, restore_config, session)
+    assert cell == {
+        "state": "failed",
+        "started_at": "2025-09-06T21:00:00",
+        "finished_at": "2025-09-06T21:05:00",
+        "error": "DSH 没应答",
+    }
+
+
+def test_the_minutes_cell_survives_a_corrupt_status_file(
+    tmp_path, monkeypatch, restore_config
+) -> None:
+    """状态文件坏了 → 如实 `idle`，不挡这只端点（读不出就是不认为有，第 6 条）。"""
+    session = _workspace_with_audio(tmp_path)
+    (session / "meeting_minutes_status.json").write_text("{oops", encoding="utf-8")
+    cell = _minutes_cell(tmp_path, monkeypatch, restore_config, session)
+    assert cell == {"state": "idle", "started_at": None, "finished_at": None, "error": None}

@@ -424,6 +424,9 @@ export function gpuBusyView(
  *   一起楔死）；读数翻新由组件那头的「不用刷顺手刷一遍列表」接住；
  * - 手上已有一份读数、且它说「真在跑」（`in_process`）或「盘上停着 `running`」→ 问
  *   （后者也要问：万一那一趟其实还活着，读数会翻回 `in_process: true`）；
+ * - **转码与纪要在飞也问**（本节点：工序链的第一批读者）——转码那趟在跑/停着
+ *   `paused`（工序还活着、等摘旗）时链上那一段要跟着翻面；纪要在飞时链上那一段
+ *   要在收工那一刻翻成「已完成」；
  * - 其余（终态、**被打断**（b1c6a58e：它也是终态，重按按钮才再跑）、还没跑过、
  *   什么都没选）→ 不问。
  */
@@ -434,10 +437,15 @@ export function shouldWatch(
 ): boolean {
   if (row === null) return false;
   const fresh = status !== null && status.dir === row.dir;
+  const flying = (current: SessionStatus): boolean =>
+    current.offline.in_process ||
+    current.offline.state === 'running' ||
+    current.transcode.in_process ||
+    current.post.some((job) => job.kind === 'minutes' && job.running);
   if (postJobs.some((job) => job.dir === row.dir)) {
     if (!fresh) return true;
-    return status.offline.in_process || status.offline.state === 'running';
+    return flying(status as SessionStatus);
   }
   if (!fresh) return false;
-  return status.offline.in_process || status.offline.state === 'running';
+  return flying(status as SessionStatus);
 }

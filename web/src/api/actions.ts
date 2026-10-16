@@ -5,6 +5,7 @@ import {
   settingsUpdateOkSchema,
   speakerOkSchema,
   summarizeOkSchema,
+  transcodeOkSchema,
   workspaceOkSchema,
   type ActionArgs,
   type ActionDetail,
@@ -14,6 +15,7 @@ import {
   type SettingsUpdateOk,
   type SpeakerOk,
   type SummarizeOk,
+  type TranscodeOk,
   type WorkspaceOk,
 } from '../contract';
 
@@ -90,6 +92,7 @@ export type ActionResult =
   | ({ kind: 'settings_update' } & SettingsUpdateOk)
   | ({ kind: 'summarize' } & SummarizeOk)
   | ({ kind: 'post' } & PostOk)
+  | ({ kind: 'transcode' } & TranscodeOk)
   | ({ kind: 'workspace' } & WorkspaceOk)
   | ({ kind: 'speaker' } & SpeakerOk);
 
@@ -130,6 +133,10 @@ function parseEnvelope(status: number, text: string): ActionResult {
     const post = postOkSchema.safeParse(body);
     if (post.success) {
       return { kind: 'post', ...post.data };
+    }
+    const transcode = transcodeOkSchema.safeParse(body);
+    if (transcode.success) {
+      return { kind: 'transcode', ...transcode.data };
     }
     const speaker = speakerOkSchema.safeParse(body);
     if (speaker.success) {

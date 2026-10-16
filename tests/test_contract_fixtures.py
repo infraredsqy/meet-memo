@@ -1137,6 +1137,135 @@ def test_capture_session_status_interrupted_group(tmp_path, make_client, contrac
     )
 
 
+def test_capture_session_transcripts_group(tmp_path, make_client, contract_regen) -> None:
+    """`GET /api/sessions/{id}/transcripts` 那只稿子正文端点的四档样本（本节点）。
+
+    spec 完成判定点的四档：**两路都有 / 缺一路 / 两路都缺 / 目录不在**，逐份采集
+    （`contract/README.md` 第 1 章的清单随改）。样本记的是**形状**：
+
+    - `transcripts-both.json`：四份文件都在，正文逐字原样（`text` 是确定值）；
+    - `transcripts-one-missing.json`：`mode = "mic"` 只采了一路——另一路的缺稿落
+      `unrecorded`（那一截音频从没录过），会后稿 mic 那一路落 `absent`（采了但还没跑过）；
+    - `transcripts-none.json`：`mode = "both"`、一份稿都没有（强杀现场）→ 四路全部
+      如实 `absent`；
+    - `transcripts-dir-missing.json`：登记过的目录被移走 → 404 + `session_dir_missing`
+      的失败信封（`message` 里内嵌的路径走掩码）。
+
+    路径掩 `<path>`；正文行是确定值原样留（`[20:01]` 这类分钟戳不是墙钟时刻）。
+    """
+    client = make_client({"capture.backend": "dev"})
+
+    place = tmp_path / "contract-transcripts"
+    place.mkdir()
+
+    def _write_session_json(session: Path, mode: str) -> None:
+        (session / "session.json").write_text(
+            json.dumps(
+                {"session_id": session.name, "mode": mode, "state": "done"},
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+    # -- 档 1：两路都有（四份文件都在，正文逐字原样）------------------------
+    both_dir = place / "250906"
+    both_dir.mkdir()
+    _write_session_json(both_dir, "both")
+    for name, text in {
+        "meeting_transcript_mic.md": "[20:01] 大家先过一下上周的结论\n[20:03] 行，那就这么定\n",
+        "meeting_transcript_loopback.md": "[20:02] 远端这一句\n",
+        "meeting_offline_transcript_mic.md": "[00:00] **S01**: 会后稿本地的一行\n",
+        "meeting_offline_transcript_loopback.md": "[00:01] **S01**: 会后稿远端的一行\n",
+    }.items():
+        (both_dir / name).write_text(text, encoding="utf-8")
+    _act(client, "workspace_open", {"dir": str(both_dir)})
+    got = client.get(f"/api/sessions/{quote(str(both_dir), safe='')}/transcripts")
+    assert got.status_code == 200, got.text
+    both_body = got.json()
+    # 结构断言（掩码前）：两份稿 × 两路的次序都是契约
+    assert [item["kind"] for item in both_body["kinds"]] == ["live", "offline"]
+    for kind_cell in both_body["kinds"]:
+        assert [item["source"] for item in kind_cell["sources"]] == ["mic", "loopback"]
+        for cell in kind_cell["sources"]:
+            assert set(cell) == {"source", "text"}
+
+    # -- 档 2：缺一路（mode = mic → 另一路 unrecorded；会后稿 mic 还没跑过 → absent）
+    one_dir = place / "260907"
+    one_dir.mkdir()
+    _write_session_json(one_dir, "mic")
+    (one_dir / "meeting_transcript_mic.md").write_text(
+        "[20:01] 只有本地一路\n", encoding="utf-8"
+    )
+    _act(client, "workspace_open", {"dir": str(one_dir)})
+    got = client.get(f"/api/sessions/{quote(str(one_dir), safe='')}/transcripts")
+    assert got.status_code == 200, got.text
+    one_body = got.json()
+    live = next(item for item in one_body["kinds"] if item["kind"] == "live")
+    offline = next(item for item in one_body["kinds"] if item["kind"] == "offline")
+    live_cells = {cell["source"]: cell for cell in live["sources"]}
+    offline_cells = {cell["source"]: cell for cell in offline["sources"]}
+    assert live_cells["loopback"] == {"source": "loopback", "reason": "unrecorded"}
+    assert offline_cells["mic"] == {"source": "mic", "reason": "absent"}
+    assert offline_cells["loopback"] == {"source": "loopback", "reason": "unrecorded"}
+
+    # -- 档 3：两路都缺（mode = both、一份稿都没有 → 四路全部 absent）--------
+    none_dir = place / "260908"
+    none_dir.mkdir()
+    _write_session_json(none_dir, "both")
+    _act(client, "workspace_open", {"dir": str(none_dir)})
+    got = client.get(f"/api/sessions/{quote(str(none_dir), safe='')}/transcripts")
+    assert got.status_code == 200, got.text
+    none_body = got.json()
+    for kind_cell in none_body["kinds"]:
+        for cell in kind_cell["sources"]:
+            assert cell == {"source": cell["source"], "reason": "absent"}
+
+    # -- 档 4：目录不在（登记过的目录被移走 → 404 session_dir_missing）------
+    gone_dir = place / "260909"
+    gone_dir.mkdir()
+    _write_session_json(gone_dir, "both")
+    _act(client, "workspace_open", {"dir": str(gone_dir)})
+    import shutil as _shutil
+
+    _shutil.rmtree(gone_dir)
+    gone = client.get(f"/api/sessions/{quote(str(gone_dir), safe='')}/transcripts")
+    assert gone.status_code == 404, gone.text
+    gone_body = gone.json()
+    assert gone_body["ok"] is False
+    assert gone_body["code"] == "session_dir_missing"
+    assert gone_body["detail"] == {"dir": gone_body["detail"]["dir"], "kind": "missing"}
+
+    emit(
+        {
+            "sessions/transcripts-both.json": {
+                "method": "GET",
+                "dir": "<path>",
+                "status": 200,
+                "body": normalize(both_body),
+            },
+            "sessions/transcripts-one-missing.json": {
+                "method": "GET",
+                "dir": "<path>",
+                "status": 200,
+                "body": normalize(one_body),
+            },
+            "sessions/transcripts-none.json": {
+                "method": "GET",
+                "dir": "<path>",
+                "status": 200,
+                "body": normalize(none_body),
+            },
+            "sessions/transcripts-dir-missing.json": {
+                "method": "GET",
+                "dir": "<path>",
+                "status": gone.status_code,
+                "body": normalize(gone_body),
+            },
+        },
+        regen=contract_regen,
+    )
+
+
 def test_capture_materials_group(tmp_path, make_client, contract_regen) -> None:
     """会议资料四条端点的样本（资料节点 285bf58c）：上传 / 清单 / 删除 / 取不到。
 

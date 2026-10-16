@@ -58,6 +58,11 @@ function job(over: Partial<PostJobCell> = {}): PostJobCell[] {
   ];
 }
 
+/** 一格「没跑过」的纪要读数（`minutes` 格的空档形状，38817ecf）。 */
+function minutesIdle(): SessionStatus['minutes'] {
+  return { state: 'idle', started_at: null, finished_at: null, error: null };
+}
+
 /** 一格「没跑过」的转码工序读数（`transcode` 格的空档形状）。 */
 function transcodeIdle(): SessionStatus['transcode'] {
   return {
@@ -98,6 +103,7 @@ function status(
     has_offline: false,
     post: [],
     transcode: transcodeIdle(),
+    minutes: minutesIdle(),
     speakers: [],
     offline: {
       ledger: 'meeting_offline_progress.jsonl',
@@ -449,6 +455,22 @@ describe('要不要轮询（有活动才问）', () => {
     expect(shouldWatch(selected, job(), status({}, { state: 'idle' }))).toBe(false);
     // 已中断也是终态（b1c6a58e）：重按按钮才再跑，轮询照样收尾
     expect(shouldWatch(selected, job(), status({}, { state: 'interrupted', in_process: false }))).toBe(false);
+  });
+
+  it('转码在飞 / 纪要在飞也要问（38817ecf：工序链那两段要跟着翻面）', () => {
+    const selected = row({ state: 'ended', kind: 'meeting' });
+    // 转码那道工序在本进程里飞（transcode.in_process）
+    expect(
+      shouldWatch(selected, [], status({ transcode: { ...transcodeIdle(), in_process: true } })),
+    ).toBe(true);
+    // 纪要在飞（post 清单里 minutes 那一项 running）
+    expect(
+      shouldWatch(
+        selected,
+        [],
+        status({ post: [{ running: true, kind: 'minutes', dir: selected.dir, started_at: '2026-09-21T22:10:00+08:00', finished_at: null }] }),
+      ),
+    ).toBe(true);
   });
 
   it('终态、没跑过、没选中：不问', () => {

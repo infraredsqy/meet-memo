@@ -1,0 +1,14 @@
+{
+  "method": "GET",
+  "dir": "<path>",
+  "status": 404,
+  "body": {
+    "ok": false,
+    "code": "session_dir_missing",
+    "message": "这一场的目录已不在原地：<path>",
+    "detail": {
+      "dir": "<path>",
+      "kind": "missing"
+    }
+  }
+}

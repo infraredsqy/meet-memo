@@ -28,6 +28,7 @@ import {
   materialsListSchema,
   resyncSnapshotSchema,
   sessionStatusSchema,
+  sessionTranscriptsSchema,
   sessionsResponseSchema,
   snapshotSchema,
   sseFrameSchema,
@@ -630,7 +631,7 @@ describe('设备清单样本', () => {
   });
 });
 
-describe('工作区样本（4.8 / 4.9，会后进度界面节点 52b24392 接的对齐用例）', () => {
+describe('工作区样本（4.8 / 4.9 / 4.13，会后进度界面节点 52b24392 接的对齐用例）', () => {
   it.each(SESSIONS_FIXTURES)('sessions/%s.json 过对应的 schema', (name) => {
     if (name === 'status-after-run') {
       const parsed = sessionStatusSchema.parse(readFixture('sessions', name));
@@ -638,6 +639,21 @@ describe('工作区样本（4.8 / 4.9，会后进度界面节点 52b24392 接的
     } else if (name === 'status-interrupted') {
       const parsed = sessionStatusSchema.parse(readFixture('sessions', name));
       expect(parsed.offline.state).toBe('interrupted');
+    } else if (name.startsWith('transcripts-')) {
+      // 稿子正文的样本（4.13）：请求侧两件套（method + dir）+ 状态码 + 掩码后的应答体。
+      // 「目录不在」那一档的应答体是失败信封（404），成功体的 schema 在下面专门的用例里逐档核。
+      const sample = readFixture('sessions', name) as Record<string, unknown>;
+      expect(sample.method).toBe('GET');
+      expect(sample.dir).toBe('<path>');
+      expect(typeof sample.status).toBe('number');
+      if (sample.status === 200) {
+        // 两份稿的次序（live → offline）与每份里两路的次序（mic → loopback）都是契约
+        const parsed = sessionTranscriptsSchema.parse(sample.body);
+        expect(parsed.kinds.map((item) => item.kind)).toEqual(['live', 'offline']);
+        for (const kindCell of parsed.kinds) {
+          expect(kindCell.sources.map((road) => road.source)).toEqual(['mic', 'loopback']);
+        }
+      }
     } else {
       const parsed = sessionsResponseSchema.parse(readFixture('sessions', name));
       // 两份采集里都没有活儿在飞 → 顶层第三格如实空数组
@@ -671,10 +687,10 @@ describe('工作区样本（4.8 / 4.9，会后进度界面节点 52b24392 接的
     expect(sessionsResponseSchema.safeParse(afterOpen).success).toBe(false);
   });
 
-  it('单场状态样本：前八格与列表同源，post / offline / transcode / speakers 四格回答「跑到哪儿了、有谁」', () => {
+  it('单场状态样本：前八格与列表同源，post / offline / transcode / minutes / speakers 五格回答「跑到哪儿了、有谁」', () => {
     const parsed = sessionStatusSchema.parse(readFixture('sessions', 'status-after-run'));
     expect(Object.keys(parsed).sort()).toEqual([
-      'date', 'dir', 'has_offline', 'kind', 'mode', 'offline', 'post', 'segments',
+      'date', 'dir', 'has_offline', 'kind', 'minutes', 'mode', 'offline', 'post', 'segments',
       'session_id', 'speakers', 'state', 'transcode',
     ]);
     // `post` 是多槽登记里这一场的在飞清单：样本那一场此刻没有活儿在飞 → 空数组
@@ -688,6 +704,13 @@ describe('工作区样本（4.8 / 4.9，会后进度界面节点 52b24392 接的
       elapsed_seconds: null,
       current_source: null,
       sources: [],
+    });
+    // 纪要那格（4.9）：样本那一场没出过纪要 → `idle`（判据读盘，盘上没有那份状态文件）
+    expect(parsed.minutes).toEqual({
+      state: 'idle',
+      started_at: null,
+      finished_at: null,
+      error: null,
     });
     // 段读数与列表同行同源：盘上段记录的原文（这一场恰好一段；秒数走掩码落 0）
     expect(parsed.segments).toEqual([
@@ -725,6 +748,51 @@ describe('工作区样本（4.8 / 4.9，会后进度界面节点 52b24392 接的
     expect(mic?.total).toBe(2);
     expect(loopback?.done).toBe(0);
     expect(loopback?.total).toBeNull();
+  });
+
+  it('稿子正文四档样本（4.13，38817ecf）：两路都有 / 缺一路 / 两路都缺 / 目录不在', () => {
+    const bodyOf = (name: string): unknown =>
+      (readFixture('sessions', name) as Record<string, unknown>).body;
+
+    // 档 1「两路都有」：四份都在，在的那一格恰好 source + text 两格，正文原样
+    const both = sessionTranscriptsSchema.parse(bodyOf('transcripts-both'));
+    for (const kindCell of both.kinds) {
+      for (const road of kindCell.sources) {
+        expect(Object.keys(road).sort()).toEqual(['source', 'text']);
+        expect(road.text).toBeTruthy();
+      }
+    }
+    const live = both.kinds.find((item) => item.kind === 'live');
+    expect(live?.sources.find((road) => road.source === 'mic')?.text).toContain(
+      '大家先过一下上周的结论',
+    );
+
+    // 档 2「缺一路」：mode 只采 mic → loopback 的缺稿是 unrecorded；会后稿 mic 没跑过 → absent
+    const one = sessionTranscriptsSchema.parse(bodyOf('transcripts-one-missing'));
+    const oneCells = (kind: 'live' | 'offline'): Map<string, (typeof one.kinds)[number]['sources'][number]> =>
+      new Map(
+        (one.kinds.find((item) => item.kind === kind)?.sources ?? []).map((road) => [road.source, road]),
+      );
+    expect(oneCells('live').get('mic')?.text).toBeTruthy();
+    expect(oneCells('live').get('loopback')).toEqual({ source: 'loopback', reason: 'unrecorded' });
+    expect(oneCells('offline').get('mic')).toEqual({ source: 'mic', reason: 'absent' });
+    expect(oneCells('offline').get('loopback')).toEqual({ source: 'loopback', reason: 'unrecorded' });
+
+    // 档 3「两路都缺」：一份稿都没有（mode = both）→ 四路全部如实 absent
+    const none = sessionTranscriptsSchema.parse(bodyOf('transcripts-none'));
+    for (const kindCell of none.kinds) {
+      for (const road of kindCell.sources) {
+        expect(road).toEqual({ source: road.source, reason: 'absent' });
+      }
+    }
+
+    // 档 4「目录不在」：404 + session_dir_missing 的失败信封（与单场状态同一套）
+    const gone = readFixture('sessions', 'transcripts-dir-missing') as Record<string, unknown>;
+    expect(gone.status).toBe(404);
+    const goneBody = gone.body as { ok: boolean; code: string; detail: { kind: string } };
+    expect(goneBody.ok).toBe(false);
+    expect(goneBody.code).toBe('session_dir_missing');
+    expect(goneBody.detail.kind).toBe('missing');
   });
 
   it('单场状态多一格/少一格都不符合契约', () => {

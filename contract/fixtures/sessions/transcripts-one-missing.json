@@ -1,0 +1,36 @@
+{
+  "method": "GET",
+  "dir": "<path>",
+  "status": 200,
+  "body": {
+    "dir": "<path>",
+    "kinds": [
+      {
+        "kind": "live",
+        "sources": [
+          {
+            "source": "mic",
+            "text": "[20:01] 只有本地一路\n"
+          },
+          {
+            "source": "loopback",
+            "reason": "unrecorded"
+          }
+        ]
+      },
+      {
+        "kind": "offline",
+        "sources": [
+          {
+            "source": "mic",
+            "reason": "absent"
+          },
+          {
+            "source": "loopback",
+            "reason": "unrecorded"
+          }
+        ]
+      }
+    ]
+  }
+}
