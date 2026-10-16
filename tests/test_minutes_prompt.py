@@ -1449,3 +1449,37 @@ def test_speaker_names_section_is_the_honest_empty_text_without_names() -> None:
 
     assert speaker_names_section(rows) == SPEAKER_NAMES_EMPTY
     assert speaker_names_section([]) == SPEAKER_NAMES_EMPTY
+
+
+# ---------------------------------------------------------------------------
+# 十三、遗留问题只留 P0（节点 `afefef81`）
+#
+# 遗留问题那一节只列「不定就会卡住这场会」的事：提示词把它写成硬要求——
+# 先按重要程度分级，再只保留最高一级；P1/P2 与一般待办一律不进纪要。
+# 「可选分级」与「简单待办列表」两种旧写法作废；骨架、花絮、说话人附录一格不改。
+# ---------------------------------------------------------------------------
+
+
+def test_the_real_template_makes_p0_only_a_hard_requirement(tmp_path: Path) -> None:
+    """渲染出来的提示词读得到「先分级、只留 P0」的硬要求，旧的可选措辞绝迹，骨架逐条仍在。"""
+    session = _write_session(tmp_path)
+    text = render_session_prompt(session)
+
+    # 硬要求在：先分级、只留最高一级、只列卡住这场会的事、P1/P2 与一般待办一律不写
+    assert "按重要程度分级" in text
+    assert "只保留最高一级" in text
+    assert "不定就会卡住这场会" in text
+    assert "P1/P2 与一般待办一律不写进纪要" in text
+    # 旧措辞绝迹：不许「可选分级」，也不许退化成「简单待办列表」
+    assert "可选 P0" not in text
+    assert "简单待办列表" not in text
+    # 骨架一格不改：六个标题逐条在场
+    for title in (
+        "## 会议概要",
+        "## 一、核心共识与结论",
+        "## 二、遗留问题与待办",
+        "## 花絮",
+        "## 说话人附录",
+        "### 猜不出的",
+    ):
+        assert title in text, title
