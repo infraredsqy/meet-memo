@@ -14,8 +14,8 @@ import { makeSnapshot, makeSource, T } from './live-fixtures';
 describe('statusView：四态各自的字 + 图形', () => {
   it('空闲', () => {
     expect(statusView('idle', null)).toEqual({
-      name: '待机',
-      note: '未开始录音',
+      name: '空闲',
+      note: '尚未开始',
       glyph: 'glyph--idle',
       tone: 'off',
     });
@@ -24,7 +24,7 @@ describe('statusView：四态各自的字 + 图形', () => {
   it('录音中', () => {
     expect(statusView('recording', null)).toEqual({
       name: '录音中',
-      note: '两路均在采样',
+      note: '两路都在采',
       glyph: 'glyph--rec',
       tone: 'on',
     });
@@ -33,21 +33,21 @@ describe('statusView：四态各自的字 + 图形', () => {
   it('告警：说明里两路的关系说全（哪一路还在、哪一路没了）', () => {
     const view = statusView('alert', null);
     expect(view.name).toBe('告警');
-    expect(view.note).toBe('一路仍在采样，另一路信号丢失');
+    expect(view.note).toBe('一路仍在采，另一路采不到了');
     expect(view.glyph).toBe('glyph--alert');
     expect(view.tone).toBe('alert');
   });
 
-  it('已结束有两副面孔：收尾中与已完成', () => {
+  it('已结束有两副面孔：收尾中与已完成（ui-design 4.2 二的两句话）', () => {
     expect(statusView('ended', 'draining')).toEqual({
       name: '已结束 · 收尾中',
-      note: '正在落盘，先别关机',
+      note: '还差最后一块没进盘',
       glyph: 'glyph--draining',
       tone: 'off',
     });
     expect(statusView('ended', 'done')).toEqual({
       name: '已结束 · 已完成',
-      note: '可以关机；会后那两趟回工作台按按钮',
+      note: '录音已落盘',
       glyph: 'glyph--done',
       tone: 'off',
     });

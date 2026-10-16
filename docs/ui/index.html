@@ -50,7 +50,7 @@
       <span class="statusline__note">meeting · 会中与会后界面 V2 · 纯设计稿</span>
     </div>
     <div class="topbar__main">
-      <span class="band__note">15 张状态截图 · 26 个可点状态 · 零外链，断网打开一样</span>
+      <span class="band__note">15 张状态截图 · 25 个可点状态 · 零外链，断网打开一样</span>
     </div>
   </header>
 
@@ -125,11 +125,11 @@
 
       <figure style="display: flex; flex-direction: column; gap: var(--space-3);">
         <a href="shots/live-ended-1440.png" target="_blank" rel="noopener">
-          <img src="shots/live-ended-1440.png" alt="已结束：收尾中还是已完成" width="1440" height="990" decoding="async" style="display: block; width: 100%; height: 16rem; object-fit: cover; object-position: center; border: var(--size-divider) solid var(--color-rule); background: var(--color-sunk); padding: var(--space-1);">
+          <img src="shots/live-ended-1440.png" alt="已结束：收尾中还是已完成" width="1440" height="1752" decoding="async" style="display: block; width: 100%; height: 16rem; object-fit: cover; object-position: center; border: var(--size-divider) solid var(--color-rule); background: var(--color-sunk); padding: var(--space-1);">
         </a>
         <figcaption>
           <span class="kv__v">live-ended-1440.png</span>
-          <p class="band__note">时长已经冻在 02:19:23，收尾四项各自写着「进行中 / 已完成 / 等待」。V1 的收尾最长能跑到 300 秒，这段时间里说成「已完成」，人就会去关机、丢掉这场会 —— 所以答案只由这一条横幅给。</p>
+          <p class="band__note">时长已经冻在 02:19:23，收尾带是 quiet 的边线小块：三步（落盘 / log / 启动会后）各带状态，收尾横幅只说「还差最后一块没进盘」。V1 的收尾最长能跑到 300 秒，这段时间里说成「已完成」，人就会去关机、丢掉这场会 —— 所以「能不能关机」只由这一小块回答。</p>
         </figcaption>
       </figure>
 
@@ -239,21 +239,21 @@
 
       <figure style="display: flex; flex-direction: column; gap: var(--space-3);">
         <a href="shots/live-ended-1440.png" target="_blank" rel="noopener">
-          <img src="shots/live-ended-1440.png" alt="已结束 1440" width="1440" height="990" decoding="async" style="display: block; width: 100%; height: 16rem; object-fit: cover; object-position: center; border: var(--size-divider) solid var(--color-rule); background: var(--color-sunk); padding: var(--space-1);">
+          <img src="shots/live-ended-1440.png" alt="已结束 1440" width="1440" height="1752" decoding="async" style="display: block; width: 100%; height: 16rem; object-fit: cover; object-position: center; border: var(--size-divider) solid var(--color-rule); background: var(--color-sunk); padding: var(--space-1);">
         </a>
         <figcaption>
           <span class="kv__v">live-ended-1440.png</span>
-          <p class="band__note">「已结束」有两副面孔：收尾中给的是「正在落盘，先别关机」+ 落盘 / 转码 / log / 启动会后四项各自的状态（跑 / 跑 / 勾 / 方框）；已完成才写「可以关机」。用户真正要问的那句话只有这一条横幅在答。这两张图是这一轮重出的：此前放行规则漏了「收尾中」与「已完成」两档，横幅一个字都不显示，屏幕上只剩一条空的红带子 —— 现在横幅与四项明细都量得到（1440 下横幅高 109px、标题高 24px）。</p>
+          <p class="band__note">「已结束」有两副面孔，都住在收尾那一小块：收尾还在跑写「还差最后一块没进盘」+ 落盘 / log / 启动会后三步各带状态；落定了才写「录音已落盘」。收尾是家务，带子是 quiet 的边线小块，不用告警带或致命色（ui-design 章 4.2 二）。这张图是收尾中那一档（ended-draining），已完成与收尾失败两档走下面的可点直达。</p>
         </figcaption>
       </figure>
 
       <figure style="display: flex; flex-direction: column; gap: var(--space-3);">
         <a href="shots/live-ended-390.png" target="_blank" rel="noopener">
-          <img src="shots/live-ended-390.png" alt="已结束 390" width="390" height="1942" decoding="async" style="display: block; width: 100%; height: 16rem; object-fit: cover; object-position: center; border: var(--size-divider) solid var(--color-rule); background: var(--color-sunk); padding: var(--space-1);">
+          <img src="shots/live-ended-390.png" alt="已结束 390" width="390" height="2354" decoding="async" style="display: block; width: 100%; height: 16rem; object-fit: cover; object-position: center; border: var(--size-divider) solid var(--color-rule); background: var(--color-sunk); padding: var(--space-1);">
         </a>
         <figcaption>
           <span class="kv__v">live-ended-390.png</span>
-          <p class="band__note">四项收尾明细折到窄屏上仍然一行一项、带勾与叉，没有因为变窄就把「哪一步没走完」藏起来。能不能关机这件事不随屏幕宽度改变。</p>
+          <p class="band__note">三步收尾明细折到窄屏上仍然一行一项，没有因为变窄就把「哪一步没走完」藏起来。能不能关机这件事不随屏幕宽度改变。</p>
         </figcaption>
       </figure>
 
@@ -311,12 +311,12 @@
   </section>
 
   <!-- ======================================================================
-       第八段：会中每个状态的可点直达。20 个取值与 live.html 脚本里的
+       第八段：会中每个状态的可点直达。19 个取值与 live.html 脚本里的
        STATES 对象逐字一致（状态清单按脚本抄，不按记忆抄）。
        ====================================================================== -->
   <section class="band">
     <div class="band__head">
-      <h2 class="band__title">会中视图 · 20 个状态可点直达</h2>
+      <h2 class="band__title">会中视图 · 19 个状态可点直达</h2>
       <span class="band__note">live.html?state=… · 取值与 live.html 脚本里的 STATES 对象逐字一致</span>
     </div>
     <div class="band__body">
@@ -374,17 +374,17 @@
 
         <p class="list__row">
           <a class="tag" href="live.html?state=ended-draining">?state=ended-draining</a>
-          已结束 · 收尾中：时长冻结在 02:19:23，收尾四项在跑，横幅说「正在落盘，先别关机」。这时候说成「已完成」，人就会去关机。
+          已结束 · 收尾中：时长冻结在 02:19:23，收尾三步（落盘 / log / 启动会后）在跑，quiet 收尾带说「还差最后一块没进盘」。这时候说成「已完成」，人就会去关机。
         </p>
 
         <p class="list__row">
           <a class="tag" href="live.html?state=ended-done">?state=ended-done</a>
-          已结束 · 已完成：四项全勾，横幅这才写「可以关机」。
+          已结束 · 已完成：收尾三步都落定（启动会后停在等待也算落定），quiet 收尾带这才写「录音已落盘」。
         </p>
 
         <p class="list__row">
           <a class="tag" href="live.html?state=ended-drain-failed">?state=ended-drain-failed</a>
-          收尾失败：转码那一步打叉、写出原因（远端这条音频转不出来，文件被截断）、给 log 路径与可复制的命令，并且绝不说「可以关机」。没有独立截图，靠这条链接复核。
+          收尾失败：落盘那一步打叉、写出原因（远端这条音频没写进盘：磁盘只剩 120 MB）、给 log 路径与可复制的命令，并且绝不说「已落盘」。没有独立截图，靠这条链接复核。
         </p>
 
         <p class="list__row">
@@ -497,7 +497,7 @@
       <span class="band__note">15 张装不下这些；能切出来 + 写明，就有据可查</span>
     </div>
     <div class="band__body">
-      <p class="band__note">下面 17 条逐个占一行，截图之外的状态也都在这里。复核时按状态名点进去看。</p>
+      <p class="band__note">下面 8 条逐个占一行，截图之外的状态也都在这里。复核时按状态名点进去看。</p>
       <p class="band__note">顺带说清缺省档：不带 <span class="num">?state=</span> 直接打开时，<span class="num">live.html</span> 落在空闲态（<span class="num">state=idle</span>），<span class="num">post.html</span> 落在已完成那一档（<span class="num">state=done</span>，也就是默认选中最近一场 <span class="num">250906</span> 的结果）。想切哪一档就照上面的链接加参数。</p>
       <div>
         <p class="list__row">
@@ -530,7 +530,7 @@
         </p>
         <p class="list__row">
           <a class="tag" href="live.html?state=ended-drain-failed">live.html?state=ended-drain-failed</a>
-          收尾失败：这时候界面上不出现「可以关机」，也不出现「重跑」按钮。这一档屏幕上说「出事了」的横幅只有收尾那一条 —— 通道失效横幅（远端这一路采不到了）属于录音还在跑却丢了一路的告警态，不与它同屏。
+          收尾失败：这时候界面上不说「已落盘」，也不出现「重跑」按钮。这一档屏幕上说「出事了」的横幅只有收尾那一条 —— 通道失效横幅（远端这一路采不到了）属于录音还在跑却丢了一路的告警态，不与它同屏。
         </p>
       </div>
     </div>
@@ -551,7 +551,7 @@
         </p>
         <p class="list__row">
           <span class="tag">一屏</span>
-          1440×900 不滚动就能看到状态、时长、两路电平、每路健康、告警区、总结入口。20 个状态逐个量过，这六样元素的底边最远 791（`ended-drain-failed` 那一档的收尾带 `#drain-band`）。（硬门槛 5）
+          1440×900 不滚动就能看到状态、时长、两路电平、每路健康、告警区、总结入口。19 个状态逐个量过，这六样元素的底边逐档都在 900 以内；收尾带 #drain-band 自收尾带换 quiet 那一轮起不算六样，单独量也 ≤900，量法与选择器口径见 ui-design 章 8 门槛 5。（硬门槛 5）
         </p>
         <p class="list__row">
           <span class="tag">可见性</span>

@@ -1,24 +1,27 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 
 /**
- * 工作台首页（空闲态那一屏）：左边"我这些会"，右边选中的那一场。
+ * 工作台首页（空闲与已结束的那一屏）：左边"我这些会"，右边选中的那一场。
  *
  * 界面手上**只有服务给的原文**：注册表来自 `GET /api/sessions`（服务侧配置目录里那份
- * `workspaces.json`，界面只读、不落任何本地存储 —— 契约章 6 第 2 条）；目录选择器来自
- * `GET /api/dirs`（起点用户主目录）；打开/收编/删除走 `POST /api/actions` 的
- * `workspace_open` / `workspace_remove`。会中那一路（`start` 之后）由外面那层闸
- * （`App.tsx`）切到 `LiveView`，本组件不碰会中屏。
+ * `workspaces.json`，界面只读、不落任何本地存储 —— 契约章 6 第 2 条）；会后在进度区读
+ * `GET /api/sessions/{id}`。会中那一路（`start` 之后）由外面那层闸（`HomeGate`）切到
+ * `LiveView`，本组件不碰会中屏。左栏那条常驻工作区栏（清单 / 添加 / 移除 / 忙闲一格）
+ * 与会中屏共用同一个组件（`./WorkspaceRail`，d61829f1）；「添加工作区」的选择器与
+ * 收编、移除两只确认弹窗也住在那条栏里。
  *
  * 会后进度区（R27，节点 52b24392）读 `GET /api/sessions/{id}`：**不开 SSE 通道**，
  * 按心跳的样板自排轮询（`api/sessions.ts` 的轮询器，有活动才开），逐块行往下刷、
- * 带进度条、可展开收缩；左清单每行四态与全局「显卡忙不忙」一格的读法在 `home/progress.ts`。
+ * 带进度条、可展开收缩；左清单每行四档与全局「显卡忙不忙」一格的读法在 `home/progress.ts`。
+ * 详情里还有一小块**落盘进度**（d61829f1，ui-design 4.2 二）：停止录音那一刻就回
+ * 工作台，收尾还在跑也回 —— 它读的是快照 `ended`（HomeGate 转手进来），只占一小块。
  */
 
 import { postAction } from '../api';
 import { ConfirmDialog } from '../dialogs';
-import { confirmWorkspaceOpen } from './confirmWorkspaceOpen';
-import { DirPicker, useDirBrowse, type PickerPick } from './DirPicker';
 import { MaterialsPanel } from '../materials/MaterialsPanel';
+import { WorkspaceRail } from './WorkspaceRail';
+import { drainStripView } from './drain';
 import {
   createSessionStatusPoller,
   fetchSessions,
@@ -27,7 +30,7 @@ import {
 } from '../api/sessions';
 import { clampHeartbeatInterval } from '../api/heartbeat';
 import { HEARTBEAT_INTERVAL_DEFAULT_SECONDS } from '../contract';
-import { decisionFor, emptyStateLines, initialSelection, rowDurationLabel, segmentsView, startButtonLabel, startWhy } from './model';
+import { emptyStateLines, initialSelection, segmentsView, startButtonLabel, startWhy } from './model';
 import {
   advanceChunkRows,
   chunkLedgerReset,
@@ -50,7 +53,7 @@ import {
 import { SPEAKER_RENAME_ACTION, duplicateNameHolders, namesRows, type NamesRowView } from './names';
 import { failureFrom, type ActionFailureView } from '../failure';
 import { FailureBlock } from '../failure-ui';
-import type { SessionRow, SessionStatus, SessionsResponse } from '../contract';
+import type { Ended, SessionRow, SessionStatus, SessionsResponse } from '../contract';
 
 // ---------------------------------------------------------------------------
 // 小料
@@ -159,15 +162,6 @@ function SpeakerNamesDialog({
   );
 }
 
-/**
- * 名目 → 挑了之后走哪一档（spec 三情形的唯一出处是 `api/sessions.ts` 的 `probeDecision()`，
- * 这里只转手）。`missing` 名目到不了选择器——`GET /api/dirs` 只摆存在的目录；真到了不走
- * 确认弹窗，显式失败（不可当作可收编入口，见 `openFromPicker`）。
- *
- * 目录选择器本体与它的取数（`useDirBrowse`）住在 `./DirPicker`（160d1a78 搬出共用，
- * 文件模式归资料区）；这里只留挑中之后的登记三档。
- */
-
 /** 两个按钮的动作名 → 界面上的名字（与 `docs/requirements.md` R26 的叫法逐字对齐）。 */
 const POST_LABELS: Readonly<Record<string, string>> = {
   [POST_OFFLINE_ACTION]: '生成会后精细稿',
@@ -189,31 +183,38 @@ const POST_INPUT_LABELS: Readonly<Record<string, string>> = {
 const RECORD_HINT = '在这一场工作区里开始一段新录音；已有段落会保留，续接在它们之后';
 
 /**
- * 待确认的三只弹窗：收编非空目录 / 从列表移除 / 「启动新会议会打断会后总结」。
- * 打断那只挂在**开始录音**上、只在 **offline 档在飞**时摆出来（唯一硬闸：
- * 会后精细稿与会中录音不并排；minutes / 转码在飞没有东西会被打断，不弹）；
- * `dir` 是确认之后要开始的那一场。
+ * 待确认的一只弹窗：「启动新会议会打断会后总结」。打断那只挂在**开始录音**上、
+ * 只在 **offline 档在飞**时摆出来（唯一硬闸：会后精细稿与会中录音不并排；
+ * minutes / 转码在飞没有东西会被打断，不弹）；`dir` 是确认之后要开始的那一场。
+ * （收编 / 移除那两只确认住在左栏 `./WorkspaceRail` 里。）
  */
-type ConfirmState =
-  | { what: 'unknown'; dir: string }
-  | { what: 'remove'; dir: string }
-  | { what: 'start-interrupt'; dir: string };
+type ConfirmState = { what: 'start-interrupt'; dir: string };
+
+/** 快照 `ended` 的转手包：落盘那一小块的读数来源（`HomeGate` 从快照上摘下来）。 */
+export interface HomeDrain {
+  ended: Ended;
+  /** 这一段收尾说的是哪一场（快照 `session.dir`；详情只在选中它时显示这一小块）。 */
+  dir: string | null;
+  /** 失败块里可复制的 log 路径（快照 `service.log_path`）。 */
+  logPath: string | null;
+}
 
 // ---------------------------------------------------------------------------
 // 首页本体
 // ---------------------------------------------------------------------------
 
-export function WorkspaceHome({
-  heartbeatSeconds,
-}: { heartbeatSeconds?: number } = {}): ReactNode {
+export function WorkspaceHome(props: {
+  /** 心跳周期（服务给的 settings；会后进度区的轮询跟着同一个节奏）。 */
+  heartbeatSeconds?: number;
+  /** 快照 `ended` 的转手包（HomeGate 摘出来；`null` = 快照上没有收尾这件事）。 */
+  drain?: HomeDrain | null;
+}): ReactNode {
+  const { heartbeatSeconds, drain = null } = props;
   const [sessions, setSessions] = useState<SessionsResponse | null>(null);
   const [selection, setSelection] = useState<string | null>(null);
   const [failure, setFailure] = useState<ActionFailureView | null>(null);
   const [busy, setBusy] = useState(false);
-  // 选择器的两层弹窗与待确认的一只
-  const [picker, setPicker] = useState(false);
-  /** 选择器的取数（换层 / 跳层 / 失败那一行）——本体在 `./DirPicker`（老路径不带文件）。 */
-  const dirBrowse = useDirBrowse(false);
+  /** 打断确认那一只弹窗（收编 / 移除的两只住在左栏）。 */
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   /**
    * 会后那两个按钮的动作回执（一句话：这一趟已起；`post_minutes` 的回执带 `inputs` /
@@ -412,36 +413,10 @@ export function WorkspaceHome({
   // -- 动作 ----------------------------------------------------------------
 
   /**
-   * 「新会议」的登记入口。**登记不再打断任何在飞的活**（进程级一刀切已废：登记只是
-   * 写一行名单，与在飞的精细稿 / 纪要 / 转码互不冲突）；唯一要确认的打断挂在
-   * **开始录音**那只按钮上（见 `startSelected`）。非空目录（need-confirm）先按 R20
-   * 问收编，过了就登记。
+   * 「新会议」的登记入口在左栏（`./WorkspaceRail`）：登记不打断任何在飞的活，
+   * 收编与移除的两只确认也住在那条栏里。这里只剩**开始录音**这一件事 ——
+   * 唯一要确认的打断挂在它身上（见 `startSelected`）。
    */
-  const openDir = (
-    dir: string,
-    kindHint: 'empty' | 'meeting' | 'need-confirm',
-  ): void => {
-    if (kindHint === 'need-confirm') {
-      setConfirm({ what: 'unknown', dir });
-      return;
-    }
-    openDirNow(dir);
-  };
-
-  /** 登记本体（确认弹窗放行之后走这里；`workspace_open` 动作 + 失败块 + 刷新）。 */
-  const openDirNow = (dir: string): void => {
-    setFailure(null);
-    setBusy(true);
-    void postAction('workspace_open', { dir })
-      .then(
-        () => undefined,
-        (error) => setFailure(failureFrom(error)),
-      )
-      .then(() => {
-        setBusy(false);
-        reloadAfterAction();
-      });
-  };
 
   /**
    * 停掉正在跑的「生成会后精细稿」（R28 / b1c6a58e）：打一只 `post_stop`，受理即回。
@@ -605,110 +580,32 @@ export function WorkspaceHome({
   /** 一场都没有：右栏让给那张空态（左栏照旧留着「添加工作区」）。 */
   const isEmpty = sessions !== null && sessions.sessions.length === 0;
 
-  const openFromPicker = (pick: PickerPick): void => {
-    setPicker(false);
-    if (pick.what !== 'dir') return; // 这只选择器是目录模式：文件那一档归资料区
-    if (pick.kind === 'missing') {
-      // 理论上不可达（选择器只摆存在的目录）；真到达就如实失败，不该弹「确认收编」。
-      setFailure(failureFrom(new Error(`该目录已不存在：${pick.dir}`)));
-      return;
-    }
-    openDir(pick.dir, decisionFor(pick.kind));
-  };
+  /**
+   * 落盘那一小块（d61829f1）：快照 `ended` 说的是快照里那一场收尾，只在选中它时显示。
+   * HomeGate 把快照上的 `ended` / `session.dir` / `service.log_path` 转手进来，
+   * 快照一路在推，这一小块跟着翻面（落定即「录音已落盘」），不等任何轮询。
+   */
+  const strip =
+    drain !== null && selected !== null && selected.dir === drain.dir
+      ? drainStripView(drain.ended)
+      : null;
 
   return (
     <main className="shell page--home" data-top-state="idle">
       <section className="home">
-        {/* 左栏：这一台机器上有哪些工作区。应用名、添加工作区、清单、忙闲一格
-            都住在这儿 —— 顶栏那条横带不再需要，工作台整页就是这两栏。 */}
-        <aside className="home__list" aria-label="工作区">
-          <div className="title-sm">会议工作台</div>
-          <button
-            className="btn btn--ghost home__new"
-            type="button"
-            disabled={busy}
-            onClick={() => {
-              setPicker(true);
-              dirBrowse.browseInto(null);
-            }}
-          >
-            添加工作区
-          </button>
-
-          {sessions === null && failure === null && <p className="hint">正在读取列表…</p>}
-          {sessions !== null && sessions.sessions.length > 0 && (
-            <>
-              {/* 清单头顶这一行只说两件事：这一列是什么、共几个 */}
-              <div className="wslist__head">
-                <span>工作区</span>
-                <span className="num">{sessions.sessions.length}</span>
-              </div>
-              <div className="list wslist" role="listbox" aria-label="工作区列表">
-              {sessions.sessions.map((row) => {
-                const cell = rowStatusView(row, postJobs);
-                const dur = rowDurationLabel(row);
-                return (
-                <div
-                  key={row.dir}
-                  className={`wslist__row ${row.dir === selection ? 'wslist__row--on' : ''}`}
-                  role="option"
-                  aria-selected={row.dir === selection}
-                  tabIndex={0}
-                  onClick={() => setSelection(row.dir)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' || event.key === ' ') setSelection(row.dir);
-                  }}
-                >
-                  <span className="wslist__name">{row.session_id ?? row.dir}</span>
-                  <span className="wslist__path num">{row.dir}</span>
-                  {/* 盘上录到的总时长：清单里一眼看出这一场多长 */}
-                  {dur !== null && <span className="wslist__dur num">{dur}</span>}
-                  {/* 行四态（R27）：字 + 图形两条通道并存，颜色只是冗余的那一半。
-                      判据在 `home/progress.ts` 的 `rowStatusView()`。 */}
-                  <span
-                    className={`wslist__state wslist__state--${cell.tone} ${
-                      cell.dim ? 'wslist__state--dim' : ''
-                    }`}
-                  >
-                    {cell.mark === null ? (
-                      <span className="spinner" aria-hidden="true" />
-                    ) : (
-                      <span className={`glyph ${cell.mark}`} aria-hidden="true" />
-                    )}
-                    {cell.label}
-                  </span>
-                  <button
-                    className="btn btn--small btn--ghost wslist__remove"
-                    type="button"
-                    title="仅从列表移除，不修改磁盘文件；可通过「添加工作区」重新加入"
-                    disabled={busy}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setConfirm({ what: 'remove', dir: row.dir });
-                    }}
-                  >
-                    删除
-                  </button>
-                </div>
-                );
-              })}
-              </div>
-            </>
-          )}
-
-          {/* 忙闲一格住在这一列的末尾（R31）：读法与判据在 `home/progress.ts`
-              的 `gpuBusyView()`。全站没有全局进度条 —— 进度跟着各自的工作区走。 */}
-          <div className="home__foot">
-            <span
-              className={`gpucell ${gpu.busy ? 'gpucell--busy' : ''}`}
-              title={gpu.note}
-              data-busy={gpu.busy ? 'true' : 'false'}
-            >
-              <span className={`glyph ${gpu.mark}`} aria-hidden="true" />
-              {gpu.label}
-            </span>
-          </div>
-        </aside>
+        {/* 左栏：这一台机器上有哪些工作区。铭牌、添加工作区、清单、忙闲一格、
+            选择器与收编/移除两只确认都住在那条栏里 —— 它与会中屏共用同一个组件
+            （d61829f1：两屏同一条常驻工作区栏）。 */}
+        <WorkspaceRail
+          sessions={sessions}
+          selection={selection}
+          postJobs={postJobs}
+          gpu={gpu}
+          busy={busy}
+          onRowActivate={setSelection}
+          onReload={reloadAfterAction}
+          onFailure={setFailure}
+        />
 
         <div className="home__aside">
           {isEmpty ? (
@@ -755,16 +652,51 @@ export function WorkspaceHome({
                   <p className="kv">
                     <span className="kv__k">状态</span>
                     <span className="kv__v">
-                      {cell.mark === null ? (
-                        <span className="spinner" aria-hidden="true" />
-                      ) : (
-                        <span className={`glyph ${cell.mark}`} aria-hidden="true" />
-                      )}
+                      <span className={`glyph ${cell.mark}`} aria-hidden="true" />
                       {cell.label}
                     </span>
                   </p>
                 );
               })()}
+              {/* 落盘那一小块（d61829f1，ui-design 4.2 二）：「录音已结束」之下的
+                  一小段进度，只占一小块、不阻塞任何东西 —— 会后那两个按钮照常可按。
+                  家务进度不用告警带：quiet 的小块，失败也只是把原因、命令与 log 写全。 */}
+              {strip !== null && (
+                <div className="wsdrain" aria-label="落盘进度" data-settled={strip.settled ? 'true' : 'false'}>
+                  <p className="wsdrain__line">
+                    <span
+                      className={`glyph ${
+                        strip.failed ? 'glyph--dashed' : strip.settled ? 'glyph--done' : 'glyph--draining'
+                      }`}
+                      aria-hidden="true"
+                    />
+                    {strip.headline}
+                  </p>
+                  {strip.steps.length > 0 && (
+                    <p className="wsdrain__steps num">
+                      {strip.steps.map((step) => `${step.label}：${step.status}`).join(' · ')}
+                    </p>
+                  )}
+                  {(strip.error !== null || strip.failures.length > 0) && (
+                    <div className="wsdrain__bad">
+                      {strip.error !== null && <p className="wsdrain__fail">{strip.error}</p>}
+                      {strip.failures.map((line) => (
+                        <p className="wsdrain__fail" key={line}>
+                          {line}
+                        </p>
+                      ))}
+                      {/* R15 / R16 的兜底：可复制的命令与 log 路径（绝不说「已落盘」） */}
+                      <code className="codeblock">meeting post {selected.dir}</code>
+                      {drain?.logPath != null && (
+                        <>
+                          <code className="codeblock">{drain.logPath}</code>
+                          <p className="wsdrain__fail">log：{drain.logPath}</p>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
               {selected.date !== null && (
                 <p className="kv">
                   <span className="kv__k">日期</span>
@@ -960,82 +892,6 @@ export function WorkspaceHome({
           )}
         </div>
       </section>
-
-      {picker && (
-        <DirPicker
-          browse={dirBrowse.browse}
-          onBrowse={dirBrowse.browseInto}
-          onJump={dirBrowse.jumpTo}
-          onCreate={dirBrowse.createIn}
-          onPick={openFromPicker}
-          onClose={() => {
-            setPicker(false);
-            dirBrowse.reset();
-          }}
-        />
-      )}
-      {picker && dirBrowse.browseError !== null && (
-        <div className="dlg__layer" role="presentation">
-          <div className="dlg">
-            <div className="dlg__title">目录浏览失败</div>
-            <div className="dlg__text">{dirBrowse.browseError}</div>
-            <div className="dlg__acts">
-              <button className="btn" type="button" onClick={() => setPicker(false)}>
-                关闭
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {confirm !== null && confirm.what === 'unknown' && (
-        <ConfirmDialog
-          title="将该目录添加为工作区？"
-          text="该目录非空，且不含会议材料。确认后将登记到左侧列表，目录内文件保持不变。"
-          confirmLabel="确认添加"
-          busy={busy}
-          onConfirm={() => {
-            const dir = confirm.dir;
-            setConfirm(null);
-            // 收编这一问过了（R20）：登记不打断任何在飞的活（一刀切已废），直接登记。
-            setFailure(null);
-            setBusy(true);
-            void confirmWorkspaceOpen(dir, {
-              onFail: setFailure,
-              reload: () => {
-                setBusy(false);
-                reloadAfterAction();
-              },
-            });
-          }}
-          onCancel={() => setConfirm(null)}
-        />
-      )}
-
-      {confirm !== null && confirm.what === 'remove' && (
-        <ConfirmDialog
-          title="从列表移除该工作区？"
-          text="仅从左侧列表移除，工作区目录及其中的文件保持不变；之后可通过「添加工作区」重新加入。"
-          confirmLabel="从列表移除"
-          busy={busy}
-          onConfirm={() => {
-            const dir = confirm.dir;
-            setConfirm(null);
-            setFailure(null);
-            setBusy(true);
-            void postAction('workspace_remove', { dir })
-              .then(
-                () => undefined,
-                (error) => setFailure(failureFrom(error)),
-              )
-              .then(() => {
-                setBusy(false);
-                reloadAfterAction();
-              });
-          }}
-          onCancel={() => setConfirm(null)}
-        />
-      )}
 
       {confirm !== null && confirm.what === 'start-interrupt' && (
         <ConfirmDialog

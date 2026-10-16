@@ -6,7 +6,7 @@ import { fetchSessions, browseDirs, fetchSessionStatus } from '../src/api/sessio
 import { postAction } from '../src/api';
 // 这一条**不经 `../src/api`**（那个模块在本文件里被 mock 掉了，类拿到的会是替身）
 import { ActionFailedError } from '../src/api/actions';
-import type { DirsResponse, SessionRow, SessionStatus, SessionsResponse } from '../src/contract';
+import type { DirsResponse, Ended, SessionRow, SessionStatus, SessionsResponse } from '../src/contract';
 
 /** 一格「没跑过」的转码工序读数（`transcode` 格的空档形状）。 */
 function transcodeIdle(): SessionStatus['transcode'] {
@@ -1080,5 +1080,94 @@ describe('目录选择器「选中再确认」（57ab5255）', () => {
     });
 
     expect(buttonByText(renderer, '选定这个目录').props.disabled).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 落盘那一小块（d61829f1）：停止录音就回工作台，收尾还在跑也回 ——
+// 详情里那一小块如实说「还差最后一块没进盘」，且不阻塞会后那两个按钮。
+// （闸的判据「ended 任意相都回」在 home.test.ts 单独锁；这里锁回得来之后的画。）
+// ---------------------------------------------------------------------------
+
+describe('落盘那一小块（d61829f1，ui-design 4.2 二）', () => {
+  /** 一份「收尾还在跑」的快照 ended（HomeGate 从快照上摘下来转手的那几格）。 */
+  function drainingEnded(): Ended {
+    return {
+      phase: 'draining',
+      error: null,
+      steps: [
+        { id: 'flush', status: 'running', detail: '', error: null },
+        { id: 'log', status: 'done', detail: '', error: null },
+        { id: 'post', status: 'waiting', detail: '', error: null },
+      ],
+    };
+  }
+
+  it('停止录音就回工作台（落盘仍在跑那一档）：详情打得开，小块写「还差最后一块没进盘」', async () => {
+    fetchSessionsMock.mockResolvedValue(
+      list({ sessions: [row({ state: 'ended' })], recent: 'C:\\会议\\跟老王聊周会' }),
+    );
+    let renderer!: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        createElement(WorkspaceHome, {
+          heartbeatSeconds: 10,
+          drain: {
+            ended: drainingEnded(),
+            dir: 'C:\\会议\\跟老王聊周会',
+            logPath: 'C:\\log\\meeting.log',
+          },
+        }),
+      );
+    });
+
+    const blocks = renderer.root.findAll((node) => node.props['aria-label'] === '落盘进度');
+    expect(blocks, '快照 ended 转手进来后小块现身').toHaveLength(1);
+    const text = textOf(blocks[0] as TestRenderer.ReactTestInstance);
+    expect(text).toContain('还差最后一块没进盘');
+    expect(text).toContain('落盘：进行中');
+    expect(text).toContain('启动会后：等待');
+    // 不阻塞任何东西：会后那两个按钮照常可按（家务进度不拦人）
+    expect(buttonByText(renderer, '生成会后精细稿').props.disabled).toBe(false);
+    await act(async () => {
+      renderer.unmount();
+    });
+  });
+
+  it('收尾落定那一拍：小块翻成「录音已落盘」', async () => {
+    /** 一份「收尾落定」的快照 ended（post 停在 waiting 也算落定）。 */
+    function settledEnded(): Ended {
+      return {
+        phase: 'done',
+        error: null,
+        steps: [
+          { id: 'flush', status: 'done', detail: '', error: null },
+          { id: 'log', status: 'done', detail: '', error: null },
+          { id: 'post', status: 'waiting', detail: '', error: null },
+        ],
+      };
+    }
+    fetchSessionsMock.mockResolvedValue(
+      list({ sessions: [row({ state: 'ended' })], recent: 'C:\\会议\\跟老王聊周会' }),
+    );
+    let renderer!: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(
+        createElement(WorkspaceHome, {
+          heartbeatSeconds: 10,
+          drain: {
+            ended: settledEnded(),
+            dir: 'C:\\会议\\跟老王聊周会',
+            logPath: null,
+          },
+        }),
+      );
+    });
+
+    const blocks = renderer.root.findAll((node) => node.props['aria-label'] === '落盘进度');
+    expect(textOf(blocks[0] as TestRenderer.ReactTestInstance)).toContain('录音已落盘');
+    await act(async () => {
+      renderer.unmount();
+    });
   });
 });

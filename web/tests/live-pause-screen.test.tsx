@@ -324,36 +324,29 @@ describe('录音态那一屏（渲染层）', () => {
 });
 
 describe('全局一格的会后一半（review-1 m2）：post 在飞读的是 GET /api/sessions', () => {
-  /** 收尾窗口那一档的快照：已停录（ended）但收尾没落定 —— 旧实现这里显假「闲」。 */
-  function drainingSnapshot(): Snapshot {
-    return makeSnapshot({ top_state: 'ended', session: null });
-  }
-
-  it('post 在飞时全局格答「忙碌」，不再显假「空闲」', async () => {
+  /**
+   * d61829f1 起「收尾窗口」不再挂在会中这一屏（ended 任意相都回工作台，
+   * 落盘的进度归工作台详情里那一小块）—— 这一屏上 gpucell 的忙闲判据照旧：
+   * 录着（含告警）就是忙，`post_jobs` 的在飞趟补上会后那一半读数；
+   * 常驻工作区栏的栏底还有一只同款（两处读同一条 `GET /api/sessions`）。
+   */
+  it('post 在飞时全局格答「忙碌」，小注说清跑的是哪一趟（顶栏与栏底两处一致）', async () => {
     fetchSessionsMock.mockResolvedValue({
       sessions: [],
       recent: null,
       post_jobs: [{ kind: 'offline', dir: 'C:\\会议\\跑着', started_at: T('22:10:00') }],
     });
-    const renderer = await mountLive(drainingSnapshot());
+    const renderer = await mountLive(makeSnapshot());
 
     const cells = renderer.root.findAll((node) =>
       `${node.props.className ?? ''}`.startsWith('gpucell'),
     );
-    expect(cells, '会中顶栏该有一只 gpucell').toHaveLength(1);
-    expect((cells[0] as TestRenderer.ReactTestInstance).props['data-busy']).toBe('true');
-    expect(String((cells[0] as TestRenderer.ReactTestInstance).props.title)).toContain(
-      '会后那趟在跑',
-    );
-  });
-
-  it('没有会后的活儿：同一格照旧「空闲」', async () => {
-    fetchSessionsMock.mockResolvedValue({ sessions: [], recent: null, post_jobs: [] });
-    const renderer = await mountLive(drainingSnapshot());
-
-    const cells = renderer.root.findAll((node) =>
-      `${node.props.className ?? ''}`.startsWith('gpucell'),
-    );
-    expect((cells[0] as TestRenderer.ReactTestInstance).props['data-busy']).toBe('false');
+    expect(cells, '顶栏一只 + 常驻工作区栏栏底一只').toHaveLength(2);
+    for (const cell of cells) {
+      expect((cell as TestRenderer.ReactTestInstance).props['data-busy']).toBe('true');
+      expect(String((cell as TestRenderer.ReactTestInstance).props.title)).toContain(
+        '会后那趟在跑',
+      );
+    }
   });
 });

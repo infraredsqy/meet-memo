@@ -2234,14 +2234,127 @@ input[type="checkbox"] {
   color: var(--t-signal-ink);
 }
 
-/* 行四态的冗余色档（字与图形已经承载语义，颜色只作第二通道）：
-   会后跑着余晖青、等着人动手灯丝黄 —— 正在录的实心红灯由 `glyph--rec` 自带 */
-.wslist__state--post-running {
-  color: var(--t-signal-ink);
+/* 行四档的字色（d61829f1）：列表行只说录音的四档（空白工作区 / 尚未开始 / 录音中 /
+   录音结束，另有「目录不存在」灰档），字与 glyph 已承载语义 —— 旧的「会后跑着 /
+   等着动手」两个冗余色档随「会后任务运行中」一档一并退场。正在录的实心红灯由
+   `glyph--rec` 自带；「目录不存在」走 `--dim` 灰；「录音结束」收半档墨，不抢眼。 */
+.wslist__state--ended {
+  color: var(--t-ink-mid);
 }
 
-.wslist__state--waiting {
-  color: var(--t-amber);
+/* 6.6 会中屏的常驻工作区栏（d61829f1）：与工作台同一条左栏（`home__list`），grid
+   两栏摆法 —— 左边那条栏、右边整格留给会中自己的内容（居中的 1440 单列，`.shell`
+   的宽度上限在这一格照旧成立）。左栏吸顶自滚，会中内容的长短不牵动它。 */
+.wsbar-page {
+  display: grid;
+  grid-template-columns: 17rem minmax(0, 1fr);
+  align-items: start;
+}
+
+.wsbar-page > .home__list {
+  position: sticky;
+  top: 0;
+  max-height: 100vh;
+  max-height: 100dvh;
+}
+
+.wsbar-main {
+  min-width: 0;
+}
+
+/* 栏里那块选中工作区的小详情（会中屏给 `detail` 这一格）：清单点哪行说哪场。
+   骨架与 `.wslist__row` 同一副语言（同底、同线、同字号阶梯），窄栏里竖着排。 */
+.wsbar__detail {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  padding: var(--space-3);
+  border: var(--size-divider) solid var(--t-rule-hair);
+  background: var(--t-surface);
+}
+
+.wsbar__detailtitle {
+  font-size: var(--size-micro);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+  color: var(--t-ink-faint);
+}
+
+.wsbar__detailname {
+  font-family: var(--t-font-sign);
+  font-size: var(--size-base);
+  font-weight: var(--weight-medium);
+  color: var(--t-ink);
+  overflow-wrap: anywhere;
+}
+
+.wsbar__detailrow {
+  min-width: 0;
+  margin: 0;
+  color: var(--t-ink-quiet);
+  font-size: var(--size-caption);
+  overflow-wrap: anywhere;
+}
+
+.wsbar__detailacts {
+  display: flex;
+  gap: var(--space-2);
+}
+
+/* 「开始录音」被拒那一格（start-rejected 档口径）：一句话指出在录的是哪一场 +
+   「打开那一场」的去处。按不动时不冒话，按下才现身。 */
+.wsbar__reject {
+  display: grid;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: var(--size-divider) solid var(--t-rule-hair);
+}
+
+.wsbar__why {
+  margin: 0;
+  color: var(--t-ink-mid);
+  font-size: var(--size-caption);
+  line-height: var(--line-snug);
+}
+
+/* 6.65 工作台详情里那一小块「落盘进度」（d61829f1，ui-design 4.2 二）：「录音已结束」
+   之下的一小段，只占一小块、不阻塞任何东西。**家务进度不用告警带**：quiet 的边线小块，
+   失败也只是把原因、命令与 log 写全（`wsdrain__fail` 不吃致命色）。 */
+.wsdrain {
+  display: grid;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: var(--size-divider) solid var(--t-rule-hair);
+}
+
+.wsdrain__line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--t-ink-mid);
+  font-size: var(--size-small);
+}
+
+.wsdrain__steps {
+  margin: 0;
+  color: var(--t-ink-quiet);
+  font-size: var(--size-caption);
+  letter-spacing: var(--track-data);
+}
+
+.wsdrain__bad {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.wsdrain__fail {
+  margin: 0;
+  color: var(--t-ink-mid);
+  font-size: var(--size-caption);
+  line-height: var(--line-snug);
+  overflow-wrap: anywhere;
 }
 
 /* 6.7 会议资料（160d1a78）：一块资料区，四个入口（粘贴 / 拖拽 / 提交文字 / 选文件）、
@@ -2685,6 +2798,18 @@ button.mat__name:focus-visible {
     overflow-y: visible;
     border-right: none;
     border-bottom: var(--size-divider) solid var(--t-rule-hair);
+  }
+
+  /* 会中屏的那条栏同样摞到内容上面（d61829f1）：吸顶与自滚只归宽屏，
+     窄屏回到文档流、清单限高自滚 —— 会中六样照样排在它下面，不横向溢出 */
+  .wsbar-page {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .wsbar-page > .home__list {
+    position: static;
+    max-height: 40vh;
   }
 
   .home__aside {

@@ -1171,6 +1171,21 @@ blockquote {
   padding-left: var(--space-6);
 }
 
+/* 收尾带里的那条横幅（d61829f1）：落盘 / log / 启动会后是家务，不用告警带或致命色
+   （章 4.2 二）。quiet 的边线小块，走「槽是亮的」那一副语言（章 7.8 第 3 条），
+   字与图形自己说话 —— 左沿是结构线，不是那道全页唯一的实心色条 */
+.alert--drain {
+  position: relative;
+  background: var(--color-sunk);
+  border-block: var(--size-divider) solid var(--color-rule-hairline);
+  border-left: var(--size-rule) solid var(--color-rule);
+  padding-left: var(--space-6);
+}
+
+.alert--drain .alert__head {
+  color: var(--color-ink);
+}
+
 .alert__head {
   display: flex;
   align-items: baseline;
@@ -1392,6 +1407,7 @@ blockquote {
    那些句子会被自己的类名压住、一个字都不显示。
    提示级告警条用的是列表里的 `.alert--hint` */
 .alert--fatal,
+.alert--drain,
 .alert--hint,
 .fail,
 .heartbeat,
@@ -1410,9 +1426,9 @@ blockquote {
    漏掉 ended-draining / ended-done 这两条，屏幕上就只剩一条 14px 高的粉色空横带：
    标题与四项明细都在 DOM 里，一个字都不显示（.alert--fatal 默认 display: none）。
    三档并列写全，不许再漏 */
-.is-ended-draining #drain-band .alert--fatal,
-.is-ended-done #drain-band .alert--fatal,
-.is-ended-drain-failed #drain-band .alert--fatal {
+.is-ended-draining #drain-band .alert--drain,
+.is-ended-done #drain-band .alert--drain,
+.is-ended-drain-failed #drain-band .alert--drain {
   display: block;
 }
 

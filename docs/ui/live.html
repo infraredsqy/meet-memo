@@ -135,8 +135,8 @@
         <button class="btn btn--small btn--danger" type="button" id="end-from-alert">结束录音</button>
       </div>
       <div class="fail" id="fail-drain" hidden>
-        <div class="fail__why">转码失败：远端这条音频转不出来（文件被截断）</div>
-        <div class="fail__next">下一步：先别关机。这个文件留在场次目录里，重跑在命令行——界面上没有重跑按钮，重跑在命令行那一条路上。这个时候绝不说「可以关机」。</div>
+        <div class="fail__why">落盘失败：远端这条音频没写进盘（磁盘只剩 120 MB）</div>
+        <div class="fail__next">下一步：先别关机。这个文件留在场次目录里，重跑在命令行——界面上没有重跑按钮，重跑在命令行那一条路上。这个时候绝不说「已落盘」。</div>
         <code class="codeblock">meeting post 250906</code>
         <div class="fail__log">log：C:\Users\<user>\.config\meeting\logs\meeting.log</div>
       </div>
@@ -172,15 +172,15 @@
        横幅不再另说一套；这一档的告警带整块不出现（章 4.2 二、章 4.5）。
        横幅与失败明细的放行规则都在 ui.css 的 11.1 节，三档并列写全——
        已结束的两副面孔都在那三条里，屏幕上不会只剩一条空的红带子 -->
-  <section class="band band--alert" id="drain-band" aria-label="收尾" hidden>
-    <div class="alert alert--fatal">
-      <div class="alert__title" id="drain-title">正在落盘，先别关机</div>
-      <div class="alert__body" id="drain-body">落盘 / 转码 / log / 启动会后：四项都在跑，走完之前东西还没落好。这个时候说「已完成」，就等于让人关机丢掉这场会。</div>
+  <section class="band band--quiet" id="drain-band" aria-label="收尾" hidden>
+    <div class="alert alert--drain">
+      <div class="alert__title" id="drain-title">还差最后一块没进盘</div>
+      <div class="alert__body" id="drain-body">落盘 / log / 启动会后：三步都在跑，走完之前东西还没落好。这个时候说「已完成」，就等于让人关机丢掉这场会。</div>
       <div class="alert__acts" id="drain-detail"></div>
     </div>
     <div class="fail" id="drain-fail" hidden>
-      <div class="fail__why">转码失败：远端这条音频转不出来（文件被截断）</div>
-      <div class="fail__next">下一步：先别关机。远端那条音频留在场次目录里，重跑在命令行。界面不说「可以关机」。</div>
+      <div class="fail__why">落盘失败：远端这条音频没写进盘（磁盘只剩 120 MB）</div>
+      <div class="fail__next">下一步：先别关机。清出空间再补跑；界面不说「已落盘」。</div>
       <code class="codeblock">meeting post 250906</code>
       <div class="fail__log">log：C:\Users\<user>\.config\meeting\logs\meeting.log</div>
     </div>
@@ -485,19 +485,19 @@
       local: { readout: "—", health: "stopped", healthText: "数据已停", bars: LOCAL_LIVE, live: false, frozen: true, chipGlyph: "idle", chipText: "本地 · 数据已停" },
       remote: { readout: "—", health: "stopped", healthText: "数据已停", bars: REMOTE_LIVE, live: false, frozen: true, chipGlyph: "idle", chipText: "远端 · 数据已停" } },
     "heartbeat-recovered": { note: "心跳恢复 · 中断 42 秒，两路都在采", hbRecord: true, stamp: "20:58" },
-    "ended-draining": { name: "已结束 · 收尾中", note: "正在落盘，先别关机", clockLabel: "本场时长", clock: "02:19:23", stamp: END_STAMP, live: false, summaryDisabled: true, summaryWhyText: "这场已经结束，会中总结只在录音时按。",
-      drainTitle: "正在落盘，先别关机", drainBody: "音频还在转码、落盘，会后那一套也才刚起来。这几步走完之前，东西还没落好。",
-      drainDetail: [["落盘", "running"], ["转码", "running"], ["log", "done"], ["启动会后", "wait"]],
+    "ended-draining": { name: "已结束 · 收尾中", note: "还差最后一块没进盘", clockLabel: "本场时长", clock: "02:19:23", stamp: END_STAMP, live: false, summaryDisabled: true, summaryWhyText: "这场已经结束，会中总结只在录音时按。",
+      drainTitle: "还差最后一块没进盘", drainBody: "收尾三步（落盘 / log / 启动会后）还在跑，走完之前东西还没落好。转码不在这三步里：flush 落定它就在后台自己跑。",
+      drainDetail: [["落盘", "running"], ["log", "done"], ["启动会后", "wait"]],
       local: buildCh("−35.2 dBFS", "本地 · 已停止", "已停止"),
       remote: buildCh("−48.0 dBFS", "远端 · 已停止", "已停止") },
-    "ended-done": { name: "已结束 · 已完成", note: "可以关机", clockLabel: "本场时长", clock: "02:19:23", stamp: END_STAMP, live: false, summaryDisabled: true, summaryWhyText: "这场已经结束，会中总结只在录音时按。",
-      drainTitle: "已完成，可以关机", drainBody: "音频已落盘、log 已写完这一场、会后那一套已经启动。",
-      drainDetail: [["落盘", "done"], ["转码", "done"], ["log", "done"], ["启动会后", "done"]],
+    "ended-done": { name: "已结束 · 已完成", note: "录音已落盘", clockLabel: "本场时长", clock: "02:19:23", stamp: END_STAMP, live: false, summaryDisabled: true, summaryWhyText: "这场已经结束，会中总结只在录音时按。",
+      drainTitle: "录音已落盘", drainBody: "收尾三步都落定（post 那一格停在 waiting 也算落定：会后一个动作都不自动跑，等你在工作台上按按钮）。",
+      drainDetail: [["落盘", "done"], ["log", "done"], ["启动会后", "wait"]],
       local: buildCh("−35.2 dBFS", "本地 · 已停止", "已停止"),
       remote: buildCh("−48.0 dBFS", "远端 · 已停止", "已停止") },
     "ended-drain-failed": { name: "已结束 · 收尾中", note: "收尾失败 · 先别关机", clockLabel: "本场时长", clock: "02:19:23", stamp: END_STAMP, live: false, summaryDisabled: true, summaryWhyText: "这场已经结束，会中总结只在录音时按。", fatal: true, fail: "drain",
-      drainTitle: "收尾出事了，先别关机", drainBody: "远端这条音频转不出来：文件被截断。这个时候绝不说「可以关机」。",
-      drainDetail: [["落盘", "done"], ["转码", "fail"], ["log", "done"], ["启动会后", "wait"]],
+      drainTitle: "收尾出事了，先别关机", drainBody: "落盘失败：远端这条音频没写进盘（磁盘只剩 120 MB）。这个时候绝不说「已落盘」。",
+      drainDetail: [["落盘", "fail"], ["log", "done"], ["启动会后", "wait"]],
       local: buildCh("−35.2 dBFS", "本地 · 已停止", "已停止"),
       remote: buildCh("−48.0 dBFS", "远端 · 已停止", "已停止") },
     "summary-running": { summary: "running" },

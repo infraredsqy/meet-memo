@@ -327,17 +327,19 @@ describe('会后进度区：换值渲染不塌', () => {
   });
 });
 
-describe('行四态与全局一格：可识别、不塌', () => {
-  it('四种行状态在列表里各有字与形状（颜色不是唯一通道）', async () => {
+describe('行四档与全局一格：可识别、不塌', () => {
+  it('行四档在列表里各有字与形状（颜色不是唯一通道；会后任务在飞不改行）', async () => {
     fetchSessionsMock.mockResolvedValue({
       sessions: [
-        row({ dir: 'C:\\会议\\空闲', session_id: '空闲', kind: 'empty', state: null }),
+        row({ dir: 'C:\\会议\\空白', session_id: '空白', kind: 'empty', state: null }),
         row({ dir: 'C:\\会议\\在录', session_id: '在录', state: 'recording' }),
-        row({ dir: 'C:\\会议\\跑着', session_id: '跑着' }),
-        row({ dir: 'C:\\会议\\等动手', session_id: '等动手', state: 'ended' }),
+        row({ dir: 'C:\\会议\\没开过', session_id: '没开过', kind: 'unknown', state: null }),
+        row({ dir: 'C:\\会议\\结束', session_id: '结束', state: 'ended' }),
+        row({ dir: 'C:\\会议\\没了', session_id: '没了', dir_exists: false }),
       ],
       recent: DIR,
-      post_jobs: [{ kind: 'offline', dir: 'C:\\会议\\跑着', started_at: '2026-09-21T22:10:00+08:00' }],
+      // post_jobs 在飞的那一趟不再进行状态（d61829f1）：只喂忙闲格与进度区
+      post_jobs: [{ kind: 'offline', dir: 'C:\\会议\\结束', started_at: '2026-09-21T22:10:00+08:00' }],
     });
     fetchSessionStatusMock.mockImplementation(async (dir: string) => ({
       ...status({}),
@@ -363,11 +365,12 @@ describe('行四态与全局一格：可识别、不塌', () => {
       });
 
     const find = (tone: string) => joined.filter((item) => item.cls.includes(`--${tone}`));
-    expect(find('idle')[0]?.text).toBe('空白工作区');
+    expect(find('blank')[0]?.text).toBe('空白工作区');
+    expect(find('unstarted')[0]?.text).toBe('尚未开始');
     expect(find('recording')[0]?.text).toBe('录音中');
-    expect(find('post-running')[0]?.text).toBe('会后任务运行中');
-    expect(find('waiting')[0]?.text).toBe('待处理');
-    // 图形通道逐行都在：空闲空心框、在录实心圆、会后任务运行中转圈、等动手虚线圈
+    expect(find('ended')[0]?.text).toBe('录音结束');
+    expect(find('gone')[0]?.text).toBe('目录不存在');
+    // 图形通道逐行都在：没开过空心框、在录实心圆、结束实心块打勾、目录不在虚线圈
     const marks = cells.map((node) =>
       (node.children as unknown[])
         .filter((child) => child !== null && typeof child === 'object')
@@ -375,8 +378,9 @@ describe('行四态与全局一格：可识别、不塌', () => {
     );
     expect(marks[0]).toContain('glyph glyph--idle');
     expect(marks[1]).toContain('glyph glyph--rec');
-    expect(marks[2]).toContain('spinner');
-    expect(marks[3]).toContain('glyph glyph--dashed');
+    expect(marks[2]).toContain('glyph glyph--idle');
+    expect(marks[3]).toContain('glyph glyph--done');
+    expect(marks[4]).toContain('glyph glyph--dashed');
   });
 
   it('全局一格：会后那趟在飞时「忙碌」，一只 gpucell 顶起整格', async () => {
@@ -438,7 +442,7 @@ function rowStatesOf(renderer: TestRenderer.ReactTestRenderer): string {
 }
 
 describe('联结档收敛（review-1 C1）：跑完那一跳之后界面要跟得上', () => {
-  it('选中行被联结命中：在飞时 start，终态那一跳 stop + 列表重取 + 行与全局格翻回', async () => {
+  it('选中行被联结命中：在飞时 start，终态那一跳 stop + 列表重取 + 全局格翻回（行只读录音三档）', async () => {
     fetchSessionsMock.mockResolvedValue({
       sessions: [row({ state: 'ended' })],
       recent: DIR,
@@ -449,7 +453,8 @@ describe('联结档收敛（review-1 C1）：跑完那一跳之后界面要跟�
     );
     const renderer = await mountHome();
     expect(pollerOf().start).toHaveBeenCalledWith(DIR);
-    expect(rowStatesOf(renderer)).toContain('会后任务运行中');
+    // 行不再联结 post_jobs（d61829f1）： ended 的行恒读「录音结束」，忙闲另说
+    expect(rowStatesOf(renderer)).toContain('录音结束');
     expect(gpuCellOf(renderer).props['data-busy']).toBe('true');
 
     // 跑完：读数翻终态、服务把 post_job 翻 null —— 这一次读数翻新要全跟上（旧行为全部卡死）
@@ -465,15 +470,14 @@ describe('联结档收敛（review-1 C1）：跑完那一跳之后界面要跟�
 
     expect(pollerOf().stop).toHaveBeenCalled();
     expect(fetchSessionsMock).toHaveBeenCalledTimes(2);
-    expect(rowStatesOf(renderer)).not.toContain('会后任务运行中');
-    expect(rowStatesOf(renderer)).toContain('待处理');
+    expect(rowStatesOf(renderer)).toContain('录音结束');
     expect(gpuCellOf(renderer).props['data-busy']).toBe('false');
     await act(async () => {
       renderer.unmount();
     });
   });
 
-  it('post 在飞但选中的是别行：列表按心跳重取，翻 null 那一拍行与全局格跟上、心跳即停', async () => {
+  it('post 在飞但选中的是别行：列表按心跳重取，翻 null 那一拍全局格跟上、心跳即停', async () => {
     vi.useFakeTimers();
     try {
       const rowsFly = (): SessionRow[] => [
@@ -487,16 +491,15 @@ describe('联结档收敛（review-1 C1）：跑完那一跳之后界面要跟�
       });
       const renderer = await mountHome();
       expect(fetchSessionsMock).toHaveBeenCalledTimes(1); // 只有挂载那一次
-      expect(rowStatesOf(renderer)).toContain('会后任务运行中');
+      expect(rowStatesOf(renderer)).not.toContain('会后任务运行中');
       expect(gpuCellOf(renderer).props['data-busy']).toBe('true');
 
-      // 跑完：服务翻 null；下一拍心跳重取，A 行翻回、全局格翻闲
+      // 跑完：服务翻 null；下一拍心跳重取，全局格翻闲
       fetchSessionsMock.mockResolvedValue({ sessions: rowsFly(), recent: DIR, post_jobs: [] });
       await act(async () => {
         await vi.advanceTimersByTimeAsync(10_000);
       });
       expect(fetchSessionsMock).toHaveBeenCalledTimes(2);
-      expect(rowStatesOf(renderer)).not.toContain('会后任务运行中');
       expect(gpuCellOf(renderer).props['data-busy']).toBe('false');
 
       // post_job 清 null → 心跳停：再走两拍也不再取

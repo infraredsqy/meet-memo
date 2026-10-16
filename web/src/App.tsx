@@ -12,7 +12,7 @@ import {
 } from './api';
 import { failureFrom, type ActionFailureView } from './failure';
 import { FailureBlock } from './failure-ui';
-import type { Heartbeat, LevelsData, PostJobCell, Snapshot, SummaryWindowChoice } from './contract';
+import type { Heartbeat, LevelsData, PostJobCell, SessionRow, SessionsResponse, Snapshot, SummaryWindowChoice } from './contract';
 import { HEARTBEAT_INTERVAL_DEFAULT_SECONDS } from './contract';
 import { decideAlarmSound, initialAlarmSound } from './live/alarm';
 import {
@@ -29,7 +29,7 @@ import {
   type HeartbeatState,
 } from './live/heartbeat';
 import { emptyLossRecord, observeLosses, type LossRecord } from './live/loss';
-import { drainFailure as drainFailureOf, drainFailedSteps as drainFailedStepsOf } from './live/drain';
+import { drainFailedSteps as drainFailedStepsOf } from './live/drain';
 import { holdFrameWhileDataStopped, releaseHeldFrame, type StoredLevels } from './live/levels';
 import { healthView } from './live/status';
 import { createAlarmSound, browserAudioContextFactory } from './live/sound';
@@ -71,7 +71,9 @@ import type { ChannelView } from './live/view';
 import { normalizeDefaultWindow } from './live/settings';
 import { clampHeartbeatInterval } from './api/heartbeat';
 import { fetchSessions } from './api/sessions';
-import { gpuBusyView } from './home/progress';
+import { gpuBusyView, rowStatusView } from './home/progress';
+import { initialSelection, startButtonLabel } from './home/model';
+import { WorkspaceRail } from './home/WorkspaceRail';
 import { MaterialsPanel } from './materials/MaterialsPanel';
 import { SettingsDrawer } from './settings/SettingsDrawer';
 import { HomeGate } from './home/HomeGate';
@@ -282,6 +284,95 @@ function SummaryFailureCard({
 }
 
 /**
+ * 会中屏左栏里那块**选中工作区的小详情**（d61829f1）：清单里点哪一行，这里说哪一场 ——
+ * 「切到别的工作区看详情」就落在这小块上（工作台的同位详情是右栏那整块 `wspane`）。
+ *
+ * 「开始录音」是这一屏唯一受单场硬限制的动作：**在录时按下不发起、当场如实拒**
+ * （`start-rejected` 档口径：指出在录的是哪一场、录了多久，并给「打开那一场」的去处
+ * —— 把清单选区切回在录那一行；选区**已**是在录那一行时这只钮不摆——按下只会撞
+ * `switchWorkspace` 的早退，是只空转的钮（review-1 m3）），不停在「没反应」。
+ * 拒的话只从快照 `session` 上读，不编数；真发出去的 `start` 若被服务 409（快照
+ * 陈旧那一拍）也走同一条失败块兜底。
+ */
+function WsBarDetail({
+  row,
+  postJobs,
+  recording,
+  busy,
+  onStart,
+  onOpenSession,
+}: {
+  row: SessionRow;
+  postJobs: readonly PostJobCell[];
+  /** 在录的那一场（快照 `session`；会中屏恒有 —— 闸只放 recording / alert 进来）。 */
+  recording: Snapshot['session'];
+  busy: boolean;
+  onStart: () => void;
+  /** 「打开那一场」：把清单选区切回在录那一行（选区已是在录行时钮不摆，见拒块）。 */
+  onOpenSession: () => void;
+}): ReactNode {
+  const [rejected, setRejected] = useState(false);
+  const cell = rowStatusView(row, postJobs);
+  const elapsed = recording?.elapsed_seconds ?? null;
+  /** 「已录 41 分钟」这一格：分钟级的人话；不满一分钟如实说秒（数字来自服务）。 */
+  const elapsedLabel =
+    elapsed === null
+      ? ''
+      : elapsed < 90
+        ? `已录 ${Math.max(1, Math.round(elapsed))} 秒`
+        : `已录 ${Math.round(elapsed / 60)} 分钟`;
+  return (
+    <div className="wsbar__detail" aria-label="选中工作区详情">
+      <div className="wsbar__detailtitle">选中的工作区</div>
+      <div className="wsbar__detailname">{row.session_id ?? row.dir}</div>
+      <p className="wsbar__detailrow">
+        <span className={`wslist__state wslist__state--${cell.tone} ${cell.dim ? 'wslist__state--dim' : ''}`}>
+          <span className={`glyph ${cell.mark}`} aria-hidden="true" />
+          {cell.label}
+        </span>
+      </p>
+      <p className="wsbar__detailrow num">{row.dir}</p>
+      <div className="wsbar__detailacts">
+        <button
+          className="btn btn--small btn--primary"
+          type="button"
+          disabled={busy}
+          title={
+            rejected
+              ? undefined
+              : '在这一场工作区里开始一段新录音；同一时刻只录一场，在录时按下会被如实拒'
+          }
+          onClick={() => {
+            if (recording !== null) {
+              // 单场硬限制（R17）：在录时按下即如实拒，不发起 —— 话只从快照上读。
+              setRejected(true);
+              return;
+            }
+            onStart();
+          }}
+        >
+          {startButtonLabel(row)}
+        </button>
+      </div>
+      {rejected && recording !== null && (
+        <div className="wsbar__reject">
+          <p className="wsbar__why">
+            已经有一场在录（{recording.id}
+            {elapsedLabel === '' ? '' : `，${elapsedLabel}`}）。同一时刻只录一场。
+          </p>
+          {/* 选区已是在录行时这只钮没有真实去处（按下只会早退），不摆（review-1 m3） */}
+          {recording.dir !== row.dir && (
+            <button className="btn btn--small btn--ghost" type="button" onClick={onOpenSession}>
+              打开那一场 →
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
  * 会中主视图（由 `home/HomeGate` 在非空闲形势下渲染出去）。
  *
  * **SSE 那条唯一连接在 `App.tsx` 顶层**：全页恰一个 `EventSource`（web-homegate-dual-sse）。
@@ -324,11 +415,15 @@ export function LiveView({
   /** 本场总结记录那一块开着没有（结果面板与它是两块内容，各自关各自的）。 */
   const [summaryLogOpen, setSummaryLogOpen] = useState(false);
   /**
-   * 会后那趟在不在飞（`GET /api/sessions` 顶层第三格的原文）：全局「显卡忙不忙」
-   * 的会后一半读数。之前这一屏硬编码 `null`，收尾窗口显假「闲」（review-1 m2）——
+   * 工作区注册表的那一份（`GET /api/sessions` 的应答原文）：顶层 `post_jobs` 喂全局
+   * 「显卡忙不忙」那一格；清单整份喂左栏那条**常驻工作区栏**（d61829f1：会中屏与
+   * 工作台共用同一条栏 —— 录音时能看清单、能切到别的工作区看详情、能添加工作区）。
+   * 之前这一屏只留 `post_jobs`，且硬编码 `null` 显假「闲」（review-1 m2）——
    * 同一服务的同一份读数，按下面的心跳节奏伸手取即可。
    */
-  const [postJobs, setPostJobs] = useState<PostJobCell[]>([]);
+  const [wsSessions, setWsSessions] = useState<SessionsResponse | null>(null);
+  /** 工作区栏的选区（左栏清单里点中的那一场；默认落在最近一次被打开的那一场）。 */
+  const [wsSelection, setWsSelection] = useState<string | null>(null);
   /** 总结区那台状态机（这一次请求的状态、当前档位、记录那一份）。 */
   const summaryRef = useRef<SummaryController | null>(null);
   if (summaryRef.current === null) {
@@ -422,17 +517,20 @@ export function LiveView({
     heartRef.current?.setIntervalFromSnapshot(heartbeatSeconds);
   }, [heartbeatSeconds]);
 
-  // 会后在飞读数（review-1 m2）：挂上这一屏就按心跳节奏取一遍 `GET /api/sessions`，
-  // 把顶层的 `post_jobs` 喂给全局那格「显卡忙不忙」——录着的那一档它本来就答忙，
-  // 真正要这份读数的是收尾窗口那一档（recording 已假、会后模型还开着）。取不到的
-  // 那一跳（瞬态失联）手上这份照旧，下一跳再试；周期与心跳同一个可配节奏。
+  // 工作区栏读数（review-1 m2 起，d61829f1 扩成整份清单）：挂上这一屏就按心跳节奏取
+  // 一遍 `GET /api/sessions`，把顶层 `post_jobs` 喂给全局那格「显卡忙不忙」、清单整份
+  // 喂给左栏那条常驻工作区栏。取不到的那一跳（瞬态失联）手上这份照旧，下一跳再试；
+  // 周期与心跳同一个可配节奏。首份到手时给选区落座：最近一次被打开的那一场。
+  const postJobs = wsSessions?.post_jobs ?? [];
   useEffect(() => {
     let cancelled = false;
     const seconds = clampHeartbeatInterval(heartbeatSeconds ?? HEARTBEAT_INTERVAL_DEFAULT_SECONDS);
     const load = (): void => {
       void fetchSessions().then(
         (data) => {
-          if (!cancelled) setPostJobs(data.post_jobs);
+          if (cancelled) return;
+          setWsSessions(data);
+          setWsSelection((current) => current ?? initialSelection(data.sessions, data.recent));
         },
         () => undefined,
       );
@@ -444,6 +542,17 @@ export function LiveView({
       clearInterval(timer);
     };
   }, [heartbeatSeconds]);
+
+  /** 清单重取（左栏的登记动作落地后走这一条）。 */
+  const reloadWs = useCallback((): void => {
+    void fetchSessions().then(
+      (data) => {
+        setWsSessions(data);
+        setWsSelection((current) => current ?? initialSelection(data.sessions, data.recent));
+      },
+      () => undefined,
+    );
+  }, []);
 
   // 快速总结的缺省档同样来自快照的 settings（`311f84f5`）：预选跟着服务走，
   // 用户显式挑过的档不被覆盖（判据在 summary-controller 的 applyDefaultWindow 里）。
@@ -555,6 +664,20 @@ export function LiveView({
   );
 
   /**
+   * 切工作区（d61829f1）：发**既有**的 `workspace_open` 登记动作（不造新端点），
+   * 成功后才把详情切过去 —— 登记失败（目录没了这类）详情留在原处，失败块说原因。
+   */
+  const switchWorkspace = useCallback(
+    (dir: string): void => {
+      if (dir === wsSelection) return;
+      void runAction('workspace_open', { dir })
+        .then(() => setWsSelection(dir))
+        .catch(() => undefined); // 失败块已由 runAction 画出
+    },
+    [runAction, wsSelection],
+  );
+
+  /**
    * 四组合直切（`c9f5d04d`）：映射表差几步发几步，按次序发、中途失败即停。
    *
    * 「现状」在半途要读对：上一趟还没落地（`pendingCombo` 有值）时快照还是旧的，
@@ -638,6 +761,9 @@ export function LiveView({
     postJobs,
     snapshot !== null && (snapshot.top_state === 'recording' || snapshot.top_state === 'alert'),
   );
+  /** 左栏小详情说的是选中的那一场（清单点哪行说哪场）；选区没落座时这一块不给。 */
+  const wsRow: SessionRow | null =
+    (wsSessions?.sessions ?? []).find((row) => row.dir === wsSelection) ?? null;
   const chips = useMemo(() => {
     if (snapshot === null) return [];
     return snapshot.sources.map((source) => {
@@ -668,14 +794,8 @@ export function LiveView({
     setJumpVisible(false);
   }, []);
 
-  /**
-   * 收尾失败那一档要画的那块明细（读法在 `live/drain.ts`，本组件只转手）。
-   */
+  /** 收尾失败那几步的行（读法在 `live/drain.ts`，本组件只转手）。 */
   const drainFailedSteps = useMemo(() => drainFailedStepsOf(snapshot), [snapshot]);
-  const drainFailureView = useMemo<ActionFailureView | null>(
-    () => drainFailureOf(failure, snapshot, drainFailedSteps),
-    [failure, snapshot, drainFailedSteps],
-  );
 
   const bodyClass = [
     'page--live',
@@ -754,6 +874,34 @@ export function LiveView({
         </div>
       )}
 
+      {/* 常驻工作区栏（d61829f1）：会中屏与工作台共用同一条左栏 —— 录音时能看清单、
+          能切到别的工作区看详情、能添加工作区；只有「开始录音」受单场限制。
+          会中自己的内容仍读作居中的 1440 单列（右边那格 `.wsbar-main` 里的 `.shell`）。 */}
+      <div className="wsbar-page">
+      <WorkspaceRail
+        sessions={wsSessions}
+        selection={wsSelection}
+        postJobs={postJobs}
+        gpu={gpu}
+        busy={busy}
+        onRowActivate={switchWorkspace}
+        onReload={reloadWs}
+        onFailure={setFailure}
+        detail={
+          wsRow === null ? null : (
+            <WsBarDetail
+              key={wsRow.dir}
+              row={wsRow}
+              postJobs={postJobs}
+              recording={snapshot.session}
+              busy={busy}
+              onStart={() => runActionQuietly('start', { dir: wsRow.dir, mode: 'both' })}
+              onOpenSession={() => switchWorkspace(snapshot.session?.dir ?? wsRow.dir)}
+            />
+          )
+        }
+      />
+      <div className="wsbar-main">
       <main
         className={`shell ${bodyClass}`}
         data-hb-level={heartbeat.level}
@@ -1173,43 +1321,6 @@ export function LiveView({
         </section>
       )}
 
-      {/* 收尾：能不能关机，只由这一条回答 */}
-      {snapshot.ended !== null && (
-        <section className="band band--alert" aria-label="收尾">
-          <div className="alert alert--fatal">
-            <div className="alert__title">
-              {snapshot.ended.phase === 'done'
-                ? '已完成，可以关机'
-                : drainFailedSteps.length > 0
-                  ? '收尾出事了，先别关机'
-                  : '正在落盘，先别关机'}
-            </div>
-            <div className="alert__body">
-              {snapshot.ended.phase === 'done'
-                ? '音频与日志均已落盘，可以关机。会后那两趟回工作台按按钮。'
-                : '音频仍在转码、落盘。这些步骤走完之前，数据还没有落好。'}
-            </div>
-            <div className="alert__acts">
-              <span className="kv__v">
-                {snapshot.ended.steps
-                  .map((step) => `${step.id}：${step.status}`)
-                  .join(' · ')}
-              </span>
-            </div>
-          </div>
-          {/* 收尾失败：原因 + 可复制的命令 + log 路径（设计章 4.2 二）。
-              这一档的失败明细不只来自动作失败 —— 服务自己在收尾里出事时
-              （`ended.error` 有值、或某一步 `status = failed`）也要画出来，
-              所以判据是「收尾没走到 done + 有错可报」 */}
-          {snapshot.ended.phase !== 'done' && drainFailureView !== null && (
-            <FailureBlock
-              failure={drainFailureView}
-              logPath={logPath}
-              extraLines={drainFailedSteps}
-            />
-          )}
-        </section>
-      )}
       {/* 动作失败与拒绝：按 code 分派，detail 有哪个键显示哪个键（契约 6.7）。
           它排在告警区外面：失联时那一整块要收掉（两句话不同屏），
           而动作失败讲的是「刚才这一下没成」这件事 */}
@@ -1315,6 +1426,8 @@ export function LiveView({
         {captureNote === null ? '' : ` ${captureNote}。`}
       </p>
       </main>
+      </div>
+      </div>
     </>
   );
 }

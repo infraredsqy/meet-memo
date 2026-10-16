@@ -21,11 +21,8 @@ export function FailureBlock({
   forbiddenNote?: boolean;
 }): ReactNode {
   /**
-   * extraLines 先对 detail 去重（web-drain-failure-double-lines）：会中收尾那一档
-   * `drainFailure`（live/drain.ts）的 detail 已按逐字等价线摊进了收尾失败那几行，
-   * App 又把 `drainFailedSteps` 传成 extraLines —— 同一行就被画两遍。这里只做
-   * 字符串行**精确相等**的去重：已在 detail 里的 extra 行不再渲染，行序保持；
-   * drain.ts 的 detail 构成与调用方传参都不动。
+   * extraLines 先对 detail 去重（web-drain-failure-double-lines）：同一行明细不画两遍
+   * —— 只做字符串行**精确相等**的去重：已在 detail 里的 extra 行不再渲染，行序保持。
    */
   const detailSet = new Set('detail' in failure ? failure.detail : []);
   const extraUnique = extraLines.filter((line) => !detailSet.has(line));

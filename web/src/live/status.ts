@@ -36,20 +36,21 @@ export interface StatusView {
   tone: 'off' | 'on' | 'alert';
 }
 
-/** 顶层状态 → 胶囊。收尾中 / 已完成按 `ended.phase` 分成两副面孔（设计章 4.2 二）。 */
+/** 顶层状态 → 胶囊。收尾中 / 已完成按 `ended.phase` 分成两副面孔（设计章 4.2 二）。
+ *  五句固定文案照 `docs/ui-design.md` 2.3 的口径逐字对齐（d61829f1 改的旧稿话）。 */
 export function statusView(
   topState: TopState,
   endedPhase: 'draining' | 'done' | null,
 ): StatusView {
   switch (topState) {
     case 'idle':
-      return { name: '待机', note: '未开始录音', glyph: 'glyph--idle', tone: 'off' };
+      return { name: '空闲', note: '尚未开始', glyph: 'glyph--idle', tone: 'off' };
     case 'recording':
-      return { name: '录音中', note: '两路均在采样', glyph: 'glyph--rec', tone: 'on' };
+      return { name: '录音中', note: '两路都在采', glyph: 'glyph--rec', tone: 'on' };
     case 'alert':
       return {
         name: '告警',
-        note: '一路仍在采样，另一路信号丢失',
+        note: '一路仍在采，另一路采不到了',
         glyph: 'glyph--alert',
         tone: 'alert',
       };
@@ -57,13 +58,13 @@ export function statusView(
       return endedPhase === 'done'
         ? {
             name: '已结束 · 已完成',
-            note: '可以关机；会后那两趟回工作台按按钮',
+            note: '录音已落盘',
             glyph: 'glyph--done',
             tone: 'off',
           }
         : {
             name: '已结束 · 收尾中',
-            note: '正在落盘，先别关机',
+            note: '还差最后一块没进盘',
             glyph: 'glyph--draining',
             tone: 'off',
           };

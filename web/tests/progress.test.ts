@@ -21,7 +21,8 @@ import type { OfflineSourceProgress, PostJobCell, SessionRow, SessionStatus } fr
  * `live-fixtures.ts` 同一姿态）。形状的权威在 `docs/contract.md` 4.9，逐键对着写。
  *
  * 四组：
- * 1. 列表行四态（b3：显示层重映射 + `post_job.dir` 联结）；
+ * 1. 列表行四档（d61829f1：空白工作区 / 尚未开始 / 录音中 / 录音结束 + 目录不存在；
+ *    会后工序的进度不进行状态）；
  * 2. 进度读数（真在跑 / 停着一版 running / 终态 / 没跑过；分母按路各算各的）；
  * 3. 逐块行（每跑完一块落一行；四档归属靠计数差值）与记录重置检出（review-2 m2：
  *    重跑一场逐块行整段重播）；
@@ -114,19 +115,19 @@ function status(
 }
 
 // ---------------------------------------------------------------------------
-// 1. 列表行四态
+// 1. 列表行四档（d61829f1：只说录音，会后工序的进度不进这一格）
 // ---------------------------------------------------------------------------
 
-describe('列表行四态（R27，字与图形并存）', () => {
-  it('空闲：没开过会的目录各有原话，形状是空心框', () => {
+describe('列表行四档（d61829f1，字与图形并存）', () => {
+  it('空白工作区 / 尚未开始：按名目 kind 分档，形状是空心框（颜色不是唯一通道）', () => {
     expect(rowStatusView(row({ kind: 'empty' }), [])).toEqual({
-      tone: 'idle', label: '空白工作区', mark: 'glyph--idle', dim: false,
+      tone: 'blank', label: '空白工作区', mark: 'glyph--idle', dim: false,
     });
-    expect(rowStatusView(row({ kind: 'meeting' }), [])?.label).toBe('会议目录');
-    expect(rowStatusView(row({ kind: 'unknown' }), [])?.label).toBe('普通目录');
-    expect(rowStatusView(row({ kind: 'meeting', suspected: true }), [])?.label).toBe(
-      '疑似会议目录（缺少元数据）',
-    );
+    // 有材料没元数据的疑似目录、收编的普通目录：没开过会就一律读「尚未开始」
+    expect(rowStatusView(row({ kind: 'meeting', suspected: true }), [])).toEqual({
+      tone: 'unstarted', label: '尚未开始', mark: 'glyph--idle', dim: false,
+    });
+    expect(rowStatusView(row({ kind: 'unknown' }), [])?.label).toBe('尚未开始');
   });
 
   it('录音中：state=recording，实心红灯 + 字，两条通道都在', () => {
@@ -136,30 +137,22 @@ describe('列表行四态（R27，字与图形并存）', () => {
     expect(view.mark).toBe('glyph--rec');
   });
 
-  it('等着人动手：录音结束（ended）就是 waiting 语义（三档口径，收尾进度不进行状态）', () => {
+  it('录音结束（ended）：三档口径只答「这场录音走到哪了」，收尾进度不进行状态', () => {
     const ended = rowStatusView(row({ state: 'ended', kind: 'meeting' }), []);
-    expect(ended.tone).toBe('waiting');
-    expect(ended.label).toBe('待处理');
-    expect(ended.mark).toBe('glyph--dashed');
+    expect(ended.tone).toBe('ended');
+    expect(ended.label).toBe('录音结束');
+    expect(ended.mark).toBe('glyph--done');
   });
 
-  it('会后任务运行中：post_job.dir 与这一行联结命中（ended 的那一行也被它盖过）', () => {
+  it('会后任务在飞不改这一行：post_jobs 只喂忙闲格与进度区，行四档看不见它', () => {
+    // 旧口径这里翻「会后任务运行中」；d61829f1 起那一档从行上摘除
     const view = rowStatusView(row({ state: 'ended', kind: 'meeting' }), job());
-    expect(view.tone).toBe('post-running');
-    expect(view.label).toBe('会后任务运行中');
-    expect(view.mark).toBeNull(); // 画 spinner（转的），不是静态形状
+    expect(view.tone).toBe('ended');
+    expect(view.label).toBe('录音结束');
+    expect(view.mark).not.toBeNull();
   });
 
-  it('联结只认同一场：别人的 post_job 点不亮这一行', () => {
-    const view = rowStatusView(
-      row({ state: 'ended', kind: 'meeting' }),
-      job({ dir: 'C:\\会议\\另一场' }),
-    );
-    expect(view.tone).toBe('waiting');
-    expect(view.label).toBe('待处理');
-  });
-
-  it('目录不存在：灰档 + 虚线圈，联结与四态都让位', () => {
+  it('目录不存在：灰档 + 虚线圈，四档都让位（如实保留）', () => {
     const gone = rowStatusView(row({ dir_exists: false }), job());
     expect(gone.tone).toBe('gone');
     expect(gone.label).toBe('目录不存在');
@@ -167,10 +160,10 @@ describe('列表行四态（R27，字与图形并存）', () => {
     expect(gone.dim).toBe(true);
   });
 
-  it('被强杀在收尾半路的那一场：三档口径里它就是 ended，行翻「待处理」（旧 draining 档删除）', () => {
+  it('被强杀在收尾半路的那一场：三档口径里它就是 ended，行读「录音结束」', () => {
     const view = rowStatusView(row({ state: 'ended', kind: 'meeting' }), []);
-    expect(view.tone).toBe('waiting');
-    expect(view.label).toBe('待处理');
+    expect(view.tone).toBe('ended');
+    expect(view.label).toBe('录音结束');
   });
 });
 

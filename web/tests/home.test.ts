@@ -68,11 +68,11 @@ describe('行状态一眼可读', () => {
     expect(statusLabel(row({ state: 'ended' }))).toBe('录音结束');
   });
 
-  it('没有记录的三档：空白工作区 / 疑似会议目录（兜底不当杂物）/ 会议目录 / 普通目录', () => {
+  it('没有记录的两档按名目 kind 分：空白工作区 / 尚未开始（d61829f1 的行四档）', () => {
     expect(statusLabel(row({ kind: 'empty' }))).toBe('空白工作区');
-    expect(statusLabel(row({ kind: 'meeting', suspected: true }))).toBe('疑似会议目录（缺少元数据）');
-    expect(statusLabel(row({ kind: 'meeting' }))).toBe('会议目录');
-    expect(statusLabel(row({ kind: 'unknown' }))).toBe('普通目录');
+    // 有材料没元数据的疑似目录、收编的普通目录：没开过会就一律「尚未开始」
+    expect(statusLabel(row({ kind: 'meeting', suspected: true }))).toBe('尚未开始');
+    expect(statusLabel(row({ kind: 'unknown' }))).toBe('尚未开始');
   });
 });
 
@@ -263,7 +263,7 @@ describe('闸的分流（R26：结束录音之后回到工作台）', () => {
     expect(showsWorkspaceHome(snapshot({ top_state: 'idle', hasSession: false }))).toBe(true);
   });
 
-  it('收尾四步落定（post 停在 waiting）→ 回工作台', () => {
+  it('收尾落定（post 停在 waiting）→ 回工作台', () => {
     expect(showsWorkspaceHome(snapshot({ phase: 'done' }))).toBe(true);
     expect(drainSettled(snapshot({ phase: 'done' }))).toBe(true);
   });
@@ -273,17 +273,19 @@ describe('闸的分流（R26：结束录音之后回到工作台）', () => {
     expect(showsWorkspaceHome(snap)).toBe(true);
   });
 
-  it('收尾还在跑（post 停在 running）→ 留在会中那一屏', () => {
+  it('停止录音就回工作台，落盘还在跑也回（d61829f1：停下不锁屏）', () => {
     const snap = snapshot({ phase: 'draining', statuses: ['done', 'done', 'done', 'running'] });
-    expect(showsWorkspaceHome(snap)).toBe(false);
+    expect(showsWorkspaceHome(snap)).toBe(true);
+    // 那一小块的两档判据照旧：没落定就是没落定（详情里写「还差最后一块没进盘」）
+    expect(drainSettled(snap)).toBe(false);
   });
 
-  it('前三步还没轮到（waiting）→ 留在会中那一屏', () => {
+  it('前三步还没轮到（waiting）→ 照样回工作台（d61829f1：ended 任意相都回）', () => {
     const snap = snapshot({
       phase: 'draining',
       statuses: ['waiting', 'waiting', 'waiting', 'waiting'],
     });
-    expect(showsWorkspaceHome(snap)).toBe(false);
+    expect(showsWorkspaceHome(snap)).toBe(true);
   });
 
   it('录音中 / 告警 → 留在会中那一屏', () => {

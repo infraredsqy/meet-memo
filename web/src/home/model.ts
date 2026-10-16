@@ -93,7 +93,14 @@ export function segmentsView(row: SessionRow): SessionSegmentsView | null {
   return { lines, total: `共 ${lines.length} 段 · ${secondsLabel(finished)}` };
 }
 
-/** 行状态那一格的人话（契约字段 → 文案，一处定义；`state` 是三档口径）。 */
+/**
+ * 行状态那一格的人话（契约字段 → 文案，一处定义；`state` 是三档口径）。
+ *
+ * 列表行只说**录音走到哪了**的四档（d61829f1：会后工序的进度不进这一格）——
+ * 「空白工作区 / 尚未开始」的分界按名目 `kind` 判：`empty`（目录里什么都没有）读
+ * 「空白工作区」，其余没开过会的（有音频没元数据的疑似目录、收编的普通目录）读
+ * 「尚未开始」。颜色不是唯一通道：字由这里给，形状由 `rowStatusView()` 的 glyph 给。
+ */
 export function statusLabel(row: SessionRow): string {
   if (!row.dir_exists) return '目录不存在';
   switch (row.state) {
@@ -105,9 +112,7 @@ export function statusLabel(row: SessionRow): string {
       break;
   }
   if (row.kind === 'empty') return '空白工作区';
-  if (row.suspected) return '疑似会议目录（缺少元数据）';
-  if (row.kind === 'meeting') return '会议目录';
-  return '普通目录';
+  return '尚未开始';
 }
 
 /** 注册表空着时右栏那张空态：一句状态 + 一句怎么开始。 */

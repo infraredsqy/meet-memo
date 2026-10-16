@@ -16,8 +16,9 @@ import { sourceDisplayName } from '../live/format';
  *
  * 四件事，判据全部落在服务给的原文上：
  *
- * 1. **列表行四态**（b3）：空闲 / 正在录 / 会后跑着 / 等你动手 —— 纯显示层重映射
- *    加 `post_jobs` 联结（这一场有任一趟在飞即命中）；行 schema 十二键一字不动。
+ * 1. **列表行四档**（d61829f1：空白工作区 / 尚未开始 / 录音中 / 录音结束，另保留
+ *    「目录不存在」）—— 纯显示层重映射，行 schema 十二键一字不动；会后工序的进度
+ *    不进这一格（`post_jobs` 只喂左栏底那格忙闲与详情里的进度区）。
  * 2. **进度读数**：`GET /api/sessions/{id}` 的 `offline` 那份 → 每路一条的读数与
  *    进度条百分比。**分母按路各算各的**（契约 4.9：合成一个整场分母就是在造一个
  *    不存在的量，设计意图第 9 条）。
@@ -39,23 +40,24 @@ export type { PostJobCell };
 // ---------------------------------------------------------------------------
 
 /**
- * 行状态的档位。spec 四态是 `idle` / `recording` / `post-running` / `waiting`；
- * 另有一档如实保留：「路径已不在」（`gone`）。行 `state` 是三档口径（契约 4.8）：
- * `recording` / `ended` / `null` —— 收尾走到哪一步不进这个口径，落盘与转码的进度
- * 由详情里的进度区（`GET /api/sessions/{id}` 的 `offline` 那份）另答。
+ * 行状态的档位。列表行只说录音的**四档**（d61829f1）：`blank`（空白工作区）/
+ * `unstarted`（尚未开始）/ `recording`（录音中）/ `ended`（录音结束）；另有一档
+ * 如实保留：「目录不存在」（`gone`）。行 `state` 是三档口径（契约 4.8）：
+ * `recording` / `ended` / `null` —— 收尾走到哪一步、会后那几趟在不在飞都**不进
+ * 这个口径**：落盘的进度由详情里那一小块落盘进度另答，会后由进度区（`offline`
+ * 那份）与左栏底那格忙闲另答。
  */
-export type RowTone = 'gone' | 'idle' | 'recording' | 'post-running' | 'waiting';
+export type RowTone = 'gone' | 'blank' | 'unstarted' | 'recording' | 'ended';
 
 export interface RowStatusView {
   tone: RowTone;
   /** 状态格上的字。 */
   label: string;
   /**
-   * 图形标记（形状是「不靠颜色」的那一半，`ui-design` §7.10 的 `glyph--*`）；
-   * `null` = 会后跑着，画 `spinner`（转的那个，与会中总结进行中同一只）。
+   * 图形标记（形状是「不靠颜色」的那一半，`ui-design` §7.10 的 `glyph--*`）。
    */
-  mark: string | null;
-  /** 灰档：只有「路径已不在」用它（沿 `wslist__state--dim` 的既有口径）。 */
+  mark: string;
+  /** 灰档：只有「目录不存在」用它（沿 `wslist__state--dim` 的既有口径）。 */
   dim: boolean;
 }
 
@@ -64,29 +66,30 @@ export interface RowStatusView {
  *
  * 判据按次序：
  *
- * - 目录不在原地 → 「目录不存在」（最优先 —— 目录都没了，联结无从谈起）；
- * - `post_jobs` 里有 `dir === row.dir` 的一趟 → 「会后任务运行中」（联结命中；
- *   跑的是哪几趟写在全局那格）；
- * - 三档口径 `state`：`recording` → 录音中；`ended` → **待处理语义**
- *   （05a48b6a 立下这条口径：录音已结束、会后归两个按钮，都不按就什么都不跑）；
- * - 其余（还没开过会的目录）→ 空闲族，文案以 `model.ts` `statusLabel()` 为唯一出处。
+ * - 目录不在原地 → 「目录不存在」（最优先 —— 目录都没了，录音也无从谈起）；
+ * - 三档口径 `state`：`recording` → 录音中；`ended` → 录音结束（被强杀丢在收尾
+ *   半路的那一场也在这一档 —— 三档口径只答「这场录音走到哪了」）；
+ * - 其余（还没开过会）→ `kind === 'empty'` 读「空白工作区」，否则「尚未开始」
+ *   （分界判据在 `model.ts` `statusLabel()`，唯一的文案出处）。
  */
-export function rowStatusView(row: SessionRow, postJobs: readonly PostJobCell[]): RowStatusView {
+export function rowStatusView(row: SessionRow, _postJobs: readonly PostJobCell[]): RowStatusView {
   if (!row.dir_exists) {
     return { tone: 'gone', label: statusLabel(row), mark: 'glyph--dashed', dim: true };
-  }
-  if (postJobs.some((job) => job.dir === row.dir)) {
-    return { tone: 'post-running', label: '会后任务运行中', mark: null, dim: false };
   }
   switch (row.state) {
     case 'recording':
       return { tone: 'recording', label: '录音中', mark: 'glyph--rec', dim: false };
     case 'ended':
-      return { tone: 'waiting', label: '待处理', mark: 'glyph--dashed', dim: false };
+      return { tone: 'ended', label: '录音结束', mark: 'glyph--done', dim: false };
     default:
       break;
   }
-  return { tone: 'idle', label: statusLabel(row), mark: 'glyph--idle', dim: false };
+  return {
+    tone: row.kind === 'empty' ? 'blank' : 'unstarted',
+    label: statusLabel(row),
+    mark: 'glyph--idle',
+    dim: false,
+  };
 }
 
 // ---------------------------------------------------------------------------
