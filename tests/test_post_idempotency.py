@@ -36,6 +36,7 @@ import pytest
 from meeting import cli as cli_module
 from meeting import config as config_module
 from meeting.backends import minutes as minutes_backend
+from meeting.capture import transcode as transcode_module
 from meeting.minutes import launch as minutes_launch
 from meeting.minutes import status as minutes_status
 from meeting.offline import artifacts as offline_artifacts
@@ -347,18 +348,50 @@ def test_the_second_run_calls_neither_the_engine_nor_the_launcher(tmp_path: Path
 
 
 def test_the_repeat_runs_leave_the_pcm_and_the_mp3_alone(tmp_path: Path) -> None:
-    """三遍跑完：PCM 的 sha256 一模一样，MP3 的 `mtime` 一次都没被刷新（不重复转）。"""
-    session, engine, launcher = a_finished_session(tmp_path / "250919")
-    pcm = session / "meeting_audio_mic_001.pcm"
-    mp3 = session / "meeting_audio_mic_001.mp3"
-    before_digest = digest(pcm)
-    before_mtime = mp3.stat().st_mtime_ns
+    """三遍跑完：PCM 的 sha256 一模一样；**留着凭据的段**重跑不动 MP3（`mtime` 不变）。
 
-    run_post(session, engine=engine, minutes_launcher=launcher)
-    run_post(session, engine=engine, minutes_launcher=launcher)
+    完成判据是逐段凭据（`meeting/capture/transcode.py` 那一份，全仓唯一）：凭据认账才
+    跳过，「MP3 比 PCM 新」不再构成判据。对照半场照强杀探针的语义造：删掉凭据的那一段
+    重做（没有凭据的产物不算成品），留着凭据的那段原地不动。
+    """
+    session = synth_session(tmp_path / "250919")
+    engine = FakeEngine()
+    launcher = SettlingLauncher()
+    converter = RecordingConverter()
+    first = run_post(
+        session, engine=engine, minutes_launcher=launcher, archive_converter=converter
+    )
+    assert first["exit_code"] == EXIT_OK, first.get("error")
+    assert len(converter.calls) == len(SOURCES), f"首跑该把两段都转过：{converter.calls}"
 
-    assert digest(pcm) == before_digest
-    assert mp3.stat().st_mtime_ns == before_mtime, "MP3 比 PCM 新时不该再转一次"
+    def snapshot() -> dict[str, tuple[str, int]]:
+        """两段的 `(PCM sha256, MP3 mtime_ns)` ——「动没动」全看这一格。"""
+        return {
+            source: (
+                digest(session / f"meeting_audio_{source}_001.pcm"),
+                (session / f"meeting_audio_{source}_001.mp3").stat().st_mtime_ns,
+            )
+            for source in SOURCES
+        }
+
+    before = snapshot()
+
+    run_post(session, engine=engine, minutes_launcher=launcher, archive_converter=converter)
+    run_post(session, engine=engine, minutes_launcher=launcher, archive_converter=converter)
+
+    assert snapshot() == before, "留着凭据的重跑：PCM 与 MP3 一个都不该动"
+    assert len(converter.calls) == len(SOURCES), "凭据认账的段不重转"
+
+    # 对照半场（与强杀探针同一语义）：删掉凭据的那一段重做，另一段不动
+    transcode_module.credential_path(session, "loopback", 1).unlink()
+    third = run_post(
+        session, engine=engine, minutes_launcher=launcher, archive_converter=converter
+    )
+    assert third["exit_code"] == EXIT_OK, third.get("error")
+    assert len(converter.calls) == len(SOURCES) + 1, converter.calls
+    after = snapshot()
+    assert after["loopback"][1] != before["loopback"][1], "缺凭据的段该重做（MP3 重写一遍）"
+    assert after["mic"] == before["mic"], "留着凭据的那段仍原地不动"
 
 
 def test_the_repeat_runs_write_no_offline_product_again(tmp_path: Path) -> None:
@@ -795,8 +828,9 @@ def test_the_offline_runner_keeps_its_own_announce_function(
 class ExplodingConverter:
     """转码器替身：对着 PCM **抛错**（`ffmpeg` 缺席那一档的替身）。
 
-    它经 `_archive_converter()` 这一个接缝注进去（`sync_archive()` 缺省就是取它），
-    因此走产品路径那一趟也吃得到 —— 那正是被测模块自己留出来的接缝。
+    它经 `sync_archive()` 的 `converter` 形参注进去（`meeting/cli.py` 现行的用例接缝；
+    `run_post()` 那一格叫 `archive_converter`，`post()` 那条真入口由用例把
+    `cli.sync_archive` 换成注入形参的一份），因此走产品路径那一趟也吃得到。
     """
 
     def __init__(self, message: str = "ffmpeg 缺席（用例注入）") -> None:
@@ -997,7 +1031,14 @@ def test_a_failed_archive_is_not_swallowed_by_the_no_pending_work_exit(
     for path in sorted(session.glob("meeting_audio_*.mp3")):
         path.unlink()
     converter = ExplodingConverter()
-    monkeypatch.setattr(cli_module, "_archive_converter", lambda: converter)
+    # 真入口 `post()` 不收转码器：把 `cli.sync_archive` 换成「往现行接缝
+    # （`converter` 形参）注替身」的那一份，`run_post()` 以下整条链照真走。
+    real_sync_archive = cli_module.sync_archive
+
+    def sync_with_converter(directory: Any, **kwargs: Any) -> Any:
+        return real_sync_archive(directory, **{**kwargs, "converter": converter})
+
+    monkeypatch.setattr(cli_module, "sync_archive", sync_with_converter)
 
     with pytest.raises(SystemExit) as info:
         post([str(session)])
@@ -1012,18 +1053,15 @@ def test_a_failed_archive_is_not_swallowed_by_the_no_pending_work_exit(
 
 
 @pytest.mark.slow
-def test_a_failed_archive_keeps_the_no_pending_work_message_away(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_failed_archive_keeps_the_no_pending_work_message_away(tmp_path: Path) -> None:
     """同上，判据落在摘要上：`exit_code` 失败档、`ok` 为假、`state` 如实记失败。"""
     session = synth_session(tmp_path / "250919")
     offline_runner.run_session(session, engine=FakeEngine())
     a_finished_minutes_layer(session)
     for path in sorted(session.glob("meeting_audio_*.mp3")):
         path.unlink()
-    monkeypatch.setattr(cli_module, "_archive_converter", lambda: ExplodingConverter())
 
-    summary = run_post(session)
+    summary = run_post(session, archive_converter=ExplodingConverter())
 
     assert summary["archive"]["state"] == "failed"
     assert summary["exit_code"] == EXIT_FAILURE, summary.get("error")

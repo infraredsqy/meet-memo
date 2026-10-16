@@ -267,11 +267,13 @@ def test_summarize_and_its_two_codes_are_registered():
     `post_offline` / `post_minutes` 两只是会后按钮节点（`05a48b6a`）加的；
     `pause` / `resume` / `set_source` 是暂停那一个节点（`10770b41`）加的；
     `speaker_rename` 是人名节点（`91b6752e`）加的那一只；
-    `post_stop` 是打断会后那个节点（`b1c6a58e`）加的。"""
+    `post_stop` 是打断会后那个节点（`b1c6a58e`）加的；
+    `transcode_run` / `transcode_pause` / `transcode_resume` 三只是转码独立工序那个节点加的。"""
     assert ACTION_NAMES == (
         "start", "stop", "mute_session", "settings_update", "reprobe", "dev_inject",
         "summarize", "workspace_open", "workspace_remove",
         "post_offline", "post_minutes", "post_stop",
+        "transcode_run", "transcode_pause", "transcode_resume",
         "pause", "resume", "set_source",
         "speaker_rename",
     )
