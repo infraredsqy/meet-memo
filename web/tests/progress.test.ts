@@ -75,7 +75,7 @@ function status(
     dir: 'C:\\会议\\跟老王聊周会',
     session_id: '跟老王聊周会',
     kind: 'meeting',
-    state: 'done',
+    state: 'ended',
     date: '2026-09-21',
     mode: 'both',
     segments: [],
@@ -120,20 +120,15 @@ describe('列表行四态（R27，字与图形并存）', () => {
     expect(view.mark).toBe('glyph--rec');
   });
 
-  it('等着人动手：done / failed 都是 waiting 语义，失败把「收尾失败」说在字里', () => {
-    const done = rowStatusView(row({ state: 'done', kind: 'meeting' }), null);
-    expect(done.tone).toBe('waiting');
-    expect(done.label).toBe('待处理');
-    expect(done.mark).toBe('glyph--dashed');
-
-    const failed = rowStatusView(row({ state: 'failed', kind: 'meeting' }), null);
-    expect(failed.tone).toBe('waiting');
-    expect(failed.label).toBe('收尾失败 · 待处理');
-    expect(failed.mark).toBe('glyph--cross');
+  it('等着人动手：录音结束（ended）就是 waiting 语义（三档口径，收尾进度不进行状态）', () => {
+    const ended = rowStatusView(row({ state: 'ended', kind: 'meeting' }), null);
+    expect(ended.tone).toBe('waiting');
+    expect(ended.label).toBe('待处理');
+    expect(ended.mark).toBe('glyph--dashed');
   });
 
-  it('会后任务运行中：post_job.dir 与这一行联结命中（done 的那一行也被它盖过）', () => {
-    const view = rowStatusView(row({ state: 'done', kind: 'meeting' }), job());
+  it('会后任务运行中：post_job.dir 与这一行联结命中（ended 的那一行也被它盖过）', () => {
+    const view = rowStatusView(row({ state: 'ended', kind: 'meeting' }), job());
     expect(view.tone).toBe('post-running');
     expect(view.label).toBe('会后任务运行中');
     expect(view.mark).toBeNull(); // 画 spinner（转的），不是静态形状
@@ -141,7 +136,7 @@ describe('列表行四态（R27，字与图形并存）', () => {
 
   it('联结只认同一场：别人的 post_job 点不亮这一行', () => {
     const view = rowStatusView(
-      row({ state: 'done', kind: 'meeting' }),
+      row({ state: 'ended', kind: 'meeting' }),
       job({ dir: 'C:\\会议\\另一场' }),
     );
     expect(view.tone).toBe('waiting');
@@ -156,10 +151,10 @@ describe('列表行四态（R27，字与图形并存）', () => {
     expect(gone.dim).toBe(true);
   });
 
-  it('收尾中如实保留（录音中与落定之间的一瞬，不折进任何一态）', () => {
-    const view = rowStatusView(row({ state: 'draining', kind: 'meeting' }), null);
-    expect(view.tone).toBe('draining');
-    expect(view.label).toBe('收尾中');
+  it('被强杀在收尾半路的那一场：三档口径里它就是 ended，行翻「待处理」（旧 draining 档删除）', () => {
+    const view = rowStatusView(row({ state: 'ended', kind: 'meeting' }), null);
+    expect(view.tone).toBe('waiting');
+    expect(view.label).toBe('待处理');
   });
 });
 
@@ -429,7 +424,7 @@ describe('全局「忙不忙」（R31）', () => {
 
 describe('要不要轮询（有活动才问）', () => {
   it('联结命中就要问；读数说在跑 / 停着 running 也要问', () => {
-    const selected = row({ state: 'done', kind: 'meeting' });
+    const selected = row({ state: 'ended', kind: 'meeting' });
     expect(shouldWatch(selected, job(), null)).toBe(true);
     expect(shouldWatch(selected, job(), status({ dir: 'C:\\会议\\另一场' }))).toBe(true);
     expect(
@@ -440,7 +435,7 @@ describe('要不要轮询（有活动才问）', () => {
   });
 
   it('联结命中但读数已落定（终态那一跳）：不问了 —— watch 要翻 false 才收得了尾（review-1 C1）', () => {
-    const selected = row({ state: 'done', kind: 'meeting' });
+    const selected = row({ state: 'ended', kind: 'meeting' });
     expect(shouldWatch(selected, job(), status({}, { state: 'done', in_process: false }))).toBe(false);
     expect(shouldWatch(selected, job(), status({}, { state: 'idle' }))).toBe(false);
     // 已中断也是终态（b1c6a58e）：重按按钮才再跑，轮询照样收尾
@@ -448,7 +443,7 @@ describe('要不要轮询（有活动才问）', () => {
   });
 
   it('终态、没跑过、没选中：不问', () => {
-    const selected = row({ state: 'done', kind: 'meeting' });
+    const selected = row({ state: 'ended', kind: 'meeting' });
     expect(shouldWatch(selected, null, status({}, { state: 'done', in_process: false }))).toBe(false);
     expect(shouldWatch(selected, null, status({}, { state: 'idle' }))).toBe(false);
     expect(shouldWatch(selected, null, status({}, { state: 'interrupted', in_process: false }))).toBe(false);

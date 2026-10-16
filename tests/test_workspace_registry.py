@@ -281,9 +281,9 @@ def test_api_sessions_empty_and_open_paths(api, tmp_path: Path):
     assert len(rows["sessions"]) == 4
     dirs_only = {row["dir"] for row in rows["sessions"]}
     assert dirs_only == {str(empty_dir), str(meeting_dir), str(junk_dir), str(suspected)}
-    # 会场两行的现场读数从 session.json 现场来
+    # 会场两行的现场读数从 session.json 现场来（state 是三档口径：有记录即 ended）
     meeting_row = next(row for row in rows["sessions"] if row["dir"] == str(meeting_dir))
-    assert meeting_row["state"] == "done"
+    assert meeting_row["state"] == "ended"
     assert meeting_row["date"] == "2026-09-21"
     assert meeting_row["mode"] == "both"
     empty_row = next(row for row in rows["sessions"] if row["dir"] == str(empty_dir))
@@ -438,6 +438,42 @@ def test_start_notes_registry(api, tmp_path: Path):
     assert len(rows["sessions"]) == 1
     assert rows["sessions"][0]["state"] == "recording"
     assert rows["recent"] == str(ws)
+
+
+def test_a_session_killed_mid_recording_reads_ended(api, tmp_path: Path):
+    """三档口径：盘上停在 `recording`、但本进程没在录它的一场读 `ended`。
+
+    强杀在录音半路（盘上 `session.json` 停在 `state="recording"`、服务重启过）的那一场，
+    工作区读数是「录音结束」——`"recording"` 仅当这一行就是本进程此刻在录的活跃场次；
+    收尾半路（`draining`）与录完（`done` / `failed`）同档。空白工作区那行照旧 `null`。
+    """
+    client, _home, out_root = api
+    killed = out_root / "杀在录音半路"
+    killed.mkdir()
+    (killed / SESSION_FILE_NAME).write_text(
+        json.dumps({"session_id": "杀在录音半路", "state": "recording"}), encoding="utf-8"
+    )
+    mid_drain = out_root / "杀在收尾半路"
+    mid_drain.mkdir()
+    (mid_drain / SESSION_FILE_NAME).write_text(
+        json.dumps({"session_id": "杀在收尾半路", "state": "draining", "interrupted": True}),
+        encoding="utf-8",
+    )
+    assert client.post(
+        "/api/actions", json={"action": "workspace_open", "args": {"dir": str(killed)}},
+        headers={"X-Meeting-Service": "1"},
+    ).status_code == 200
+    assert client.post(
+        "/api/actions", json={"action": "workspace_open", "args": {"dir": str(mid_drain)}},
+        headers={"X-Meeting-Service": "1"},
+    ).status_code == 200
+
+    rows = {row["dir"]: row for row in client.get("/api/sessions").json()["sessions"]}
+    assert rows[str(killed)]["state"] == "ended", "盘上有记录、本进程没在录它 → ended"
+    assert rows[str(mid_drain)]["state"] == "ended", "收尾半路与录完同档（三档口径）"
+
+    single_killed = client.get(f"/api/sessions/{str(killed)}").json()
+    assert single_killed["state"] == "ended", "单场那一只同一套读法"
 
 
 def test_api_list_does_not_bump_revision(api):

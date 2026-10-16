@@ -18,7 +18,7 @@ function statusWith(speakers: SessionStatus['speakers']): SessionStatus {
     dir: 'C:/会议/250919',
     session_id: '250919',
     kind: 'meeting',
-    state: 'done',
+    state: 'ended',
     date: '2025-09-19',
     mode: 'both',
     segments: [],

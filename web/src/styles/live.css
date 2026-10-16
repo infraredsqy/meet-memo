@@ -2235,16 +2235,12 @@ input[type="checkbox"] {
 }
 
 /* 行四态的冗余色档（字与图形已经承载语义，颜色只作第二通道）：
-   会后跑着余晖青、等着人动手灯丝黄、收尾失败硫红 —— 正在录的实心红灯由 `glyph--rec` 自带 */
+   会后跑着余晖青、等着人动手灯丝黄 —— 正在录的实心红灯由 `glyph--rec` 自带 */
 .wslist__state--post-running {
   color: var(--t-signal-ink);
 }
 
 .wslist__state--waiting {
-  color: var(--t-amber);
-}
-
-.wslist__state--draining {
   color: var(--t-amber);
 }
 

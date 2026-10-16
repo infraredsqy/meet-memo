@@ -139,6 +139,22 @@ def _generate_console_ctrl_event(event: int, process_group: int) -> bool:
     return bool(kernel32.GenerateConsoleCtrlEvent(ctypes.c_uint(event), ctypes.c_uint(process_group)))
 
 
+def _hidden_startupinfo() -> Any:
+    """Windows 上让服务子进程**不弹窗**（`SW_HIDE`，与宿主 `-WindowStyle Hidden` 同一件事）。
+
+    无控制台的宿主里 `Popen` 起的子进程会新建一个可见控制台窗口（`tests/
+    test_config_isolation.py` 里同名助手先落的那套口径，两处同一个落法）：本机 `AGENTS.md`
+    明令不用 `CREATE_NO_WINDOW`（那会让子进程以 `STATUS_DLL_INIT_FAILED` 死亡），
+    `STARTF_USESHOWWINDOW` + `SW_HIDE` 是这两条约束下的落法。
+    """
+    if os.name != "nt":
+        return None
+    info = subprocess.STARTUPINFO()
+    info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    info.wShowWindow = subprocess.SW_HIDE
+    return info
+
+
 class ServiceProcess(helpers.ServiceProcess):
     """一个真服务子进程（`[sys.executable, "-m", "meeting", "web"]`，cwd = 仓库根）。
 
@@ -251,6 +267,7 @@ class ServiceProcess(helpers.ServiceProcess):
             encoding="utf-8",
             errors="replace",
             creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+            startupinfo=_hidden_startupinfo(),  # **不许弹窗**（SW_HIDE，见 `_hidden_startupinfo()`）
         )
         self._lines: queue.Queue[str] = queue.Queue()
         self._all_lines: list[str] = []

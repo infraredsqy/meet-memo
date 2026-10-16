@@ -93,18 +93,14 @@ export function segmentsView(row: SessionRow): SessionSegmentsView | null {
   return { lines, total: `共 ${lines.length} 段 · ${secondsLabel(finished)}` };
 }
 
-/** 行状态那一格的人话（契约字段 → 文案，一处定义）。 */
+/** 行状态那一格的人话（契约字段 → 文案，一处定义；`state` 是三档口径）。 */
 export function statusLabel(row: SessionRow): string {
   if (!row.dir_exists) return '目录不存在';
   switch (row.state) {
     case 'recording':
       return '录音中';
-    case 'draining':
-      return '收尾中';
-    case 'done':
-      return '已完成';
-    case 'failed':
-      return '收尾失败';
+    case 'ended':
+      return '录音结束';
     default:
       break;
   }

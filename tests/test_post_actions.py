@@ -416,7 +416,6 @@ def test_post_offline_without_args_dir_keeps_running_the_just_ended_session(
     [
         ("unregistered", "missing-from-registry"),
         ("not-on-disk", "missing"),
-        ("still-recording", "recording"),
     ],
 )
 def test_post_offline_refuses_an_args_dir_that_is_not_a_runnable_session(
@@ -424,8 +423,11 @@ def test_post_offline_refuses_an_args_dir_that_is_not_a_runnable_session(
 ) -> None:
     """`args["dir"]` 不合法时按 400 `invalid_setting` 如实回错档，不起任何一趟（C3）。
 
-    三档判据与 `GET /api/sessions` 同一套注册表 / 目录判读：没登记过、目录不在原地、
-    盘上还停在 `recording`（这一场还没结束）。
+    两档判据与 `GET /api/sessions` 同一套注册表 / 目录判读：没登记过、目录不在原地。
+    「盘上 `state=recording` 就拒」那一档已按三档口径收走：盘上停在 `recording` 的强杀
+    残档放行（见 `test_post_offline_accepts_a_session_killed_mid_recording`）；本进程
+    此刻在录的那一场归运行时闸的 409（见
+    `test_post_offline_is_refused_while_the_session_is_still_recording`）。
     """
     from meeting.service.runtime import ActionError
 
@@ -445,15 +447,9 @@ def test_post_offline_refuses_an_args_dir_that_is_not_a_runnable_session(
         )
     else:
         target = _register_other_session(runtime, tmp_path, monkeypatch, build)
-        if build == "not-on-disk":
-            import shutil
+        import shutil
 
-            shutil.rmtree(target)
-        else:
-            (target / "session.json").write_text(
-                '{"session_id": "still-recording", "state": "recording", "mode": "both"}',
-                encoding="utf-8",
-            )
+        shutil.rmtree(target)
     try:
         with pytest.raises(ActionError) as info:
             runtime.post_offline({"dir": str(target)})
@@ -464,6 +460,98 @@ def test_post_offline_refuses_an_args_dir_that_is_not_a_runnable_session(
     finally:
         config_module.set_current(previous)
     assert calls == [], f"{expected_kind}：这一档一个引擎都不该被拉起来"
+
+
+def test_post_offline_is_refused_while_the_session_is_still_recording(
+    tmp_path, monkeypatch
+) -> None:
+    """还在录（收尾都没开始）时按「生成会后精细稿」→ 409 `draining`。
+
+    「录音中」的拒只剩运行时闸这一道（`_reject_post_job`）：与「直接出纪要」那一条
+    （`test_post_minutes_is_refused_while_the_session_is_still_recording`）同一道闸、
+    同一个档；盘上残档放行见 `test_post_offline_accepts_a_session_killed_mid_recording`。
+    """
+    from meeting.service.runtime import ActionError
+
+    runtime, previous = _runtime(tmp_path, monkeypatch)
+    workspace = tmp_path / "ws-still-recording-offline"
+    workspace.mkdir()
+    try:
+        runtime.start_session(dir=str(workspace))
+        with pytest.raises(ActionError) as info:
+            runtime.post_offline({"dir": str(workspace)})
+        assert info.value.code == "draining"
+        assert info.value.status == 409
+        assert runtime.post_job_state() is None
+    finally:
+        config_module.set_current(previous)
+
+
+def test_post_offline_accepts_a_session_killed_mid_recording(tmp_path, monkeypatch) -> None:
+    """`args["dir"]` 指到盘上停在 `recording`（被强杀在录音半路）的残档 → 照常受理。
+
+    「盘上 `state=recording` 就拒」这条旧判据作废：它只会拦住强杀在录音半路留下的残档
+    （本进程活跃在录的那一场由运行时闸先按 409 拦下，轮不到这一档）—— 永久卡死类就此
+    收口；残档的清单读数是 `ended`（三档口径，`tests/test_workspace_registry.py` 同场判据）。
+    """
+    runtime, _session_dir, previous = _ended_session(tmp_path, monkeypatch)
+    calls: list[str] = []
+
+    from meeting.offline import runner as offline_runner
+
+    monkeypatch.setattr(
+        offline_runner, "run_session", lambda target, **kwargs: calls.append(str(target))
+    )
+    try:
+        target = _register_other_session(runtime, tmp_path, monkeypatch, "killed-mid-recording")
+        (target / "session.json").write_text(
+            json.dumps(
+                {"session_id": "killed-mid-recording", "state": "recording",
+                 "interrupted": True, "mode": "both"},
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        started = runtime.post_offline({"dir": str(target)})
+        _wait_job_done(runtime)
+    finally:
+        config_module.set_current(previous)
+
+    assert started == {"kind": "offline", "dir": str(target)}, started
+    assert calls == [str(target)], calls
+
+
+def test_post_offline_accepts_a_session_killed_mid_drain(tmp_path, monkeypatch) -> None:
+    """`args["dir"]` 指到盘上停在 `draining`（被强杀在收尾半路）的那一场 → 照常受理。
+
+    「落盘没落定就拒」这条判据作废：会后能不能按只由「已经有一趟在飞」与 minutes 层的
+    claim 闸决定；盘上 `recording` 的残档同档放行（下一条）。
+    """
+    runtime, _session_dir, previous = _ended_session(tmp_path, monkeypatch)
+    calls: list[str] = []
+
+    from meeting.offline import runner as offline_runner
+
+    monkeypatch.setattr(
+        offline_runner, "run_session", lambda target, **kwargs: calls.append(str(target))
+    )
+    try:
+        target = _register_other_session(runtime, tmp_path, monkeypatch, "killed-mid-drain")
+        (target / "session.json").write_text(
+            json.dumps(
+                {"session_id": "killed-mid-drain", "state": "draining",
+                 "interrupted": True, "mode": "both"},
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        started = runtime.post_offline({"dir": str(target)})
+        _wait_job_done(runtime)
+    finally:
+        config_module.set_current(previous)
+
+    assert started == {"kind": "offline", "dir": str(target)}, started
+    assert calls == [str(target)], calls
 
 
 # ---------------------------------------------------------------------------
@@ -639,19 +727,21 @@ def test_post_minutes_returns_the_claim_without_a_mark_failed_writer(
 
 
 # ---------------------------------------------------------------------------
-# 七、m6：`_reject_post_job()` 第二道闸的「`ended` 在、收尾还没收完」那一格
+# 七、「落盘没落定就拒会后动作」判据作废：收尾没走完照样受理
 # ---------------------------------------------------------------------------
 
 
-def test_post_minutes_is_refused_until_the_drain_has_settled(tmp_path, monkeypatch) -> None:
-    """`stop` 之后收尾还在跑时按按钮 → 409 `draining`；第 4 步落 `waiting` 之后放行（m6）。
+def test_post_minutes_is_accepted_while_the_drain_has_not_settled(
+    tmp_path, monkeypatch
+) -> None:
+    """收尾没落定不再拒会后动作：第 4 步还停在 `running` 时按「出纪要」照常受理。
 
-    这是 `drain_has_settled()` 那句「`running` 不算落定」的活判据：同一格上 `running`
-    与 `waiting` 分得开，`waiting` 一落同一调用就放行。
+    旧判据（`drain_has_settled()` 不过 → 409 `draining`）作废：会后能不能按只由两道闸
+    决定（「已经有一趟在飞」与 minutes 层的 claim 闸），收尾走到哪一步不拦按钮。
+    第 4 步落 `waiting` 之后同一调用照常受理 ——「受理」不因收尾进度分档。
     """
     import asyncio
 
-    from meeting.service.runtime import ActionError
     from meeting.state import begin_drain, finish_drain_step
 
     runtime, previous = _runtime(tmp_path, monkeypatch)
@@ -674,27 +764,18 @@ def test_post_minutes_is_refused_until_the_drain_has_settled(tmp_path, monkeypat
     try:
         runtime.start_session(dir=str(workspace))
         begin_drain(runtime.snapshot, reason="user")
-        # 前三步落定、第 4 步停在 `running`：收尾还没收完
+        # 前三步落定、第 4 步停在 `running`：收尾还没收完 —— 会后动作照常受理
         for step_id in ("flush", "transcode", "log"):
             finish_drain_step(step_id, "done", snapshot=runtime.snapshot)
         finish_drain_step("post", "running", snapshot=runtime.snapshot)
         assert runtime.drain_has_settled() is False
 
-        with pytest.raises(ActionError) as info:
-            runtime.post_minutes({})
-        assert info.value.code == "draining"
-        assert info.value.status == 409
-        assert info.value.detail.get("top_state") == "ended", info.value.detail
-        assert runtime.post_job_state() is None
-
-        # 第 4 步落成 `waiting`（＝等你动手）—— 同一调用当场放行
-        finish_drain_step("post", "waiting", snapshot=runtime.snapshot)
-        assert runtime.drain_has_settled() is True
         asyncio.run(runtime._drain_post(deadline=time.monotonic() + 10.0))
         started = runtime.post_minutes({})
         _wait_job_done(runtime)
         assert started == {"kind": "minutes", "dir": str(workspace)}
         assert launched == [str(workspace)], launched
+        assert runtime.post_job_state() is None
     finally:
         config_module.set_current(previous)
 

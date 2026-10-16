@@ -336,7 +336,7 @@ describe('会后那两个按钮（review-1 m7）', () => {
     expect(stateCells.join('\n'), '那一行还是按路径那一格说「目录不存在」').toContain('目录不存在');
   });
 
-  it('还在录那一档：两个按钮都按不动，那一格把「还在录」与「磁盘上的会后精细稿：有」并列说（review-2 C1/m2）', async () => {
+  it('还在录音中那一档：两个按钮都按不动，那一格把「还在录」与「磁盘上的会后精细稿：有」并列说（review-2 C1/m2）', async () => {
     fetchSessionsMock.mockResolvedValue(
       list({
         sessions: [row({ dir: 'C:\\会议\\在录', state: 'recording', has_offline: true })],
@@ -350,30 +350,29 @@ describe('会后那两个按钮（review-1 m7）', () => {
     const whys = renderer.root
       .findAll((node) => node.props.className === 'wspane__why')
       .map((node) => `${node.props.children}`);
-    expect(whys.join('\n')).toContain('该工作区正在录音或收尾中');
+    expect(whys.join('\n')).toContain('该工作区正在录音中');
     const lines = postLines(renderer).join('\n');
-    // 两件事都在：这一场还没落定 + 盘上此刻那一份的读数（不许哪一句盖住另一句）
-    expect(lines).toContain('该工作区正在录音或收尾中');
+    // 两件事都在：这一场还在录 + 盘上此刻那一份的读数（不许哪一句盖住另一句）
+    expect(lines).toContain('该工作区正在录音中');
     expect(lines).toContain('磁盘上的会后精细稿：有');
-    // 也不许换成落定之后那一句（那一行列的是收尾落定之后的话）
+    // 也不许换成录音结束之后那一句（那一行列的是录音结束之后的话）
     expect(lines.split('\n')).not.toContain('会后精细稿：有');
   });
 
-  it('还在收尾那一档：两个按钮都按不动，那一格照实说「磁盘上的会后精细稿：没有」（review-2 C1/m2）', async () => {
+  it('被强杀在收尾半路的那一场（三档口径就是 ended）：两个按钮照常能按，那一格照实说「磁盘上的会后精细稿：没有」', async () => {
     fetchSessionsMock.mockResolvedValue(
       list({
-        sessions: [row({ dir: 'C:\\会议\\在收尾', state: 'draining', has_offline: false })],
-        recent: 'C:\\会议\\在收尾',
+        sessions: [row({ dir: 'C:\\会议\\强杀现场', state: 'ended', has_offline: false })],
+        recent: 'C:\\会议\\强杀现场',
       }),
     );
     const renderer = await mountHome();
 
-    expect(buttonByText(renderer, '生成会后精细稿').props.disabled).toBe(true);
-    expect(buttonByText(renderer, '生成纪要').props.disabled).toBe(true);
+    // 「落盘没落定就拒」判据作废：ended 的那一场按钮照常可按
+    expect(buttonByText(renderer, '生成会后精细稿').props.disabled).toBe(false);
+    expect(buttonByText(renderer, '生成纪要').props.disabled).toBe(false);
     const lines = postLines(renderer).join('\n');
-    expect(lines).toContain('该工作区正在录音或收尾中');
-    expect(lines).toContain('磁盘上的会后精细稿：无');
-    expect(lines.split('\n')).not.toContain('会后精细稿：无');
+    expect(lines).toContain('会后精细稿：无');
   });
 });
 
@@ -554,7 +553,7 @@ function flyingList(
   },
 ): SessionsResponse {
   return list({
-    sessions: [row({ dir: stopDir, state: 'done' })],
+    sessions: [row({ dir: stopDir, state: 'ended' })],
     recent: stopDir,
     post_job: postJob,
   });

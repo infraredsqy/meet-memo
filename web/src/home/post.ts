@@ -32,13 +32,14 @@ export interface PostButtonsView {
  * 判据（逐条来自服务给的原文）：
  *
  * - 目录不在原地 → 两个都按不动（同 `startWhy()` 的口气）；
- * - 盘上 `state` 是 `recording` / `draining` → 收尾还没走完，两个都按不动
- *   （服务侧那两个动作按 `dir` 那一场的盘上 `state` 判读、以 `invalid_setting` 400 拒掉
- *   —— `docs/contract.md` 4.3；运行时自己还在录 / 收尾没落定的那一档才是 `draining` 409，
- *   那一档不会与工作台同屏 —— 这里只是先把它写在脸上），那一格
- *   按 `unsettledOfflineNotice()` 把「还在录 / 还在收尾」与「盘上有没有会后稿」并列说；
- * - 其余（`done` / `failed`，或还没开过会的那一行）按得动 —— 会后那两趟活该不该跑，
- *   与收尾那一步的成败无关。
+ * - 三档口径 `state` 是 `recording`（这一行就是本进程此刻在录的活跃场次）→ 两个都按不动
+ *   （服务侧与这一行同一判据：本进程在录的那一场才会读出 `recording`，会后两按钮由运行时闸
+ *   按 `draining` 409 拒 —— `docs/contract.md` 4.3；那一档不会与工作台同屏，
+ *   这里只是先把它写在脸上），那一格
+ *   按 `recordingOfflineNotice()` 把「还在录」与「盘上有没有会后稿」并列说；
+ * - 其余（`ended` = 录音已发生过，或还没开过会的那一行）按得动 —— **「落盘没落定就拒」
+ *   这条判据作废**：收尾走到哪一步不拦会后动作（被强杀丢在半路的那一场，读数就是
+ *   `ended`、按钮照按）。
  */
 export function postButtonsView(row: SessionRow): PostButtonsView {
   if (!row.dir_exists) {
@@ -51,12 +52,12 @@ export function postButtonsView(row: SessionRow): PostButtonsView {
       offlineNotice: null,
     };
   }
-  if (row.state === 'recording' || row.state === 'draining') {
+  if (row.state === 'recording') {
     return {
       canPostOffline: false,
       canPostMinutes: false,
-      why: '该工作区正在录音或收尾中',
-      offlineNotice: unsettledOfflineNotice(row),
+      why: '该工作区正在录音中',
+      offlineNotice: recordingOfflineNotice(row),
     };
   }
   return {
@@ -73,16 +74,16 @@ export function offlineNoticeOf(row: SessionRow): string {
 }
 
 /**
- * 「该工作区正在录音或收尾中」那一档的那一格：**两件事并列说，各说各的**（review-2 C1）。
+ * 「该工作区正在录音中」那一档的那一格：**两件事并列说，各说各的**（review-2 C1）。
  *
- * 「这一场还没落定」与「盘上此刻有没有那份会后稿」是两件各自为真的事：盘上那一份只能按
+ * 「这一场还在录」与「盘上此刻有没有那份会后稿」是两件各自为真的事：盘上那一份只能按
  * 名目读（`has_offline` 只看文件名 —— `meeting/workspace.py`），同一个目录被重开一场新会时
  * `session.json` 回到 `recording`、上一场留下的那份稿还在原地。因此这一格既不因为两个按钮
- * 按不动就把「盘上有没有」收起来，也不拿「盘上有」盖住「这一场还没落定」。
+ * 按不动就把「盘上有没有」收起来，也不拿「盘上有」盖住「这一场还在录」。
  */
-export function unsettledOfflineNotice(row: SessionRow): string {
+export function recordingOfflineNotice(row: SessionRow): string {
   const onDisk = row.has_offline ? '有' : '无';
-  return `该工作区正在录音或收尾中；磁盘上的会后精细稿：${onDisk}`;
+  return `该工作区正在录音中；磁盘上的会后精细稿：${onDisk}`;
 }
 
 // ---------------------------------------------------------------------------

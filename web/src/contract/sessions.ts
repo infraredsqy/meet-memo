@@ -42,8 +42,10 @@ export const sessionRowSchema = z
     kind: dirKindSchema,
     /** 有音频归档名但没有 `session.json` 的疑似会议目录（照收编处理）。 */
     suspected: z.boolean(),
-    /** 盘上 `session.json` 的 `state`（四档之外如实 `null`，服务不反查映射）。 */
-    state: z.enum(['recording', 'draining', 'done', 'failed']).nullable(),
+    /** 工作区状态，三档口径（契约 4.8）：`recording` 仅当这一行是本进程此刻在录的
+     *  活跃场次；盘上有 `session.json` 一律 `ended`（收尾走到哪一步不进这个口径）；
+     *  没有 `session.json`（空白工作区 / 尚未开过会）是 `null`。 */
+    state: z.enum(['recording', 'ended']).nullable(),
     date: z.string().nullable(),
     mode: z.string().nullable(),
     /** 这场会各段的时长与时间（续接过的会看得出接过）；盘上没有段记录时是空数组。 */
@@ -218,7 +220,8 @@ export const sessionStatusSchema = z
     dir: z.string(),
     session_id: sessionIdSchema.nullable(),
     kind: z.enum(['empty', 'meeting', 'unknown']),
-    state: z.enum(['recording', 'draining', 'done', 'failed']).nullable(),
+    /** 三档口径，与 `GET /api/sessions` 那一行同一格（前八格同源，契约 4.9）。 */
+    state: z.enum(['recording', 'ended']).nullable(),
     date: z.string().nullable(),
     mode: z.string().nullable(),
     segments: z.array(sessionSegmentCellSchema),

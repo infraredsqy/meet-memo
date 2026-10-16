@@ -61,11 +61,9 @@ describe('行状态一眼可读', () => {
     expect(statusLabel(row({ dir_exists: false }))).toBe('目录不存在');
   });
 
-  it('盘上 session.json 的四档 state 各有话', () => {
+  it('三档口径的 state 各有话：录音中 / 录音结束（收尾走到哪一步不进这个口径）', () => {
     expect(statusLabel(row({ state: 'recording' }))).toBe('录音中');
-    expect(statusLabel(row({ state: 'draining' }))).toBe('收尾中');
-    expect(statusLabel(row({ state: 'done' }))).toBe('已完成');
-    expect(statusLabel(row({ state: 'failed' }))).toBe('收尾失败');
+    expect(statusLabel(row({ state: 'ended' }))).toBe('录音结束');
   });
 
   it('没有记录的三档：空白工作区 / 疑似会议目录（兜底不当杂物）/ 会议目录 / 普通目录', () => {
@@ -79,14 +77,13 @@ describe('行状态一眼可读', () => {
 describe('「开始 / 继续录音」在这一行上能不能按', () => {
   it('空白工作区可按；录过的目录照样可按——对着它按就是续接（第 9 条翻案）', () => {
     expect(startWhy(row({ kind: 'empty', state: null }))).toBeNull();
-    expect(startWhy(row({ kind: 'meeting', state: 'done' }))).toBeNull();
-    expect(startWhy(row({ kind: 'meeting', state: 'failed' }))).toBeNull();
+    expect(startWhy(row({ kind: 'meeting', state: 'ended' }))).toBeNull();
     expect(startWhy(row({ dir_exists: false }))).toBe('目录不存在，无法录音');
   });
 
   it('动作钮的名字跟着行走：录过的叫「继续录音」，没录过的叫「开始录音」', () => {
     expect(startButtonLabel(row({ kind: 'empty', state: null }))).toBe('开始录音');
-    expect(startButtonLabel(row({ kind: 'meeting', state: 'done' }))).toBe('继续录音');
+    expect(startButtonLabel(row({ kind: 'meeting', state: 'ended' }))).toBe('继续录音');
     expect(startButtonLabel(row({ kind: 'meeting', state: 'recording' }))).toBe('继续录音');
   });
 });
@@ -95,7 +92,7 @@ describe('详情区的段读数（续接过的会看得出接过）', () => {
   it('盘上段记录原文 → 每段一行 + 合计（合计只数写完的段，第 7 条）', () => {
     const view = segmentsView(
       row({
-        state: 'done',
+        state: 'ended',
         segments: [
           { index: 1, started_at: '2026-09-21T10:02:00+08:00', ended_at: '2026-09-21T10:19:00+08:00', duration_seconds: 61.5 },
           { index: 2, started_at: '2026-09-21T11:30:00+08:00', ended_at: '2026-09-21T11:32:00+08:00', duration_seconds: 122.3 },
@@ -138,32 +135,28 @@ describe('目录名目 → 三档处理', () => {
 });
 
 describe('会后那两个按钮（R26 / R29）', () => {
-  it('收尾落定的那一场两个都能按', () => {
-    const view = postButtonsView(row({ kind: 'meeting', state: 'done', has_offline: true }));
+  it('录音已结束（ended）的那一场两个都能按：收尾走到哪一步不拦按钮', () => {
+    const view = postButtonsView(row({ kind: 'meeting', state: 'ended', has_offline: true }));
     expect(view.canPostOffline).toBe(true);
     expect(view.canPostMinutes).toBe(true);
     expect(view.why).toBeNull();
   });
 
-  it('还在录 / 还在收尾：两个都按不动，并给一句为什么', () => {
-    for (const state of ['recording', 'draining'] as const) {
-      const view = postButtonsView(row({ kind: 'meeting', state }));
-      expect(view.canPostOffline).toBe(false);
-      expect(view.canPostMinutes).toBe(false);
-      expect(view.why).toContain('收尾');
-    }
+  it('还在录音中：两个都按不动，并给一句为什么', () => {
+    const view = postButtonsView(row({ kind: 'meeting', state: 'recording' }));
+    expect(view.canPostOffline).toBe(false);
+    expect(view.canPostMinutes).toBe(false);
+    expect(view.why).toBe('该工作区正在录音中');
   });
 
-  it('还在录 / 还在收尾那一格：两件事并列说，不拿「盘上有稿」盖住「还没落定」（review-2 C1）', () => {
-    for (const state of ['recording', 'draining'] as const) {
-      for (const has_offline of [true, false]) {
-        const view = postButtonsView(row({ kind: 'meeting', state, has_offline }));
-        expect(view.offlineNotice).not.toBeNull();
-        expect(view.offlineNotice).toContain('该工作区正在录音或收尾中');
-        expect(view.offlineNotice).toContain(`磁盘上的会后精细稿：${has_offline ? '有' : '无'}`);
-        // 这一档的那一句**就是**这一格的全部：不许换成落定之后那一句
-        expect(view.offlineNotice).not.toBe(offlineNoticeOf(row({ has_offline })));
-      }
+  it('还在录音中那一格：两件事并列说，不拿「盘上有稿」盖住「还在录」（review-2 C1）', () => {
+    for (const has_offline of [true, false]) {
+      const view = postButtonsView(row({ kind: 'meeting', state: 'recording', has_offline }));
+      expect(view.offlineNotice).not.toBeNull();
+      expect(view.offlineNotice).toContain('该工作区正在录音中');
+      expect(view.offlineNotice).toContain(`磁盘上的会后精细稿：${has_offline ? '有' : '无'}`);
+      // 这一档的那一句**就是**这一格的全部：不许换成录音结束之后那一句
+      expect(view.offlineNotice).not.toBe(offlineNoticeOf(row({ has_offline })));
     }
   });
 
@@ -175,8 +168,8 @@ describe('会后那两个按钮（R26 / R29）', () => {
     expect(view.offlineNotice).toBeNull();
   });
 
-  it('收尾失败（failed）那一场照样能按：会后跑不跑与收尾那一步的成败无关', () => {
-    expect(postButtonsView(row({ state: 'failed' })).canPostMinutes).toBe(true);
+  it('被强杀在收尾半路的那一场照样能按：三档口径里它就是 ended（旧判据作废）', () => {
+    expect(postButtonsView(row({ state: 'ended' })).canPostMinutes).toBe(true);
   });
 
   it('「生成纪要」按钮上那一格按 has_offline 如实写（R29）', () => {

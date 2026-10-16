@@ -39,10 +39,11 @@ export type { PostJobCell };
 
 /**
  * 行状态的档位。spec 四态是 `idle` / `recording` / `post-running` / `waiting`；
- * 另有两档如实保留：「路径已不在」（`gone`）与「收尾中」（`draining`）——
- * 后者是正在录与落定之间的一瞬，把它折进任何一态都是在替服务下结论。
+ * 另有一档如实保留：「路径已不在」（`gone`）。行 `state` 是三档口径（契约 4.8）：
+ * `recording` / `ended` / `null` —— 收尾走到哪一步不进这个口径，落盘与转码的进度
+ * 由详情里的进度区（`GET /api/sessions/{id}` 的 `offline` 那份）另答。
  */
-export type RowTone = 'gone' | 'idle' | 'recording' | 'draining' | 'post-running' | 'waiting';
+export type RowTone = 'gone' | 'idle' | 'recording' | 'post-running' | 'waiting';
 
 export interface RowStatusView {
   tone: RowTone;
@@ -64,9 +65,8 @@ export interface RowStatusView {
  *
  * - 目录不在原地 → 「目录不存在」（最优先 —— 目录都没了，联结无从谈起）；
  * - `post_job.dir === row.dir` → 「会后任务运行中」（联结命中；跑的是哪一趟写在全局那格）；
- * - 盘上 `state`：`recording` → 录音中、`draining` → 收尾中；
- * - `done` / `failed` → **待处理语义**（05a48b6a 立下这条口径：收尾落定、会后归两个按钮，
- *   都不按就什么都不跑）——「待处理」；失败那档在文字里把「收尾失败」说破；
+ * - 三档口径 `state`：`recording` → 录音中；`ended` → **待处理语义**
+ *   （05a48b6a 立下这条口径：录音已结束、会后归两个按钮，都不按就什么都不跑）；
  * - 其余（还没开过会的目录）→ 空闲族，文案以 `model.ts` `statusLabel()` 为唯一出处。
  */
 export function rowStatusView(row: SessionRow, postJob: PostJobCell | null): RowStatusView {
@@ -79,12 +79,8 @@ export function rowStatusView(row: SessionRow, postJob: PostJobCell | null): Row
   switch (row.state) {
     case 'recording':
       return { tone: 'recording', label: '录音中', mark: 'glyph--rec', dim: false };
-    case 'draining':
-      return { tone: 'draining', label: '收尾中', mark: 'glyph--draining', dim: false };
-    case 'done':
+    case 'ended':
       return { tone: 'waiting', label: '待处理', mark: 'glyph--dashed', dim: false };
-    case 'failed':
-      return { tone: 'waiting', label: '收尾失败 · 待处理', mark: 'glyph--cross', dim: false };
     default:
       break;
   }

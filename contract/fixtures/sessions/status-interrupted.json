@@ -2,7 +2,7 @@
   "dir": "<path>",
   "session_id": "<session-id>",
   "kind": "meeting",
-  "state": "done",
+  "state": "ended",
   "date": "2026-09-07",
   "mode": "both",
   "segments": [

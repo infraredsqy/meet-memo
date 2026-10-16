@@ -413,20 +413,78 @@ def test_speaker_rename_refuses_a_directory_outside_the_workspace_list(
 def test_speaker_rename_refuses_while_the_session_is_still_recording(
     tmp_path, monkeypatch, restore_config
 ) -> None:
-    """盘上停在 `recording` 的那一场拒掉（会中不提供改名，d11）。"""
+    """本进程正在录的那一场拒掉（会中不提供改名，d11）。
+
+    判据是「本进程此刻在录、就是快照里那一场」（与工作区清单三档口径同一支，
+    `runtime_catalog._is_actively_recording()`）：盘上停在 `recording` 的强杀残档
+    **不是**录音中，照常放行（下一条）。
+    """
     runtime, _session, previous = _registered_session(tmp_path, monkeypatch)
-    recording = tmp_path / "260930"
-    recording.mkdir()
-    _write_live_transcript(recording, "mic")
-    (recording / "session.json").write_text(
-        json.dumps({"session_id": "260930", "state": "recording"}), encoding="utf-8"
-    )
-    runtime.workspace_open(str(recording))
+    live = tmp_path / "260930"
+    live.mkdir()
+    _write_live_transcript(live, "mic")
+    runtime.start_session(dir=str(live))
     try:
         with pytest.raises(ActionError) as refused:
-            runtime.speaker_rename({"dir": str(recording), "key": "mic", "name": "老王"})
+            runtime.speaker_rename({"dir": str(live), "key": "mic", "name": "老王"})
         assert (refused.value.code, refused.value.status) == ("invalid_setting", 400)
-        assert not names_path(recording).exists()
+        assert not names_path(live).exists()
+    finally:
+        config_module.set_current(previous)
+
+
+def test_speaker_rename_accepts_a_session_killed_mid_recording(
+    tmp_path, monkeypatch, restore_config
+) -> None:
+    """盘上停在 `recording`（被强杀在录音半路）的残档放行：旧拒判据作废。
+
+    「盘上 `state=recording` 就拒」只会拦住强杀在录音半路留下的残档 —— 永久卡死类
+    就此收口：这一场清单读数是「录音结束」，改名照用；在录的那一场才拒（上一条）。
+    """
+    runtime, _session, previous = _registered_session(tmp_path, monkeypatch)
+    killed = tmp_path / "260932"
+    killed.mkdir()
+    _write_live_transcript(killed, "mic")
+    (killed / "session.json").write_text(
+        json.dumps(
+            {"session_id": "260932", "state": "recording", "interrupted": True},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    runtime.workspace_open(str(killed))
+    try:
+        receipt = runtime.speaker_rename({"dir": str(killed), "key": "mic", "name": "老王"})
+        assert receipt == {"dir": str(killed), "key": "mic", "name": "老王"}
+        assert read_names_entries(killed) == {"mic": "老王"}
+    finally:
+        config_module.set_current(previous)
+
+
+def test_speaker_rename_accepts_a_session_killed_mid_drain(
+    tmp_path, monkeypatch, restore_config
+) -> None:
+    """盘上停在 `draining`（被强杀在收尾半路）的那一场放行：旧拒判据作废。
+
+    「落盘没落定」不再是闸 —— 改名只写这一场目录里的人名表，与收尾走到哪一步无关；
+    盘上 `recording` 的残档同档放行（下一条），在录的那一场才拒（上上一条）。
+    """
+    runtime, _session, previous = _registered_session(tmp_path, monkeypatch)
+    draining = tmp_path / "260931"
+    draining.mkdir()
+    _write_live_transcript(draining, "mic")
+    (draining / "session.json").write_text(
+        json.dumps(
+            {"session_id": "260931", "state": "draining", "interrupted": True},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    runtime.workspace_open(str(draining))
+    try:
+        receipt = runtime.speaker_rename({"dir": str(draining), "key": "mic", "name": "老王"})
+        assert receipt == {"dir": str(draining), "key": "mic", "name": "老王"}
+        assert read_names_entries(draining) == {"mic": "老王"}
     finally:
         config_module.set_current(previous)
 

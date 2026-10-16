@@ -157,7 +157,7 @@ def test_the_progress_is_readable_while_the_offline_run_is_in_flight(
         assert body["dir"] == str(session)
         assert body["session_id"] == "250919", "盘上 session.json 那一格原样给回"
         assert body["kind"] == "meeting"
-        assert body["state"] == "done"  # 盘上 session.json 那一档
+        assert body["state"] == "ended"  # 三档口径：盘上有 session.json（录音已发生过）
         assert body["has_offline"] is False, "跑到一半时正式稿还没落，那一格照旧是假"
         assert body["post"]["kind"] == "offline"
         assert body["post"]["running"] is True, "这一趟正在飞"
@@ -221,9 +221,10 @@ def test_the_seven_cells_match_the_list_row_when_the_disk_is_out_of_range(
     """前七格与 `GET /api/sessions` 同一行**同源**：盘上落在域外时两处给同一个值。
 
     契约 4.9 写着前七格与 4.8 同一行同源、逐格语义见 4.8；这一条把「同一个事实在两处
-    给同一个值」钉住：`session.json` 的 `state` 写成四档之外的 `waiting`、`date` 写成
-    数字 `20250906`、`mode` 写成 `null` 时，列表那一行与单场那一只都如实答 `null`
-    —— 单场那一只不另开一套读法、不把域外的值漏给界面。
+    给同一个值」钉住：`session.json` 的 `state` 写成取值域之外的 `waiting` 时，三档口径
+    照样答 `ended`（盘上有这份记录 = 录音已发生过，盘上 `state` 停在哪一档不进这个口径）、
+    `date` 写成数字 `20250906`、`mode` 写成 `null` 时两处都如实答 `null`
+    —— 单场那一只不另开一套读法。
     """
     runtime, previous = _runtime(tmp_path, monkeypatch, **{"post.chunk_seconds": CHUNK_SECONDS})
     session = _workspace_with_audio(tmp_path)
@@ -231,7 +232,7 @@ def test_the_seven_cells_match_the_list_row_when_the_disk_is_out_of_range(
         session,
         {
             "session_id": "250919",
-            "state": "waiting",        # 四档（recording/draining/done/failed）之外
+            "state": "waiting",        # 盘上取值域之外的值（三档口径照答 ended）
             "date": 20250906,          # 契约写的是 <YYYY-MM-DD>，这里是数字
             "mode": None,              # 契约写的是 both|mic|loopback
         },
@@ -247,7 +248,7 @@ def test_the_seven_cells_match_the_list_row_when_the_disk_is_out_of_range(
             assert body[cell] == row[cell], (
                 f"{cell} 这一格两处该同值：列表给 {row[cell]!r}、单场给 {body[cell]!r}"
             )
-        assert row["state"] is None, "四档之外如实 null（列表那一套收口）"
+        assert row["state"] == "ended", "盘上有 session.json 一律答 ended（三档口径）"
         assert row["date"] is None, "不是字符串的日期如实 null"
         assert row["mode"] is None
     finally:
@@ -489,4 +490,4 @@ def test_the_list_carries_the_post_job_cell_at_the_top_level(
 
     done = runtime.sessions_dict()
     assert done["post_job"] is None, "跑完那一刻这一格翻回 None"
-    assert {row["dir"]: row for row in done["sessions"]}[str(session)]["state"] == "done"
+    assert {row["dir"]: row for row in done["sessions"]}[str(session)]["state"] == "ended"

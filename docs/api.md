@@ -60,7 +60,7 @@
 | `code` | HTTP | 意思 | 谁会回它 |
 |---|---|---|---|
 | `already_recording` | 409 | 已经有一场在录 | `start` / `reprobe` |
-| `draining` | 409 | 上一场还在收尾（或收尾失败后停留），这场不能开；会后两个按钮拿它回「收尾没落定 / 有一趟会在飞」；`post_stop` 拿它回「没有在飞的会后可停 / 在飞的是纪要那一趟」 | `start` / `post_offline` / `post_minutes` / `post_stop` |
+| `draining` | 409 | 上一场还在收尾（或收尾失败后停留），这场不能开；会后两个按钮拿它回「还在录音中 / 有一趟会在飞」（不再提「落盘没落定」）；`post_stop` 拿它回「没有在飞的会后可停 / 在飞的是纪要那一趟」 | `start` / `post_offline` / `post_minutes` / `post_stop` |
 | `capture_unavailable` | 503 | 采集后端不可用：没接入、或设备起不来；`set_source` 那一档的 `detail` 是 `{source, error}` | `start` / `set_source` |
 | `not_recording` | 409 | 现在没有在录的场次 | `stop` / `mute_session` / `pause` / `resume` / `set_source` / `dev_inject` / `summarize` |
 | `invalid_setting` | 400 | 参数或键名非法（校验都在动手之前） | 各动作 |
@@ -84,9 +84,9 @@
 | `summarize` | 409 `not_recording` | 200：**只读**，结果在应答体的 `summary` 键里（转写没在跑 503、端点没配齐 502） | 200：同上 | 409 `not_recording` | 409 `not_recording` |
 | `workspace_open` | 200：写工作区注册表（缺 `dir` / 目录不存在 / 非空未确认 → 400） | 200 | 200 | 200 | 200 |
 | `workspace_remove` | 200：摘一行名单，文件不碰 | 200 | 200 | 200 | 200 |
-| `post_offline` / `post_minutes` | 带 `dir` 且那一行合法 → 200；不带 → 409 `draining`（手上没有可以跑后会的场次） | 409 `draining` | 409 `draining` | 200（这一层没接实现 → 404 `action_unavailable`；有一趟在飞 → 409 `draining`） | 收尾落定（`post` 停 `waiting` 算落定）→ 200；还没落定 → 409 `draining` |
+| `post_offline` / `post_minutes` | 带 `dir` 且那一行合法 → 200；不带 → 409 `draining`（手上没有可以跑后会的场次） | 409 `draining`（还在录音中） | 409 `draining`（同左） | 200（这一层没接实现 → 404 `action_unavailable`；有一趟在飞 → 409 `draining`） | 200（与 `ended·done` 同档：收尾没落定不再拦，被强杀丢在收尾半路的那一场照常受理） |
 | `post_stop` | 409 `draining`（没有在飞的会后可停） | 409 `draining`（同左） | 409 `draining`（同左） | 200（在飞的 offline 被受理 → `{kind, dir, stopping: true}`；在飞的是 minutes → 409 `draining`；`dir` 指到另一场 → 400 `invalid_setting`） | 200（同 `ended·done`——停止只看在飞，不看收尾） |
-| `speaker_rename` | `dir` / `key` / `name` 齐且那一行合法 → 200（写这一场目录里的人名表） | 400 `invalid_setting`（盘上 `state` 是 `recording`，会中不提供改名） | 400 `invalid_setting`（同左） | 200 | 400 `invalid_setting`（盘上 `state` 是 `draining`） |
+| `speaker_rename` | `dir` / `key` / `name` 齐且那一行合法 → 200（写这一场目录里的人名表） | 400 `invalid_setting`（本进程正在录的那一场，会中不提供改名） | 400 `invalid_setting`（同左） | 200 | 200（与 `ended·done` 同档：盘上残档照常受理——收尾半路、录音半路的强杀现场都放行） |
 
 `settings_update` 写的是配置文件，与「这一场录到哪儿」无关，因此**任何状态下都可用**。`mute_session` 只在本场收尾之前可用 —— 收尾完成后本场已无可静音，复位发生在下一场 `start`。`reprobe` 只在**没有场次在跑**的时候可用（`recording` / `alert` 两态回 `already_recording`）：设备在开场前定下来，会中换设备是明文不做的那一档。`summarize` 只在**有场次在跑**的时候可用（它读的是这一场的实时转写）。
 
@@ -177,8 +177,8 @@
 {"action": "post_offline", "args": {"dir": "C:\\会议\\跟老王聊周会"}}
 ```
 
-- `args.dir` **可省**：给了就跑它指定的那一场，且要过与 `GET /api/sessions` 同一套注册表 / 目录判读（不在注册表里、目录不在原地、盘上 `state` 还是 `recording` / `draining` → `invalid_setting`(400)）；省略时跑**收尾刚落定的那一场**（命令行与既有调用走这一路）。
-- 拒绝档固定三条：这一场还没结束 / 收尾还没落定，或已经有一趟会后活在飞 → 409 `draining`；`post_minutes` 那一层的状态停在 `running`（纪要 claim 闸同步判）→ 409 `draining`，`detail` 带 `status_path`；这一层没接实现（`post.hook` / `minutes.hook` 缺席）→ 404 `action_unavailable`。
+- `args.dir` **可省**：给了就跑它指定的那一场，且要过与 `GET /api/sessions` 同一套注册表 / 目录判读（不在注册表里、目录不在原地 → `invalid_setting`(400)；「还在录音中」不落在这个参数档 —— 本进程在录的那一场由拒绝档第一条那道运行时闸按 409 拦下；**盘上残档不拒**：被强杀丢在录音半路（盘上 `state=recording`）或收尾半路（`draining`）的那一场都照常受理）；省略时跑**收尾刚落定的那一场**（命令行与既有调用走这一路）。
+- 拒绝档固定三条：这一场还在录音中，或已经有一趟会后活在飞 → 409 `draining`；`post_minutes` 那一层的状态停在 `running`（纪要 claim 闸同步判）→ 409 `draining`，`detail` 带 `status_path`；这一层没接实现（`post.hook` / `minutes.hook` 缺席）→ 404 `action_unavailable`。
 - 成功体是通用信封 + `post: {kind: "offline"|"minutes", dir}`；回执只说「起没起、跑的哪一场」，跑成什么样由场次目录里的 `meeting_offline_status.json` / `meeting_minutes_status.json` 回答；**跑到哪一档**（第几块 / 共几块、正在跑哪一路、已经跑了多久）由 `GET /api/sessions/{id}` 回答。
 
 **`post_stop`** —— 停掉正在跑的「生成会后精细稿」（R28），语义全文见 `docs/contract.md` 4.3：

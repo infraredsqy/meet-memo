@@ -755,7 +755,7 @@ export function WorkspaceHome({
                   {post.why !== null && <p className="wspane__why">{post.why}</p>}
                   {postNote !== null && <p className="wspane__postline">{postNote}</p>}
                   {/* 说话人名字（R10 第四条）：会后区的一行入口，点开小弹窗当场改名。
-                      这一场还在录 / 收尾没落定 / 目录不存在时与两个按钮同判按不动。 */}
+                      这一场还在录音中 / 目录不存在时与两个按钮同判按不动（收尾走到哪一步不拦）。 */}
                   <p className="wspane__postline">
                     <button
                       className="btn btn--small btn--ghost"

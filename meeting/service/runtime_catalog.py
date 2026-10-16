@@ -81,6 +81,14 @@ def _session_status_error(code: str, message: str, *, detail: dict[str, Any]) ->
     return ActionError(code, message, status=404, detail=detail)
 
 
+def _disk_str_or_none(record: dict[str, Any] | None, key: str) -> str | None:
+    """盘上 `session.json` 的一个字符串格（`date` / `mode`）：缺席或不是字符串如实 `null`。"""
+    if not isinstance(record, dict):
+        return None
+    value = record.get(key)
+    return str(value) if isinstance(value, str) else None
+
+
 class RuntimeCatalogMixin:
     """工作台 / 场次目录 / 状态视图 / 杂项动作 mixin。"""
 
@@ -214,30 +222,46 @@ class RuntimeCatalogMixin:
 
     # -- 工作区注册表（工作台收编节点 e2f6166b）---------------------------
 
-    #: `session.json` 的 `state` 四档取值（读盘那一份时**只判集合成员关系**，
-    #: 不做反查映射、不把它读成 `top_state` —— reading 的口径与 `state_for` 写侧对齐）
-    _DISK_STATE_VALUES: frozenset[str] = frozenset(
-        {"recording", "draining", "done", "failed"}
-    )
+    def _is_actively_recording(self, path: str | Path) -> bool:
+        """`path` 这一场是不是**本进程此刻在录**的那一场（三档口径里 `recording` 的判据）。
+
+        **判据只此一处**（`GET /api/sessions` 的行读数与会后动作的参数校验同源）：
+        `top_state ∈ recording / alert` 且目录就是快照里那一场。盘上 `session.json` 停在
+        `state="recording"` 的残档（被强杀在录音半路、本进程没在录它）**不是**录音中 ——
+        那一场的读数是 `ended`（`_disk_record_cells()`）、会后动作照常受理。
+        """
+        session = self.snapshot.session
+        return (
+            self.snapshot.top_state in ("recording", "alert")
+            and session is not None
+            and os.path.normcase(canonical_dir(str(session.dir)))
+            == os.path.normcase(canonical_dir(str(path)))
+        )
 
     def _disk_record_cells(
-        self, record: dict[str, Any] | None
+        self, record: dict[str, Any] | None, path: str | Path
     ) -> tuple[str | None, str | None, str | None]:
-        """盘上 `session.json` 那三格的读数：`(state, date, mode)`。
+        """工作区清单那三格的读数：`(state, date, mode)`。
 
         **`GET /api/sessions` 与 `GET /api/sessions/{id}` 前七格共用这一处**（契约 4.9
         写着前七格与 4.8 同一行同源、逐格语义见 4.8）：同一个事实在两处必须给同一个值。
-        收口两条 —— `state` **只判集合成员关系**（`_DISK_STATE_VALUES` 之外如实 `null`），
-        `date` / `mode` 要是字符串（盘上落成数字或对象时同样如实 `null`）。
-        状态文件不在场（`record is None`）时三格一律 `null`。
+
+        `state` 是**三档口径**（只表达「这场录音走到哪了」，落盘 / 转码 / 会后那几步
+        不进这个口径）：
+
+        - `"recording"` —— **仅当**这一行是本进程此刻在录的活跃场次（`_is_actively_recording()`）；
+        - `"ended"` —— 盘上有 `session.json`（录音已经发生过；盘上 `state` 停在哪一档
+          —— 收尾半路 / 收完 / 失败 / 录音半路的残档 —— 一律不进这个口径，那几步的进度另有读数）；
+        - `null` —— 没有 `session.json`（空白工作区 / 尚未开过会）。
+
+        `date` / `mode` 仍是盘上原文的字符串判读（盘上落成数字或对象时如实 `null`）。
+        `dir_exists` 与 `kind` 由调用方照旧现场判，不折进这三档。
         """
+        if self._is_actively_recording(path):
+            return "recording", _disk_str_or_none(record, "date"), _disk_str_or_none(record, "mode")
         if record is None:
             return None, None, None
-        raw_state = record.get("state")
-        state = str(raw_state) if str(raw_state) in self._DISK_STATE_VALUES else None
-        date = str(record["date"]) if isinstance(record.get("date"), str) else None
-        mode = str(record["mode"]) if isinstance(record.get("mode"), str) else None
-        return state, date, mode
+        return "ended", _disk_str_or_none(record, "date"), _disk_str_or_none(record, "mode")
 
     def _disk_segment_cells(self, record: dict[str, Any] | None) -> list[dict[str, Any]]:
         """盘上 `session.json` 的**段读数**（界面上「两段的时长与时间」的来源）。
@@ -336,8 +360,10 @@ class RuntimeCatalogMixin:
 
         条目只记两个时刻（`added_at` / `last_opened_at`），**"目录还在不在、里面是什么"
         由本函数现场判**（注册表不反映目录内容）：`dir_exists` 由 `Path.is_dir()` 给、
-        `kind` 由 `classify_workspace_dir()` 给、`state` / `date` / `mode` 只在盘上的
-        `session.json` 读得出来时带值（四档之外如实为 `null`，不反查映射）。
+        `kind` 由 `classify_workspace_dir()` 给；`state` 是三档口径
+        （`"recording"` 仅当这一行就是本进程此刻在录的活跃场次；盘上有 `session.json`
+        一律 `"ended"`；没有则 `null` —— 见 `_disk_record_cells()`），
+        `date` / `mode` 只在盘上读得出来时带值。
         `recent` 是最近一次被打开/切换的那一条的目录（**只从注册表读**，不扫任何场次
         目录 —— 启动序列对它的口径见 `docs/state.md`「重启自洽」）。
 
@@ -359,7 +385,7 @@ class RuntimeCatalogMixin:
             path = str(entry["dir"])
             probe = classify_workspace_dir(path)
             record = self.store.read_session_json(path)
-            state, date, mode = self._disk_record_cells(record)
+            state, date, mode = self._disk_record_cells(record, path)
             rows.append(
                 {
                     "dir": path,
@@ -483,7 +509,7 @@ class RuntimeCatalogMixin:
                 detail={"dir": str(directory), "kind": probe["kind"]},
             )
         record = self.store.read_session_json(directory)
-        state, date, mode = self._disk_record_cells(record)
+        state, date, mode = self._disk_record_cells(record, directory)
         post = _post_job_view(self.post_job, directory)
         if post is not None:
             post["running"] = self.post_job_state() is not None
@@ -558,13 +584,13 @@ class RuntimeCatalogMixin:
         return snapshot
 
     def _reject_post_job(self) -> None:
-        """会后那两趟活的两道闸：还会中动作在跑，或已经有一趟没跑完。
+        """会后那两趟活的两道闸：本场还在录音，或已经有一趟没跑完。
 
-        「还会中动作在跑」按 `draining` 档报（409）：会后那两个按钮要等收尾走完才轮得到
-        （收尾本身还在落盘、音频还没归档好，此刻起会后是白跑）。**收尾落定之后**
-        （四步都到了 `done` / `skipped` / `waiting` 那一格）就放行 —— 那一格正是
-        「工作区回到没有进行中的会议」的现场：`ended.phase` 可能还是 `draining`
-        （收尾里有失败步时它本来就停在那一档），但会后该不该跑与那一步的成败无关。
+        「本场还在录音」按 `draining` 档报（409）：会还在录着，会后那两个按钮要等
+        录音结束（工作区清单上那一行还是「录音中」）。**「落盘没落定」不再是闸**
+        ——收尾走到哪一步、成没成，都不拦会后动作；盘上停在收尾半路的那一场，
+        工作区读数就是「录音结束」，按钮照按。
+
         「已经有一趟在飞」同样按 `draining` 报：一张显卡上不并排开两份模型
         （`docs/design-intent.md` 第 21 条）。`action_unavailable`（404）留给
         「这台机器上没接这一层的实现」那一档。
@@ -577,18 +603,16 @@ class RuntimeCatalogMixin:
                 status=409,
                 detail={"kind": job["kind"], "dir": job["dir"], "started_at": job["started_at"]},
             )
-        draining = self.snapshot.top_state in ("recording", "alert") or (
-            self.snapshot.ended is not None and not self.drain_has_settled()
-        )
-        if draining:
+        if self.snapshot.top_state in ("recording", "alert"):
+            session = self.snapshot.session
             raise ActionError(
                 "draining",
-                "这一场还没结束（或收尾还没走完）：会后的两个按钮要等收尾落定",
+                "这一场还在录音中：会后的两个按钮要等录音结束",
                 status=409,
                 detail={
                     "top_state": self.snapshot.top_state,
-                    "session_id": None if self.snapshot.session is None else self.snapshot.session.id,
-                    "dir": None if self.snapshot.session is None else self.snapshot.session.dir,
+                    "session_id": None if session is None else session.id,
+                    "dir": None if session is None else session.dir,
                 },
             )
 
@@ -613,8 +637,9 @@ class RuntimeCatalogMixin:
         校验全在动手之前（`code` 全落在既有那几个上，不加新的）：
 
           - `args["dir"]` **必给**，过 `_session_dir_for_post()` 同一套判据
-            （注册表里 / 目录在原地 / 盘上 `state` 不是 `recording` / `draining`），
+            （注册表里 / 目录在原地 / 不是本进程此刻在录的那一场），
             否则 `invalid_setting`(400)——会中不提供改名（这一屏根本不出现入口）；
+            盘上残档不拒（收尾半路、录音半路的强杀残档都放行）；
           - `args["key"]` 要是盘上身份集形状的一个键（`mic` / `loopback` 或
             `mic:S01` 这种带路前缀的限定名），`args["name"]` 要是非空字符串；
             跳过 = 不起名，空名字不落任何状态；
@@ -634,7 +659,7 @@ class RuntimeCatalogMixin:
                 detail={
                     "key": "dir",
                     "value": "" if raw_dir is None else str(raw_dir),
-                    "legal": ["工作台清单里、目录还在原地、盘上不是 recording / draining 的一场"],
+                    "legal": ["工作台清单里、目录还在原地、不是本进程正在录的一场"],
                 },
             )
         target = self._session_dir_for_post(args)

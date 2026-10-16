@@ -90,7 +90,7 @@ function row(over: Partial<SessionRow> = {}): SessionRow {
     dir_exists: true,
     kind: 'meeting',
     suspected: false,
-    state: 'done',
+    state: 'ended',
     date: '2026-09-21',
     mode: 'both',
     segments: [],
@@ -118,7 +118,7 @@ function status(offline: Partial<SessionStatus['offline']>, post: SessionStatus[
     dir: DIR,
     session_id: '这一场',
     kind: 'meeting',
-    state: 'done',
+    state: 'ended',
     date: '2026-09-21',
     mode: 'both',
     segments: [],
@@ -316,7 +316,7 @@ describe('行四态与全局一格：可识别、不塌', () => {
         row({ dir: 'C:\\会议\\空闲', session_id: '空闲', kind: 'empty', state: null }),
         row({ dir: 'C:\\会议\\在录', session_id: '在录', state: 'recording' }),
         row({ dir: 'C:\\会议\\跑着', session_id: '跑着' }),
-        row({ dir: 'C:\\会议\\等动手', session_id: '等动手', state: 'done' }),
+        row({ dir: 'C:\\会议\\等动手', session_id: '等动手', state: 'ended' }),
       ],
       recent: DIR,
       post_job: { kind: 'offline', dir: 'C:\\会议\\跑着', started_at: '2026-09-21T22:10:00+08:00' },
@@ -324,7 +324,7 @@ describe('行四态与全局一格：可识别、不塌', () => {
     fetchSessionStatusMock.mockImplementation(async (dir: string) => ({
       ...status({}),
       dir,
-      state: 'done',
+      state: 'ended',
     }));
     const renderer = await mountHome();
 
@@ -422,7 +422,7 @@ function rowStatesOf(renderer: TestRenderer.ReactTestRenderer): string {
 describe('联结档收敛（review-1 C1）：跑完那一跳之后界面要跟得上', () => {
   it('选中行被联结命中：在飞时 start，终态那一跳 stop + 列表重取 + 行与全局格翻回', async () => {
     fetchSessionsMock.mockResolvedValue({
-      sessions: [row({ state: 'done' })],
+      sessions: [row({ state: 'ended' })],
       recent: DIR,
       post_job: { kind: 'offline', dir: DIR, started_at: '2026-09-21T22:10:00+08:00' },
     });
@@ -439,7 +439,7 @@ describe('联结档收敛（review-1 C1）：跑完那一跳之后界面要跟�
       status({ state: 'done', in_process: false }),
     );
     fetchSessionsMock.mockResolvedValue({
-      sessions: [row({ state: 'done' })],
+      sessions: [row({ state: 'ended' })],
       recent: DIR,
       post_job: null,
     });
@@ -459,8 +459,8 @@ describe('联结档收敛（review-1 C1）：跑完那一跳之后界面要跟�
     vi.useFakeTimers();
     try {
       const rowsFly = (): SessionRow[] => [
-        row({ dir: 'C:\\会议\\跑着', session_id: '跑着', state: 'done' }),
-        row({ dir: DIR, session_id: '这一场', state: 'done' }),
+        row({ dir: 'C:\\会议\\跑着', session_id: '跑着', state: 'ended' }),
+        row({ dir: DIR, session_id: '这一场', state: 'ended' }),
       ];
       fetchSessionsMock.mockResolvedValue({
         sessions: rowsFly(),
@@ -562,7 +562,7 @@ describe('按钮起跑档（review-2 C1）：post_job 出现在选中行上之�
   it('挂载握着旧终态 → 按「生成会后精细稿」→ post_job 出现 → 补跳一跳 start 被喊、读数跟走；终局照旧收敛', async () => {
     // 挂载：终态读数在手（上一趟的记录）、post_job:null —— 轮询不该起
     fetchSessionsMock.mockResolvedValueOnce({
-      sessions: [row({ state: 'done', has_offline: true })],
+      sessions: [row({ state: 'ended', has_offline: true })],
       recent: DIR,
       post_job: null,
     });
@@ -587,7 +587,7 @@ describe('按钮起跑档（review-2 C1）：post_job 出现在选中行上之�
     // 按「生成会后精细稿」：node 下真实 postAction 当场拒（fetch 相对路径），失败块出列、
     // 收尾 reloadAfterAction() 照走 —— post_job 从第二份列表应答进来
     fetchSessionsMock.mockResolvedValue({
-      sessions: [row({ state: 'done', has_offline: true })],
+      sessions: [row({ state: 'ended', has_offline: true })],
       recent: DIR,
       post_job: { kind: 'offline', dir: DIR, started_at: '2026-09-21T22:10:00+08:00' },
     });
@@ -652,7 +652,7 @@ describe('按钮起跑档（review-2 C1）：post_job 出现在选中行上之�
       }),
     );
     fetchSessionsMock.mockResolvedValue({
-      sessions: [row({ state: 'done', has_offline: true })],
+      sessions: [row({ state: 'ended', has_offline: true })],
       recent: DIR,
       post_job: null,
     });
@@ -668,7 +668,7 @@ describe('按钮起跑档（review-2 C1）：post_job 出现在选中行上之�
 describe('重跑一场的逐块行（review-2 m2）：记录重置那一跳整段重播，不接旧记录往下编', () => {
   it('started_at 换新的那一跳：旧趟十行整段换掉，新记录从空起步、往下照常落', async () => {
     fetchSessionsMock.mockResolvedValue({
-      sessions: [row({ state: 'done', has_offline: true })],
+      sessions: [row({ state: 'ended', has_offline: true })],
       recent: DIR,
       post_job: null,
     });
@@ -743,7 +743,7 @@ async function mountWithPostJumpFailing(
   vi.useFakeTimers();
   // 挂载：终态读数在手（上一趟的记录）、post_job:null —— 轮询不该起
   fetchSessionsMock.mockResolvedValueOnce({
-    sessions: [row({ state: 'done', has_offline: true })],
+    sessions: [row({ state: 'ended', has_offline: true })],
     recent: DIR,
     post_job: null,
   });
@@ -767,7 +767,7 @@ async function mountWithPostJumpFailing(
   // 按「生成会后精细稿」：post_job 从第二份列表应答进来（node 下真实 postAction 当场
   // 拒，收尾 reloadAfterAction() 照走 —— 与 review-2 C1 用例同一手法）；补跳那一跳失败
   fetchSessionsMock.mockResolvedValue({
-    sessions: [row({ state: 'done', has_offline: true })],
+    sessions: [row({ state: 'ended', has_offline: true })],
     recent: DIR,
     post_job: { kind: 'offline', dir: DIR, started_at: '2026-09-21T22:10:00+08:00' },
   });

@@ -35,8 +35,15 @@ class RuntimePostMixin:
         **给了 `args["dir"]` 就按它指定的那一场跑**（工作台里选中并按下按钮的那一行就是
         这一场：界面那一格 `has_offline` 说的也是它，动作与界面因此同源），该路径要过与
         `GET /api/sessions` 同一套注册表 / 目录判读的校验 —— 不在注册表里、目录不在原地、
-        或盘上还停在 `recording` / `draining`（这一场还没结束）都按 `invalid_setting`(400)
-        如实回错档；**没给 `dir` 时退回原来那条**：跑**收尾刚走完、盘上停着的那一场**
+        或这一场正是**本进程此刻在录**的那一场（`_is_actively_recording()`，与清单行读数
+        同一个判据）都按 `invalid_setting`(400) 如实回错档；**盘上残档不拒**——盘上
+        `session.json` 停在哪一档（收尾半路 `draining`、录音半路 `state="recording"` 的
+        强杀残档）都不拦：收尾走到哪一步、录音有没有好好收场，都不是会后动作的闸（被强杀
+        丢在半路的那一场，工作区读数就是「录音结束」，按钮照按）。本进程在录的那一场对
+        `post_offline` / `post_minutes` 到不了这里——动作本体先走 `_reject_post_job()`
+        的运行时闸、按 `draining`(409) 拦下；这一道 400 只落到不走那道闸的
+        `speaker_rename`（会中不提供改名）头上。
+        **没给 `dir` 时退回原来那条**：跑**收尾刚走完、盘上停着的那一场**
         （`session` 还在，命令行与既有用例都走这一路）。
 
         没有场次时按 `draining` 档拒（见 `_reject_post_job()` 的第二道闸）。
@@ -54,8 +61,8 @@ class RuntimePostMixin:
                        "先在界面上把它打开，或把 `dir` 指到清单里的一行")
             elif probe["kind"] == "missing":
                 why = "这一场的目录已不在原地"
-            elif disk_state in ("recording", "draining"):
-                why = f"这一场还没结束（盘上 state={disk_state}）：等收尾落定再按"
+            elif self._is_actively_recording(target):
+                why = "这一场还在录音中：结束录音之后才能按"
             if why is not None:
                 raise ActionError(
                     "invalid_setting",
@@ -65,8 +72,8 @@ class RuntimePostMixin:
                         "key": "dir",
                         "value": str(raw),
                         "legal": [
-                            "工作台清单里、目录还在原地、盘上 state 不是 recording / draining "
-                            "的一场；省略时跑收尾刚落定的那一场",
+                            "工作台清单里、目录还在原地、不是本进程正在录的一场；"
+                            "省略时跑收尾刚落定的那一场",
                         ],
                         "dir": target,
                         "kind": probe["kind"],
