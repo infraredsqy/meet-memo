@@ -1,0 +1,16 @@
+{
+  "method": "POST",
+  "dir": "<path>",
+  "name": "新会",
+  "status": 200,
+  "body": {
+    "ok": true,
+    "revision": 1,
+    "directory": {
+      "name": "新会",
+      "dir": "<path>",
+      "kind": "empty",
+      "suspected": false
+    }
+  }
+}

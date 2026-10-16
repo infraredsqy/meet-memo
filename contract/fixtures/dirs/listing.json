@@ -1,0 +1,25 @@
+{
+  "home": "<path>",
+  "cwd": "<path>",
+  "up": "<path>",
+  "here": {
+    "name": "contract-dirs",
+    "dir": "<path>",
+    "kind": "unknown",
+    "suspected": false
+  },
+  "dirs": [
+    {
+      "name": "杂物间",
+      "dir": "<path>",
+      "kind": "unknown",
+      "suspected": false
+    },
+    {
+      "name": "空会",
+      "dir": "<path>",
+      "kind": "empty",
+      "suspected": false
+    }
+  ]
+}

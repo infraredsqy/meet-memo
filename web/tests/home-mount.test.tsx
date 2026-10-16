@@ -586,7 +586,8 @@ function pickerAddr(renderer: TestRenderer.ReactTestRenderer): TestRenderer.Reac
 const emptyDirs: DirsResponse = {
   home: 'C:\\Users\\<user>',
   cwd: 'C:\\Users\\<user>',
-  up: null,
+  up: 'C:\\Users',
+  here: { name: 'PC', dir: 'C:\\Users\\<user>', kind: 'unknown', suspected: false },
   dirs: [{ name: '新场', dir: 'C:\\会议\\新场', kind: 'empty', suspected: false }],
 };
 
@@ -594,7 +595,8 @@ const emptyDirs: DirsResponse = {
 const nonEmptyDirs: DirsResponse = {
   home: 'C:\\Users\\<user>',
   cwd: 'C:\\Users\\<user>',
-  up: null,
+  up: 'C:\\Users',
+  here: { name: 'PC', dir: 'C:\\Users\\<user>', kind: 'unknown', suspected: false },
   dirs: [{ name: '旧文件夹', dir: 'C:\\杂物\\旧文件夹', kind: 'unknown', suspected: false }],
 };
 
@@ -602,7 +604,8 @@ const nonEmptyDirs: DirsResponse = {
 const twoKindDirs: DirsResponse = {
   home: 'C:\\Users\\<user>',
   cwd: 'C:\\Users\\<user>',
-  up: null,
+  up: 'C:\\Users',
+  here: { name: 'PC', dir: 'C:\\Users\\<user>', kind: 'unknown', suspected: false },
   dirs: [
     { name: '新场', dir: 'C:\\会议\\新场', kind: 'empty', suspected: false },
     { name: '旧文件夹', dir: 'C:\\杂物\\旧文件夹', kind: 'unknown', suspected: false },
@@ -835,6 +838,7 @@ describe('目录选择器「选中再确认」（57ab5255）', () => {
       home: 'C:\\Users\\<user>',
       cwd: 'C:\\会议',
       up: 'C:\\Users\\<user>',
+      here: { name: '会议', dir: 'C:\\会议', kind: 'unknown', suspected: false },
       dirs: [
         { name: '跟老王聊周会', dir: 'C:\\会议\\跟老王聊周会', kind: 'meeting', suspected: false },
       ],
@@ -902,6 +906,7 @@ describe('目录选择器「选中再确认」（57ab5255）', () => {
       home: 'C:\\Users\\<user>',
       cwd: 'C:\\会议\\新场',
       up: 'C:\\Users\\<user>',
+      here: { name: '新场', dir: 'C:\\会议\\新场', kind: 'empty', suspected: false },
       dirs: [],
     });
     await act(async () => {
@@ -910,35 +915,44 @@ describe('目录选择器「选中再确认」（57ab5255）', () => {
     expect(browseDirsMock).toHaveBeenLastCalledWith('C:\\会议\\新场');
   });
 
-  it('「向上一层」住在地址栏旁：主目录置灰；有上层时点了退上一层', async () => {
+  it('「向上一层」住在地址栏旁：盘根置灰；主目录不再置灰（点了退上一层）', async () => {
     fetchSessionsMock.mockResolvedValue(list());
     browseDirsMock.mockResolvedValue(twoKindDirs);
     const renderer = await mountHome();
     await click(renderer, buttonByText(renderer, '添加工作区'));
 
+    // 主目录不再是天花板：从 home 也能向上（目录选择器节点的新口径）
     const upAtHome = buttonByText(renderer, '向上一层');
-    expect(upAtHome.props.disabled).toBe(true);
+    expect(upAtHome.props.disabled).toBe(false);
     // 位置：与地址栏输入框同一个容器行（地址栏右边那颗）
     expect(upAtHome.parent?.findAll((node) => node.type === 'input')).toHaveLength(1);
-
     browseDirsMock.mockResolvedValue({
       home: 'C:\\Users\\<user>',
-      cwd: 'C:\\会议',
-      up: 'C:\\Users\\<user>',
-      dirs: [{ name: '新场', dir: 'C:\\会议\\新场', kind: 'empty', suspected: false }],
+      cwd: 'C:\\Users',
+      up: 'C:\\',
+      here: { name: 'Users', dir: 'C:\\Users', kind: 'unknown', suspected: false },
+      dirs: [{ name: 'PC', dir: 'C:\\Users\\<user>', kind: 'unknown', suspected: false }],
+    });
+    await click(renderer, upAtHome);
+    expect(browseDirsMock).toHaveBeenLastCalledWith('C:\\Users');
+
+    // 盘根那一档 up 如实 null：按钮置灰（「向上一层」唯一的到顶档）
+    browseDirsMock.mockResolvedValue({
+      home: 'C:\\Users\\<user>',
+      cwd: 'C:\\',
+      up: null,
+      here: { name: 'C:\\', dir: 'C:\\', kind: 'unknown', suspected: false },
+      dirs: [{ name: 'Users', dir: 'C:\\Users', kind: 'unknown', suspected: false }],
     });
     await act(async () => {
-      pickerAddr(renderer).props.onChange({ target: { value: 'C:\\会议' } });
+      pickerAddr(renderer).props.onChange({ target: { value: 'C:\\' } });
     });
     await act(async () => {
       pickerAddr(renderer).props.onKeyDown({ key: 'Enter' });
     });
 
-    const up = buttonByText(renderer, '向上一层');
-    expect(up.props.disabled).toBe(false);
-    browseDirsMock.mockResolvedValue(twoKindDirs);
-    await click(renderer, up);
-    expect(browseDirsMock).toHaveBeenLastCalledWith('C:\\Users\\<user>');
+    const upAtRoot = buttonByText(renderer, '向上一层');
+    expect(upAtRoot.props.disabled).toBe(true);
   });
 
   it('底部「选定这个目录」：未选中置灰零请求；选中 empty 后点它才发 workspace_open', async () => {
@@ -995,7 +1009,8 @@ describe('目录选择器「选中再确认」（57ab5255）', () => {
     browseDirsMock.mockResolvedValue({
       home: 'C:\\Users\\<user>',
       cwd: 'C:\\Users\\<user>',
-      up: null,
+      up: 'C:\\Users',
+      here: { name: 'PC', dir: 'C:\\Users\\<user>', kind: 'unknown', suspected: false },
       dirs: [
         { name: '旧会议', dir: 'C:\\会议\\旧会议', kind: 'meeting', suspected: false },
       ],
@@ -1030,6 +1045,7 @@ describe('目录选择器「选中再确认」（57ab5255）', () => {
       home: 'C:\\Users\\<user>',
       cwd: 'C:\\会议',
       up: 'C:\\Users\\<user>',
+      here: { name: '会议', dir: 'C:\\会议', kind: 'unknown', suspected: false },
       dirs: [],
     });
     await act(async () => {

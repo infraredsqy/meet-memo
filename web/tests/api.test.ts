@@ -9,7 +9,9 @@ import {
   REQUIRED_HEADERS,
   SessionStatusHttpError,
   DirsHttpError,
+  DirCreateHttpError,
   browseDirs,
+  createDir,
   SessionsProtocolError,
   SessionsUnavailableError,
   SummariesProtocolError,
@@ -349,6 +351,7 @@ describe('browseDirs 的读法（目录选择器 57ab5255）', () => {
       home: 'C:\\Users\\<user>',
       cwd: 'C:\\会议',
       up: 'C:\\Users\\<user>',
+      here: { name: '会议', dir: 'C:\\会议', kind: 'unknown', suspected: false },
       dirs: [{ name: '新场', dir: 'C:\\会议\\新场', kind: 'empty', suspected: false }],
     };
     const fetchImpl = vi.fn(async () => jsonResponse(200, payload)) as unknown as typeof fetch;
@@ -391,6 +394,59 @@ describe('browseDirs 的读法（目录选择器 57ab5255）', () => {
     expect(error).toBeInstanceOf(DirsHttpError);
     expect((error as DirsHttpError).note).toBeNull();
     expect((error as DirsHttpError).message).toContain('HTTP 500');
+  });
+});
+
+describe('createDir 的读法（新建目录，目录选择器节点）', () => {
+  it('POST + dir/name 进查询串 + 写端点头哨；成功体 directory 逐键交回来', async () => {
+    const payload = {
+      ok: true,
+      revision: 1,
+      directory: { name: '新会', dir: 'C:\\会议\\新会', kind: 'empty', suspected: false },
+    };
+    const fetchImpl = vi.fn(async () => jsonResponse(200, payload)) as unknown as typeof fetch;
+
+    const parsed = await createDir('C:\\会议', '新会', { fetchImpl });
+
+    expect(parsed.directory.name).toBe('新会');
+    expect(parsed.directory.kind).toBe('empty');
+    const [url, init] = (fetchImpl as unknown as { mock: { calls: [string, RequestInit][] } })
+      .mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`/api/dirs?dir=${encodeURIComponent('C:\\会议')}&name=${encodeURIComponent('新会')}`);
+    expect(init.method).toBe('POST');
+    expect((init.headers as Record<string, string>)['X-Meeting-Service']).toBe('1');
+  });
+
+  it('409 同名已存在：DirCreateHttpError 的 message 就是信封原话，code 带着走', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse(409, {
+        ok: false,
+        code: 'dir_exists',
+        message: '这一层里已经有叫「新会」的目录或文件：C:\\会议\\新会；换个名字，或者双击进去直接用它',
+        detail: { dir: 'C:\\会议', name: '新会' },
+      }),
+    ) as unknown as typeof fetch;
+
+    const error = await createDir('C:\\会议', '新会', { fetchImpl }).then(
+      () => null,
+      (caught: unknown) => caught,
+    );
+    expect(error).toBeInstanceOf(DirCreateHttpError);
+    expect((error as DirCreateHttpError).status).toBe(409);
+    expect((error as DirCreateHttpError).code).toBe('dir_exists');
+    expect((error as DirCreateHttpError).message).toContain('已经有叫「新会」');
+  });
+
+  it('400 且读不出信封：DirCreateHttpError 落固定话术，不冒充原话', async () => {
+    const fetchImpl = vi.fn(async () => fakeResponse(500, '网关炸了')) as unknown as typeof fetch;
+
+    const error = await createDir('C:\\x', 'y', { fetchImpl }).then(
+      () => null,
+      (caught: unknown) => caught,
+    );
+    expect(error).toBeInstanceOf(DirCreateHttpError);
+    expect((error as DirCreateHttpError).note).toBeNull();
+    expect((error as DirCreateHttpError).message).toContain('HTTP 500');
   });
 });
 

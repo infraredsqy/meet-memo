@@ -1,0 +1,15 @@
+{
+  "method": "POST",
+  "dir": "<path>",
+  "name": "新会",
+  "status": 409,
+  "body": {
+    "ok": false,
+    "code": "dir_exists",
+    "message": "这一层里已经有叫「新会」的目录或文件：<path>；换个名字，或者双击进去直接用它",
+    "detail": {
+      "dir": "<path>",
+      "name": "新会"
+    }
+  }
+}

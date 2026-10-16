@@ -1,6 +1,6 @@
 # meeting · HTTP 面
 
-> 这份文档写服务对外的那几条线：十五条端点（十三条 `/api/*` + 静态首页 `GET /` + `/debug`）、动作的信封、动作表与 `code` 表、以及本地防线。
+> 这份文档写服务对外的那几条线：十六条端点（十四条 `/api/*` + 静态首页 `GET /` + `/debug`）、动作的信封、动作表与 `code` 表、以及本地防线。
 >
 > 读者是接这套 API 的人：前端、验收脚本、命令行复核。四态状态机、快照字段、`session.json`、SSE 帧形状、告警判定写在 `docs/state.md`；怎么起服务写在 `docs/service.md`。
 >
@@ -10,14 +10,14 @@
 
 | 章 | 标题 |
 |---|---|
-| 1 | 十五条端点 |
+| 1 | 十六条端点 |
 | 2 | 请求信封与应答形状 |
 | 3 | 动作表与 `code` 表 |
 | 4 | `settings_update`：写哪些键、什么时候生效 |
 | 5 | 端口与本地最低防线 |
 | 6 | 复核时怎么打 |
 
-## 1. 十五条端点
+## 1. 十六条端点
 
 | 端点 | 给什么 |
 |---|---|
@@ -29,7 +29,8 @@
 | `GET /api/summaries` | 本场按过的、成功产出的那几次会中总结（时刻 + 窗口 + 那几条），`200`，任何状态下都给。记录活在服务侧内存里、**不落文件**，新的一场 `start` 清空 |
 | `GET /api/sessions` | 工作区注册表：软件自己记的那份"我这些会"（住在配置目录 `workspaces.json`、按路径去重），`200`，任何状态下都给；`recent` = 最近一次被打开/切换的那一场；每行带这一场各段的时长与时间（`segments`，续接过的会看得出接过）；顶层还有一格 `post_job`（此刻在飞的那趟会后，`null` = 没有）—— 界面那格全局「显卡忙不忙」的会后一半读数。**纯读**，形状与现行口径见 `docs/contract.md` 4.8 |
 | `GET /api/sessions/{id}` | 单场状态：这一场此刻跑到哪一档、各段的时长与时间（`segments`，与清单同一来源）、会后离线跑到第几块 / 共几块、正在跑哪一路、已经跑了多久，`200`。`{id}` 是**这一场的目录路径**（URL 编码的绝对路径）。**纯读**，形状与失败口径见 `docs/contract.md` 4.9 |
-| `GET /api/dirs` | 目录选择器的一个现场：一层子目录的名目判读（起点用户主目录，`?dir=` 换层），`200`。**纯读**，只挑已有目录、不建目录；`?files=1`（资料界面的选择器文件模式，160d1a78）时应答体多一个 `files` 键——这一层的普通文件每项 `{name, dir, size_bytes}`，与 `dirs` 分开两列 |
+| `GET /api/dirs` | 目录选择器的一个现场：一层子目录的名目判读（起点用户主目录，`?dir=` 换层）+ 正在浏览这一层自己的名目（`here`），`200`。**纯读**，只列名目、不写任何东西；`up` 到盘根才落 `null`（用户主目录不再是天花板）。`?files=1`（资料界面的选择器文件模式，160d1a78）时应答体多一个 `files` 键——这一层的普通文件每项 `{name, dir, size_bytes}`，与 `dirs` 分开两列。形状与 `up` / `here` 口径见 `docs/contract.md` 4.8 |
+| `POST /api/dirs` | 目录选择器里**新建目录**：在正在浏览的这一层里就地建一个（`?dir=` 父层，省略时主目录，与 GET 同一起点；`?name=` 新目录名，必给、必须用户亲手起）。成功体 = 通用信封 + `directory`（新建那一行的名目判读，界面拿它把新行插进清单并直接置为选定）。拒绝档三条（一层不存在 / 非法名 / 同名已存在）与盘上出岔档见 `docs/contract.md` 4.8；**不走动作信封**的写端点，头哨要 `X-Meeting-Service: 1`（第 5 章），不涨 `revision`、不广播 |
 | `GET /api/devices` | 两路各自的候选设备端点表（`{mic: [...], loopback: [...]}`，每项六格），`200`，任何状态下都给。**纯读、只枚举、不开任何设备**（`probe()` 会短暂试开，清单不走它）；设置抽屉的两个设备下拉读它 |
 | `POST /api/actions` | 动作端点，见第 2–4 章 |
 | `GET /api/sessions/{id}/materials` | 会议资料的清单：`{dir, materials_dir, items:[{name, size_bytes, added_at}]}`，`200`。**目录就是清单**（没有 JSON 记录）；`meeting_materials/` 还不在时 `items` 是空数组、**目录也不建**（首次上传才由服务创建）。**纯读**。资料层整体见第 3 章末尾那一节 |
@@ -220,6 +221,21 @@
 - **独立于四态快照**：四条端点都是纯读写文件——不提交、不涨 `revision`、不广播；成功信封里的 `revision` 只是当前版本号（先例是 `summarize`）。
 - golden 样本：`contract/fixtures/materials/`（四份），语义与失败档由 `tests/test_materials.py` 实测。
 
+### 目录选择器的写入口（`POST /api/dirs`，目录选择器节点）
+
+新建目录这只写入口与 `GET /api/dirs` 同族（同一只路径、异方法），语义正本在 `docs/contract.md` 4.8：
+
+```text
+POST /api/dirs?dir=<父层路径>&name=<新目录名>
+```
+
+- 两个参数都走查询串（与 GET 的 `?dir=`、资料上传的 `?name=` 同一套写法）；`dir` 省略时落到用户主目录（与 GET 同一个起点），`name` 必给。请求体为空——形状全在查询串里。
+- 名字**必须用户亲手起**：服务侧**拒绝式校验、不清洗不改写**（设计意图第 3、4 条的新口径——软件可以替你建目录，但仍不自动命名、不自动挑落点）；非法名原样拒回 400 `invalid_setting`（`detail.key = "name"`，`message` 是一句能看懂的人话）。
+- 拒绝档固定三条 + 盘上出岔：一层不存在 → 400 `invalid_setting`（与 GET 同一档）；名字非法 → 400 `invalid_setting`；同名已存在（目录或文件都算占位）→ **409 `dir_exists`**（这一片自己的 `code`，先例是资料的 `material_missing`）；无权限等盘上出岔 → 500 `persist_failed`。每一档盘上都不落半截东西。
+- 成功体 = `{"ok": true, "revision": N, "directory": {name, dir, kind, suspected}}`：`directory` 是新建那一行的名目判读（刚建出来是 `empty`），界面拿它把新行插进清单并直接置为选定，后续确认走既有「选定这个目录」链路（`workspace_open` 登记）。
+- **只建一层、不做删除、不做改名**；独立于四态快照——不提交、不涨 `revision`、不广播（先例是资料四条端点）。
+- golden 样本：`contract/fixtures/dirs/`（四份），语义与失败档由 `tests/test_dirs_create.py` 实测。
+
 ## 4. `settings_update`：写哪些键、什么时候生效
 
 请求的 `args` 就是**「配置点号键名 → 值」的扁平映射**，只有这一层、不按键前缀分组：
@@ -254,7 +270,7 @@
 - 端口被占**不猜、不静默换端口**，两种情形都以退出码 `2` 结束：占用者是 meeting 服务（`GET /api/heartbeat` 应答里有 `"service": "meeting"`）→ 说「已经有一个 meeting 服务在跑」；占用者是别的程序 → 写明端口被谁占着、怎么改。
 - 三道最低防线，挡的是「本机浏览器里的恶意页面往 `127.0.0.1:8765` 发请求」：
   1. **Host 校验**：`Host` 不是 `127.0.0.1[:port]` / `localhost[:port]` 就 `403`（挡 DNS rebinding）。
-  2. **写语义端点要自定义头**：带写语义的端点必须带 `X-Meeting-Service: 1`，缺了 `403`（挡表单式简单请求——本机浏览器里的恶意页面发不出带自定义头的请求）。现在守两处：`POST /api/actions`（还要求 `Content-Type: application/json`；改状态的动作集中在这一个信封里，这是新动作不另开端点的原因）与**会议资料的两条写端点**（`POST …/materials` 上传、`DELETE …/materials/{name}` 删除）——那两条的正文是二进制、装不进 JSON 信封，头哨由中间件按端点扩到它们身上（`meeting/service/app.py` 的 `_materials_write_path()` 一张核对表），防线仍然只守中间件这一处。校验都先于路由匹配生效。
+  2. **写语义端点要自定义头**：带写语义的端点必须带 `X-Meeting-Service: 1`，缺了 `403`（挡表单式简单请求——本机浏览器里的恶意页面发不出带自定义头的请求）。现在守三处：`POST /api/actions`（还要求 `Content-Type: application/json`；改状态的动作集中在这一个信封里，这是新动作不另开端点的原因）、**会议资料的两条写端点**（`POST …/materials` 上传、`DELETE …/materials/{name}` 删除——那两条的正文是二进制、装不进 JSON 信封）与**`POST /api/dirs`**（新建目录，形状全在查询串里、不走动作信封）——头哨由中间件按端点扩到它们身上（`meeting/service/app.py` 的 `_write_guard_path()` 一张核对表），防线仍然只守中间件这一处。校验都先于路由匹配生效。
   3. **不开 CORS**：不发 `Access-Control-Allow-Origin`，前端由本服务同源发出。
 
 ## 6. 复核时怎么打
@@ -275,6 +291,8 @@ curl.exe -s http://127.0.0.1:8765/api/sessions
 # 单场状态（会后进度读数；{id} 是这一场的目录路径，得 URL 编码）
 curl.exe -s "http://127.0.0.1:8765/api/sessions/C%3A%5C%E4%BC%9A%E8%AE%AE%5C%E8%B7%9F%E8%80%81%E7%8E%8B%E8%81%8A%E5%91%A8%E4%BC%9A"
 curl.exe -s http://127.0.0.1:8765/api/dirs
+# 新建目录（写请求必须带头）：在指定的那一层里建一个用户起名的目录
+curl.exe -s -X POST "http://127.0.0.1:8765/api/dirs?dir=<URL编码父层路径>&name=%E6%96%B0%E4%BC%9A" -H "X-Meeting-Service: 1"
 # 会议资料（清单；{id} 同样是 URL 编码的目录路径）
 curl.exe -s "http://127.0.0.1:8765/api/sessions/C%3A%5C%E4%BC%9A%E8%AE%AE%5C%E8%B7%9F%E8%80%81%E7%8E%8B%E8%81%8A%E5%91%A8%E4%BC%9A/materials"
 # 上传（请求体 = 文件原样字节；写请求必须带头）与取原文件

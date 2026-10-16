@@ -6,7 +6,7 @@
 >
 > 读者两种：把它装起来用的人（读第 1–3、8 章），和往它里面插后端 / 加功能的下游开发者（读第 2、4–7 章）。
 >
-> 四态状态机、快照字段、`session.json`、SSE 帧形状、告警判定写在 `docs/state.md`；十五条端点（十三条 `/api/*` + 静态首页 + `/debug`）与动作信封写在 `docs/api.md`；会中总结那一层（窗口、提示词、配置键、动作与记录端点）写在 `docs/summary.md`。
+> 四态状态机、快照字段、`session.json`、SSE 帧形状、告警判定写在 `docs/state.md`；十六条端点（十四条 `/api/*` + 静态首页 + `/debug`）与动作信封写在 `docs/api.md`；会中总结那一层（窗口、提示词、配置键、动作与记录端点）写在 `docs/summary.md`。
 
 ## 章节目录
 
@@ -124,7 +124,8 @@ $env:MEETING_CAPTURE="dev"; $env:MEETING_NO_BROWSER="1"; meeting web
 | `GET /api/summaries` | 本场按过的、成功产出的那几次会中总结（时刻 + 窗口 + 那几条），任何状态下都 `200`。记录活在内存里、不落文件，新的一场 `start` 清空 |
 | `GET /api/sessions` | 工作区注册表 + `recent`（最近一场）+ 顶层 `post_job`（此刻在飞的那趟会后，全局「显卡忙不忙」的会后一半读数），任何状态下都 `200`，**纯读**。形状见 `docs/contract.md` 4.8 |
 | `GET /api/sessions/{id}` | 单场状态：这一场此刻跑到哪一档、各段时长与时间、会后离线跑到第几块 / 共几块、正在跑哪一路、已经跑了多久，`200`，**纯读**。`{id}` 是这一场的目录路径（URL 编码的绝对路径）。形状见 `docs/contract.md` 4.9 |
-| `GET /api/dirs` | 目录选择器的一层现场（起点用户主目录，`?dir=` 换层），`200`，**纯读** |
+| `GET /api/dirs` | 目录选择器的一层现场（起点用户主目录，`?dir=` 换层，`up` 到盘根才 `null`）+ 正在浏览这一层自己的名目（`here`），`200`，**纯读**。形状见 `docs/contract.md` 4.8 |
+| `POST /api/dirs` | 目录选择器里就地新建目录：在正在浏览的这一层建一个（`?dir=` 父层、省略时主目录；`?name=` 新目录名，必须用户给），成功体 = 通用信封 + `directory`（新建那一行的名目判读，界面拿它插行并直接置为选定）。拒绝档（父层不存在 / 非法名 / 同名已存在）与盘上出岔档见 `docs/contract.md` 4.8；**不走动作信封**的写端点 |
 | `GET /api/devices` | 两路各自的候选设备端点表（`{mic, loopback}` 每项六格），`200`，**纯读、只枚举、不开设备**（设置抽屉的两个下拉读它） |
 | `POST /api/actions` | 十六个动作（`start` / `stop` / `mute_session` / `settings_update` / `reprobe` / `dev_inject` / `summarize` / `workspace_open` / `workspace_remove` / `post_offline` / `post_minutes` / `post_stop` / `pause` / `resume` / `set_source` / `speaker_rename`）。信封、动作表与 `code` 表见 `docs/api.md`；`post_offline` / `post_minutes` 是会后两个按钮（R26），`post_stop` 停掉正在跑的精细稿（R28，`b1c6a58e`），`pause` / `resume` / `set_source` 是会中的暂停、继续与逐路开关（`10770b41`），`speaker_rename` 把一个说话人编号的名字写进这一场目录里的人名表（R10 第四条，`91b6752e`） |
 | `GET /api/sessions/{id}/materials` | 会议资料的清单（`{dir, materials_dir, items:[{name, size_bytes, added_at}]}`），`200`，**纯读**；目录就是清单，`meeting_materials/` 还不在时 `items` 是空数组、目录也不建。资料层口径见 `docs/api.md` 第 3 章末与 `docs/contract.md` 4.12 |
@@ -132,7 +133,7 @@ $env:MEETING_CAPTURE="dev"; $env:MEETING_NO_BROWSER="1"; meeting web
 | `GET /api/sessions/{id}/materials/{name}` | 取原文件：原始字节从盘上流式读出，`Content-Type` 按扩展名判 |
 | `DELETE /api/sessions/{id}/materials/{name}` | 删除：只删那一个文件。成功体 = 通用信封 + `material: {name}` |
 
-`/api/*` 的应答一律带 `Cache-Control: no-store`。端口策略与三道本地最低防线（Host 校验 / 写语义端点要自定义头——动作之外，会议资料的两条写端点也要 / 不开 CORS）见 `docs/api.md` 第 5 章。
+`/api/*` 的应答一律带 `Cache-Control: no-store`。端口策略与三道本地最低防线（Host 校验 / 写语义端点要自定义头——动作之外，会议资料两条写端点与新建目录那条也要 / 不开 CORS）见 `docs/api.md`。
 
 `GET /api/summaries` 是本服务唯一一条「读内存里那点会话级数据」的端点（会中总结的记录表）：它**不落文件**，也没有配置键；九个 `summary.*` 键（三个端点键、预设两键与四个预算 / 缺省档键）的取值与默认值见 `meeting/config.py` 与 `docs/api.md` 第 4 章 `settings_update` 那一张键表。
 

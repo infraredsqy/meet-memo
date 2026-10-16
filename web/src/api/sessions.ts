@@ -1,8 +1,10 @@
 import {
   HEARTBEAT_INTERVAL_DEFAULT_SECONDS,
+  dirCreateOkSchema,
   dirsResponseSchema,
   sessionStatusSchema,
   sessionsResponseSchema,
+  type DirCreateOk,
   type DirKind,
   type DirsResponse,
   type SessionsResponse,
@@ -11,11 +13,13 @@ import {
 import { clampHeartbeatInterval } from './heartbeat';
 
 /**
- * 工作区注册表、目录选择器与单场状态的读端点（`docs/contract.md` 4.8 / 4.9）。
+ * 工作区注册表、目录选择器与单场状态的读端点（`docs/contract.md` 4.8 / 4.9），
+ * 以及选择器那只新建目录的写入口（`POST /api/dirs`）。
  *
- * 与 `POST /api/actions` 那条不同，它们**不带那两个必需头**（三道防线是给「改状态」的
- * 请求设的），也不写任何东西：读它们不涨 `revision`、不广播。界面拿到的就是服务给的
- * 原文，不派生、不缓存、不落本地存储（注册表只能住服务端，前端只读）。
+ * 读端点**不带那两个必需头**（三道防线是给「改状态」的请求设的），也不写任何东西：
+ * 读它们不涨 `revision`、不广播。界面拿到的就是服务给的原文，不派生、不缓存、
+ * 不落本地存储（注册表只能住服务端，前端只读）。写入口按头哨规矩带
+ * `X-Meeting-Service: 1`；它同样不进四态快照。
  */
 
 export const SESSIONS_URL = '/api/sessions';
@@ -175,6 +179,88 @@ export function probeDecision(kind: DirKind): ProbeDecision {
   if (kind === 'empty') return 'empty';
   if (kind === 'meeting') return 'meeting';
   return 'need-confirm';
+}
+
+// ---------------------------------------------------------------------------
+// 新建目录（`POST /api/dirs`）：选择器里就地建一个，建完直接选中
+// ---------------------------------------------------------------------------
+
+/** `POST /api/dirs` 的 HTTP 拒答（400 非法名 / 409 同名已存在 / 500 盘上出岔等）。 */
+export class DirCreateHttpError extends Error {
+  readonly status: number;
+  readonly code: string | null;
+  /** 失败信封的 `message` 原话；读不出信封就是 `null`（弹窗里画固定话术）。 */
+  readonly note: string | null;
+
+  constructor(status: number, code: string | null, note: string | null, raw: string) {
+    super(
+      note ??
+        (code !== null
+          ? `新建目录被拒：HTTP ${status} · ${code}`
+          : `新建目录被拒：HTTP ${status}`),
+    );
+    this.name = 'DirCreateHttpError';
+    this.status = status;
+    this.code = code;
+    this.note = note;
+    this.raw = raw;
+  }
+
+  readonly raw: string;
+}
+
+export interface CreateDirOptions {
+  fetchImpl?: typeof fetch;
+}
+
+/**
+ * 在 `parent` 那一层里新建一个名字叫 `name` 的目录（服务不清洗不改写：名字必须
+ * 用户亲手起，非法的服务给一句人话拒回来）。写端点头哨 `X-Meeting-Service: 1`
+ * 由这里带；不涨 `revision`（选择器的现场独立于四态快照）。
+ */
+export async function createDir(
+  parent: string | null,
+  name: string,
+  options: CreateDirOptions = {},
+): Promise<DirCreateOk> {
+  const doFetch = options.fetchImpl ?? fetch;
+  const query = [
+    parent === null ? null : `dir=${encodeURIComponent(parent)}`,
+    `name=${encodeURIComponent(name)}`,
+  ]
+    .filter((part): part is string => part !== null)
+    .join('&');
+  let response: Response;
+  try {
+    response = await doFetch(`${DIRS_URL}?${query}`, {
+      method: 'POST',
+      headers: { 'X-Meeting-Service': '1' },
+    });
+  } catch (cause) {
+    // 连接层失败：不走 SessionsUnavailableError（那句固定话术是「取不到…」，读端点的口吻）
+    throw new Error(
+      `新建目录发不出去：${cause instanceof Error ? cause.message : String(cause)}`,
+    );
+  }
+  const text = await response.text();
+  if (!response.ok) {
+    let code: string | null = null;
+    let note: string | null = null;
+    try {
+      const body = JSON.parse(text) as { code?: unknown; message?: unknown };
+      if (typeof body.code === 'string') code = body.code;
+      if (typeof body.message === 'string' && body.message !== '') note = body.message;
+    } catch {
+      // 非 JSON：两格都留在 null，message 走固定话术
+    }
+    throw new DirCreateHttpError(response.status, code, note, text);
+  }
+  const raw = parseOk('新建目录')(response, text);
+  const parsed = dirCreateOkSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new SessionsProtocolError('新建目录', response.status, text, parsed.error);
+  }
+  return parsed.data;
 }
 
 // ---------------------------------------------------------------------------

@@ -841,6 +841,93 @@ def test_capture_workspace_group(tmp_path, make_client, contract_regen):
     )
 
 
+def test_capture_dirs_group(tmp_path, make_client, contract_regen):
+    """目录选择器那一档的样本（目录选择器节点）：`GET` 现场 + `POST` 新建目录三档。
+
+    采样路径是**真实服务路径**：临时根下造两个子目录（空 / 杂物），打 `GET /api/dirs`
+    采一只现场（`up` 到盘根才 null、`here` 是正在浏览这一层自己的名目）；再打
+    `POST /api/dirs` 采成功体（`directory` 是新建那一行的名目判读）与两档拒绝
+    （同名已存在 409 `dir_exists`、非法名 400 `invalid_setting`）。与资料那组同构：
+    请求侧是**三件套**（`method` + `dir` + `name`），父层路径掩成 `<path>`、名字是
+    确定值原样进样本。选择器的现场独立于四态快照，这一档不涨 `revision`（成功体里
+    的 `revision` 只是当前版本号）。
+    """
+    client = make_client({"capture.backend": "dev"})
+
+    place = tmp_path / "contract-dirs"
+    place.mkdir()
+    (place / "空会").mkdir()
+    junk = place / "杂物间"
+    junk.mkdir()
+    (junk / "wj.pdf").write_bytes(b"%PDF")
+
+    listed = client.get(f"/api/dirs?dir={quote(str(place), safe='')}")
+    assert listed.status_code == 200, listed.text
+    listing = listed.json()
+    assert set(listing) == {"home", "cwd", "up", "here", "dirs"}
+    assert listing["here"] == {
+        "name": "contract-dirs", "dir": str(place), "kind": "unknown", "suspected": False,
+    }
+    assert listing["up"] == str(place.parent)
+    assert [row["name"] for row in listing["dirs"]] == ["杂物间", "空会"]  # 按名字排序
+
+    created = client.post(
+        f"/api/dirs?dir={quote(str(place), safe='')}&name={quote('新会', safe='')}",
+        headers={"X-Meeting-Service": "1"},
+    )
+    assert created.status_code == 200, created.text
+    created_body = created.json()
+    assert created_body["directory"]["kind"] == "empty"
+    assert (place / "新会").is_dir()
+
+    # 同名再建：409 dir_exists（这一片自己的 code，先例是 material_missing）
+    exists = client.post(
+        f"/api/dirs?dir={quote(str(place), safe='')}&name={quote('新会', safe='')}",
+        headers={"X-Meeting-Service": "1"},
+    )
+    assert exists.status_code == 409, exists.text
+    exists_body = exists.json()
+    assert exists_body["code"] == "dir_exists"
+
+    # 非法名：服务不清洗不改写，原样拒回
+    illegal = client.post(
+        f"/api/dirs?dir={quote(str(place), safe='')}&name={quote('../逃逸', safe='')}",
+        headers={"X-Meeting-Service": "1"},
+    )
+    assert illegal.status_code == 400, illegal.text
+    illegal_body = illegal.json()
+    assert illegal_body["code"] == "invalid_setting"
+    assert illegal_body["detail"]["key"] == "name"
+
+    emit(
+        {
+            "dirs/listing.json": normalize(listing),
+            "dirs/create-ok.json": {
+                "method": "POST",
+                "dir": "<path>",
+                "name": "新会",
+                "status": created.status_code,
+                "body": normalize(created_body),
+            },
+            "dirs/fail-exists.json": {
+                "method": "POST",
+                "dir": "<path>",
+                "name": "新会",
+                "status": exists.status_code,
+                "body": normalize(exists_body),
+            },
+            "dirs/fail-invalid-name.json": {
+                "method": "POST",
+                "dir": "<path>",
+                "name": "../逃逸",
+                "status": illegal.status_code,
+                "body": normalize(illegal_body),
+            },
+        },
+        regen=contract_regen,
+    )
+
+
 def test_capture_devices_group(tmp_path, make_client, monkeypatch, contract_regen) -> None:
     """`GET /api/devices` 那一份（设置抽屉的两个设备下拉，节点 `311f84f5`）。
 

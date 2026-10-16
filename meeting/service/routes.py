@@ -1,4 +1,4 @@
-"""九条路由的**唯一注册点**（phase2 §3.7 / §3.8 / §3.9 / §3.11 / §3.12；`1987cb20` phase2 加 `summaries`；
+"""十五条路由的**唯一注册点**（十四条 `/api/*` + `/debug`；phase2 §3.7 / §3.8 / §3.9 / §3.11 / §3.12；`1987cb20` phase2 加 `summaries`；
 工作台收编节点 e2f6166b 加 `sessions` / `dirs` 两只读端点与 `workspace_open` / `workspace_remove` 两动作；
 会后进度读数节点 `a9affaa8` 加 `sessions/{dir}` 那只单场状态端点；设置抽屉节点 `311f84f5` 加
 `devices` 那只设备清单端点；人名节点 `91b6752e` 加 `speaker_rename` 那只改名动作；打断会后的
@@ -26,7 +26,10 @@ b1c6a58e 加 `post_stop` 那只停掉动作；资料节点 285bf58c 加会议资
       按端点扩到它们身上，`meeting/service/app.py` 的 `_LocalGuardsMiddleware`）；
     - `GET /api/sessions/{id}/materials/{name}`（取原文件，`Content-Type` 按扩展名）；
     - `DELETE /api/sessions/{id}/materials/{name}`（删那一个文件）；
-  - `GET /api/dirs`（目录选择器的现场：一层子目录的名目判读，读现场不写任何东西）；
+  - `GET /api/dirs`（目录选择器的现场：一层子目录的名目判读 + 正在浏览这一层自己的名目
+    （`here`），读现场不写任何东西）；
+  - `POST /api/dirs`（新建目录：在选择器正在浏览的这一层里就地建一个，名字必须用户给；
+    REST 写入口、不走动作信封，头哨在中间件的核对表里）；
   - `GET /api/devices`（两路各自的候选设备端点表：只读、纯枚举、不开设备）；
   - `GET /debug`（骨架自检页，从包内读）。
 
@@ -208,14 +211,15 @@ def _api_session_status(request: Request) -> Response:
 
 
 def _api_dirs(request: Request) -> Response:
-    """目录选择器的现场：`{home, cwd, up, dirs}`（**200**；`?dir=` 省略时从主目录起步）。
+    """目录选择器的现场：`{home, cwd, up, here, dirs}`（**200**；`?dir=` 省略时从主目录起步）。
 
-    纯读：只判每层子目录的名目（三档），不写任何东西。「软件自己会不建目录」这条
-    在这里同样成立 —— 选择器只用来挑一个**已有**目录。
+    纯读：只判每层子目录的名目（三档），不写任何东西。`up` **到盘根才落 `null`**
+    （用户主目录不再是天花板，盘根那一档界面按它把「向上一层」置灰）；`here` 是
+    正在浏览这一层自己的名目判读——选择器里这一层本身可选。
 
     `?files=1`（资料界面的选择器文件模式要的，160d1a78）：应答体**多一个 `files` 键**
     ——这一层里的普通文件每项 `{name, dir, size_bytes}`，与 `dirs` 分开两列。不带这个
-    参数时没有这个键，旧应答体一个字节不动（挑录音落点的老路径照旧）。
+    参数时没有这个键。
     """
     runtime = _runtime_of(request)
     if runtime is None:  # pragma: no cover - 应用未装配
@@ -228,6 +232,32 @@ def _api_dirs(request: Request) -> Response:
         )
     except ActionError as exc:
         return _error_response(exc)
+
+
+def _api_dirs_create(request: Request) -> Response:
+    """新建目录：`POST /api/dirs?dir=<父层>&name=<名字>`（写端点，头哨在中间件）。
+
+    与 `GET /api/dirs` 同族的一只 REST 写入口（先例是资料上传那条不走动作信封的
+    `POST …/materials`）：落点是正在浏览的这一层（`dir` 省略时主目录，与 GET 同一
+    起点），名字必给、必须用户亲手起——软件不自动命名、不自动挑落点（设计意图
+    第 3、4 条的新口径），只建一层、不做删除、不做改名。
+
+    成功体 = 通用信封 + `directory` 键：新建那一行的名目判读（刚建出来是 `empty`），
+    界面拿它把新行插进清单并直接置为选定。拒绝档三条（一层不存在 / 名字非法 /
+    同名已存在）与盘上出岔档由 `runtime.dirs_create()` 按契约给；**不涨 `revision`、
+    不广播**（选择器的现场独立于四态快照，先例同上）。
+    """
+    runtime = _runtime_of(request)
+    if runtime is None:  # pragma: no cover - 应用未装配
+        return JSONResponse({"error": "runtime 未装配"}, status_code=500)
+    runtime.bind_from_scope(request.scope)
+    try:
+        row = runtime.dirs_create(
+            request.query_params.get("dir"), request.query_params.get("name")
+        )
+    except ActionError as exc:
+        return _error_response(exc)
+    return JSONResponse({"ok": True, "revision": runtime.revision, "directory": row})
 
 
 async def _api_devices(request: Request) -> Response:
@@ -671,7 +701,7 @@ async def _debug_page(request: Request) -> Response:
 
 
 def api_routes() -> list[Route]:
-    """十三条 `/api/*` 路由（`/debug` 在 `debug_routes()` 里，同一个模块）。"""
+    """十四条 `/api/*` 路由（`/debug` 在 `debug_routes()` 里，同一个模块）。"""
     return [
         Route("/api/state", _api_state, methods=["GET"]),
         Route("/api/events", _api_events, methods=["GET"]),
@@ -696,6 +726,9 @@ def api_routes() -> list[Route]:
         # 注册在资料四条之后：星形路由按注册顺序匹配，资料那几条先吃自己的路径。
         Route("/api/sessions/{dir:path}", _api_session_status, methods=["GET"]),
         Route("/api/dirs", _api_dirs, methods=["GET"]),
+        # 新建目录（目录选择器节点）：与 GET 同路径异方法，REST 写入口、不走动作信封
+        # ——头哨由中间件的核对表盖住（`meeting/service/app.py`）。
+        Route("/api/dirs", _api_dirs_create, methods=["POST"]),
         Route("/api/devices", _api_devices, methods=["GET"]),
     ]
 
@@ -706,7 +739,7 @@ def debug_routes() -> list[Route]:
 
 
 def all_routes() -> list[Route]:
-    """十四条路由一次给全（装配模块只负责把它们挂上应用）。"""
+    """十五条路由一次给全（十四条 `/api/*` + `/debug`；装配模块只负责把它们挂上应用）。"""
     return api_routes() + debug_routes()
 
 

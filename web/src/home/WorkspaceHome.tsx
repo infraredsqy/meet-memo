@@ -896,6 +896,7 @@ export function WorkspaceHome({
           browse={dirBrowse.browse}
           onBrowse={dirBrowse.browseInto}
           onJump={dirBrowse.jumpTo}
+          onCreate={dirBrowse.createIn}
           onPick={openFromPicker}
           onClose={() => {
             setPicker(false);

@@ -27,7 +27,7 @@
 
 **单一契约声明**：服务对外只有**一个**契约面，就是这一份。`GET /api/state` 的 body、SSE 的 `snapshot` 帧、SSE 的 `state` 帧**三者是同一个函数出的同一份东西**（`ServiceRuntime.to_dict()` → `Snapshot.to_dict()`），不存在「快照有两套形状」这回事。界面拿到哪一份都可以按第 2 章逐键读。
 
-**口径一句话**：**十三条 `/api/*` + `/debug` + 静态挂载**（`sessions` / `sessions/{id}` / `dirs` / `devices` 的形状分别在 4.8、4.9 与 4.10；会议资料四条在 4.12）。
+**口径一句话**：**十四条 `/api/*` + `/debug` + 静态挂载**（`sessions` / `sessions/{id}` / `dirs` / `devices` 的形状分别在 4.8、4.9 与 4.10；会议资料四条在 4.12）。
 
 | 路径 | 方法 | 给什么 |
 |---|---|---|
@@ -39,6 +39,7 @@
 | `/api/sessions` | GET | 工作区注册表（第 4.8 章），**任何状态下都 200** |
 | `/api/sessions/{id}` | GET | 单场状态：这一场此刻跑到哪一档、会后离线跑到第几块（第 4.9 章），**任何状态下都 200**；路径打不到已登记的工作区时 404 |
 | `/api/dirs` | GET | 目录选择器的一层现场（第 4.8 章），**任何状态下都 200** |
+| `/api/dirs` | POST | 目录选择器里新建目录（第 4.8 章）：在正在浏览的这一层里就地建一个用户起名的目录。**不走动作信封的写端点**，头哨见第 6 章第 4 条 |
 | `/api/devices` | GET | 两路各自的候选设备端点表（第 4.10 章），**任何状态下都 200** |
 | `/api/sessions/{id}/materials` | GET | 会议资料的清单（第 4.12 章）：目录就是清单，**任何状态下都 200**（寻址失败 404，见 4.12） |
 | `/api/sessions/{id}/materials` | POST | 会议资料的上传：原样字节流式写盘（第 4.12 章）。**不走动作信封的二进制写端点**，头哨见第 6 章第 4 条与 4.12 |
@@ -493,7 +494,7 @@ X-Meeting-Service: 1
 
 **这一档的 fixtures**：`contract/fixtures/actions/summarize-ok.json`、`actions/fail-transcript-unavailable.json`、`actions/fail-summary-failed-missing.json` 与 `contract/fixtures/summaries/after-one.json`。
 
-### 4.8 工作台收编：`workspace_open` / `workspace_remove` 与两只读端点
+### 4.8 工作台收编：`workspace_open` / `workspace_remove` 与目录选择器
 
 **`workspace_open`**（`POST /api/actions`，成功体 = 通用信封 + `workspace` 键）：
 
@@ -543,15 +544,35 @@ X-Meeting-Service: 1
 **`GET /api/dirs`**（目录选择器的一个现场；**任何状态下都 200**；纯读）：
 
 ```json
-{"home": "<path>", "cwd": "<path>", "up": "<path>|null", "dirs": [
+{"home": "<path>", "cwd": "<path>", "up": "<path>|null",
+ "here": {"name": "<session-id>", "dir": "<path>", "kind": "unknown", "suspected": false},
+ "dirs": [
   {"name": "空会", "dir": "<path>", "kind": "empty", "suspected": false}]}
 ```
 
-`?dir=` 省略时从用户主目录起步（设计第 4 条：选择器起点 `~/`，落点由用户挑）；`up` 到主目录时为 `null`（不再往上给）。每项只判名目（`classify_workspace_dir()`），不读内容、不写任何东西；`?dir=` 给到不存在的目录回 400 `invalid_setting`。
+`?dir=` 省略时从用户主目录起步（设计第 4 条：选择器起点 `~/`，落点由用户挑）；**`up` 到盘根才落 `null`**（目录选择器节点起的新口径：用户主目录不再是天花板，从 `~/` 一路向上能走到 `C:\` 这类盘根，盘根那一档 `up` 落 `null`，界面按它把「向上一层」置灰；UNC 路径不在口径里）。`here` 是**正在浏览的这一层自己**的名目判读（与 `dirs` 每项同一套四格；盘根没有末段名，`name` 如实给整条路径）——选择器里这一层本身可选，不必退到上一层再点那一行。每项只判名目（`classify_workspace_dir()`），不读内容、不写任何东西；`?dir=` 给到不存在的目录回 400 `invalid_setting`。
 
-**`?files=1`（可选项，资料面板节点 160d1a78 加的）**：资料界面的选择器**文件模式**要在一层里看到文件，带上这个参数时应答体**多一个 `files` 键**——这一层里的**普通文件**每项 `{"name", "dir", "size_bytes"}`（`dir` 是文件的绝对路径，`size_bytes` 是现读的文件大小），按名字排序、与 `dirs` 分开两列（目录进不了 `files`，文件也进不了 `dirs`）。**不带这个参数时没有这个键**，旧应答体一个字节不动——挑录音落点的老路径照旧。同样纯读；`?dir=` 的失败口径与不带参数同一档。
+**`?files=1`（可选项，资料面板节点 160d1a78 加的）**：资料界面的选择器**文件模式**要在一层里看到文件，带上这个参数时应答体**多一个 `files` 键**——这一层里的**普通文件**每项 `{"name", "dir", "size_bytes"}`（`dir` 是文件的绝对路径，`size_bytes` 是现读的文件大小），按名字排序、与 `dirs` 分开两列（目录进不了 `files`，文件也进不了 `dirs`）。**不带这个参数时没有这个键**。同样纯读；`?dir=` 的失败口径与不带参数同一档。
 
-**这一档的 fixtures**：`contract/fixtures/sessions/empty.json`、`sessions/after-open.json`、`actions/workspace-open-ok.json`、`actions/workspace-remove-ok.json`。
+**`POST /api/dirs`（新建目录，目录选择器节点）**——在选择器正在浏览的这一层里就地建一个：
+
+```text
+POST /api/dirs?dir=<父层路径>&name=<新目录名>
+```
+
+- 两个参数都走查询串：`dir` 是落点那一层（省略时用户主目录，与 GET 同一个起点），`name` **必给、必须用户亲手起**（设计第 3、4 条的新口径：软件可以替你建目录，但仍不自动命名、不自动挑落点）。请求体为空。**服务侧拒绝式校验、不清洗不改写**：非法名原样拒回，不悄悄清洗出另一个名字落盘（与资料上传那套清洗相反——资料收的是已有文件的名字，这里落的是人刚起的名字）。
+- 拒绝档固定三条 + 盘上出岔，各给一句能看懂的人话，**不留半截状态**（动手前校验全过才碰盘；`mkdir()` 单调用，建不出来就是什么都没有）：
+
+| `code` | HTTP | 什么时候 | `detail` |
+|---|---|---|---|
+| `invalid_setting` | 400 | 那一层不存在（与 GET 同一档），或名字非法（`detail.key = "name"`：带路径分隔符或冒号、`.`/`..`、控制字符、以点结尾、两头空白、保留设备名（`CON` 这类）、超长） | `{key, value, legal}`（层那一档）/ `{key: "name", value, legal}`（名字那一档） |
+| `dir_exists` | 409 | 同名已存在——目录或普通文件都算占位。这一片自己的 `code`（先例是资料的 `material_missing`、单场状态的 `session_dir_missing`） | `{dir, name}` |
+| `persist_failed` | 500 | 盘上出岔（无权限等） | `{error}` |
+
+- 成功体 = 通用信封 + `directory` 键：新建那一行的名目判读 `{name, dir, kind, suspected}`（刚建出来是 `empty`，判读照走同一套 `classify_workspace_dir()`）。界面拿它把新行按服务同一条次序（名字小写序）插进清单并**直接置为选定**，后续确认走既有「选定这个目录」链路（empty / meeting 直接 `workspace_open` 登记，unknown 先弹收编确认）。
+- **只建一层、不做删除、不做改名**；独立于四态快照——不提交、不涨 `revision`、不广播（先例是资料四条端点，成功体里的 `revision` 只是当前版本号）。写端点头哨要 `X-Meeting-Service: 1`（第 6 章第 4 条，核对表在 `meeting/service/app.py` 的 `_write_guard_path()`）。
+
+**这一档的 fixtures**：`contract/fixtures/sessions/empty.json`、`sessions/after-open.json`、`actions/workspace-open-ok.json`、`actions/workspace-remove-ok.json`、`dirs/listing.json`、`dirs/create-ok.json`、`dirs/fail-exists.json`、`dirs/fail-invalid-name.json`。
 
 ### 4.9 单场状态：`GET /api/sessions/{id}`
 
@@ -701,7 +722,7 @@ R10 第四条 / R30：名字要能改、并且记住。这一只动作 + 4.9 的
 
 **取不到 / 删不到**：名字清不出现存的文件（含**重复删除**）→ **404 `material_missing`**，`detail = {name}`——这一片自己的 `code`（先例是 4.9 的 `session_dir_missing`；它不在 4.4 那张动作 `code` 表里，因为资料这四条不走 `/api/actions`）。盘上出岔（建不了目录 / 写不进去 / 清单读不出来 / 删不掉）→ **500 `persist_failed`**，`detail = {error}`。
 
-**写入的头哨**：上传与删除两条写端点**不走** `/api/actions` 的 JSON 信封（正文是二进制），`X-Meeting-Service: 1` 由中间件按端点扩到它们身上（`meeting/service/app.py` 的 `_materials_write_path()`）：缺头 **403**、不带失败信封（请求没走到端点）。清单与取原文件是纯读，与其余 `GET /api/*` 同档（Host 校验已盖住）。客户端义务见第 6 章第 4 条。
+**写入的头哨**：上传与删除两条写端点**不走** `/api/actions` 的 JSON 信封（正文是二进制），`X-Meeting-Service: 1` 由中间件按端点扩到它们身上（`meeting/service/app.py` 的 `_write_guard_path()` 一张核对表；`POST /api/dirs` 新建目录同在表里）：缺头 **403**、不带失败信封（请求没走到端点）。清单与取原文件是纯读，与其余 `GET /api/*` 同档（Host 校验已盖住）。客户端义务见第 6 章第 4 条。
 
 **独立于四态快照**：四条端点都是纯读写文件——不提交、不涨 `revision`、不广播（spec 点名的最小口径）；成功信封里的 `revision` 只是当前版本号（先例是 4.7 的 `summarize`）。快照九键、列表十二键、4.9 的应答体一个字不动。
 
@@ -784,7 +805,7 @@ R10 第四条 / R30：名字要能改、并且记住。这一只动作 + 4.9 的
 1. **只消费推送，不持本地权威状态。** 状态的唯一权威在服务侧（`ServiceRuntime` 手里的那一份快照）。界面手上那份是**它推过来的副本**，任何分歧以服务为准。
 2. **不用浏览器本地存储（`localStorage` / `sessionStorage` / IndexedDB / Cookie）保存会中状态。** 会中状态（哪一态、时长、告警、静音、转写）一律从服务取；刷新、重开、多开看到的都是同一份。界面自己持久化的只能是**纯界面偏好**（例如心跳周期、面板展开与否这一类与服务无关的东西）。
 3. **SSE 重连后以快照重同步**：服务**不重放**断开期间的事件（没有 `Last-Event-ID` 机制），重连后拿到的第一帧必然是完整 `snapshot`，界面据此**整块替换**。收到 `resync: true` 那一帧同样整块替换。
-4. **写请求带必需头**：`POST /api/actions` 必须带 `Content-Type: application/json` **且** `X-Meeting-Service: 1`；会议资料的两条写端点（`POST …/materials` 上传、`DELETE …/materials/{name}` 删除，4.12）必须带 `X-Meeting-Service: 1`。缺了服务回 403 且**不带失败信封**（它没走到端点）。界面的 403 处理要与第 4.2 节的失败块分开。
+4. **写请求带必需头**：`POST /api/actions` 必须带 `Content-Type: application/json` **且** `X-Meeting-Service: 1`；会议资料的两条写端点（`POST …/materials` 上传、`DELETE …/materials/{name}` 删除，4.12）与新建目录那条（`POST /api/dirs`，4.8）必须带 `X-Meeting-Service: 1`。缺了服务回 403 且**不带失败信封**（它没走到端点）。界面的 403 处理要与第 4.2 节的失败块分开。
 5. **心跳按配置周期轮询**：默认 10 秒、可配 1–60 秒（`settings.heartbeat_interval_seconds`）。判定用应答里的 `server_time` 作基准；失联时的界面处置见 `docs/ui-design.md` 的心跳一节（冻结 + 压灰 + 横幅）。
 6. **不自己造派生数据**：包络（`envelope`）与 `bar` 由服务算好推过来，界面**不许自己造**；告警的 `muted` 由服务判定，界面**不算任何抑制窗口**、只按布尔值决定响不响。`recording_alive === false` 的连续两次判停计数（第 5 章的两拍规则）是**对数据字段的确认计数**，与声音无关：响不响照旧只读 `settings.alarm_sound` 与 `alerts.*.muted` 两个布尔（de899128）。
 7. **按 `code` 分派失败画法、按 `detail` 有哪个键显示哪个键**：九个 `code` 固定、`detail` 的档位（尤其是 `capture_unavailable` 四档与 `invalid_setting` 四档）以第 4.4 节为准，**不按 `message` 做字符串匹配**。
@@ -824,7 +845,7 @@ R10 第四条 / R30：名字要能改、并且记住。这一只动作 + 4.9 的
 1. **抽一个快照 fixtures 与 `Snapshot.to_dict()` 逐字段对照**：`meeting/state.py` 的 `to_dict()` 是唯一产出形态，顶层九键、`settings` 七键、`session` 七子键、`sources` 九键、`DrainStep` 四键都能逐行对上。`ended` / `session` 两个 `null` 档都能在 `idle` 样本里看一次。
 2. **故意改坏一个键名跑比对测试，确认会红**（验完还原）：例如把 `contract/fixtures/snapshot/recording.json` 里的 `"top_state"` 改成 `"topState"`，`python -m pytest tests/test_contract_fixtures.py -q` 应当报出「与实时采集不一致」。
 3. **任选两条 `detail` 与 `meeting/service/runtime_drain.py` 的实际路径对照**：`already_recording` 三键在 `_already_recording_error()`、`draining` 四键在 `_draining_error()`。
-4. **确认保留登记章里没有任何端点被顺手实现**：`python -c "from meeting.service.routes import all_routes; print([r.path for r in all_routes()])"` 应当只打出十四条路径（十三条 `/api/*` + `/debug`）；`ACTION_NAMES` 应当有十六个名字（清单见 4.3；会议资料那四条不是动作、不在其中）。
+4. **确认保留登记章里没有任何端点被顺手实现**：`python -c "from meeting.service.routes import all_routes; print([r.path for r in all_routes()])"` 应当只打出十五条路径（十四条 `/api/*` + `/debug`）；`ACTION_NAMES` 应当有十六个名字（清单见 4.3；会议资料那四条与新建目录那一条不是动作、不在其中）。
 
 ## 10. 相关文档
 

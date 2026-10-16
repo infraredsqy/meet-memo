@@ -1,0 +1,18 @@
+{
+  "method": "POST",
+  "dir": "<path>",
+  "name": "../逃逸",
+  "status": 400,
+  "body": {
+    "ok": false,
+    "code": "invalid_setting",
+    "message": "目录名里不能带路径分隔符或冒号（\\ / :）：一次只建一层，层级由地址栏或双击走进去",
+    "detail": {
+      "key": "name",
+      "value": "../逃逸",
+      "legal": [
+        "一层名字：不带路径分隔符、不以点或空白结尾、不是 Windows 保留设备名"
+      ]
+    }
+  }
+}

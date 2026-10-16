@@ -103,15 +103,31 @@ export const dirFileRowSchema = z
   })
   .strict();
 
-/** `GET /api/dirs` 的应答体。`up` 到主目录时为 `null`（不再往上给）；
- *  `files` 只在 `?files=1` 那一档出现（一层里的普通文件，与 `dirs` 分开两列）。 */
+/** `GET /api/dirs` 的应答体。`up` **到盘根才**为 `null`（向上一层唯一的到顶档；
+ *  用户主目录不再是天花板）；`here` 是正在浏览这一层自己的名目判读——这一层本身
+ *  可选，不必退到上一层再点那一行。`files` 只在 `?files=1` 那一档出现（一层里的
+ *  普通文件，与 `dirs` 分开两列）。 */
 export const dirsResponseSchema = z
   .object({
     home: z.string(),
     cwd: z.string(),
     up: z.string().nullable(),
+    here: dirRowSchema,
     dirs: z.array(dirRowSchema),
     files: z.array(dirFileRowSchema).optional(),
+  })
+  .strict();
+
+/**
+ * `POST /api/dirs`（新建目录）的成功体：通用信封 + `directory` 键——新建那一行的
+ * 名目判读（刚建出来是 `empty`）。界面拿它把新行插进清单并直接置为选定。
+ * 写入独立于四态快照：`revision` 只是当前版本号（先例是资料四条端点）。
+ */
+export const dirCreateOkSchema = z
+  .object({
+    ok: z.literal(true),
+    revision: z.number().int(),
+    directory: dirRowSchema,
   })
   .strict();
 
@@ -239,6 +255,7 @@ export type SessionsResponse = z.infer<typeof sessionsResponseSchema>;
 export type DirRow = z.infer<typeof dirRowSchema>;
 export type DirFileRow = z.infer<typeof dirFileRowSchema>;
 export type DirsResponse = z.infer<typeof dirsResponseSchema>;
+export type DirCreateOk = z.infer<typeof dirCreateOkSchema>;
 export type WorkspaceOk = z.infer<typeof workspaceOkSchema>;
 export type PostJobCell = z.infer<typeof postJobCellSchema>;
 export type SessionPostView = z.infer<typeof sessionPostViewSchema>;

@@ -2477,6 +2477,26 @@ button.mat__name:focus-visible {
   line-height: var(--line-snug);
 }
 
+/* 新建一行（目录模式）：名字输入框与「新建目录」同排，住在地址栏下面；
+   建完新那一行直接进选定态（目录选择器节点） */
+.picker__newrow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.picker__newrow .field__input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 新建失败那一行：与跳层失败同一副骨架（一行小字；层不动、清单不动） */
+.picker__newerr {
+  color: var(--t-alert-ink);
+  font-size: var(--size-caption);
+  line-height: var(--line-snug);
+}
+
 .picker__list {
   min-height: 8rem;
   overflow: auto;
@@ -2503,6 +2523,12 @@ button.mat__name:focus-visible {
   border-color: var(--t-rule-strong);
   background: var(--t-raised);
   box-shadow: inset var(--size-rule) 0 0 var(--t-signal);
+}
+
+/* 「当前这一层」那一行：清单顶上、虚线边与子目录行分开——选中它就是选正在
+   浏览的这一层本身，不必退到上一层再点那一行（目录选择器节点） */
+.picker__row--here {
+  border-style: dashed;
 }
 
 .picker__row:focus-visible {

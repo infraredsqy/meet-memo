@@ -297,17 +297,27 @@ def test_api_sessions_empty_and_open_paths(api, tmp_path: Path):
 
 
 def test_api_dirs_browses_from_home(api, tmp_path: Path):
-    """目录选择器：起点是用户主目录，一层子目录带着名目；up 到主目录就是 null。"""
+    """目录选择器：起点是用户主目录，一层子目录带着名目；`up` 到盘根才 null。"""
     client, _home, _out_root = api
     import os
 
     listed = client.get("/api/dirs")
     assert listed.status_code == 200
     body = listed.json()
-    home_norm = os.path.normcase(str(Path(os.environ["HOME"]).resolve()))
+    home_path = Path(os.environ["HOME"]).resolve()
+    home_norm = os.path.normcase(str(home_path))
     assert os.path.normcase(body["cwd"]) == home_norm
     assert body["home"] == body["cwd"]
-    assert body["up"] is None
+    # 用户主目录不再是天花板：从 home 还能向上（up 是 home 的上一层，目录选择器节点）
+    assert body["up"] == str(home_path.parent)
+    # here 是正在浏览这一层自己的名目（与 dirs 每项同一套四格）
+    assert set(body["here"]) == {"name", "dir", "kind", "suspected"}
+    assert os.path.normcase(body["here"]["dir"]) == home_norm
+    assert body["here"]["kind"] in ("empty", "meeting", "unknown")
+    # 盘根那一档 up 如实落 null（「向上一层」唯一的到顶档）
+    at_root = client.get("/api/dirs?dir=" + home_path.anchor)
+    assert at_root.status_code == 200
+    assert at_root.json()["up"] is None
 
     # 放一个空目录和多一个杂物目录进去
     base = tmp_path / "browse-root"

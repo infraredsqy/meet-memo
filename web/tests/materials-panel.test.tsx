@@ -461,6 +461,7 @@ describe('文件选择器（文件模式）', () => {
       home: 'C:\\Users\\<user>',
       cwd: 'C:\\资料',
       up: 'C:\\Users\\<user>',
+      here: { name: '资料', dir: 'C:\\资料', kind: 'unknown', suspected: false },
       dirs: [{ name: '子目录', dir: 'C:\\资料\\子目录', kind: 'unknown', suspected: false }],
       files: [
         { name: '报告.pdf', dir: 'C:\\资料\\报告.pdf', size_bytes: 10 },
@@ -520,6 +521,7 @@ describe('文件选择器（文件模式）', () => {
       home: 'C:\\Users\\<user>',
       cwd: 'C:\\资料',
       up: 'C:\\Users\\<user>',
+      here: { name: '资料', dir: 'C:\\资料', kind: 'unknown', suspected: false },
       dirs: [],
       files: [
         { name: '录像.mkv', dir: 'C:\\资料\\录像.mkv', size_bytes: MATERIALS_MAX_BYTES + 1 },

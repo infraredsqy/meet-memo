@@ -517,11 +517,12 @@ class _LocalGuardsMiddleware:
        （挡 DNS rebinding）。
     2. **写语义端点要自定义头**：带写语义的端点必须带 `X-Meeting-Service: 1`，否则
        **403**（挡表单式简单请求——本机浏览器里的恶意页面发不出带自定义头的请求）。
-       现在守两处：`POST /api/actions`（还要求 `Content-Type: application/json`，
-       改状态的动作集中在这一个信封里）与**会议资料的两条写端点**（`POST
-       …/materials` 上传、`DELETE …/materials/{name}` 删除，资料节点 285bf58c）——
-       那两条的正文是二进制、装不进 JSON 动作信封，头哨由中间件按端点扩到它们身上：
-       防线还是只守中间件这一处，写语义端点在 `_materials_write_path()` 一张核对表里。
+       守三处：`POST /api/actions`（还要求 `Content-Type: application/json`，
+       改状态的动作集中在这一个信封里）、**会议资料的两条写端点**（`POST
+       …/materials` 上传、`DELETE …/materials/{name}` 删除，资料节点 285bf58c）与
+       **`POST /api/dirs`**（选择器里新建目录，目录选择器节点）——正文装不进 JSON
+       动作信封或不走动作信封的写端点，头哨由中间件按端点扩到它们身上：
+       防线还是只守中间件这一处，写语义端点在 `_write_guard_path()` 一张核对表里。
        **校验先于路由匹配生效**。
     3. **不开 CORS**：**不发** `Access-Control-Allow-Origin`。
     """
@@ -548,8 +549,8 @@ class _LocalGuardsMiddleware:
 
         # ② 写语义端点的自定义头（校验先于路由匹配）
         is_action_post = method == "POST" and path == "/api/actions"
-        is_materials_write = _materials_write_path(path, method)
-        if is_action_post or is_materials_write:
+        is_write = _write_guard_path(path, method)
+        if is_action_post or is_write:
             content_type = headers.get("content-type", "")
             header_ok = headers.get(ACTION_HEADER_NAME, "").strip() == ACTION_HEADER_VALUE
             if is_action_post and not content_type.lower().startswith(ACTION_CONTENT_TYPE):
@@ -559,7 +560,7 @@ class _LocalGuardsMiddleware:
                     "Forbidden: /api/actions 需要 Content-Type: application/json "
                     "与 X-Meeting-Service: 1"
                 ) if is_action_post else (
-                    "Forbidden: 会议资料的写请求需要 X-Meeting-Service: 1"
+                    "Forbidden: 这个写端点需要 X-Meeting-Service: 1"
                 )
                 await self._plain(send, 403, message)
                 return
@@ -605,14 +606,17 @@ class _LocalGuardsMiddleware:
         await send({"type": "http.response.body", "body": body})
 
 
-def _materials_write_path(path: str, method: str) -> bool:
-    """这条请求是不是**会议资料的写端点**（头哨的核对表，与 routes.py 的注册逐条对应）。
+def _write_guard_path(path: str, method: str) -> bool:
+    """这条请求是不是**不走动作信封的写端点**（头哨的核对表，与 routes.py 的注册逐条对应）。
 
-    只认两条：`POST /api/sessions/{dir}/materials`（上传）与
-    `DELETE /api/sessions/{dir}/materials/{name}`（删除）。清单与取原文件是纯读，
+    只认三条：`POST /api/sessions/{dir}/materials`（资料上传）、
+    `DELETE /api/sessions/{dir}/materials/{name}`（资料删除）与
+    `POST /api/dirs`（选择器里新建目录）。清单、取原文件与 `GET /api/dirs` 是纯读，
     与其余 `GET /api/*` 同档（Host 校验已盖住）。`method` 由调用方先大写化。
     """
     if method == "POST":
+        if path == "/api/dirs":
+            return True
         return path.startswith("/api/sessions/") and path.endswith("/materials")
     if method == "DELETE":
         return path.startswith("/api/sessions/") and "/materials/" in path
