@@ -187,6 +187,13 @@ export const summarizeOkSchema = z
  * 状态文件回答（`meeting_offline_status.json` / `meeting_minutes_status.json`，
  * 见 `docs/requirements.md` R26 与 R27）。`stopping` 只有 `post_stop` 的受理回执才带
  * （`true` = 旗标已立，线程在下一块开跑前收场；起跑那两只动作没有这一格）。
+ *
+ * `inputs` / `note` 只有 `post_minutes` 的回执带（`docs/contract.md` 4.3）：
+ * `inputs` 是**受理那一刻**读到的输入档位（两份稿子都在 / 只有会中稿 / 只有会后稿 /
+ * 一份都没有），**恒在**；`note` 是「同场的会后精细稿还在跑」时的说破句（纪要免闸
+ * 不许静默降级，spec 原文），只在那一档出现。一个 schema 罩两个 `kind`，两格因此都
+ * 是 `optional()` —— 界面按「有哪个就画哪个」（`docs/ui-design.md` 3.1：那一句照实
+ * 画进回执那一行）。
  */
 export const postOkSchema = z
   .object({
@@ -197,6 +204,8 @@ export const postOkSchema = z
         kind: z.enum(['offline', 'minutes']),
         dir: z.string(),
         stopping: z.boolean().optional(),
+        inputs: z.enum(['both', 'live_only', 'offline_only', 'none']).optional(),
+        note: z.string().optional(),
       })
       .strict(),
   })

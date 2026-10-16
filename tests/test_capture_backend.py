@@ -10,8 +10,8 @@
   1. `start()` 的抛错口径：单路起不来**不抛错**（只给那一路发 `SourceLost`）、本场该采的路
      全起不来才抛 `CaptureUnavailable`、`mode=mic` 时只有 mic 算数；
   2. 会话与收尾：归档写进 `session_dir`、`finalize()` 落盘、`transcode()` 出 MP3、`stop()` 幂等；
-  3. 端到端（进程内真 `ServiceRuntime`）：`capture.backend = auto` 开一场 → 停 → 收尾四步里
-     `flush` / `transcode` 记 `done`、场次目录里出现两个 `.mp3`。
+  3. 端到端（进程内真 `ServiceRuntime`）：`capture.backend = auto` 开一场 → 停 → 收尾 `flush`
+     记 `done`、flush 落定自动起的转码独立工序转出两个 `.mp3`（状态文件落 `done`）。
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ pytestmark = pytest.mark.slow
 FAKE_MIC = DeviceEndpoint("假-麦克风 (Focusrite)", "MME", "input", index=1, is_default=True)
 FAKE_RENDER = DeviceEndpoint("假-扬声器 (Focusrite USB Audio)", "", "render", index=0)
 
-#: 进程内用例的轮询超时（收尾四步跑在收尾线程池里）
+#: 进程内用例的轮询超时（收尾三步跑在收尾线程池里）
 BACKEND_POLL_TIMEOUT_SECONDS = 15.0
 
 
@@ -437,21 +437,21 @@ def test_the_real_backend_still_has_no_inject_fault(monkeypatch: pytest.MonkeyPa
 
 
 # ---------------------------------------------------------------------------
-# ③ 端到端：收尾四步里 flush / transcode 记 done
+# ③ 端到端：flush 记 done、转码独立工序转出两份 MP3
 # ---------------------------------------------------------------------------
 
 
 def test_end_to_end_session_drains_with_two_mp3(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """进程内真运行时 + `auto` 真后端 + 假源：开一场 → 停 → 收尾第 1、2 步跑真实现，两个 `.mp3`。
+    """进程内真运行时 + `auto` 真后端 + 假源：开一场 → 停 → 收尾 `flush` 跑真实现，
+    转码独立工序（flush 落定自动起的那一道）转出两个 `.mp3`。
 
     `flush` 这一档记 **`done`**（不再是 `skipped`）：真后端落地之后
     `registry.capabilities_of()` 对 `finalize` 报 `True`，收尾第 1 步因此真的调它。
 
-    `transcode` 那一步的判定**只看采集侧**（`meeting/service/runtime.py` 的
-    `_drain_transcode()`：`capture_resolution.skipped()` **或** `capture_capabilities["transcode"]`
-    为假就记 `skipped`）：本场的采集后端是真的（`auto`），两项收尾能力如实为真，
-    于是第 2 步真的走到 `capture_backend.transcode()`，两个 `.mp3` 由**本节点的真代码**
-    转出来（不是替身记的一笔）。转写后端在不在场与这一步无关。
+    转码已不在收尾序列里：它是这一场的**独立后台工序**（`meeting/capture/transcode.py`），
+    flush 落定那一刻自动在后台起（判据同样是采集侧的 `capture_capabilities["transcode"]`，
+    转写后端在不在场与它无关）。本场的采集后端是真的（`auto`），两个 `.mp3` 由**真代码**
+    经这道工序转出来（不是替身记的一笔）；它的完成以逐段凭据与状态文件落 `done` 为准。
     """
     factory = SourceFactory(chunks=None, pace_seconds=SourceFactory.PACE_SECONDS)
     install_fake_probe(monkeypatch, factory)
@@ -493,8 +493,30 @@ def test_end_to_end_session_drains_with_two_mp3(tmp_path: Path, monkeypatch: pyt
 
         steps = {step["id"]: step for step in done["ended"]["steps"]}
         assert steps["flush"]["status"] == "done"
-        assert steps["transcode"]["status"] == "done", steps["transcode"]
         assert steps["log"]["status"] == "done"
+        assert steps["post"]["status"] == "waiting"
+        assert set(steps) == {"flush", "log", "post"}, sorted(steps)
+
+        # 转码独立工序在 flush 落定后自动起：等它凭据落齐、状态落 done，MP3 才算「写完了」
+        from meeting.capture import transcode as transcode_module
+
+        document = wait_until(
+            lambda: (
+                doc
+                if (doc := transcode_module.read_status(session_dir)) is not None
+                and doc.get("state") == "done"
+                else None
+            ),
+            timeout=BACKEND_POLL_TIMEOUT_SECONDS,
+            what="转码独立工序落 done",
+        )
+        assert document["sources"][0]["done"] == 1 and document["sources"][1]["done"] == 1, document
+        assert transcode_module.segment_done(
+            transcode_module.plan_segments(session_dir, ("mic",))[0]
+        )
+        assert transcode_module.segment_done(
+            transcode_module.plan_segments(session_dir, ("loopback",))[0]
+        )
 
         assert (session_dir / "meeting_audio_mic_001.mp3").exists()
         assert (session_dir / "meeting_audio_loopback_001.mp3").exists()

@@ -30,7 +30,7 @@
 
 **看门断言（缺了就直接判红，不留「静默没挂上」的口子）**：子进程载入假件模块时会往
 `FakePlugin.annotation_file` 写一行 `fake-modules-loaded`；用例用 `plugin.module_loaded()`
-断言它 —— 假件没挂上时 registry 会静默回退替身，收尾四步于是全 `skipped`，用例会以
+断言它 —— 假件没挂上时 registry 会静默回退替身，收尾各步于是全 `skipped`，用例会以
 「以为在验 A、其实在验 B」的形式蒙混过关。
 """
 
@@ -244,7 +244,7 @@ LAUNCH_THREAD_SECONDS_ENV = "MEETING_TEST_DRAIN_LAUNCH_THREAD_SECONDS"
 #: `_drain_wait()` 与事件循环的计时判出来（那一步 `error` 里的两个数仍由被测代码给出）。
 #:
 #: **它由哪一步写**：第 1 步 `flush`（`FakeCaptureBackend.finalize()` 返回前）。
-#: 原先写在第 4 步的会后钩子上，而按「结束录音」之后会后一个动作都不自动跑（R26），
+#: 原先写在 `post` 那一步的会后钩子上，而按「结束录音」之后会后一个动作都不自动跑（R26），
 #: 那一步已经不再被调用 —— 标记因此改由收尾里**第一个真实调用**写下，排在它后面的
 #: `transcode` / `log` / `post` 三格面对的剩余预算随即过期，越界照样落在真实的调用上。
 FINALIZE_MARKER_ENV = "MEETING_TEST_DRAIN_FINALIZE_MARKER"
@@ -451,7 +451,7 @@ class FakeTranscriberBackend:
         return _seconds_from_env(SEGMENT_TIMEOUT_SECONDS_ENV, self._segment_timeout)
 
     def release_gpu(self) -> bool:
-        """收尾第 4 步现在只做这件事（R26：会后归用户手上那两个按钮）。
+        """收尾的 `post` 那一步现在只做这件事（R26：会后归用户手上那两个按钮）。
 
         它照真后端那条防御式取法被用到（`getattr(self.transcriber_backend, "release_gpu", None)`
         + 经 `_drain_wait()` 提交到工作线程），收尾编排里该跑的四步因此一步不少。
@@ -532,7 +532,7 @@ class FailingPostHook:
 class BlockingThreadPostHook:
     """会后钩子假件：`launch()` 里睡 `block_seconds` 再返回（把某一步钉在 `running` 上）。
 
-    运行时的收尾四步经**收尾专用的 daemon 执行器**把 `launch()` 整体放进工作线程再等，
+    运行时的收尾各步经**收尾专用的 daemon 执行器**把 `launch()` 整体放进工作线程再等，
     因此这一段 `time.sleep` 睡的是工作线程、事件循环空着 —— `/api/state` 在整段阻塞里照常
     应答，「轮询到某步处于运行中」这个同步点因此一定等得到（同步阻塞若真的落在事件循环上，
     那个窗口根本不会出现）。
@@ -808,7 +808,7 @@ def write_failing_post_hook(home: Path | str, *, capture: str = "dev") -> FakePl
     """挂「`launch()` 抛错」的假会后钩子（§4 点名的辅助；`test_shutdown_signal.py` ④ / ⑤ 用它）。
 
     采集侧由 `capture` 决定（缺省 `dev` 采集替身）：`POST start` 要能真开起来，
-    收尾才能走到第 4 步去撞那个抛错的钩子。`capture=""` 表示这一项不写进配置。
+    收尾才能走到 `post` 那一步去撞那个抛错的钩子。`capture=""` 表示这一项不写进配置。
     """
     plugin = write_fake_module(home)
     plugin.config[CONFIG_KEY_POST] = plugin.module("FailingPostHook")

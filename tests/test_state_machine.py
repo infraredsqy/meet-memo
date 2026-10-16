@@ -156,7 +156,7 @@ def test_state_vocabularies_are_the_frozen_ones():
     assert TOP_STATE == ("idle", "recording", "alert", "ended")
     assert SESSION_STATE == ("recording", "draining", "done", "failed")
     assert ENDED_PHASE == ("draining", "done")
-    assert DRAIN_STEP_IDS == ("flush", "transcode", "log", "post")
+    assert DRAIN_STEP_IDS == ("flush", "log", "post")  # 转码已摘出收尾序列（独立工序）
     assert set(PROBE_STATUS) <= set(SOURCE_HEALTH)
     assert set(SOURCE_HEALTH) == {
         "unprobed", "ready", "probe_failed", "capturing", "lost", "restored", "stopped",
@@ -645,10 +645,10 @@ def test_finish_drain_keeps_top_state_ended(tmp_path):
         # `session` 保留（本场时长冻结）
         assert snapshot["session"] is not None
         assert snapshot["session"]["frozen"] is True
-        # 前三步都有终态；第 4 步如实停在「等你动手」那一格
+        # 前两步都有终态；`post` 步如实停在「等你动手」那一格
         steps = {step["id"]: step["status"] for step in snapshot["ended"]["steps"]}
         assert steps == {
-            "flush": "skipped", "transcode": "skipped", "log": "done", "post": "waiting",
+            "flush": "skipped", "log": "done", "post": "waiting",
         }
         # 成功档里两路从 stopped 回到 unprobed
         assert {item["health"] for item in snapshot["sources"]} == {"unprobed"}
@@ -705,7 +705,7 @@ def test_finish_drain_failure_branch_keeps_draining(tmp_path, monkeypatch):
     """失败分支：有任一步 `failed` → `phase` 保持 `draining`、`top_state` 停在 `ended`。
 
     造法（进程内，不起第二个服务）：把 `log` 那一步写**场次日志结束标记**的落点换成一个抛错的
-    替身 ——「有实现却抛错 → `failed`」这一档（§3.0 的边界）在收尾四步里由它来演。
+    替身 ——「有实现却抛错 → `failed`」这一档（§3.0 的边界）在收尾三步里由它来演。
     第 4 步 `post` 现在停在 `waiting`（会后一个动作都不自动跑，R26），它不再产生失败步；
     而失败步的记录形状（`error` 里带可复制命令与 log 路径、`start` 被 409 拒）一个字没变。
     """
@@ -865,8 +865,8 @@ def test_cancelled_drain_keeps_the_same_face_without_done(tmp_path):
         assert runtime.snapshot.session is not None
         # 已落定的保持原样、正被取消的那一步留在 running（不伪造终态、不写 failed）
         statuses = [step.status for step in runtime.snapshot.ended.steps]
-        assert statuses[:3] == ["skipped", "skipped", "done"]
-        assert statuses[3] == "running"
+        assert statuses[:2] == ["skipped", "done"]
+        assert statuses[2] == "running"
         assert "failed" not in statuses
 
         # 取消路径也落盘（不留半截）：盘上停在收尾中，`done` 这一档还没到
@@ -874,8 +874,9 @@ def test_cancelled_drain_keeps_the_same_face_without_done(tmp_path):
         assert record["state"] == "draining"
         assert record["interrupted"] is True
         assert record["ended_at"] is None
-        # 新的 `start` 拒之门外
-        assert post(client, "start").status_code == 409
+        # 新的 `start` 不再被拒（收尾闸收窄：flush 已落定的收尾半路不拦新一场 ——
+        # 被打断的收尾留痕在盘上，转码 / 会后照常可对那一场补跑）
+        assert post(client, "start").status_code == 200
     finally:
         if original_release is not None:
             runtime.transcriber_backend.release_gpu = original_release

@@ -141,7 +141,7 @@ describe('SSE onError 的失败块（渲染层转手）', () => {
     vi.mocked(fetchSessions).mockResolvedValue({
       sessions: [],
       recent: null,
-      post_job: null,
+      post_jobs: [],
     });
 
     const snapshot = makeSnapshot();
@@ -226,11 +226,11 @@ describe('收尾失败的失败块（drain 那一档不双画）', () => {
     vi.mocked(fetchSessions).mockResolvedValue({
       sessions: [],
       recent: null,
-      post_job: null,
+      post_jobs: [],
     });
 
     const failedSteps = [
-      { id: 'transcode' as const, status: 'done' as const, detail: '', error: null },
+      { id: 'flush' as const, status: 'done' as const, detail: '', error: null },
       { id: 'log' as const, status: 'failed' as const, detail: 'log 落盘', error: '日志路径不可写' },
       { id: 'post' as const, status: 'failed' as const, detail: 'post 跑挂', error: '钩子抛错' },
     ];

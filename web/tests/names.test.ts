@@ -7,6 +7,20 @@ import {
 } from '../src/home/names';
 import type { SessionStatus } from '../src/contract';
 
+/** 一格「没跑过」的转码工序读数（`transcode` 格的空档形状）。 */
+function transcodeIdle(): SessionStatus['transcode'] {
+  return {
+    state: 'idle',
+    in_process: false,
+    started_at: null,
+    finished_at: null,
+    elapsed_seconds: null,
+    current_source: null,
+    sources: [],
+  };
+}
+
+
 /**
  * 「说话人名字」纯逻辑的用例（人名节点 `91b6752e`）：行怎么读、撞名怎么判。
  * 判据全部来自服务给的 `speakers` 一格——这一层只转手，不造数据。
@@ -23,7 +37,8 @@ function statusWith(speakers: SessionStatus['speakers']): SessionStatus {
     mode: 'both',
     segments: [],
     has_offline: false,
-    post: null,
+    post: [],
+    transcode: transcodeIdle(),
     offline: {
       ledger: 'meeting_offline_progress.jsonl',
       state: 'idle',

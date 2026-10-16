@@ -141,7 +141,7 @@ def setup_service_logging(
 ) -> RotatingFileHandler:
     """幂等初始化入口：按配置值构造轮转处理器，并换掉 bootstrap 阶段的 handler。
 
-    §3.5 第 1 条的四步都走它：
+    §3.5 第 1 条的收尾各步都走它：
       ① bootstrap 阶段用**默认参数**建一次；
       ③ 读配置后按生效参数**重建**一次（先摘掉并关闭旧 handler、再加新的）。
     **同参数重复调用时 handler 不重复叠加**（直接返回既有 handler）。
@@ -362,11 +362,11 @@ def session_log_dir() -> str | None:
 #: 这一场的**结束标记**格式（phase3 §3.7 起的名字）。
 #:
 #: 里面有三个占位符：`{state}`（`session.json` 的 `state`：`draining` / `done` / `failed`）、
-#: `{steps}`（四步 `status` 的概要，如 `flush=skipped, transcode=skipped, log=done, post=skipped`）、
+#: `{steps}`（收尾各步 `status` 的概要，如 `flush=skipped, log=done, post=waiting`）、
 #: `{log_path}`（服务级主 log 的路径）。场次 id 由格式串里的 `session=%(session)s` 带上
 #: （场次级 handler 的 `SessionFilter` 写的就是场次目录名）。
 #: 它是**场次 log 的最后一行**（测试照这条断言）。
-SESSION_END_MARKER = "场次结束：state={state}；收尾四步：{steps}；服务级 log：{log_path}"
+SESSION_END_MARKER = "场次结束：state={state}；收尾步骤：{steps}；服务级 log：{log_path}"
 
 
 def flush_session_log() -> None:

@@ -428,7 +428,6 @@ describe('liveView：一份快照摊成主视图', () => {
         phase: 'draining',
         steps: [
           { id: 'flush', status: 'running', detail: '在写盘', error: null },
-          { id: 'transcode', status: 'waiting', detail: '', error: null },
           { id: 'log', status: 'done', detail: '', error: null },
           { id: 'post', status: 'waiting', detail: '', error: null },
         ],

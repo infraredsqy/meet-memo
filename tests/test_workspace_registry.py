@@ -226,10 +226,10 @@ def test_api_sessions_empty_and_open_paths(api, tmp_path: Path):
     """spec 完成判定第 1–2 条：三档目录逐个走「新会议」；同一目录两次只占一行。"""
     client, _home, _out_root = api
 
-    # 还没开过：两只读端点的空档（顶层第三格 `post_job`：此刻没有会后的活儿在飞）
+    # 还没开过：两只读端点的空档（顶层第三格 `post_jobs`：此刻没有会后的活儿在飞）
     listed = client.get("/api/sessions")
     assert listed.status_code == 200
-    assert listed.json() == {"sessions": [], "recent": None, "post_job": None}
+    assert listed.json() == {"sessions": [], "recent": None, "post_jobs": []}
 
     dirs_root = tmp_path / "meeting-places"
     dirs_root.mkdir()

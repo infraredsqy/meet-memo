@@ -1,5 +1,5 @@
 {
-  "revision": 11,
+  "revision": 9,
   "service": {
     "started_at": "<iso>",
     "version": "0.1.0",
@@ -90,12 +90,6 @@
         "id": "flush",
         "status": "skipped",
         "detail": "这一场没有真实归档要落（采集替身不写真实音频；finalize 归 dca4539b）",
-        "error": null
-      },
-      {
-        "id": "transcode",
-        "status": "skipped",
-        "detail": "这一场没有可转码的产物（未接真采集后端 / 采集替身没有 transcode 能力；转码归 dca4539b）",
         "error": null
       },
       {

@@ -541,7 +541,11 @@ def test_the_product_path_calls_the_one_converter_the_repo_already_has(
     assert [row["outcome"] for row in outcome["sources"]] == ["converted"]
     assert len(seen) == 1, f"转码该只被调一次，实测 {seen}"
     assert Path(seen[0][0]).name == "meeting_audio_mic_001.pcm"
-    assert Path(seen[0][1]).name == "meeting_audio_mic_001.mp3"
+    # 转码器拿到的是**临时名字**：产物先落临时、再原子替换到正名（半截 MP3 永远不坐
+    # 在最终路径上 —— 完成判据是凭据，不是「产物文件在那儿」）
+    assert Path(seen[0][1]).name == "meeting_audio_mic_001.mp3.tmp"
+    assert (session / "meeting_audio_mic_001.mp3").read_bytes() == b"mp3-from-the-one-implementation"
+    assert not (session / "meeting_audio_mic_001.mp3.tmp").exists()
 
 
 def test_an_empty_pcm_produces_no_mp3_and_calls_no_converter(tmp_path: Path) -> None:
@@ -570,21 +574,19 @@ def test_a_one_byte_pcm_counts_as_empty(tmp_path: Path) -> None:
     assert not (session / "meeting_audio_mic_001.mp3").exists()
 
 
-def test_an_mp3_newer_than_the_pcm_is_left_alone(tmp_path: Path) -> None:
-    """MP3 的 mtime 已比 PCM 新 → **不调转码**，MP3 字节一个都不变。"""
+def test_a_credentialed_segment_is_left_alone(tmp_path: Path) -> None:
+    """凭据认账的那一段 → **不调转码**，MP3 字节一个都不变（判据是凭据，不再是 mtime）。"""
     session = synth_session(tmp_path / "250919", sources=("mic",))
+    first = RecordingConverter(body=b"already-archived")
+    assert sync_archive(session, sources=("mic",), converter=first)["state"] == "done"
     mp3 = session / "meeting_audio_mic_001.mp3"
-    mp3.write_bytes(b"already-archived")
-    pcm = session / "meeting_audio_mic_001.pcm"
-    old = time.time() - 600
-    os.utime(pcm, (old, old))
-    os.utime(mp3, (time.time(), time.time()))
     before = digest(mp3)
     converter = RecordingConverter()
 
     outcome = sync_archive(session, sources=("mic",), converter=converter)
 
     assert [row["outcome"] for row in outcome["sources"]] == ["no_work"]
+    assert [row["reason"] for row in outcome["sources"]] == ["凭据认账，不重转"]
     assert converter.calls == []
     assert digest(mp3) == before
 

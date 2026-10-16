@@ -92,7 +92,7 @@ def wait_until(
     与 `httpx.ReadTimeout: timed out`）会让 `wait_until()` 当场把它**当成「等到了」交回去**，
     调用点接着去取字段，炸成一句与现场无关的
     `TypeError: string indices must be integers, not 'str'`（`tests/test_drain.py` 的 ⑤f 条
-    就是这么偶发的：同一趟子进程的 log 里收尾四步完全正常，红却红在这句话上）。
+    就是这么偶发的：同一趟子进程的 log 里收尾各步完全正常，红却红在这句话上）。
 
     现在改成就地重试：故障落在窗口里 → 下一次读把它绕过去、用例照常过；窗口内一直读不到 →
     那条报错作为**最后观察值**带进超时报告，红的时候手上有一句能读的现场。
@@ -203,7 +203,7 @@ class ServiceProcess(helpers.ServiceProcess):
         # **两个后端的共用缺省**（与 `_helpers.spawn_service()` / `run_cli()` 同源）：本用例的
         # `config.json` 里没写 `capture.backend` 时补 `DEFAULT_CAPTURE_BACKEND`（`dev` 替身）、
         # 没写 `post.hook` 时补 `DEFAULT_POST_HOOK`（`null` 缺席档）。不补的话产品缺省 `auto`
-        # 会让子进程 startup 里的 `probe()` 走到真实采集入口上、收尾第 4 步起一条后台线程跑
+        # 会让子进程 startup 里的 `probe()` 走到真实采集入口上、收尾 `post` 那一步起一条后台线程跑
         # 整条会后链。用例自己写过的值一个字节都不动（只补缺，见 `apply_backend_defaults()`）。
         helpers.apply_backend_defaults(home)
 

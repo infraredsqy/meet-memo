@@ -75,7 +75,7 @@ def _wait_job_done(runtime) -> None:
     """
     deadline = time.monotonic() + JOB_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
-        if runtime.post_job_state() is None:
+        if not runtime.post_jobs_state():
             return
         time.sleep(0.005)
     raise AssertionError("等不到会后的活儿收工")
@@ -102,10 +102,10 @@ def test_the_drain_post_step_settles_waiting_and_no_job_is_started(tmp_path, mon
     try:
         step = next(item for item in runtime.snapshot.ended.steps if item.id == "post")
         assert step.status == "waiting", (step.status, step.detail, step.error)
-        assert runtime.post_job_state() is None
+        assert not runtime.post_jobs_state()
         # 再跑一次那一步也还是同一个读数（「不按就什么都不跑」不是一次性的巧合）
         asyncio.run(runtime._drain_post(deadline=time.monotonic() + 10.0))
-        assert runtime.post_job_state() is None
+        assert not runtime.post_jobs_state()
     finally:
         config_module.set_current(previous)
 
@@ -144,8 +144,53 @@ def test_post_offline_runs_the_offline_lane_only(tmp_path, monkeypatch) -> None:
     assert announced == [], "「生成会后精细稿」一个纪要都不该起"
 
 
-def test_post_offline_is_refused_when_a_job_is_already_running(tmp_path, monkeypatch) -> None:
-    """已经有一趟没跑完时按第二个按钮 → 409 `draining`（一张显卡上不并排开两份模型）。"""
+def test_post_minutes_is_accepted_while_the_offline_job_is_running(
+    tmp_path, monkeypatch
+) -> None:
+    """纪要免闸：同一场的会后精细稿还在跑，「直接出纪要」照常受理 —— 但回执**说破**输入档位。"""
+    import threading
+
+    runtime, session_dir, previous = _ended_session(tmp_path, monkeypatch)
+    gate = threading.Event()
+    started = threading.Event()
+
+    from meeting.offline import runner as offline_runner
+
+    def blocking_run_session(target, **kwargs):
+        started.set()
+        gate.wait(timeout=JOB_TIMEOUT_SECONDS)
+        return {"state": "done"}
+
+    monkeypatch.setattr(offline_runner, "run_session", blocking_run_session)
+
+    from meeting.backends import registry as registry_module
+
+    class FakeMinutesImplementation:
+        def launch(self, target: str, **kwargs) -> None:
+            pass
+
+    class FakeResolution:
+        selector = "fake"
+        has_implementation = True
+        implementation = FakeMinutesImplementation()
+
+    monkeypatch.setattr(registry_module, "resolve_minutes_hook", lambda *a, **k: FakeResolution())
+    try:
+        runtime.post_offline({})
+        assert started.wait(timeout=JOB_TIMEOUT_SECONDS)
+        receipt = runtime.post_minutes({})
+        assert receipt["kind"] == "minutes" and receipt["dir"] == str(session_dir)
+        # 会后精细稿还在跑：这一趟注定只拿得到会中稿 —— 回执必须说破，不许静默降级
+        assert receipt["inputs"] == "none", receipt
+        assert "会中稿" in receipt["note"], receipt
+    finally:
+        gate.set()
+        _wait_job_done(runtime)
+        config_module.set_current(previous)
+
+
+def test_post_offline_twice_on_the_same_session_is_refused(tmp_path, monkeypatch) -> None:
+    """同一场已经有一趟「生成会后精细稿」在跑 → 第二趟 409 `draining`（(种类,场次) 槽闸）。"""
     import threading
 
     from meeting.service.runtime import ActionError
@@ -166,9 +211,56 @@ def test_post_offline_is_refused_when_a_job_is_already_running(tmp_path, monkeyp
         runtime.post_offline({})
         assert started.wait(timeout=JOB_TIMEOUT_SECONDS)
         with pytest.raises(ActionError) as info:
-            runtime.post_minutes({})
+            runtime.post_offline({})
         assert info.value.code == "draining"
         assert info.value.status == 409
+        assert info.value.detail["kind"] == "offline"
+    finally:
+        gate.set()
+        _wait_job_done(runtime)
+        config_module.set_current(previous)
+
+
+def test_cross_session_minutes_run_in_parallel(tmp_path, monkeypatch) -> None:
+    """跨场次的纪要能并行：第二场的 minutes 不被第一场的 offline / minutes 拦下。"""
+    import threading
+
+    runtime, session_dir, previous = _ended_session(tmp_path, monkeypatch)
+    gate = threading.Event()
+    started = threading.Event()
+
+    from meeting.offline import runner as offline_runner
+
+    def blocking_run_session(target, **kwargs):
+        started.set()
+        gate.wait(timeout=JOB_TIMEOUT_SECONDS)
+        return {"state": "done"}
+
+    monkeypatch.setattr(offline_runner, "run_session", blocking_run_session)
+
+    other = tmp_path / "ws-post-actions-2"
+    other.mkdir()
+    runtime.workspace_open(str(other))
+
+    from meeting.backends import registry as registry_module
+
+    class FakeMinutesImplementation:
+        def launch(self, target: str, **kwargs) -> None:
+            pass
+
+    class FakeResolution:
+        selector = "fake"
+        has_implementation = True
+        implementation = FakeMinutesImplementation()
+
+    monkeypatch.setattr(registry_module, "resolve_minutes_hook", lambda *a, **k: FakeResolution())
+    try:
+        runtime.post_offline({})
+        assert started.wait(timeout=JOB_TIMEOUT_SECONDS)
+        receipt = runtime.post_minutes({"dir": str(other)})
+        assert receipt["dir"] == str(other)
+        flying = {job["kind"] for job in runtime.post_jobs_state()}
+        assert flying == {"offline", "minutes"}, flying
     finally:
         gate.set()
         _wait_job_done(runtime)
@@ -186,7 +278,7 @@ def test_post_offline_is_refused_without_the_hook(tmp_path, monkeypatch) -> None
             runtime.post_offline({})
         assert info.value.code == "action_unavailable"
         assert info.value.status == 404
-        assert runtime.post_job_state() is None
+        assert not runtime.post_jobs_state()
     finally:
         config_module.set_current(previous)
 
@@ -228,7 +320,9 @@ def test_post_minutes_hands_the_session_over_without_running_the_offline_lane(
     finally:
         config_module.set_current(previous)
 
-    assert started == {"kind": "minutes", "dir": str(session_dir)}
+    assert started["kind"] == "minutes"
+    assert started["dir"] == str(session_dir)
+    assert started["inputs"] == "none", started  # 现场没有稿子：如实说破输入档位
     assert launched == [str(session_dir)], launched
     assert offline_calls == [], "「直接出纪要」不补跑离线那一层（R9：那一条是可选的）"
 
@@ -264,7 +358,7 @@ def test_post_minutes_launches_with_the_human_gate_open(tmp_path, monkeypatch) -
     finally:
         config_module.set_current(previous)
 
-    assert started == {"kind": "minutes", "dir": str(session_dir)}
+    assert started["kind"] == "minutes" and started["dir"] == str(session_dir)
     launch_calls = [item for item in launches if "target" in item]
     assert launch_calls == [
         {"target": str(session_dir), "claimed": True, "deliver": True}
@@ -283,7 +377,7 @@ def test_post_minutes_is_refused_while_the_session_is_still_recording(tmp_path, 
         with pytest.raises(ActionError) as info:
             runtime.post_minutes({})
         assert info.value.code == "draining"
-        assert runtime.post_job_state() is None
+        assert not runtime.post_jobs_state()
     finally:
         config_module.set_current(previous)
 
@@ -456,7 +550,7 @@ def test_post_offline_refuses_an_args_dir_that_is_not_a_runnable_session(
         assert info.value.code == "invalid_setting", (expected_kind, info.value.code)
         assert info.value.status == 400, (expected_kind, info.value.status)
         assert info.value.detail.get("key") == "dir", info.value.detail
-        assert runtime.post_job_state() is None
+        assert not runtime.post_jobs_state()
     finally:
         config_module.set_current(previous)
     assert calls == [], f"{expected_kind}：这一档一个引擎都不该被拉起来"
@@ -467,7 +561,7 @@ def test_post_offline_is_refused_while_the_session_is_still_recording(
 ) -> None:
     """还在录（收尾都没开始）时按「生成会后精细稿」→ 409 `draining`。
 
-    「录音中」的拒只剩运行时闸这一道（`_reject_post_job`）：与「直接出纪要」那一条
+    「录音中」的拒只剩运行时闸这一道（`_reject_recording_post`）：与「直接出纪要」那一条
     （`test_post_minutes_is_refused_while_the_session_is_still_recording`）同一道闸、
     同一个档；盘上残档放行见 `test_post_offline_accepts_a_session_killed_mid_recording`。
     """
@@ -482,7 +576,7 @@ def test_post_offline_is_refused_while_the_session_is_still_recording(
             runtime.post_offline({"dir": str(workspace)})
         assert info.value.code == "draining"
         assert info.value.status == 409
-        assert runtime.post_job_state() is None
+        assert not runtime.post_jobs_state()
     finally:
         config_module.set_current(previous)
 
@@ -562,7 +656,7 @@ def test_post_offline_accepts_a_session_killed_mid_drain(tmp_path, monkeypatch) 
 def test_post_minutes_is_refused_without_the_minutes_hook(tmp_path, monkeypatch) -> None:
     """`minutes.hook = null` → 404 `action_unavailable`，不起线程（对称于 `post.hook` 那一侧）。
 
-    坑（复审 m3 点名的那一个）：`_reject_post_job()` 的两道闸排在钩子闸**前面**，
+    坑（复审 m3 点名的那一个）：`_reject_recording_post()` 的两道闸排在钩子闸**前面**，
     一个 runtime 里连按两个按钮会把 404 盖成 409 —— 本条只按纪要那一个按钮。
     """
     from meeting.service.runtime import ActionError
@@ -576,7 +670,7 @@ def test_post_minutes_is_refused_without_the_minutes_hook(tmp_path, monkeypatch)
         assert info.value.code == "action_unavailable"
         assert info.value.status == 404
         assert info.value.detail.get("key") == "minutes.hook", info.value.detail
-        assert runtime.post_job_state() is None
+        assert not runtime.post_jobs_state()
     finally:
         config_module.set_current(previous)
 
@@ -589,7 +683,7 @@ def test_post_minutes_is_refused_when_the_minutes_layer_is_still_in_flight(
     现场（一个真 DSH 子会话都没有，不占显卡、不出声）：先由 `status.mark_running()` 在盘上
     落一版停在 `running` 的 `meeting_minutes_status.json`（第一趟还在飞的现场读数，
     它落的正是那一版），`meeting.minutes.runner.run` 换成登记 no-op。判据落在**动作本体**上：
-    第二个按钮在起线程之前就按 409 拒，`post_job_state()` 因此读不到第二趟。
+    第二个按钮在起线程之前就按 409 拒，`post_jobs_state()` 因此读不到第二趟。
     """
     from meeting.minutes import status as minutes_status
     from meeting.service.runtime import ActionError
@@ -609,7 +703,7 @@ def test_post_minutes_is_refused_when_the_minutes_layer_is_still_in_flight(
 
         # 头一道闸此刻**没有**东西可拒（没有线程在飞、收尾已经落定）—— 这一趟要是被拒，
         # 只可能落在 claim 闸上；`status_path` 也只在 claim 闸那支的 detail 里（review-2 m7）
-        assert runtime.post_job_state() is None, "这一刻没有会后的活儿在飞"
+        assert not runtime.post_jobs_state(), "这一刻没有会后的活儿在飞"
         assert runtime.drain_has_settled() is True
 
         with pytest.raises(ActionError) as info:
@@ -619,7 +713,7 @@ def test_post_minutes_is_refused_when_the_minutes_layer_is_still_in_flight(
         assert info.value.detail.get("status_path", "").endswith(
             "meeting_minutes_status.json"
         ), info.value.detail
-        assert runtime.post_job_state() is None, "这一趟压根没有起线程"
+        assert not runtime.post_jobs_state(), "这一趟压根没有起线程"
         assert armed == [], "第二趟不许再进纪要那一层"
     finally:
         config_module.set_current(previous)
@@ -673,11 +767,11 @@ def test_post_minutes_returns_the_claim_when_the_thread_cannot_start(
         record = minutes_status.read_status(minutes_status.status_path(session_dir))
         assert record["state"] == "failed", record
         assert "can't start new thread" in str(record.get("error")), record
-        assert runtime.post_job_state() is None
+        assert not runtime.post_jobs_state()
 
         # 出路：同一现场再按一次，claim 闸不再拒（改之前这里是 409 draining）
         started = runtime.post_minutes({})
-        assert started == {"kind": "minutes", "dir": str(session_dir)}, started
+        assert started["kind"] == "minutes" and started["dir"] == str(session_dir), started
         assert handed.wait(timeout=JOB_TIMEOUT_SECONDS), "这一趟该真的把这一场交给纪要那一层"
         assert armed == [str(session_dir)], armed
         _wait_job_done(runtime)
@@ -764,8 +858,8 @@ def test_post_minutes_is_accepted_while_the_drain_has_not_settled(
     try:
         runtime.start_session(dir=str(workspace))
         begin_drain(runtime.snapshot, reason="user")
-        # 前三步落定、第 4 步停在 `running`：收尾还没收完 —— 会后动作照常受理
-        for step_id in ("flush", "transcode", "log"):
+        # 前两步落定、`post` 步停在 `running`：收尾还没收完 —— 会后动作照常受理
+        for step_id in ("flush", "log"):
             finish_drain_step(step_id, "done", snapshot=runtime.snapshot)
         finish_drain_step("post", "running", snapshot=runtime.snapshot)
         assert runtime.drain_has_settled() is False
@@ -773,9 +867,9 @@ def test_post_minutes_is_accepted_while_the_drain_has_not_settled(
         asyncio.run(runtime._drain_post(deadline=time.monotonic() + 10.0))
         started = runtime.post_minutes({})
         _wait_job_done(runtime)
-        assert started == {"kind": "minutes", "dir": str(workspace)}
+        assert started["kind"] == "minutes" and started["dir"] == str(workspace)
         assert launched == [str(workspace)], launched
-        assert runtime.post_job_state() is None
+        assert not runtime.post_jobs_state()
     finally:
         config_module.set_current(previous)
 
@@ -828,7 +922,7 @@ def test_post_stop_sets_the_cancel_flag_and_answers_the_receipt(
         assert seen["cancel"] is not None and seen["cancel"](), (
             "线程体递进 run_session 的旗标该已立起"
         )
-        cancel = runtime.post_job["cancel"]
+        cancel = runtime.post_jobs[("offline", str(session_dir))]["cancel"]
         assert cancel is not None and cancel.is_set()
     finally:
         gate.set()
@@ -896,8 +990,9 @@ def test_post_stop_refuses_the_minutes_lane_truthfully(tmp_path, monkeypatch) ->
         config_module.set_current(previous)
 
 
-def test_post_stop_with_another_dir_is_refused(tmp_path, monkeypatch) -> None:
-    """在飞的永远只有一场；`dir` 指到另一场 → 400 `invalid_setting`（legal 带在飞那场）。"""
+def test_post_stop_with_another_dir_answers_truthfully(tmp_path, monkeypatch) -> None:
+    """多趟在飞后的指向：`dir` 点名停哪一场；指到没有在飞的一场 → 409（那里没东西可停），
+    在飞的那一场不受影响。"""
     import threading
 
     from meeting.service.runtime import ActionError
@@ -919,10 +1014,60 @@ def test_post_stop_with_another_dir_is_refused(tmp_path, monkeypatch) -> None:
         assert started.wait(timeout=JOB_TIMEOUT_SECONDS)
         with pytest.raises(ActionError) as info:
             runtime.post_stop({"dir": str(tmp_path / "另一场")})
-        assert info.value.code == "invalid_setting"
-        assert info.value.status == 400
-        assert info.value.detail["legal"] == [str(session_dir)]
+        assert info.value.code == "draining"
+        assert info.value.status == 409
+        # 在飞的那一场照旧活着：省略 dir 再停，停的就是它
+        receipt = runtime.post_stop({})
+        assert receipt == {"kind": "offline", "dir": str(session_dir), "stopping": True}, receipt
     finally:
         gate.set()
+        _wait_job_done(runtime)
+        config_module.set_current(previous)
+
+
+def test_post_stop_with_two_offline_flights_requires_dir(tmp_path, monkeypatch) -> None:
+    """两场 offline 都在飞：省略 `dir` → 400 让 `dir` 点名（不猜）；点名停哪场停哪场。"""
+    import threading
+
+    from meeting.service.runtime import ActionError
+
+    runtime, session_dir, previous = _ended_session(tmp_path, monkeypatch)
+    gates: list[threading.Event] = []
+
+    from meeting.offline import runner as offline_runner
+
+    def blocking_run_session(target, **kwargs):
+        marker = threading.Event()
+        gates.append(marker)
+        marker.wait(timeout=JOB_TIMEOUT_SECONDS)
+        return {"state": "done"}
+
+    monkeypatch.setattr(offline_runner, "run_session", blocking_run_session)
+    other = tmp_path / "ws-post-actions-2"
+    other.mkdir()
+    runtime.workspace_open(str(other))
+    try:
+        runtime.post_offline({})
+        runtime.post_offline({"dir": str(other)})
+        # 等**两条线程都跑进假件**（marker 登记满两枚）：在飞登记在线程 start 那一刻就
+        # 有两格，光等它不算数 —— 两问都过才动手
+        tick = threading.Event()
+        for _ in range(500):
+            if len(gates) == 2:
+                break
+            tick.wait(timeout=0.01)
+        assert len(gates) == 2, gates
+        with pytest.raises(ActionError) as info:
+            runtime.post_stop({})
+        assert info.value.code == "invalid_setting"
+        assert sorted(info.value.detail["legal"]) == sorted([str(session_dir), str(other)])
+        receipt = runtime.post_stop({"dir": str(other)})
+        assert receipt["dir"] == str(other) and receipt["stopping"] is True
+        # 受理即回：那一场的取消旗标立起、另一场的旗标不动
+        assert runtime.post_jobs[("offline", str(other))]["cancel"].is_set()
+        assert not runtime.post_jobs[("offline", str(session_dir))]["cancel"].is_set()
+    finally:
+        for marker in gates:
+            marker.set()
         _wait_job_done(runtime)
         config_module.set_current(previous)

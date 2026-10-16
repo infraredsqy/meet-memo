@@ -8,6 +8,20 @@ import { postAction } from '../src/api';
 import { ActionFailedError } from '../src/api/actions';
 import type { DirsResponse, SessionRow, SessionStatus, SessionsResponse } from '../src/contract';
 
+/** 一格「没跑过」的转码工序读数（`transcode` 格的空档形状）。 */
+function transcodeIdle(): SessionStatus['transcode'] {
+  return {
+    state: 'idle',
+    in_process: false,
+    started_at: null,
+    finished_at: null,
+    elapsed_seconds: null,
+    current_source: null,
+    sources: [],
+  };
+}
+
+
 /**
  * review-2 m2：「挂载即取列表」接线用例（免 DOM 跑法）。
  *
@@ -97,7 +111,7 @@ function row(over: Partial<SessionRow> = {}): SessionRow {
 }
 
 function list(over: Partial<SessionsResponse> = {}): SessionsResponse {
-  return { sessions: [], recent: null, post_job: null, ...over };
+  return { sessions: [], recent: null, post_jobs: [], ...over };
 }
 
 /** 一份「这一场从没跑过会后」的单场读数（进度区读数的缺省替身）。 */
@@ -111,7 +125,8 @@ export function neverRunStatus(dir: string): SessionStatus {
     mode: null,
     segments: [],
     has_offline: false,
-    post: null,
+    post: [],
+    transcode: transcodeIdle(),
     speakers: [],
     offline: {
       ledger: 'meeting_offline_progress.jsonl',
@@ -294,6 +309,33 @@ describe('会后那两个按钮（review-1 m7）', () => {
       other?.props.onClick();
     });
     expect(postLines(renderer).join('\n')).toContain('会后精细稿：无');
+  });
+
+  it('纪要回执带 inputs / note 时照实画进回执那一行（说破不静默）', async () => {
+    fetchSessionsMock.mockResolvedValue(
+      list({ sessions: [row({ dir: 'C:\\会议\\这一场' })], recent: 'C:\\会议\\这一场' }),
+    );
+    // 形状照 `meeting/service/runtime_post.py` 的 `post_minutes()` 回执（contract 4.3）：
+    // `inputs` 恒在、`note` 只在同场会后精细稿还在跑那档出现（原文同 MINUTES_DEGRADED_NOTE）。
+    postActionMock.mockResolvedValue({
+      kind: 'post',
+      ok: true,
+      revision: 7,
+      post: {
+        kind: 'minutes',
+        dir: 'C:\\会议\\这一场',
+        inputs: 'live_only',
+        note: '会后的精细稿还在跑：这一趟拿到的是会中稿；等它跑完再出纪要能对上会后稿',
+      },
+    });
+    const renderer = await mountHome();
+
+    await click(renderer, buttonByText(renderer, '生成纪要'));
+
+    const line = postLines(renderer).join('\n');
+    expect(line).toContain('这一趟已起');
+    expect(line).toContain('这次读到的输入档位：只有会中稿');
+    expect(line).toContain('会后的精细稿还在跑：这一趟拿到的是会中稿');
   });
 
   it('按钮被拒（409 draining）时失败块出列，回执那一行不留假成功', async () => {
@@ -546,16 +588,18 @@ const stopDir = 'C:\\会议\\正在运行会后';
 
 /** 一份「这一场的 offline 正在飞」的列表应答（顶层第三格 + 盘上 done 的行）。 */
 function flyingList(
-  postJob: SessionsResponse['post_job'] = {
-    kind: 'offline',
-    dir: stopDir,
-    started_at: '2026-09-21T22:10:00+08:00',
-  },
+  postJobs: SessionsResponse['post_jobs'] = [
+    {
+      kind: 'offline',
+      dir: stopDir,
+      started_at: '2026-09-21T22:10:00+08:00',
+    },
+  ],
 ): SessionsResponse {
   return list({
     sessions: [row({ dir: stopDir, state: 'ended' })],
     recent: stopDir,
-    post_job: postJob,
+    post_jobs: postJobs,
   });
 }
 
@@ -631,11 +675,11 @@ describe('停掉会后与「添加工作区会打断」确认（R28 / b1c6a58e�
 
   it('在飞的是纪要那一趟：停止入口不出现（停的动作只接精细稿那一趟）', async () => {
     fetchSessionsMock.mockResolvedValue(
-      flyingList({
+      flyingList([{
         kind: 'minutes',
         dir: stopDir,
         started_at: '2026-09-21T22:10:00+08:00',
-      }),
+      }])
     );
     const renderer = await mountHome();
 
@@ -646,7 +690,7 @@ describe('停掉会后与「添加工作区会打断」确认（R28 / b1c6a58e�
     ).toHaveLength(0);
   });
 
-  it('会后在跑时按「添加工作区」挑目录：先弹「打断」确认；确认 = 先 post_stop 再 workspace_open', async () => {
+  it('会后在跑时按「添加工作区」挑目录：直接登记、零 stop（登记不打断任何在飞的活）', async () => {
     fetchSessionsMock.mockResolvedValue(flyingList());
     browseDirsMock.mockResolvedValue(emptyDirs);
     postActionMock.mockResolvedValue({ kind: 'ok', ok: true, revision: 9 });
@@ -658,31 +702,39 @@ describe('停掉会后与「添加工作区会打断」确认（R28 / b1c6a58e�
     });
     await click(renderer, buttonByText(renderer, '选定这个目录'));
 
+    // 一刀切已废：登记只是写一行名单，不问打断、不发 stop
+    expect(renderer.root.findAll((node) => node.props.role === 'dialog')).toHaveLength(0);
+    expect(postActionMock).toHaveBeenLastCalledWith('workspace_open', { dir: 'C:\\会议\\新场' });
+    expect(postActionMock.mock.calls.map(([name]) => name)).not.toContain('post_stop');
+  });
+
+  it('会后精细稿在飞时按「继续录音」：先弹打断确认（逐字那句）；确认 = 先 post_stop 再 start', async () => {
+    fetchSessionsMock.mockResolvedValue(flyingList());
+    postActionMock.mockResolvedValue({ kind: 'ok', ok: true, revision: 9 });
+    const renderer = await mountHome();
+
+    await click(renderer, buttonByText(renderer, '继续录音'));
+
     const dialogs = renderer.root.findAll((node) => node.props.role === 'dialog');
     const dialogText = dialogs.map((node) => textOf(node as TestRenderer.ReactTestInstance)).join('\n');
-    expect(dialogText).toContain('正在运行的会后任务将被中断，是否继续？');
+    // 设计意图第 13 条的那句原话，逐字
+    expect(dialogText).toContain('启动新会议会打断会后总结，是否继续');
     // 确认之前什么都不发（不确认就不打断）
     expect(postActionMock).not.toHaveBeenCalled();
 
-    await click(renderer, buttonByText(renderer, '中断并继续'));
+    await click(renderer, buttonByText(renderer, '打断并开始录音'));
 
     const calls = postActionMock.mock.calls.map(([name]) => name);
     expect(calls).toContain('post_stop');
-    expect(calls).toContain('workspace_open');
-    expect(calls.indexOf('post_stop')).toBeLessThan(calls.indexOf('workspace_open'));
-    expect(postActionMock).toHaveBeenLastCalledWith('workspace_open', { dir: 'C:\\会议\\新场' });
+    expect(calls).toContain('start');
+    expect(calls.indexOf('post_stop')).toBeLessThan(calls.indexOf('start'));
   });
 
-  it('不确认就不打断：在确认弹窗上取消，一个动作都不发', async () => {
+  it('不确认就不打断：在打断弹窗上取消，一个动作都不发', async () => {
     fetchSessionsMock.mockResolvedValue(flyingList());
-    browseDirsMock.mockResolvedValue(emptyDirs);
     const renderer = await mountHome();
 
-    await click(renderer, buttonByText(renderer, '添加工作区'));
-    await act(async () => {
-      pickerRow(renderer, '新场').props.onClick();
-    });
-    await click(renderer, buttonByText(renderer, '选定这个目录'));
+    await click(renderer, buttonByText(renderer, '继续录音'));
     await click(renderer, buttonByText(renderer, '取消'));
 
     expect(postActionMock).not.toHaveBeenCalled();
@@ -706,7 +758,7 @@ describe('停掉会后与「添加工作区会打断」确认（R28 / b1c6a58e�
 
   it('在飞的是 minutes：按「添加工作区」挑目录无确认、零 stop、直接登记（review-1 m1）', async () => {
     fetchSessionsMock.mockResolvedValue(
-      flyingList({ kind: 'minutes', dir: stopDir, started_at: '2026-09-21T22:10:00+08:00' }),
+      flyingList([{ kind: 'minutes', dir: stopDir, started_at: '2026-09-21T22:10:00+08:00' }])
     );
     browseDirsMock.mockResolvedValue(emptyDirs);
     postActionMock.mockResolvedValue({ kind: 'ok', ok: true, revision: 11 });
@@ -726,7 +778,7 @@ describe('停掉会后与「添加工作区会打断」确认（R28 / b1c6a58e�
 
   it('minutes 在飞 × 非空目录：只问收编、不问打断，登记带 confirm 且零 stop（review-1 m1/m2）', async () => {
     fetchSessionsMock.mockResolvedValue(
-      flyingList({ kind: 'minutes', dir: stopDir, started_at: '2026-09-21T22:10:00+08:00' }),
+      flyingList([{ kind: 'minutes', dir: stopDir, started_at: '2026-09-21T22:10:00+08:00' }])
     );
     browseDirsMock.mockResolvedValue(nonEmptyDirs);
     postActionMock.mockResolvedValue({ kind: 'ok', ok: true, revision: 12 });
@@ -753,7 +805,7 @@ describe('停掉会后与「添加工作区会打断」确认（R28 / b1c6a58e�
     expect(postActionMock.mock.calls.map(([name]) => name)).not.toContain('post_stop');
   });
 
-  it('非空目录 × offline 在飞：先问收编、再问打断；两问都过 = 先 post_stop 再带 confirm 登记（review-1 m2）', async () => {
+  it('非空目录 × offline 在飞：只问收编、零打断，登记带 confirm 且零 stop（一刀切已废）', async () => {
     fetchSessionsMock.mockResolvedValue(flyingList());
     browseDirsMock.mockResolvedValue(nonEmptyDirs);
     postActionMock.mockResolvedValue({ kind: 'ok', ok: true, revision: 13 });
@@ -765,7 +817,7 @@ describe('停掉会后与「添加工作区会打断」确认（R28 / b1c6a58e�
     });
     await click(renderer, buttonByText(renderer, '选定这个目录'));
 
-    // 第一问：收编（R20）；此刻零发送
+    // 只有一问：收编（R20）；此刻零发送
     const dialogs = renderer.root.findAll((node) => node.props.role === 'dialog');
     expect(dialogs).toHaveLength(1);
     expect(textOf(dialogs[0] as TestRenderer.ReactTestInstance)).toContain('将该目录添加为工作区？');
@@ -773,25 +825,16 @@ describe('停掉会后与「添加工作区会打断」确认（R28 / b1c6a58e�
 
     await click(renderer, buttonByText(renderer, '确认添加'));
 
-    // 第二问：打断（次序断言）；此刻仍然零发送
-    const after = renderer.root.findAll((node) => node.props.role === 'dialog');
-    expect(after).toHaveLength(1);
-    expect(textOf(after[0] as TestRenderer.ReactTestInstance)).toContain(
-      '正在运行的会后任务将被中断，是否继续？',
-    );
-    expect(postActionMock).not.toHaveBeenCalled();
-
-    await click(renderer, buttonByText(renderer, '中断并继续'));
-
-    const calls = postActionMock.mock.calls.map(([name]) => name);
-    expect(calls.indexOf('post_stop')).toBeLessThan(calls.indexOf('workspace_open'));
+    // 收编过了直接登记：没有第二问（登记不打断任何在飞的活）
+    expect(renderer.root.findAll((node) => node.props.role === 'dialog')).toHaveLength(0);
     expect(postActionMock).toHaveBeenLastCalledWith('workspace_open', {
       dir: 'C:\\杂物\\旧文件夹',
       confirm: true,
     });
+    expect(postActionMock.mock.calls.map(([name]) => name)).not.toContain('post_stop');
   });
 
-  it('非空目录 × offline 在飞：收编问上取消——一问都没过，零发送（review-1 m2）', async () => {
+  it('非空目录 × offline 在飞：收编问上取消——零发送', async () => {
     fetchSessionsMock.mockResolvedValue(flyingList());
     browseDirsMock.mockResolvedValue(nonEmptyDirs);
     const renderer = await mountHome();
@@ -801,22 +844,6 @@ describe('停掉会后与「添加工作区会打断」确认（R28 / b1c6a58e�
       pickerRow(renderer, '旧文件夹').props.onClick();
     });
     await click(renderer, buttonByText(renderer, '选定这个目录'));
-    await click(renderer, buttonByText(renderer, '取消'));
-
-    expect(postActionMock).not.toHaveBeenCalled();
-  });
-
-  it('非空目录 × offline 在飞：收编过了、打断问上取消——零发送（review-1 m2）', async () => {
-    fetchSessionsMock.mockResolvedValue(flyingList());
-    browseDirsMock.mockResolvedValue(nonEmptyDirs);
-    const renderer = await mountHome();
-
-    await click(renderer, buttonByText(renderer, '添加工作区'));
-    await act(async () => {
-      pickerRow(renderer, '旧文件夹').props.onClick();
-    });
-    await click(renderer, buttonByText(renderer, '选定这个目录'));
-    await click(renderer, buttonByText(renderer, '确认添加'));
     await click(renderer, buttonByText(renderer, '取消'));
 
     expect(postActionMock).not.toHaveBeenCalled();

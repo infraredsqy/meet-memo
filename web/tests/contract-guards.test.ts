@@ -4,12 +4,14 @@ import {
   ACTION_DETAIL_KEYS,
   ACTION_DETAIL_VARIANTS,
   ACTION_NAMES,
+  DRAIN_STEP_IDS,
   ENVELOPE_BAR_COUNT,
   ERROR_CODES,
   actionErrorSchema,
   actionFixtureSchema,
   actionNameSchema,
   describeFailure,
+  drainStepIdSchema,
   dbfsSchema,
   envelopeSchema,
   isoStringSchema,
@@ -18,6 +20,7 @@ import {
   levelsFrameSchema,
   pathStringSchema,
   portSchema,
+  postOkSchema,
   sessionIdSchema,
   sessionSchema,
   snapshotSchema,
@@ -549,7 +552,7 @@ describe('detail 键集合与 4.4 表逐条相等（M1，样本层精确）', ()
  * （`reprobe` 落地时就漏在这里）。下面两条一条钉枚举、一条钉它**覆盖得住服务报的 `known`**。
  */
 describe('动作名清单与样本里的 known 对齐（看守）', () => {
-  it('`ACTION_NAMES` 逐字十六个，`actionNameSchema` 就是这一份', () => {
+  it('`ACTION_NAMES` 逐字十九个，`actionNameSchema` 就是这一份', () => {
     expect([...ACTION_NAMES]).toEqual([
       'start',
       'stop',
@@ -563,6 +566,9 @@ describe('动作名清单与样本里的 known 对齐（看守）', () => {
       'post_offline',
       'post_minutes',
       'post_stop',
+      'transcode_run',
+      'transcode_pause',
+      'transcode_resume',
       'pause',
       'resume',
       'set_source',
@@ -571,7 +577,7 @@ describe('动作名清单与样本里的 known 对齐（看守）', () => {
     expect(actionNameSchema.options).toEqual([...ACTION_NAMES]);
   });
 
-  it('十六个名字全过 schema，清单外的名字与大小写变体被拒', () => {
+  it('十九个名字全过 schema，清单外的名字与大小写变体被拒', () => {
     expectVerdicts(
       actionNameSchema,
       ['PAUSE', 'START', 'Summarize', 'setSource', ''],
@@ -590,6 +596,65 @@ describe('动作名清单与样本里的 known 对齐（看守）', () => {
       expect(actionNameSchema.safeParse(name).success, `known 里的 ${name}`).toBe(true);
     }
     expect(new Set(known)).toEqual(new Set(ACTION_NAMES));
+  });
+});
+
+/**
+ * 会后回执（`post_minutes` 的 `inputs` / `note`，contract 4.3）的看守：两档真形状
+ * （普通成功、带 `inputs`+`note` 的说破档）都要过，档位值写错或多出键要咬。
+ */
+describe('postOkSchema 收真回执、咬假回执（看守）', () => {
+  const base = { ok: true, revision: 9 } as const;
+
+  it('三份真形状照过：offline 只带 {kind, dir}；minutes 恒带 inputs，降级档再加 note', () => {
+    expectVerdicts(
+      postOkSchema,
+      [],
+      [
+        { ...base, post: { kind: 'offline', dir: '<path>' } },
+        { ...base, post: { kind: 'minutes', dir: '<path>', inputs: 'live_only' } },
+        {
+          ...base,
+          post: {
+            kind: 'minutes',
+            dir: '<path>',
+            inputs: 'live_only',
+            note: '会后的精细稿还在跑：这一趟拿到的是会中稿；等它跑完再出纪要能对上会后稿',
+          },
+        },
+      ],
+    );
+  });
+
+  it('inputs 四档之外的取值与 post 格里的多余键都拒（.strict() 照旧咬人）', () => {
+    expectVerdicts(
+      postOkSchema,
+      [
+        { ...base, post: { kind: 'minutes', dir: '<path>', inputs: 'both_plus' } },
+        { ...base, post: { kind: 'minutes', dir: '<path>', inputs: null } },
+        { ...base, post: { kind: 'offline', dir: '<path>', started: true } },
+      ],
+      [],
+    );
+  });
+});
+
+/**
+ * 收尾步 id 清单（`DRAIN_STEP_IDS`）的看守：清单与服务的样本**双向对齐** —— 样本里
+ * 冒出清单外的 id、或清单里躺着服务永远不发的 id（比如已摘出收尾序列的 `transcode`），
+ * 两边都要红。`drainStepIdSchema` 是枚举成员判定，子集照过，清单自己的多余没人盯：
+ * 下一个照它画「收尾明细」的人会画出一行服务永远不发的步骤。
+ */
+describe('收尾步 id 清单与样本对齐（看守）', () => {
+  it('ended-done 样本的 steps id 与 DRAIN_STEP_IDS 逐一对齐（次序与成员都钉住）', () => {
+    const snap = snapshotSchema.parse(readFixture('snapshot', 'ended-done'));
+    const ids = (snap.ended?.steps ?? []).map((step) => step.id);
+    expect(ids).toEqual([...DRAIN_STEP_IDS]);
+  });
+
+  it('transcode 不是收尾步：schema 拒它，清单里也没有它', () => {
+    expect(drainStepIdSchema.safeParse('transcode').success).toBe(false);
+    expect([...DRAIN_STEP_IDS]).not.toContain('transcode');
   });
 });
 

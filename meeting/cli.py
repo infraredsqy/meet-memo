@@ -37,7 +37,7 @@ from typing import Any, Callable, Iterable, Sequence
 
 from meeting import config as config_module
 from meeting import logging_setup
-from meeting.capture.archive import EMPTY_PCM_BYTES
+from meeting.capture import transcode as transcode_module
 from meeting.offline import progress as offline_progress
 from meeting.offline import replay as offline_replay
 from meeting.offline import runner as offline_runner
@@ -701,11 +701,12 @@ def run_post(
 
     四件事，按顺序：
 
-      1. **音频归档补齐**（`sync_archive()`）：两路各自独立判、独立转。判据与收尾第 2 步
-         一致 —— 该路 PCM 非空（字节数 `>= EMPTY_PCM_BYTES`）且（MP3 缺席 或 MP3 比 PCM 旧）
-         才转；空 PCM 不产 MP3、已比 PCM 新的 MP3 不重转；转码失败如实记 `failed`、
-         **PCM 一个字节都不动**，退出码走 `EXIT_FAILURE`。转码实现只有一份
-         （`meeting/capture/archive.py` 的 `convert_to_mp3` + `mp3_path_for`），本模块不另写。
+      1. **音频归档补齐**（`sync_archive()`）：两路各自独立判、独立转。判据是**转码独立
+         工序**那一份（`meeting/capture/transcode.py` 的凭据核对，与 flush 落定自动起的
+         后台工序、`transcode_run` 补跑同源）：凭据认账不重转、空段不产 MP3、没凭据 /
+         不认账的重转一次；转码失败如实记 `failed`、**PCM 一个字节都不动**，退出码走
+         `EXIT_FAILURE`。转码实现只有一份（`capture.archive` 的 `convert_to_mp3` +
+         `mp3_path_for`），本模块不另写。
       2. **跑离线那一趟**：`offline_runner.run_session(session_dir, engine=engine,
          minutes_launcher=…, force=…, progress=…)` —— **模块属性调用**，好让用例把 `run_session`
          整个换掉；注入参数**一路向下传**（`minutes_launcher` / `force` / `announce_minutes`
@@ -1452,37 +1453,35 @@ def sync_archive(
     sources: Iterable[str] | None = None,
     converter: Callable[[Path, Path], bool] | None = None,
 ) -> dict[str, Any]:
-    """按收尾第 2 步同一套判据补齐各路各段的 MP3 归档，交回逐段登记。
+    """按**转码独立工序**的同一套判据补齐各路各段的 MP3 归档，交回逐段登记。
 
-    **转码实现只有一份**：`meeting/capture/archive.py` 的 `convert_to_mp3()` 与
-    `mp3_path_for()`（函数体内 import，与本模块对重依赖的惰性纪律一致），这里只负责
-    「该不该转」这一层判据 —— 连**空 PCM 那个阈值**也取它的 `EMPTY_PCM_BYTES`
-    （`meeting_audio_*_<段号>.mp3` 这个落点则由 `mp3_path_for()` 给）：本模块不留第二份
-    拷贝，那边换了值 / 换了形这里跟着走。段列表来自
-    `meeting/session.py` 的 `segment_archive_paths()`（一段 = 一次录制，逐段独立判）。
+    **完成判据只有一份**：`meeting/capture/transcode.py` 的凭据核对
+    （`segment_done()` / `ensure_segment()`）——「这一段写完了」以逐段凭据为准，
+    产物文件在那儿不算完成；补跑 / 重启时凭据缺失或不认账的那一段重做。本函数
+    （`meeting post` 的归档补齐）、服务里的转码工序（flush 落定自动起的那道，与
+    `transcode_run` 补跑动作）走的是**同一个模块的同一段判据**，不许抄第二份。
+    转码实现也只有原来那一份（`capture.archive` 的 `convert_to_mp3` +
+    `mp3_path_for`）；段列表来自 `meeting/session.py` 的 `segment_archive_paths()`。
 
-      - 该段 PCM 非空（字节数 `>= EMPTY_PCM_BYTES`）且（**MP3 缺席** 或 **MP3 比 PCM 旧**）
-        → 转一次（`converted`）：`mtime` 上 MP3 比 PCM 新说明这一段音频已经归档过，
-        R8 的「反复重跑」在它身上不该再花一次转码；
-      - 空段 PCM（0 / 1 字节，采集侧没录到东西的段就是这个形状）→ 不产 MP3、也不调转码
-        （`no_work`：这一段本来就没有音频可归档）；
-      - PCM 不在场 → 同样 `no_work`；
-      - 转码抛错（`ffmpeg` 缺席、`pydub` 起不来这类）→ 该段记 `failed`，并把这一趟可能
-        写了一半的 MP3 落盘字节**原样收回**（转码前的旧 MP3 内容与缺席状态都复原），
-        **PCM 一个字节都不动**（不 unlink、不截断）。
+      - 凭据认账 → 不重转（`no_work`）；
+      - 空段 PCM（装不下一个样本）→ 不产 MP3、落空段凭据（`no_work`）；
+      - 没凭据 / 不认账 → 转一次（`converted`）：MP3 先写临时名字再原子落位，转砸了
+        旧产物原样保留，**PCM 一个字节都不动**；
+      - 转码抛错 → 该段记 `failed`，别的段照转。
 
-    **各路各段各自独立判、独立转**：一段转不动不带停别的段（归档这一层的每一段都是
-    自己的一份记录）。`sources` 缺省取 `offline_runner.declared_sources()`（`session.json`
-    声明的那几路）；`converter` 是用例的接缝（缺省就是上面那一个真实现）。
+    `sources` 缺省取 `offline_runner.declared_sources()`（`session.json` 声明的那几路）；
+    `converter` 是用例的接缝（缺省就是共享模块缺省的那一个真实现）。
     """
     directory = Path(session_dir)
     names = tuple(sources) if sources is not None else offline_runner.declared_sources(directory)
-    apply_conversion = converter if converter is not None else _archive_converter()
+    apply_conversion = converter if converter is not None else transcode_module.default_converter()
 
     rows: list[dict[str, Any]] = []
     for source in names:
-        segment_paths = segment_archive_paths(directory, source)
-        if not segment_paths:
+        entries = [
+            entry for entry in transcode_module.plan_segments(directory, (source,))
+        ]
+        if not entries:
             rows.append(
                 {
                     "source": str(source),
@@ -1494,55 +1493,44 @@ def sync_archive(
                 }
             )
             continue
-        for pcm_path in segment_paths:
-            segment = archive_segment_number(pcm_path.stem, source)
-            mp3_path = archive_mp3_path_for(pcm_path)
+        for entry in entries:
             row: dict[str, Any] = {
                 "source": str(source),
-                "segment": segment,
-                "pcm": str(pcm_path.resolve()),
+                "segment": entry.segment,
+                "pcm": str(entry.pcm.resolve()),
                 "mp3": None,
                 "outcome": OUTCOME_NO_WORK,
                 "reason": None,
             }
-            size = pcm_path.stat().st_size
-            if size < EMPTY_PCM_BYTES:
-                row["reason"] = f"归档 PCM 是 {size} 字节（空），不产 MP3"
-                rows.append(row)
-                continue
-
-            if mp3_path.is_file() and mp3_path.stat().st_mtime > pcm_path.stat().st_mtime:
-                row.update(
-                    mp3=str(mp3_path.resolve()),
-                    outcome=OUTCOME_NO_WORK,
-                    reason="MP3 已经比 PCM 新，不重复转",
-                )
-                rows.append(row)
-                continue
-
-            # 转码前把 MP3 的现场收好：转砸了要能原样放回去
-            had_mp3 = mp3_path.is_file()
-            payload = mp3_path.read_bytes() if had_mp3 else None
-            try:
-                produced = bool(apply_conversion(pcm_path, mp3_path))
-            except Exception as exc:
-                _restore_payload(mp3_path, payload)
-                row.update(outcome=OUTCOME_FAILED, reason=f"{type(exc).__name__}: {exc}")
+            result = transcode_module.ensure_segment(entry, apply_conversion)
+            state = str(result.get("state"))
+            if state == transcode_module.ROW_FAILED:
+                row.update(outcome=OUTCOME_FAILED, reason=result.get("error"))
                 try:
-                    _log().error("音频归档补齐失败：%s（%s）", pcm_path, row["reason"])
+                    _log().error("音频归档补齐失败：%s（%s）", entry.pcm, row["reason"])
                 except Exception:  # pragma: no cover - 日志尚未初始化时只留登记
                     pass
                 rows.append(row)
                 continue
-
-            if produced and mp3_path.is_file():
-                row.update(mp3=str(mp3_path.resolve()), outcome=OUTCOME_CONVERTED)
-            elif produced:  # pragma: no cover - 转码器说产出了却不见文件：如实记成失败
+            if result.get("reused"):
                 row.update(
-                    outcome=OUTCOME_FAILED, reason="转码器报成功，但 MP3 没落盘"
+                    mp3=str(entry.mp3.resolve()) if result.get("mp3") else None,
+                    outcome=OUTCOME_NO_WORK,
+                    reason="凭据认账，不重转" if result.get("mp3") else "空段凭据在，不产 MP3",
                 )
-            else:
-                row.update(outcome=OUTCOME_NO_WORK, reason="转码器按空音频处理，没有产出 MP3")
+                rows.append(row)
+                continue
+            if state == transcode_module.ROW_SKIPPED:
+                row.update(
+                    outcome=OUTCOME_NO_WORK,
+                    reason=f"归档 PCM 是 {entry.pcm.stat().st_size} 字节（空），不产 MP3",
+                )
+                rows.append(row)
+                continue
+            if result.get("mp3"):
+                row.update(mp3=str(entry.mp3.resolve()), outcome=OUTCOME_CONVERTED)
+            else:  # pragma: no cover - 转码器说产出了却不见文件：如实记成失败
+                row.update(outcome=OUTCOME_FAILED, reason="转码器报成功，但 MP3 没落盘")
             rows.append(row)
 
     state = ARCHIVE_DONE
@@ -1553,37 +1541,16 @@ def sync_archive(
     return {"state": state, "sources": rows}
 
 
-def _archive_converter() -> Callable[[Path, Path], bool]:
-    """真转码那一个函数（**函数体内 import**：本模块的惰性纪律）。"""
-    from meeting.capture.archive import convert_to_mp3
-
-    return convert_to_mp3
-
-
 def archive_mp3_path_for(pcm_path: Path) -> Path:
-    """这一路 PCM 的 MP3 归档落点 —— **求路径也只走那一份现成实现**。
+    """这一路 PCM 的 MP3 归档落点 —— **求路径只走那一份现成实现**。
 
-    `meeting/capture/archive.py::mp3_path_for()` 是全仓唯一的求法（`with_suffix(".mp3")`
-    那一份拷贝住在本模块里，将来那边换了形这边静默跟不上）。与 `_archive_converter()`
-    同一条纪律：落地现在实现上，只在**函数体内** import。
+    `meeting/capture/archive.py::mp3_path_for()` 是全仓唯一的求法；转码工序那一份在
+    `meeting/capture/transcode.py`（它经 `plan_segments()` 拿同样的落点）。本函数只在
+    **函数体内** import：落地现在实现上，那边换了形这边静默跟不上这种事不会发生。
     """
     from meeting.capture.archive import mp3_path_for
 
     return mp3_path_for(pcm_path)
-
-
-def _restore_payload(path: Path, payload: bytes | None) -> None:
-    """把转码前的那份 MP3 内容放回去（`payload is None` = 那一趟本来就没有 MP3）。"""
-    try:
-        if payload is None:
-            path.unlink(missing_ok=True)
-        else:
-            path.write_bytes(payload)
-    except OSError:  # pragma: no cover - 复原失败时下面的 log 里留着这一路 failed 的记录
-        try:
-            _log().warning("转码失败后 MP3 的现场没能复原：%s", path, exc_info=True)
-        except Exception:
-            pass
 
 
 # ---------------------------------------------------------------------------
@@ -2281,7 +2248,7 @@ def _drain_reported_failed(runtime) -> bool:
 
     只看现场，不看退出码：`EXIT_FAILURE` 这一档里压着**两件正交的事** ——「收尾有步骤
     `failed`」与「`server.run()` 自己抛了异常」（后者由 `web()` 的 `finally` 经
-    `fallback` 交出来，见 `_drain_exit_code()` 的说明）。合并看退出码会让「收尾四步全绿、
+    `fallback` 交出来，见 `_drain_exit_code()` 的说明）。合并看退出码会让「收尾三步全绿、
     只是服务器自己炸了」的现场被说成「收尾有步骤失败，服务不自杀（现场仍在）」，与盘上
     那一版（`state == "done"`）对不上 —— 终端文案因此一律按**现场**说话：
     `ended.steps` 里找得到 `failed` 才算收尾失败档；手上没有收尾现场（`ended is None`，
@@ -2356,7 +2323,6 @@ __all__ = [
     "ARCHIVE_DONE",
     "ARCHIVE_FAILED",
     "ARCHIVE_SKIPPED",
-    "EMPTY_PCM_BYTES",
     "EXIT_FAILURE",
     "EXIT_INTERRUPTED",
     "EXIT_NAMES",

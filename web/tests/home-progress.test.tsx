@@ -11,6 +11,20 @@ import {
 } from '../src/api/sessions';
 import type { OfflineSourceProgress, SessionRow, SessionStatus } from '../src/contract';
 
+/** 一格「没跑过」的转码工序读数（`transcode` 格的空档形状）。 */
+function transcodeIdle(): SessionStatus['transcode'] {
+  return {
+    state: 'idle',
+    in_process: false,
+    started_at: null,
+    finished_at: null,
+    elapsed_seconds: null,
+    current_source: null,
+    sources: [],
+  };
+}
+
+
 /**
  * 会后进度区的挂载用例（免 DOM，手法与 `home-mount.test.tsx` 同源）。
  *
@@ -113,7 +127,10 @@ function road(over: Partial<OfflineSourceProgress> = {}): OfflineSourceProgress 
   };
 }
 
-function status(offline: Partial<SessionStatus['offline']>, post: SessionStatus['post'] = null): SessionStatus {
+function status(
+  offline: Partial<SessionStatus['offline']>,
+  post: SessionStatus['post'] = [],
+): SessionStatus {
   return {
     dir: DIR,
     session_id: '这一场',
@@ -124,6 +141,7 @@ function status(offline: Partial<SessionStatus['offline']>, post: SessionStatus[
     segments: [],
     has_offline: false,
     post,
+    transcode: transcodeIdle(),
     speakers: [],
     offline: {
       ledger: 'meeting_offline_progress.jsonl',
@@ -193,7 +211,7 @@ afterEach(() => {
 
 describe('会后进度区：换值渲染不塌', () => {
   it('第 1/10 块：读数一跳进来，阶段行、进度条分数、逐块行跟着换', async () => {
-    fetchSessionsMock.mockResolvedValue({ sessions: [row()], recent: DIR, post_job: null });
+    fetchSessionsMock.mockResolvedValue({ sessions: [row()], recent: DIR, post_jobs: [] });
     fetchSessionStatusMock.mockImplementation(async () =>
       status({
         state: 'running',
@@ -224,7 +242,7 @@ describe('会后进度区：换值渲染不塌', () => {
   });
 
   it('第 9/10 块：同一只组件再喂一跳，读数整块替换、逐块行往下长，不塌', async () => {
-    fetchSessionsMock.mockResolvedValue({ sessions: [row()], recent: DIR, post_job: null });
+    fetchSessionsMock.mockResolvedValue({ sessions: [row()], recent: DIR, post_jobs: [] });
     fetchSessionStatusMock.mockImplementation(async () =>
       status({
         state: 'running',
@@ -263,7 +281,7 @@ describe('会后进度区：换值渲染不塌', () => {
   });
 
   it('停着一版 running：in_process=false 时阶段行换成「没有任何东西在跑」，不冒充在飞', async () => {
-    fetchSessionsMock.mockResolvedValue({ sessions: [row()], recent: DIR, post_job: null });
+    fetchSessionsMock.mockResolvedValue({ sessions: [row()], recent: DIR, post_jobs: [] });
     fetchSessionStatusMock.mockImplementation(async () =>
       status({
         state: 'running',
@@ -287,7 +305,7 @@ describe('会后进度区：换值渲染不塌', () => {
   });
 
   it('展开/收缩：按一下收起（body 不见了）、再按一下展开', async () => {
-    fetchSessionsMock.mockResolvedValue({ sessions: [row()], recent: DIR, post_job: null });
+    fetchSessionsMock.mockResolvedValue({ sessions: [row()], recent: DIR, post_jobs: [] });
     const renderer = await mountHome();
 
     const toggle = () =>
@@ -319,7 +337,7 @@ describe('行四态与全局一格：可识别、不塌', () => {
         row({ dir: 'C:\\会议\\等动手', session_id: '等动手', state: 'ended' }),
       ],
       recent: DIR,
-      post_job: { kind: 'offline', dir: 'C:\\会议\\跑着', started_at: '2026-09-21T22:10:00+08:00' },
+      post_jobs: [{ kind: 'offline', dir: 'C:\\会议\\跑着', started_at: '2026-09-21T22:10:00+08:00' }],
     });
     fetchSessionStatusMock.mockImplementation(async (dir: string) => ({
       ...status({}),
@@ -365,7 +383,7 @@ describe('行四态与全局一格：可识别、不塌', () => {
     fetchSessionsMock.mockResolvedValue({
       sessions: [row()],
       recent: DIR,
-      post_job: { kind: 'minutes', dir: DIR, started_at: '2026-09-21T22:10:00+08:00' },
+      post_jobs: [{ kind: 'minutes', dir: DIR, started_at: '2026-09-21T22:10:00+08:00' }],
     });
     const renderer = await mountHome();
     const cell = () => renderer.root.find((node) => `${node.props.className ?? ''}`.startsWith('gpucell'));
@@ -375,7 +393,7 @@ describe('行四态与全局一格：可识别、不塌', () => {
   });
 
   it('全局一格：没有会后的活儿时「空闲」', async () => {
-    fetchSessionsMock.mockResolvedValue({ sessions: [row()], recent: DIR, post_job: null });
+    fetchSessionsMock.mockResolvedValue({ sessions: [row()], recent: DIR, post_jobs: [] });
     const renderer = await mountHome();
     const cell = () => renderer.root.find((node) => `${node.props.className ?? ''}`.startsWith('gpucell'));
     expect(cell().props['data-busy']).toBe('false');
@@ -384,14 +402,14 @@ describe('行四态与全局一格：可识别、不塌', () => {
   });
 
   it('轮询只挂在有活动那一档：终态读数下 start 不会被喊', async () => {
-    fetchSessionsMock.mockResolvedValue({ sessions: [row()], recent: DIR, post_job: null });
+    fetchSessionsMock.mockResolvedValue({ sessions: [row()], recent: DIR, post_jobs: [] });
     await mountHome();
     // 终态（done + 不在跑）→ 不该进入持续轮询
     expect(pollerOf().start).not.toHaveBeenCalled();
   });
 
   it('在飞那一档进入持续轮询：start 被喊、stop 在读数落定后被喊', async () => {
-    fetchSessionsMock.mockResolvedValue({ sessions: [row()], recent: DIR, post_job: null });
+    fetchSessionsMock.mockResolvedValue({ sessions: [row()], recent: DIR, post_jobs: [] });
     fetchSessionStatusMock.mockImplementation(async () =>
       status({ state: 'running', in_process: true }),
     );
@@ -424,7 +442,7 @@ describe('联结档收敛（review-1 C1）：跑完那一跳之后界面要跟�
     fetchSessionsMock.mockResolvedValue({
       sessions: [row({ state: 'ended' })],
       recent: DIR,
-      post_job: { kind: 'offline', dir: DIR, started_at: '2026-09-21T22:10:00+08:00' },
+      post_jobs: [{ kind: 'offline', dir: DIR, started_at: '2026-09-21T22:10:00+08:00' }],
     });
     fetchSessionStatusMock.mockImplementation(async () =>
       status({ state: 'running', in_process: true }),
@@ -441,7 +459,7 @@ describe('联结档收敛（review-1 C1）：跑完那一跳之后界面要跟�
     fetchSessionsMock.mockResolvedValue({
       sessions: [row({ state: 'ended' })],
       recent: DIR,
-      post_job: null,
+      post_jobs: [],
     });
     await feed();
 
@@ -465,7 +483,7 @@ describe('联结档收敛（review-1 C1）：跑完那一跳之后界面要跟�
       fetchSessionsMock.mockResolvedValue({
         sessions: rowsFly(),
         recent: DIR,
-        post_job: { kind: 'offline', dir: 'C:\\会议\\跑着', started_at: '2026-09-21T22:10:00+08:00' },
+        post_jobs: [{ kind: 'offline', dir: 'C:\\会议\\跑着', started_at: '2026-09-21T22:10:00+08:00' }],
       });
       const renderer = await mountHome();
       expect(fetchSessionsMock).toHaveBeenCalledTimes(1); // 只有挂载那一次
@@ -473,7 +491,7 @@ describe('联结档收敛（review-1 C1）：跑完那一跳之后界面要跟�
       expect(gpuCellOf(renderer).props['data-busy']).toBe('true');
 
       // 跑完：服务翻 null；下一拍心跳重取，A 行翻回、全局格翻闲
-      fetchSessionsMock.mockResolvedValue({ sessions: rowsFly(), recent: DIR, post_job: null });
+      fetchSessionsMock.mockResolvedValue({ sessions: rowsFly(), recent: DIR, post_jobs: [] });
       await act(async () => {
         await vi.advanceTimersByTimeAsync(10_000);
       });
@@ -498,7 +516,7 @@ describe('联结档收敛（review-1 C1）：跑完那一跳之后界面要跟�
 
 describe('错误跳的分档（review-1 m1）：与轮询器「失败跳照交不停表」的契约对齐', () => {
   it('404 档（SessionStatusHttpError）：停表 —— 重试也是同一句；错误行如实画出', async () => {
-    fetchSessionsMock.mockResolvedValue({ sessions: [row()], recent: DIR, post_job: null });
+    fetchSessionsMock.mockResolvedValue({ sessions: [row()], recent: DIR, post_jobs: [] });
     fetchSessionStatusMock.mockImplementation(async () =>
       status({ state: 'running', in_process: true }),
     );
@@ -519,7 +537,7 @@ describe('错误跳的分档（review-1 m1）：与轮询器「失败跳照交�
   });
 
   it('瞬态网络错误（SessionsUnavailableError）：不停表、不冻结 —— 下一跳照常进、收起态也看得见', async () => {
-    fetchSessionsMock.mockResolvedValue({ sessions: [row()], recent: DIR, post_job: null });
+    fetchSessionsMock.mockResolvedValue({ sessions: [row()], recent: DIR, post_jobs: [] });
     fetchSessionStatusMock.mockImplementation(async () =>
       status({ state: 'running', in_process: true }),
     );
@@ -564,7 +582,7 @@ describe('按钮起跑档（review-2 C1）：post_job 出现在选中行上之�
     fetchSessionsMock.mockResolvedValueOnce({
       sessions: [row({ state: 'ended', has_offline: true })],
       recent: DIR,
-      post_job: null,
+      post_jobs: [],
     });
     fetchSessionStatusMock.mockImplementation(async () =>
       status({
@@ -589,7 +607,7 @@ describe('按钮起跑档（review-2 C1）：post_job 出现在选中行上之�
     fetchSessionsMock.mockResolvedValue({
       sessions: [row({ state: 'ended', has_offline: true })],
       recent: DIR,
-      post_job: { kind: 'offline', dir: DIR, started_at: '2026-09-21T22:10:00+08:00' },
+      post_jobs: [{ kind: 'offline', dir: DIR, started_at: '2026-09-21T22:10:00+08:00' }],
     });
     // 补跳那一跳读到的是新一趟的在飞读数（新记录：done 从 0 重数）
     fetchSessionStatusMock.mockImplementation(async () =>
@@ -654,7 +672,7 @@ describe('按钮起跑档（review-2 C1）：post_job 出现在选中行上之�
     fetchSessionsMock.mockResolvedValue({
       sessions: [row({ state: 'ended', has_offline: true })],
       recent: DIR,
-      post_job: null,
+      post_jobs: [],
     });
     await feed();
     expect(pollerOf().stop).toHaveBeenCalled();
@@ -670,7 +688,7 @@ describe('重跑一场的逐块行（review-2 m2）：记录重置那一跳整�
     fetchSessionsMock.mockResolvedValue({
       sessions: [row({ state: 'ended', has_offline: true })],
       recent: DIR,
-      post_job: null,
+      post_jobs: [],
     });
     // 挂载读到的是上一趟的终读（十块全在）
     fetchSessionStatusMock.mockImplementation(async () =>
@@ -745,7 +763,7 @@ async function mountWithPostJumpFailing(
   fetchSessionsMock.mockResolvedValueOnce({
     sessions: [row({ state: 'ended', has_offline: true })],
     recent: DIR,
-    post_job: null,
+    post_jobs: [],
   });
   fetchSessionStatusMock.mockImplementation(async () =>
     status({
@@ -769,7 +787,7 @@ async function mountWithPostJumpFailing(
   fetchSessionsMock.mockResolvedValue({
     sessions: [row({ state: 'ended', has_offline: true })],
     recent: DIR,
-    post_job: { kind: 'offline', dir: DIR, started_at: '2026-09-21T22:10:00+08:00' },
+    post_jobs: [{ kind: 'offline', dir: DIR, started_at: '2026-09-21T22:10:00+08:00' }],
   });
   fetchSessionStatusMock.mockRejectedValueOnce(error);
   await act(async () => {

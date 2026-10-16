@@ -238,7 +238,11 @@ class CaptureBackend:
         session.finalize()
 
     def transcode(self) -> None:
-        """收尾第 2 步：两路 PCM → MP3（转不动就原样抛错，PCM 留着，该步记 `failed`）。"""
+        """两路 PCM → MP3（转不动就原样抛错，PCM 留着）。
+
+        采集后端的协议成员；转码已摘出收尾序列，服务侧的独立工序
+        （`meeting/capture/transcode.py`）不再调它。
+        """
         session = self.session
         if session is None:  # pragma: no cover - 同上
             return

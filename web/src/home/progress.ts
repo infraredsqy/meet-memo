@@ -17,7 +17,7 @@ import { sourceDisplayName } from '../live/format';
  * 四件事，判据全部落在服务给的原文上：
  *
  * 1. **列表行四态**（b3）：空闲 / 正在录 / 会后跑着 / 等你动手 —— 纯显示层重映射
- *    加 `post_job.dir === row.dir` 联结；行 schema 十一键一字不动。
+ *    加 `post_jobs` 联结（这一场有任一趟在飞即命中）；行 schema 十二键一字不动。
  * 2. **进度读数**：`GET /api/sessions/{id}` 的 `offline` 那份 → 每路一条的读数与
  *    进度条百分比。**分母按路各算各的**（契约 4.9：合成一个整场分母就是在造一个
  *    不存在的量，设计意图第 9 条）。
@@ -26,8 +26,9 @@ import { sourceDisplayName } from '../live/format';
  *    「被打断」是盘上自己的终态（b1c6a58e，R28）—— 自成一相，**不许掉进「跑完了」**，
  *    阶段行明说「被打断、可以重跑」。
  * 4. **全局「显卡忙不忙」**（b1/b2）：忙 = 有模型开着 —— 本机正在录（快照状态）
- *    ∨ 会后那趟在本进程跑（`GET /api/sessions` 顶层的 `post_job`）。`meeting post`
- *    命令行那趟活在另一进程、服务看不见，这一格因此不点亮 —— 如实显示。
+ *    ∨ 会后那趟在本进程跑（`GET /api/sessions` 顶层的 `post_jobs`；转码那趟不吃
+ *    显卡，不点亮这一格）。`meeting post` 命令行那趟活在另一进程、服务看不见，
+ *    这一格因此不点亮 —— 如实显示。
  */
 
 /** `GET /api/sessions` 顶层第三格的类型（`PostJobCell`）归契约层；这里引用不重定义。 */
@@ -64,16 +65,17 @@ export interface RowStatusView {
  * 判据按次序：
  *
  * - 目录不在原地 → 「目录不存在」（最优先 —— 目录都没了，联结无从谈起）；
- * - `post_job.dir === row.dir` → 「会后任务运行中」（联结命中；跑的是哪一趟写在全局那格）；
+ * - `post_jobs` 里有 `dir === row.dir` 的一趟 → 「会后任务运行中」（联结命中；
+ *   跑的是哪几趟写在全局那格）；
  * - 三档口径 `state`：`recording` → 录音中；`ended` → **待处理语义**
  *   （05a48b6a 立下这条口径：录音已结束、会后归两个按钮，都不按就什么都不跑）；
  * - 其余（还没开过会的目录）→ 空闲族，文案以 `model.ts` `statusLabel()` 为唯一出处。
  */
-export function rowStatusView(row: SessionRow, postJob: PostJobCell | null): RowStatusView {
+export function rowStatusView(row: SessionRow, postJobs: readonly PostJobCell[]): RowStatusView {
   if (!row.dir_exists) {
     return { tone: 'gone', label: statusLabel(row), mark: 'glyph--dashed', dim: true };
   }
-  if (postJob !== null && postJob.dir === row.dir) {
+  if (postJobs.some((job) => job.dir === row.dir)) {
     return { tone: 'post-running', label: '会后任务运行中', mark: null, dim: false };
   }
   switch (row.state) {
@@ -372,23 +374,29 @@ export interface GpuBusyView {
 const POST_KIND_LABELS: Readonly<Record<string, string>> = {
   offline: '会后精细稿',
   minutes: '纪要',
+  transcode: '转码',
 };
 
 /**
  * 忙/闲的判据（b2）：忙 = 有模型开着 —— 本机正在录（会中模型）∨ 会后那趟在本进程跑。
+ * **转码那一趟不吃显卡**（pydub / ffmpeg 是 CPU 的活），它不点亮这一格、也不进小注。
  * 两处调用各自带自己的输入：工作台首页（会中模型必关着）传 `recording: false` +
- * 列表应答的 `post_job`；会中那一屏传 `recording: top_state ∈ {recording, alert}`
+ * 列表应答的 `post_jobs`；会中那一屏传 `recording: top_state ∈ {recording, alert}`
  * —— 会后那趟在那一屏没有读数入口，不编。
  */
-export function gpuBusyView(postJob: PostJobCell | null, recording: boolean): GpuBusyView {
-  const busy = recording || postJob !== null;
+export function gpuBusyView(
+  postJobs: readonly PostJobCell[],
+  recording: boolean,
+): GpuBusyView {
+  const models = postJobs.filter((job) => job.kind !== 'transcode');
+  const busy = recording || models.length > 0;
   if (!busy) {
     return { busy: false, label: '空闲', note: '没有模型开着', mark: 'glyph--idle' };
   }
   const what: string[] = [];
   if (recording) what.push('会中模型开着');
-  if (postJob !== null) {
-    const kind = POST_KIND_LABELS[postJob.kind] ?? postJob.kind;
+  for (const job of models) {
+    const kind = POST_KIND_LABELS[job.kind] ?? job.kind;
     what.push(`会后那趟在跑（${kind}）`);
   }
   return {
@@ -418,12 +426,12 @@ export function gpuBusyView(postJob: PostJobCell | null, recording: boolean): Gp
  */
 export function shouldWatch(
   row: SessionRow | null,
-  postJob: PostJobCell | null,
+  postJobs: readonly PostJobCell[],
   status: SessionStatus | null,
 ): boolean {
   if (row === null) return false;
   const fresh = status !== null && status.dir === row.dir;
-  if (postJob !== null && postJob.dir === row.dir) {
+  if (postJobs.some((job) => job.dir === row.dir)) {
     if (!fresh) return true;
     return status.offline.in_process || status.offline.state === 'running';
   }

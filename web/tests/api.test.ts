@@ -136,6 +136,31 @@ describe('postAction 的信封解析', () => {
     });
   });
 
+  it('会后两只按钮的回执按真服务形状 parse（`post_minutes` 恒带 inputs、降级档再加 note）', async () => {
+    // 三份体的形状照 `meeting/service/runtime_post.py` 的 `post_minutes()` /
+    // `_minutes_inputs_tier()` 逐格抄（`docs/contract.md` 4.3）：`inputs` 恒在四档之一，
+    // `note` 只在同场会后精细稿还在跑（纪要免闸的说破句，原文同
+    // `MINUTES_DEGRADED_NOTE`）那档出现；`post_offline` 只有 `{kind, dir}`。
+    const degradedNote =
+      '会后的精细稿还在跑：这一趟拿到的是会中稿；等它跑完再出纪要能对上会后稿';
+    const shapes = [
+      { post: { kind: 'offline', dir: '<path>' } },
+      { post: { kind: 'minutes', dir: '<path>', inputs: 'live_only' } },
+      { post: { kind: 'minutes', dir: '<path>', inputs: 'live_only', note: degradedNote } },
+    ] as const;
+    for (const { post } of shapes) {
+      const fetchImpl = vi.fn(async () =>
+        jsonResponse(200, { ok: true, revision: 9, post }),
+      ) as unknown as typeof fetch;
+
+      const result = await postAction('post_minutes', { dir: '<path>' }, { fetchImpl });
+
+      expect(result.kind, JSON.stringify(post)).toBe('post');
+      if (result.kind !== 'post') throw new Error('该是 post 那一档');
+      expect(result.post).toEqual(post);
+    }
+  });
+
   it('十个失败样本都抛 ActionFailedError，带 code / message / detail', async () => {
     const names = [
       'fail-already-recording',

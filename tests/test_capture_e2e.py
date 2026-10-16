@@ -4,7 +4,7 @@
 真采集路径，唯一换掉的是最外面那层声卡库——配置键
 `capture.backend = "tests._capture_faulty:FaultyCaptureBackend"`（`module:Class` 是
 registry 的既有口径）把假端点表与带剧本的假源挂进真后端，读线程 / 写线程 / 电平刻度 /
-收尾四步 / `session.json` 全是生产代码。不起子进程（时间预算），不碰真声卡
+收尾三步与转码独立工序 / `session.json` 全是生产代码。不起子进程（时间预算），不碰真声卡
 （`tests/conftest.py` 的看门原样在用）。
 
 三场戏：
@@ -60,7 +60,7 @@ from tests.test_capture_engine import FakeCaptureSource
 #: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md` 第 7 章。
 pytestmark = pytest.mark.slow
 
-#: 进程内用例的轮询超时（收尾四步跑在收尾线程池里；与既有端到端同档）
+#: 进程内用例的轮询超时（收尾三步跑在收尾线程池里；与既有端到端同档）
 E2E_POLL_TIMEOUT_SECONDS = 15.0
 
 #: 「两路先攒出这么多块再收尾」（1.6 秒：3 个整 0.5 秒帧 + 尾数，MP3 时长也有得比）
@@ -111,13 +111,30 @@ def _wait_for_done(client) -> dict:
     )
 
 
+def _wait_transcode_done(session_dir: Path) -> dict:
+    """等转码独立工序收工（flush 落定自动起的那一道；判据是盘上状态文件，与读数同源）。"""
+    from meeting.capture import transcode as transcode_module
+
+    def _settled():
+        document = transcode_module.read_status(session_dir)
+        if document is not None and document.get("state") in ("done", "partial", "failed"):
+            return document
+        return None
+
+    return wait_until(
+        _settled,
+        timeout=E2E_POLL_TIMEOUT_SECONDS,
+        what="转码独立工序收工（状态文件落终档）",
+    )
+
+
 # ---------------------------------------------------------------------------
 # ① 一场正常会：逐帧核对 + MP3 能解 + 帧序号连续
 # ---------------------------------------------------------------------------
 
 
 def test_a_full_session_reconciles_frame_by_frame(tmp_path: Path, monkeypatch):
-    """假源的一场正常会：收尾四步 `done`，两路归档逐字节、逐帧、逐样本全部对上。
+    """假源的一场正常会：收尾三步落定、转码独立工序收工，两路归档逐字节、逐帧、逐样本全部对上。
 
     墙钟核对的确定性手段：两路的交付上限都钉在 `RECORD_CHUNKS`（喂满之后活着但不再
     出块）。于是「取墙钟读数」的那一刻，最后一块已经落定、之后不可能再有块进来 ——
@@ -167,19 +184,25 @@ def test_a_full_session_reconciles_frame_by_frame(tmp_path: Path, monkeypatch):
         done = _wait_for_done(client)
 
         steps = _drain_steps(done)
-        # 第 4 步按 R26 落 `waiting`（会后不自动跑，等你按按钮），`done` 是收尾 phase 的终态
+        # `post` 那一格按 R26 落 `waiting`（会后不自动跑，等你按按钮），`done` 是收尾 phase 的终态。
+        # 转码已摘出收尾序列：flush 落定那一刻它在后台自动起（真后端带 transcode 能力），
+        # 这里等独立工序自己收工（状态文件落 done），再核对它的产物。
         assert steps == {
-            "flush": "done", "transcode": "done", "log": "done", "post": "waiting",
+            "flush": "done", "log": "done", "post": "waiting",
         }
 
         session_dir = _session_dir_of(client)
         assert str(session_dir).startswith(str(out_root))
+        _wait_transcode_done(session_dir)
         assert sorted(item.name for item in session_dir.iterdir()) == sorted(
             [
                 SESSION_FILE_NAME,
                 archive_name("mic"), archive_name("loopback"),
                 "meeting_audio_mic_001.mp3", "meeting_audio_loopback_001.mp3",
                 "meeting.log",
+                # 转码独立工序的三层盘上记录（照离线层先例的命名）
+                "meeting_transcode_status.json", "meeting_transcode_progress.jsonl",
+                "meeting_transcode_mic_001.json", "meeting_transcode_loopback_001.json",
             ]
         )
 
@@ -309,7 +332,7 @@ def test_a_route_dying_midrun_leaves_the_other_route_intact(tmp_path: Path, monk
         done = _wait_for_done(client)
         # 第 4 步按 R26 落 `waiting`（会后不自动跑，等你按按钮），`done` 是收尾 phase 的终态
         assert _drain_steps(done) == {
-            "flush": "done", "transcode": "done", "log": "done", "post": "waiting",
+            "flush": "done", "log": "done", "post": "waiting",
         }
 
         # 死掉那一路留下恰好那 10 块，逐字节可对（半份归档照样可信）
@@ -329,6 +352,8 @@ def test_a_route_dying_midrun_leaves_the_other_route_intact(tmp_path: Path, monk
         assert len(mic_data) == mic_fed * CHUNK_BYTES
         assert len(mic_data) > size_at_death
         # 收尾的 MP3：mic 照样出得来（loopback 的 PCM 非空，也有它的一份）
+        # 转码独立工序收工（flush 落定自动起的那一道）之后 MP3 才在场
+        _wait_transcode_done(session_dir)
         assert (session_dir / "meeting_audio_mic_001.mp3").exists()
         assert (session_dir / "meeting_audio_loopback_001.mp3").exists()
 

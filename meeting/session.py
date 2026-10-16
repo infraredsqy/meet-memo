@@ -174,7 +174,7 @@ def build_session_record(
     audio_duration_seconds: float = 0.0,
     archives: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
-    """组装一份字段一个不省的 `session.json`（四步各一条、每条四键齐）。
+    """组装一份字段一个不省的 `session.json`（三步各一条、每条四键齐）。
 
     `date` 是**元信息**字段（`docs/design-intent.md` 第 3、6 条）：日期仍是每一场的信息，
     从开场的时刻取，只记录、不参与任何寻址与不参与任何校验。

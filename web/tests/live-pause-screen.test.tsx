@@ -1,6 +1,21 @@
 import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest';
+import type { SessionStatus } from '../src/contract';
 import { createElement } from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
+
+/** 一格「没跑过」的转码工序读数（`transcode` 格的空档形状）。 */
+function transcodeIdle(): SessionStatus['transcode'] {
+  return {
+    state: 'idle',
+    in_process: false,
+    started_at: null,
+    finished_at: null,
+    elapsed_seconds: null,
+    current_source: null,
+    sources: [],
+  };
+}
+
 
 import {
   createEventsClient,
@@ -210,7 +225,7 @@ afterEach(async () => {
 beforeEach(() => {
   // 会后在飞读数的缺省替身：没有会后的活儿（要特定读数自己覆盖）。
   // LiveView 挂上就取 `GET /api/sessions`（review-1 m2），不能让它在替身空转时炸掉。
-  fetchSessionsMock.mockResolvedValue({ sessions: [], recent: null, post_job: null });
+  fetchSessionsMock.mockResolvedValue({ sessions: [], recent: null, post_jobs: [] });
   // 动作端点的缺省替身：成功体（pause / resume / set_source 的成功形状）。
   postActionMock.mockResolvedValue({ kind: 'ok', ok: true, revision: 8 });
 });
@@ -318,7 +333,7 @@ describe('全局一格的会后一半（review-1 m2）：post 在飞读的是 GE
     fetchSessionsMock.mockResolvedValue({
       sessions: [],
       recent: null,
-      post_job: { kind: 'offline', dir: 'C:\\会议\\跑着', started_at: T('22:10:00') },
+      post_jobs: [{ kind: 'offline', dir: 'C:\\会议\\跑着', started_at: T('22:10:00') }],
     });
     const renderer = await mountLive(drainingSnapshot());
 
@@ -333,7 +348,7 @@ describe('全局一格的会后一半（review-1 m2）：post 在飞读的是 GE
   });
 
   it('没有会后的活儿：同一格照旧「空闲」', async () => {
-    fetchSessionsMock.mockResolvedValue({ sessions: [], recent: null, post_job: null });
+    fetchSessionsMock.mockResolvedValue({ sessions: [], recent: null, post_jobs: [] });
     const renderer = await mountLive(drainingSnapshot());
 
     const cells = renderer.root.findAll((node) =>

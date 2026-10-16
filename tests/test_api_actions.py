@@ -142,11 +142,13 @@ def test_action_names_and_codes_are_the_frozen_ones():
     两只是工作台收编节点 `e2f6166b` 加的；`post_offline` / `post_minutes` 是会后两个按钮
     （`05a48b6a`）；`pause` / `resume` / `set_source` 是暂停与会中开关某一路那三个动作
     （`10770b41`）；`speaker_rename` 是人名节点（`91b6752e`）加的那一只；
-    `post_stop` 是打断会后那个节点（`b1c6a58e`）加的。"""
+    `post_stop` 是打断会后那个节点（`b1c6a58e`）加的；`transcode_run` / `transcode_pause` /
+    `transcode_resume` 是转码独立工序这一棒加的三只。"""
     assert ACTION_NAMES == (
         "start", "stop", "mute_session", "settings_update", "reprobe", "dev_inject",
         "summarize", "workspace_open", "workspace_remove",
         "post_offline", "post_minutes", "post_stop",
+        "transcode_run", "transcode_pause", "transcode_resume",
         "pause", "resume", "set_source",
         "speaker_rename",
     )

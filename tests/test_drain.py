@@ -1,4 +1,4 @@
-"""收尾四步、自适应预算与失败出路的黑盒用例（phase3 §5.1 / §3.8 的 12 条 + 审查修复追加的几条）。
+"""收尾三步、自适应预算与失败出路的黑盒用例（phase3 §5.1 / §3.8 的 12 条 + 审查修复追加的几条）。
 
 **用例计数（照实登记，数目可核对）**
 
@@ -350,7 +350,7 @@ def _start_service(
     **`MEETING_CAPTURE` 必须从子进程环境里摘干净**：它是 `capture.backend` 的环境变量覆盖
     （优先级：环境变量 > `config.json` > 默认），留着它（哪怕是夹具的缺省 `dev`），
     `config.json` 里那条 `capture.backend`（本文件挂假件与选替身用的键）就永远不生效 ——
-    假件静默没挂上，收尾四步全落 `skipped`，用例会以「以为在验 A、其实在验 B」的形式蒙混过关。
+    假件静默没挂上，收尾三步全落 `skipped`，用例会以「以为在验 A、其实在验 B」的形式蒙混过关。
 
     **这一步摘除是必要的、不是漂移**（审查问题 M13 点名的读法）：两条子进程路径
     （`tests/test_shutdown_signal.py` 那一支与本文件这一支）**同源**，靠的都是「把这一项从
@@ -391,7 +391,7 @@ def _pin_fake(plugin: fakes.FakePlugin) -> None:
     """**看门断言**：假件确实被解析到了。
 
     写出去的那份模块在被 import 时会往标记文件写一行；少了它说明假件根本没挂上
-    （registry 会静默回退替身，收尾四步于是全 `skipped`），用例会以「以为在验 A、
+    （registry 会静默回退替身，收尾三步于是全 `skipped`），用例会以「以为在验 A、
     其实在验 B」的形式蒙混过关。
     """
     wait_until(plugin.module_loaded, timeout=DRAIN_POLL_TIMEOUT_SECONDS)
@@ -405,7 +405,7 @@ def _service_log_text(env: Any) -> str:
 def _log_with_all(path: Path, needles: list[str]) -> str | None:
     """等到日志文件里这些片段全都出现，再把整份文本给出来。
 
-    收尾四步的落盘与读文件是两个进程的事：**等到位再断言**比「读完再抱怨」稳
+    收尾三步的落盘与读文件是两个进程的事：**等到位再断言**比「读完再抱怨」稳
     （文件刚建好那一瞬间读到的是空内容）。
     """
     text = helpers.read_text(path)
@@ -417,7 +417,7 @@ def _log_with_all(path: Path, needles: list[str]) -> str | None:
 #: 场次 log **结束标记**里那一小段固定文案（`SESSION_END_MARKER` 的字面形状）。
 #: 别拿「场次结束：」去找标记：`stop` 那一刻落的「场次结束：<id>（目录 …）」也含这四个字，
 #: 两者都落在同一份场次 log 里，用宽的那个前缀会把结束标记之前的行也划到后面去。
-END_MARKER_TEXT = "；收尾四步："
+END_MARKER_TEXT = "；收尾步骤："
 
 
 def _wait_end_marker(session_dir: str, *, timeout: float = DRAIN_POLL_TIMEOUT_SECONDS) -> str:
@@ -490,7 +490,7 @@ def _warm_up_client(proc: Any) -> None:
 
     本机新建一个 `httpx.Client` 要 0.83 秒（Windows 上 SSL 上下文的初始化，
     `tests/_helpers.py` 的 `local_get()` 上有详细说明）。用例的第一次读若落在测量窗口里，
-    被测的那段墙钟就被这笔构造代价盖住 —— 收尾四步几乎瞬间开跑，「某一步停在 `running`」
+    被测的那段墙钟就被这笔构造代价盖住 —— 收尾三步几乎瞬间开跑，「某一步停在 `running`」
     这一格会被读成 `done`。预热因此是把观察点挪进窗口的必要一步（不是绕过断言：
     窗口之内的每一次读、每一条断言都照旧）。
     """
@@ -498,7 +498,7 @@ def _warm_up_client(proc: Any) -> None:
 
 
 def _wait_any_failed(proc: Any) -> dict[str, Any]:
-    """等到**收尾四步全部落定**且其中出现 `failed` 步，再返回那一份快照。
+    """等到**收尾三步全部落定**且其中出现 `failed` 步，再返回那一份快照。
 
     只等「出现 failed 步」会撞上偶发：`flush` 一落 `failed`，后面的 `transcode` / `log` /
     `post` 还在按顺序登记（失败不中断后续登记），此刻读到的 `log` 可能还停在 `running`。
@@ -724,9 +724,9 @@ def test_skipped_and_failed_follow_registry_resolution_without_exception_swallow
     """沿用 registry 的解析结论：**缺席记 `skipped`、有实现却抛错记 `failed`**。
 
     行为断言证明「异常吞成 `skipped`」这条路不在实现里：给在场实现注入一个非预期异常
-    （`finalize()` 抛 `OSError`），那一步必须落到 `failed`；同一趟里采集假件带着
-    `transcode` 能力，第 2 步照常真的跑完、落 `done`（「缺席记 `skipped`」那一档由
-    替身构建的用例钉住，如 `test_state_machine.py` 的 dev 替身那一条）。
+    （`finalize()` 抛 `OSError`），那一步必须落到 `failed`（转码已摘出收尾序列：它成了
+    这一场的独立后台工序，`flush` 失败不挡 `log` / `post` 两步照常登记 ——「某一步
+    `failed` 之后，后续步骤照常按顺序登记」这条铁律由本条钉住）。
     """
     plugin = fakes.write_failing_capture_plugin(meeting_env.home)
     fakes.write_plugin_config(meeting_env.home, plugin)
@@ -740,7 +740,7 @@ def test_skipped_and_failed_follow_registry_resolution_without_exception_swallow
     statuses = _step_statuses(snapshot["ended"]["steps"])
     detail = _service_log_text(meeting_env)
     assert statuses["flush"] == "failed", _drain_evidence(snapshot, detail)
-    assert statuses["transcode"] == "done"  # 采集假件带 transcode 能力 → 第 2 步真的跑完
+    assert set(statuses) == {"flush", "log", "post"}, sorted(statuses)
     assert statuses["log"] == "done"
     flush = next(step for step in snapshot["ended"]["steps"] if step["id"] == "flush")
     assert flush["error"] and "OSError" in flush["error"]
@@ -806,11 +806,10 @@ def test_drain_wait_limit_follows_backlog_budget(service_process, meeting_env):
     elapsed = time.monotonic() - began
 
     statuses = _step_statuses(snapshot["ended"]["steps"])
-    # 拖长的是 `flush` 一步；`transcode` 在这一趟里也有真实实现（假采集后端带着 transcode
-    # 能力），于是它跑到 `done`（替身构建下它是 `skipped`，两档都算落定）
+    # 拖长的是 `flush` 一步（转码已摘出收尾序列，三步：flush / log / post）
     assert statuses["flush"] == "done", snapshot["ended"]
     assert statuses["post"] == "waiting", snapshot["ended"]
-    assert statuses["transcode"] in ("done", "skipped")
+    assert statuses["log"] == "done", snapshot["ended"]
     assert elapsed >= DRAIN_DRAG_TOTAL_SECONDS, f"这两步该真的等满（实测 {elapsed:.2f}s）"
     upper = budget + DRAIN_LOG_MIN_BUDGET_SECONDS
     assert elapsed <= upper, f"一趟收尾 {elapsed:.2f}s 超出预算上限 {upper}s（deadline 没生效？）"
@@ -940,7 +939,9 @@ def test_step_over_budget_lands_failed_and_service_survives(service_process, mee
     （原先写标记的是第 4 步的会后钩子，而按 R26 会后已经不再自动跑 —— 那一格不再被调用，
     标记因此改由收尾里第一个真实调用写下）；这一趟的预算仍是
     `compute_drain_budget(DRAIN_DEFAULT_BACKLOG, DRAIN_DEFAULT_SEGMENT_TIMEOUT_SECONDS)` = 下限
-    30 秒（**用例按常量读它，不抄裸数**）。越界因此落在**紧跟着的那一步**（`transcode`）上。
+    30 秒（**用例按常量读它，不抄裸数**）。转码已摘出收尾序列，紧跟着的落点是 `log` 步 ——
+    而它有 `DRAIN_LOG_MIN_BUDGET_SECONDS` 的保底，因此越界通常落在 `flush` 自己的实测耗时上
+    （`finalize()` 的等待被包在剩余预算里；两档——越界落 `flush` 或落 `log`——都算验到）。
 
     四件事一起断，缺一件这一档就还是没验到：
 
@@ -1001,8 +1002,9 @@ def test_step_over_budget_lands_failed_and_service_survives(service_process, mee
     assert measured_spent > overran_budget, (
         f"error 里自报的实测耗时 {measured_spent}s 该大于那一次的 budget {overran_budget}s：{error!r}"
     )
-    # ② 越界落在末尾那三步里（`post` 那一格按 R26 停在 `waiting`，越界因此不会落在它身上）
-    assert overran["id"] in ("transcode", "log"), evidence
+    # ② 越界落在有真实调用的步骤里（`post` 那一格按 R26 停在 `waiting`，越界因此不会落在
+    # 它身上；转码已摘出收尾序列，落点是 flush 自己的实测耗时或 log 步）
+    assert overran["id"] in ("flush", "log"), evidence
     # ③ 盘上那一版：失败档的 `state`，`ended_at` 有值（收尾走到了终态）
     record = read_session_json(snapshot["session"]["dir"])
     assert record is not None, "盘上读不出 session.json"
@@ -1075,23 +1077,24 @@ DRAIN_SHARED_TRANSCODE_SECONDS = 0.06
 
 
 def test_drain_steps_share_one_deadline_with_shrinking_remaining_budget(tmp_path, monkeypatch):
-    """四步共享**同一条** deadline：越界那一步落 `failed`，后一步拿到的剩余预算比前一步小（C1）。
+    """收尾各步共享**同一条** deadline：越界那一步落 `failed`，后一步拿到的剩余预算比前一步小（C1）。
+
+    转码已摘出收尾序列（三步：flush / log / post），越界现场随之改排在 `flush` 上：
+    `finalize()` 的假件睡 `DRAIN_SHARED_TRANSCODE_SECONDS`（明显长于这一趟的小预算）。
 
     两件事一起断（缺一件「共享一条 deadline」就还是没验到）：
 
-      1. **预算耗尽真的发生**：`transcode` 那一步的假件睡 `DRAIN_SHARED_TRANSCODE_SECONDS`
-         （明显长于它开跑时剩下的那一截预算），它的 `status == "failed"`，`error` 是 §3.3
-         点名的「超出收尾预算」那一段；
-      2. **共享 deadline 的直接证据**：四步无一例外都读到**同一条**截止时刻（逐值相等），
-         而它们各自开跑时「离那条截止时刻还剩多久」**逐级单调不增**、末一步比第 2 步少掉
-         一大截（差的就是前两步实测花掉的那一段）—— 每步各拿一份**完整**预算时，
-         第 2 条当场红。
+      1. **预算耗尽真的发生**：`flush` 那一步的假件睡过预算，它的 `status == "failed"`，
+         `error` 是 §3.3 点名的「超出收尾预算」那一段；
+      2. **共享 deadline 的直接证据**：各步无一例外都读到**同一条**截止时刻（逐值相等），
+         而它们各自开跑时「离那条截止时刻还剩多久」**逐级单调不增**（每步各拿一份
+         **完整**预算时，第 2 条当场红）。
 
-    **把四处调用改成 `deadline=None` 时这一条必红**（变异自测见交付报告）：那时四步各自拿到
-    一份**完整**的下限预算、读到的截止时刻互不相同，上面第 2 条的两半都不成立；`transcode`
-    也不再落 `failed`（它拿满下限，0.06 秒的假件照常跑完）。
+    **把各处调用改成 `deadline=None` 时这一条必红**（变异自测见交付报告）：那时各步各自
+    拿到一份**完整**的下限预算、读到的截止时刻互不相同，上面第 2 条的两半都不成立；
+    `flush` 也不再落 `failed`。
 
-    预算函数由 `monkeypatch` 换成一个固定的小值（`0.05` 秒）：这一条要验的是「四步怎么**用**
+    预算函数由 `monkeypatch` 换成一个固定的小值（`0.05` 秒）：这一条要验的是「各步怎么**用**
     这笔预算」，那笔预算**算多大**由 ④ / ⑤ / ⑤b2 各自负责。
     """
     from meeting.backends.registry import BackendResolution
@@ -1100,14 +1103,13 @@ def test_drain_steps_share_one_deadline_with_shrinking_remaining_budget(tmp_path
 
     runtime = _inprocess_runtime(tmp_path, monkeypatch)
 
-    # 采集假件在场：`finalize()` 睡 `DRAIN_SHARED_STEP_SECONDS`（一小段真实耗时）、
-    # `transcode()` 睡 `DRAIN_SHARED_TRANSCODE_SECONDS`（明显长于它开跑时剩下的那截预算）
+    # 采集假件在场：`finalize()` 睡 `DRAIN_SHARED_TRANSCODE_SECONDS`（明显长于这一趟的
+    # 小预算 —— 越界现场在 `flush` 上；转码已不在收尾序列里）
     backend = fakes.FakeCaptureBackend(
-        finalize_delay_seconds=DRAIN_SHARED_STEP_SECONDS,
-        transcode_delay_seconds=DRAIN_SHARED_TRANSCODE_SECONDS,
+        finalize_delay_seconds=DRAIN_SHARED_TRANSCODE_SECONDS,
     )
     runtime.capture_backend = backend
-    runtime.capture_capabilities = {"finalize": True, "transcode": True, "dev_inject": False}
+    runtime.capture_capabilities = {"finalize": True, "transcode": False, "dev_inject": False}
     runtime.capture_resolution = BackendResolution(
         key="capture.backend",
         selector="fake",
@@ -1116,11 +1118,11 @@ def test_drain_steps_share_one_deadline_with_shrinking_remaining_budget(tmp_path
         has_implementation=True,
         detail="本用例造的现场（进程内直接注入运行时成员）",
     )
-    # **四步都要真的经 `_drain_wait()`**（§3.1 第 3 条的「无一例外」）：第 2 步的闸门只看
-    # **采集侧**（上面已给足 `capture_resolution` 与 transcode 能力，转写侧与它无关）；
-    # 第 4 步 `post` 现在只做一件事 —— 让会中模型退出显存（R26：会后归两个按钮），
-    # 那一次调用同样经 `_drain_wait()`，因此这里给一台**带 `release_gpu()` 的假转写后端**
-    # （共享假件 `FakeTranscriberBackend`，四步里就一步都不缺）。
+    # **各步都要真的经 `_drain_wait()`**（§3.1 第 3 条的「无一例外」）：`log` 步的
+    # flush / 摘除自带真实实现；`post` 步只做一件事 —— 让会中模型退出显存
+    # （R26：会后归两个按钮），那一次调用同样经 `_drain_wait()`，因此这里给一台
+    # **带 `release_gpu()` 的假转写后端**（共享假件 `FakeTranscriberBackend`）。
+    # **transcode 能力不给**：flush 越界落 `failed`，flush 落定自动起转码那一档不触发。
     transcriber = fakes.FakeTranscriberBackend()
     runtime.transcriber_backend = transcriber
     monkeypatch.setattr(runtime, "_resolve_backends", lambda: None)
@@ -1171,32 +1173,33 @@ def test_drain_steps_share_one_deadline_with_shrinking_remaining_budget(tmp_path
         runtime.start_session(dir=_new_workspace(tmp_path, "deadline-share"))
         begin_drain(runtime.snapshot, reason="user")
         await runtime.drain()
-        # 第 4 步那一趟单独再跑一遍：`transcode` 越界已经把这一趟的 deadline 用光了（剩余预算 0），
-        # 收尾编排里那一次 `_drain_wait()` 因此会在开跑之前就判越界。这一步本身只做一件事
-        # （让会中模型退出显存，R26），这里给它一条新的 deadline，量的是「它也经同一层等待」。
+        # `post` 步那一趟单独再跑一遍：`flush` 越界已经把这一趟的 deadline 用光了（剩余
+        # 预算 0），收尾编排里那一次 `_drain_wait()` 因此会在开跑之前就判越界。这一步本身
+        # 只做一件事（让会中模型退出显存，R26），这里给它一条新的 deadline，
+        # 量的是「它也经同一层等待」。
         collecting = False
         await runtime._drain_post(deadline=time.monotonic() + DRAIN_SHARED_BUDGET_SECONDS)
 
     asyncio.run(one_pass())
 
-    # 四步无一例外都经 `_drain_wait()`（§3.1 第 3 条）
+    # 各步无一例外都经 `_drain_wait()`（§3.1 第 3 条）
     assert [item["step"] for item in seen] == list(DRAIN_STEP_IDS), seen
     # ① 预算耗尽真的发生：超预算的那一步照 §3.3 点名的话落 `failed`
     statuses = {step.id: step.status for step in runtime.snapshot.ended.steps}
-    # 变异（四处调用点改成 `deadline=None`）会让这一格读到 `None` —— 下面这句如实报出来，
+    # 变异（各处调用点改成 `deadline=None`）会让这一格读到 `None` —— 下面这句如实报出来，
     # 不靠格式化把信号盖掉
-    assert seen[1]["remaining"] is not None, (
-        f"第 2 步开跑时手上没有 deadline（四处调用点没把这一趟那条传下来）：{seen}"
+    assert seen[0]["remaining"] is not None, (
+        f"第 1 步开跑时手上没有 deadline（各处调用点没把这一趟那条传下来）：{seen}"
     )
-    assert statuses["transcode"] == "failed", (
+    assert statuses["flush"] == "failed", (
         f"{statuses}（这一步的假件睡了 {DRAIN_SHARED_TRANSCODE_SECONDS}s，"
-        f"而它开跑时只剩 {seen[1]['remaining']:.4f}s）"
+        f"而它开跑时只剩 {seen[0]['remaining']:.4f}s）"
     )
-    transcode_step = next(step for step in runtime.snapshot.ended.steps if step.id == "transcode")
-    assert "超出收尾预算" in (transcode_step.error or ""), transcode_step.error
-    # 收尾编排那一趟只算一次预算（单独再跑的第 4 步不经过 `_run_drain_steps()`，不另算）
+    flush_step = next(step for step in runtime.snapshot.ended.steps if step.id == "flush")
+    assert "超出收尾预算" in (flush_step.error or ""), flush_step.error
+    # 收尾编排那一趟只算一次预算（单独再跑的 `post` 步不经过 `_run_drain_steps()`，不另算）
     assert calls["budget"] == 1, f"这一趟该只算一次预算，实测喊了 {calls['budget']} 次"
-    # 第 4 步做完它该做的（释放会中模型）就停在「等你动手」：四步里没有一步被漏掉
+    # `post` 步做完它该做的（释放会中模型）就停在「等你动手」：三步里没有一步被漏掉
     assert statuses["post"] == "waiting", statuses
     # 释放被喊到（收尾编排那一趟 + 上面单独再跑的那一趟；两次都是真的经等待层交到工作线程）
     assert transcriber.released >= 1, transcriber.released
@@ -1207,11 +1210,11 @@ def test_drain_steps_share_one_deadline_with_shrinking_remaining_budget(tmp_path
     for item in seen:
         assert item["deadline"] is not None, (
             f"{item['step']} 那一步拿到的 deadline 是 None —— 每步各拿一份下限预算，"
-            f"四步没有共享同一条 deadline：{seen}"
+            f"各步没有共享同一条 deadline：{seen}"
         )
     deadlines = {item["deadline"] for item in seen}
     assert len(deadlines) == 1, (
-        f"四步该读到**同一条**截止时刻，实测有 {len(deadlines)} 条："
+        f"各步该读到**同一条**截止时刻，实测有 {len(deadlines)} 条："
         f"{[(item['step'], item['deadline']) for item in seen]}"
     )
     # 每一步开跑时「这条 deadline 还剩多少」：同一趟收尾里逐级单调不增 —— 这正是「共享」的
@@ -1219,29 +1222,21 @@ def test_drain_steps_share_one_deadline_with_shrinking_remaining_budget(tmp_path
     remainings = [item["remaining"] for item in seen]
     assert all(
         later <= earlier for earlier, later in zip(remainings, remainings[1:])
-    ), f"四步开跑时的剩余预算该逐级单调不增：{[(i['step'], i['remaining']) for i in seen]}"
-    # 逐级变小是**实测**的：前两步真的花掉了各自那段时长，末一步拿到的那一截明显更小
-    spent_before_last = seen[0]["remaining"] - seen[-1]["remaining"]
-    assert spent_before_last >= DRAIN_SHARED_STEP_SECONDS, (
-        f"第 1 步到末一步之间该量到前几步花掉的那一段（第 1 步的假件睡了 "
-        f"{DRAIN_SHARED_STEP_SECONDS}s），实测只少了 {spent_before_last:.4f}s：{seen}"
-    )
-    # 收尾期间那条 deadline 真的走到了头：越界那一步跑完之后，剩余预算已经是 0
-    assert seen[1]["after"] == 0.0, (
-        f"transcode 跨过预算之后，这条 deadline 的剩余预算该是 0，实测 {seen[1]['after']!r}：{seen}"
+    ), f"各步开跑时的剩余预算该逐级单调不增：{[(i['step'], i['remaining']) for i in seen]}"
+    # 收尾期间那条 deadline 真的走到了头：越界那一步之后，剩余预算已经是 0
+    assert seen[0]["after"] == 0.0, (
+        f"flush 跨过预算之后，这条 deadline 的剩余预算该是 0，实测 {seen[0]['after']!r}：{seen}"
     )
     print(
         f"[C1 证据] 预算固定为 compute_drain_budget(){DRAIN_SHARED_BUDGET_SECONDS}s，"
-        f"第 1 步的假件睡 {DRAIN_SHARED_STEP_SECONDS}s、"
-        f"第 2 步的假件睡 {DRAIN_SHARED_TRANSCODE_SECONDS}s（明显长于它开跑时的剩余预算）：\n"
+        f"flush 的假件睡 {DRAIN_SHARED_TRANSCODE_SECONDS}s（明显长于预算）：\n"
         f"  每一步开跑时的剩余预算 / 截止时刻："
         f"{[(item['step'], round(item['remaining'], 4), round(item['deadline'], 4)) for item in seen]}\n"
-        f"  超预算那一步：transcode -> {statuses['transcode']}"
-        f"（error={transcode_step.error!r}）\n"
-        f"  四步读到同一条截止时刻：{len(deadlines) == 1}"
+        f"  超预算那一步：flush -> {statuses['flush']}"
+        f"（error={flush_step.error!r}）\n"
+        f"  各步读到同一条截止时刻：{len(deadlines) == 1}"
         f"（{list(deadlines)[0]:.4f}）；"
         f"剩余预算 {remainings[0]:.4f}s -> {remainings[-1]:.4f}s"
-        f"（少掉 {spent_before_last:.4f}s）"
     )
 
 
@@ -2351,14 +2346,14 @@ def test_cancelled_drain_keeps_draining_even_with_a_failed_step_before_it(tmp_pa
 
     runtime = _inprocess_runtime(tmp_path, monkeypatch)
 
-    # 第 1 步「有实现却抛错」（采集假件的 finalize() 抛错），第 2 步由同一个假件的
-    # `transcode()` 钉住这一刻（与 ③ 条同一手法，经共享假件配出来）
+    # 第 1 步「有实现却抛错」（采集假件的 finalize() 抛错）；在飞那一步改钉在 `log` 上 ——
+    # 转码已摘出收尾序列，`log` 步的结束标记由本用例换成会睡一小段的假件（真实实现照常
+    # 在它身后，睡完照常落）
     backend = fakes.FakeCaptureBackend(
         finalize_error="C2 现场的采集归档落盘失败",
-        transcode_delay_seconds=DRAIN_CANCEL_STEP_SECONDS,
     )
     runtime.capture_backend = backend
-    runtime.capture_capabilities = {"finalize": True, "transcode": True, "dev_inject": False}
+    runtime.capture_capabilities = {"finalize": True, "transcode": False, "dev_inject": False}
     runtime.capture_resolution = BackendResolution(
         key="capture.backend",
         selector="fake",
@@ -2369,6 +2364,16 @@ def test_cancelled_drain_keeps_draining_even_with_a_failed_step_before_it(tmp_pa
     )
     monkeypatch.setattr(runtime, "_resolve_backends", lambda: None)
 
+    from meeting import logging_setup as logging_setup_module
+
+    real_end_marker = logging_setup_module.write_session_end_marker
+
+    def slow_end_marker(*args, **kwargs):
+        time.sleep(DRAIN_CANCEL_STEP_SECONDS)
+        return real_end_marker(*args, **kwargs)
+
+    monkeypatch.setattr(logging_setup_module, "write_session_end_marker", slow_end_marker)
+
     session = runtime.start_session(dir=_new_workspace(tmp_path, "resolve-pinned"))
 
     async def interrupt_while_the_last_step_runs() -> None:
@@ -2376,16 +2381,16 @@ def test_cancelled_drain_keeps_draining_even_with_a_failed_step_before_it(tmp_pa
         begin_drain(runtime.snapshot, reason="user")
         task = asyncio.get_running_loop().create_task(runtime.drain())
         runtime._drain_task = task
-        # 确定同步点：`transcode` 那一步真的进了 `running`（收尾确实还在跑）再打断
+        # 确定同步点：`log` 那一步真的进了 `running`（收尾确实还在跑）再打断
         deadline = time.monotonic() + DRAIN_POLL_TIMEOUT_SECONDS
         while time.monotonic() < deadline:
-            if runtime.snapshot.drain_step("transcode").status == "running":
+            if runtime.snapshot.drain_step("log").status == "running":
                 break
             await asyncio.sleep(DRAIN_CANCEL_POLL_SECONDS)
-        else:  # pragma: no cover - 收尾一定走到 transcode 那一步
+        else:  # pragma: no cover - 收尾一定走到 log 那一步
             raise AssertionError(
-                f"等不到 transcode 那一步进入 running（实测 "
-                f"{runtime.snapshot.drain_step('transcode').status!r}）"
+                f"等不到 log 那一步进入 running（实测 "
+                f"{runtime.snapshot.drain_step('log').status!r}）"
             )
         # 强制打断那一趟的顺序（§3.5）：**先落盘**、**再 cancel()**
         runtime._shutdown_interrupted = True
@@ -2399,8 +2404,7 @@ def test_cancelled_drain_keeps_draining_even_with_a_failed_step_before_it(tmp_pa
     assert snapshot.ended.phase == "draining", snapshot.ended
     statuses = {step.id: step.status for step in snapshot.ended.steps}
     assert statuses["flush"] == "failed", statuses
-    assert statuses["log"] == "waiting", statuses
-    assert statuses["transcode"] == "running", statuses
+    assert statuses["log"] == "running", statuses
     assert statuses["post"] == "waiting", statuses
 
     # 换实现之前的那一版会在这里拿到 `state == "failed"`（映射按「有 failed 步」算出来的）
@@ -2567,10 +2571,10 @@ def test_drain_logs_budget_and_elapsed(service_process, meeting_env):
     读的是**两个日志文件**（本文件不使用 `caplog`）：`MEETING_LOG_DIR` 下的**服务级 log**
     与场次目录下的**场次 log**。两者的分工照实情写：
 
-      - **服务级 log** 是四步齐备的那一份 —— 场次 log 在 `log` 步落定那一刻就被摘掉，
+      - **服务级 log** 是各步齐备的那一份 —— 场次 log 在 `log` 步落定那一刻就被摘掉，
         `log` 步自己的「结束」与「耗时」写在摘掉之后，只进得了服务级 log；
-      - **场次 log** 里核前三步（`flush` / `transcode` / `log` 的开始，加上先落定的那两步的
-        结束与耗时），它同时是「收尾开始 + 预算输入 + 预算结果」落在本场那一份里的证据。
+      - **场次 log** 里核摘掉之前的记录（收尾开始 + `flush` 的开始 / 结束 / 耗时 +
+        `log` 步的开始），它同时是「收尾开始 + 预算输入 + 预算结果」落在本场那一份里的证据。
 
     这条用例只做自己那一遍必需的现场操作（一次 `start` + `stop`），读 log 一律走
     `wait_until()` 等两个文件都写到位再断言 —— 跨进程读文件撞上「还差最后一行」是偶发红的
@@ -2582,18 +2586,20 @@ def test_drain_logs_budget_and_elapsed(service_process, meeting_env):
     snapshot = _wait_done(proc)
     session_dir = Path(snapshot["session"]["dir"])
 
-    # 场次 log：收尾起点、预算的输入与结果，加上前三步的开始（后两步的结束写在摘掉之后）
+    # 场次 log：收尾起点、预算的输入与结果，加上摘掉之前那几步的记录
+    # （`log` 步落定那一刻场次 handler 就被摘掉 —— 它自己的「结束 / 耗时」与 `post`
+    # 步的开始都只进得了服务级 log）
     session_log = wait_until(
         lambda: _log_with_all(
             session_dir / "meeting.log",
-            ["收尾开始：", "budget=", "backlog="]
-            + [f"收尾步骤开始：{step_id}" for step_id in DRAIN_STEP_IDS[:3]]
-            + [f"收尾步骤结束：{step_id}" for step_id in DRAIN_STEP_IDS[:2]]
-            + [f"收尾步骤耗时：{step_id}" for step_id in DRAIN_STEP_IDS[:2]],
+            ["收尾开始：", "budget=", "backlog=", "segment_timeout="]
+            + [f"收尾步骤开始：{step_id}" for step_id in ("flush", "log")]
+            + [f"收尾步骤结束：{step_id}" for step_id in ("flush",)]
+            + [f"收尾步骤耗时：{step_id}" for step_id in ("flush",)],
         ),
         timeout=DRAIN_POLL_TIMEOUT_SECONDS,
     )
-    assert session_log, "场次 log 里该有收尾开始与前三步的记录"
+    assert session_log, "场次 log 里该有收尾开始与摘掉之前那几步的记录"
     assert "segment_timeout=" in session_log, "预算的另一个输入也该落在本场那一份里"
 
     # 服务级 log：四步齐备的一份 —— 每步都有开始、结束与耗时，预算的输入与结果也在这
@@ -2617,9 +2623,9 @@ def test_drain_logs_budget_and_elapsed(service_process, meeting_env):
         ),
         timeout=DRAIN_POLL_TIMEOUT_SECONDS,
     )
-    assert service_log, "服务级 log 里该有四步齐备的记录"
+    assert service_log, "服务级 log 里该有各步齐备的记录"
 
-    # 逐步点名：四步的「开始 / 结束 / 耗时」三样在服务级 log 里逐条查得到（缺哪一步就报哪一步）
+    # 逐步点名：各步的「开始 / 结束 / 耗时」三样在服务级 log 里逐条查得到（缺哪一步就报哪一步）
     for step_id in DRAIN_STEP_IDS:
         for needle, label in (
             (f"收尾步骤开始：{step_id}", "开始"),
@@ -2802,7 +2808,7 @@ def test_session_log_attached_then_detached_with_end_marker(service_process, mee
         f"而最后一个非空行是第 {len(lines)} 行\n{lines[marker_index:]}"
     )
 
-    # **标记逐字段核**（审查问题 M8、§3.7）：场次 id、`state`、四步概要、服务级 log 路径。
+    # **标记逐字段核**（审查问题 M8、§3.7）：场次 id、`state`、收尾概要、服务级 log 路径。
     # 标记是 `log` 步**在它自己那一刻**写下的：那一刻 `state` 还是 `draining`（收尾没走完），
     # 四步概要是 `log=running`（正在写它）、`post=waiting`（还没开跑）。这两件事因此按
     # 「**在 `log` 步那一刻成立的取值**」逐项核 —— 而不是拿收尾走完之后盘上那一版去套，
@@ -2817,21 +2823,20 @@ def test_session_log_attached_then_detached_with_end_marker(service_process, mee
     # `state`：取值落在 `session.json` 的取值域里
     state = marker.split("场次结束：state=", 1)[1].split("；", 1)[0]
     assert state in SESSION_STATE_DOMAIN, f"标记里的 state 落在取值域之外：{state!r}（{marker!r}）"
-    # 四步概要：**四档按 `DRAIN_STEP_IDS` 的原顺序**逐项报出（格式串把 `status` 列表按顺序
+    # 收尾概要：**各档按 `DRAIN_STEP_IDS` 的原顺序**逐项报出（格式串把 `status` 列表按顺序
     # 用 `, ` 连起来），每一项的 `status` 落在 `DRAIN_STEP_STATUS` 的取值域里
-    summary = marker.split("收尾四步：", 1)[1].split("；", 1)[0]
+    summary = marker.split("收尾步骤：", 1)[1].split("；", 1)[0]
     statuses = [item.strip() for item in summary.split(",")]
     assert len(statuses) == len(DRAIN_STEP_IDS), (
-        f"四步概该正好 {len(DRAIN_STEP_IDS)} 项（按 {list(DRAIN_STEP_IDS)} 的原顺序）：{marker!r}"
+        f"收尾概该正好 {len(DRAIN_STEP_IDS)} 项（按 {list(DRAIN_STEP_IDS)} 的原顺序）：{marker!r}"
     )
     assert set(statuses) <= set(DRAIN_STEP_STATUS), marker
     by_id = dict(zip(DRAIN_STEP_IDS, statuses))
     # 写这一行的是 `log` 步自己：它那一刻是 `running`，它后面的 `post` 还没开跑
     assert by_id["log"] == "running", marker
     assert by_id["post"] == "waiting", marker
-    # 它前面那两步在骨架构建下是 `skipped`（有真实实现就记 `done`；两者都算落定）
+    # 它前面那一步在有真实实现的构建下记 `done`（骨架构建是 `skipped`；两者都算落定）
     assert by_id["flush"] in ("done", "skipped"), marker
-    assert by_id["transcode"] in ("done", "skipped"), marker
     # 收尾走完之后盘上那一版：`done` + 四步都有终态（标记之后收尾照常把剩下的走完）
     assert record["state"] == "done", record
     assert set(step["status"] for step in _record_steps(record)) <= {
@@ -2976,13 +2981,15 @@ def test_all_log_event_categories_findable_before_end_marker(service_process, me
     check("backlog=", "预算输入 backlog")
     check("budget=", "预算结果")
     check("耗时", "每一步的耗时")
-    for step_id in DRAIN_STEP_IDS[:2]:
+    # 场次 log 在 `log` 步落定那一刻被摘掉：它里面只有 `flush` 那一步的完整记录
+    # （`log` 步自己的开始 / 结束与 `post` 步的一切都只进服务级 log）
+    for step_id in ("flush",):
         check(f"收尾步骤开始：{step_id}", f"{step_id} 的开始")
         check(f"收尾步骤结束：{step_id}", f"{step_id} 的结束")
 
     # 服务级 log 那半边：**「场次开始与目录」落在这里**（理由见上面 session_id 那一段的注释
     # —— 场次 log 是 `start` 成功之后才挂上的，这一行按时间顺序在它之前），加上两路设备探测
-    # 与四步齐备的收尾记录。字段级断言：这一行要带**本场的 id 与目录**，与场次 log 里那一半对上。
+    # 与各步齐备的收尾记录。字段级断言：这一行要带**本场的 id 与目录**，与场次 log 里那一半对上。
     service_log = _service_log_text(meeting_env)
     assert "场次开始：" in service_log, "服务级 log 缺「场次开始」"
     assert session_id in service_log, "服务级 log 的「场次开始」该带本场的 id"
@@ -2993,6 +3000,9 @@ def test_all_log_event_categories_findable_before_end_marker(service_process, me
         assert f"收尾步骤开始：{step_id}" in service_log
         assert f"收尾步骤结束：{step_id}" in service_log
 
-    # 结束标记之后不再有这一场的行（摘掉之后的消息只走服务级 log）
+    # 结束标记之后不再有这一场的行（摘掉之后的消息只走服务级 log；标记自己那行里的
+    # 「收尾步骤：」概要不算 —— 判据点的是步骤的开始 / 结束行）
     after = session_log[marker_index:]
-    assert "收尾步骤" not in after, f"结束标记之后还有这一场的行：\n{after}"
+    assert "收尾步骤开始" not in after and "收尾步骤结束" not in after, (
+        f"结束标记之后还有这一场的行：\n{after}"
+    )

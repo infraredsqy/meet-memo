@@ -35,51 +35,60 @@
 2. **采集出什么事都不自动结束会话**：所有路都挂了也只是 `alert`；进 `ended` 只有 `stop` 一条路。
 3. **心跳失联不进状态机**：`迟到` / `失联` 由界面按 `/api/heartbeat` 自己判，服务侧没有由界面心跳驱动的迁移。
 
-### 收尾四步与终态
+### 收尾三步与终态
 
-`stop` 进 `ended·draining`，时长就地冻结，然后按固定顺序跑四步：
+`stop` 进 `ended·draining`，时长就地冻结，然后按固定顺序跑三步（转码**不在收尾序列里** —— 它是这一场的独立后台工序，flush 落定即自动另起，见下一节）：
 
 | 序 | 步 | 这一步干什么 | 现在谁来填实现 |
 |---|---|---|---|
-| 1 | `flush` | 停采集、把归档落盘（后端 `finalize()`：停流 + join + 关文件 + `fsync`） | `dca4539b`（真采集后端已落地） |
-| 2 | `transcode` | 收尾转换（后端 `transcode()`：各段 PCM 逐段转 64k MP3，**转完保留 PCM**） | `dca4539b`（真采集后端已落地） |
-| 3 | `log` | 写这一场的结束标记（`session.json` + 服务级主日志） | 本服务（永远在场，永远 `done`） |
-| 4 | `post` | 让会中模型退出显存（转写后端的可选成员 `release_gpu()`；释放失败只记一条 log）。**会后一个动作都不自动跑**：这一格如实停在 `waiting`（＝等你动手），两趟会后活由「生成会后精细稿」/「生成纪要」按钮或 `meeting post` 拉起。**暂停 / 继续这两个动作也各走同一对方法**（`10770b41`：暂停提交 `release_gpu()`、继续提交配对的 `acquire_gpu()`，都异步提交到后台，不等它们做完才应答） | 本服务（释放那一步，`796bbff` 起；`7c6952e5` 的 `PostProcessHook` 不再由这一步拉起） |
+| 1 | `flush` | 停采集、把归档落盘（后端 `finalize()`：停流 + join + 关文件 + `fsync`）。**落定那一刻转码在后台自动起**（真采集能力在场时；采集替身那一档不起 —— 没有真实 PCM 可转） | `dca4539b`（真采集后端已落地） |
+| 2 | `log` | 写这一场的结束标记（`session.json` + 服务级主日志） | 本服务（永远在场，永远 `done`） |
+| 3 | `post` | 让会中模型退出显存（转写后端的可选成员 `release_gpu()`；释放失败只记一条 log）。**会后一个动作都不自动跑**：这一格如实停在 `waiting`（＝等你动手），两趟会后活由「生成会后精细稿」/「生成纪要」按钮或 `meeting post` 拉起。**暂停 / 继续这两个动作也各走同一对方法**（`10770b41`：暂停提交 `release_gpu()`、继续提交配对的 `acquire_gpu()`，都异步提交到后台，不等它们做完才应答） | 本服务（释放那一步，`796bbff` 起；`7c6952e5` 的 `PostProcessHook` 不再由这一步拉起） |
 
 每步的 `status` 取五档之一：`waiting` / `running` / `done` / `failed` / `skipped`。
 
-- **`skipped` = 这个构建里没有真实实现**（采集替身不写真实音频）。它不阻塞 `done`，只留一行 warning。收尾四步里眼下只有第 1、2 步会出现它 —— 第 4 步 `post` 对任何构建都落在 `waiting`，不再有「钩子缺席记 `skipped`」那一档。
+- **`skipped` = 这个构建里没有真实实现**（采集替身不写真实音频）。它不阻塞 `done`，只留一行 warning。收尾三步里眼下只有第 1 步会出现它 —— `post` 那一格对任何构建都落在 `waiting`，不再有「钩子缺席记 `skipped`」那一档。
 - **`failed` = 有实现，但这次调用抛错**。它带 `error`。
 - 判「缺席」只看后端的解析结果（`meeting/backends/registry.py`），不看调用时抛了什么异常。
-- **今天调这两个方法的只有两处**：收尾链第 4 步，与暂停 / 继续那一对动作。强制打断（第二次 `Ctrl+C`，或已停在 `ended·draining` 再按）与关停走的是另外两条路，**都不调** `release_gpu()` —— 前者把收尾 task 取消掉（第 4 步若还没开跑就轮不到），后者只调 `TranscriberBackend.stop()`；这两格归管收尾 / 关停的节点，来由见 `docs/asr-backends.md` 第 6 章。
+- **今天调这两个方法的只有两处**：收尾链 `post` 那一步，与暂停 / 继续那一对动作。强制打断（第二次 `Ctrl+C`，或已停在 `ended·draining` 再按）与关停走的是另外两条路，**都不调** `release_gpu()` —— 前者把收尾 task 取消掉（`post` 若还没开跑就轮不到），后者只调 `TranscriberBackend.stop()`；这两格归管收尾 / 关停的节点，来由见 `docs/asr-backends.md` 第 6 章。
 
-**第 1、2 步的闸门**（`meeting/service/runtime_drain.py` 的 `_drain_flush()` / `_drain_transcode()`）：两步都只看**采集侧**——解析结论**与** `capture_capabilities["finalize"]` / `capture_capabilities["transcode"]`，后者由 `registry.capabilities_of()` 按「实现在不在场」回答：真采集后端（`meeting.backends.capture:CaptureBackend`）两项都是 `True`，`null` / `dev` 两个替身都是 `False`。因此**真采集那一场**这两步记 `done`、产物是场次目录里的两份 `.mp3`；替身那一场照旧 `skipped`。transcode 是采集后端的能力，转写后端在不在场与这道闸门无关（转写缺席不影响第 2 步登记，解析结论与 `run_ok` 也记在采集侧）。
+**第 1 步的闸门**（`meeting/service/runtime_drain.py` 的 `_drain_flush()`）：只看**采集侧**——解析结论**与** `capture_capabilities["finalize"]`，后者由 `registry.capabilities_of()` 按「实现在不在场」回答：真采集后端（`meeting.backends.capture:CaptureBackend`）是 `True`，`null` / `dev` 两个替身都是 `False`。因此**真采集那一场**这一步记 `done`、产物是场次目录里的 PCM 段归档；替身那一场照旧 `skipped`。**`finalize()` 落定那一刻，转码工序自动在后台起**（`_start_transcode_after_flush()`，`meeting/service/runtime_transcode.py`）：判据同样是采集侧的 `capture_capabilities["transcode"]` —— 真采集那一场起、替身那一场不起（没有真实 PCM 可转）。它不占收尾预算、不挡 `start` 与会后动作，跑成什么样由场次目录里的 `meeting_transcode_status.json` 回答（见下一节）。
+
+### 转码独立工序（收尾之外，`meeting/capture/transcode.py`）
+
+转码不再是收尾的一步：它是这一场的**独立后台工序**，与收尾三步并行存在。三处入口共用同一份判据（判据只住 `meeting/capture/transcode.py` 一处，不许抄第二份）：flush 落定自动起的那一道、界面补跑动作（`transcode_run`）、命令行归档补齐（`meeting post` 的 `sync_archive()`）。
+
+- **触发**：收尾 `flush` 落定即自动起（真采集能力在场时）；也可由 `transcode_run` / `transcode_pause` / `transcode_resume` 三只动作或 `meeting post` 随时拉起。它不吃会中 / 会后那两张模型的显卡（pydub / ffmpeg 的活），**不挡 `start`、不挡会后动作、不占收尾预算**。
+- **完成判据是凭据，不是产物文件**：逐段凭据落在场次目录根（`meeting_transcode_<source>_<NNN>.json`，临时文件 + `os.replace` 原子写），记下这一段的源 PCM 字节数与时长、产物 MP3 的字节数。「这段写完了」**只认凭据**：补跑 / 重启时凭据缺失或与源 / 产物对不上账（源 PCM 尺寸变了、产物缺了、半截产物）的那一段**重做**；产物文件在那儿永远不构成完成 —— 被强杀留下的半截 MP3 没有凭据，下一次一定被认出来重做。MP3 先写临时名字再原子落位，半截产物不会坐在最终路径上。逐段转码实现仍只有原来那一份（`capture.archive` 的 `convert_to_mp3` + `mp3_path_for`，转完 PCM 照留）。
+- **进度与状态**（照离线层 `meeting_offline_status.json` / `meeting_offline_progress.jsonl` 的先例设计）：`meeting_transcode_status.json`（工序状态 `running` / `paused` / `done` / `partial` / `failed`，外加逐路 done / total / current_segment）与 `meeting_transcode_progress.jsonl`（逐段一行账）。**判据读盘、不依赖进程内存**：服务重启后读数照旧；盘上停着一版 `running` 而本进程没有这道工序在飞，`GET /api/sessions/{id}` 的 `transcode` 格按 `in_process` 分「真的在跑」与「上次被杀停在半路」（与离线层同一套读法）。
+- **暂停 / 继续**：`transcode_pause` 立起暂停旗标即回（受理即回），工序在**段边界**落 `paused` 并就地等旗标；`transcode_resume` 摘旗接着前进（同一条线程），本进程没有这道工序在飞时从盘上凭据接着做。同一场只能有一道工序在跑（`(种类, 场次)` 的槽闸如实拒第二道）；**与转写、纪要、别的场次互不设闸**。
+- **终态**：`done`（全部段凭据认账）/ `partial`（有失败段也有成功段）/ `failed`（全失败）。转码的失败**不进收尾终态**（它已不在收尾序列里），PCM 一个字节都不动，补跑从凭据接着做。
 
 **终态判定只在一处**（`finish_drain()`）：
 
-| 四步结果 | `ended.phase` | `top_state` | `session` | 新的 `start` |
+| 收尾各步结果 | `ended.phase` | `top_state` | `session` | 新的 `start` |
 |---|---|---|---|---|
-| 四步全部落定（`done` / `skipped`；`post` 那一格的终态是 `waiting`，也算落定）且无 `failed` | `done` | 停在 `ended` | 保留（时长冻结，界面画「已结束·已完成」） | 放行，从 `ended` 直接进 `recording` |
-| 有任一步 `failed`，或四步没全落定就走到了出口 | 保持 `draining` | 停在 `ended` | 保留 | `draining`(409)，`detail` 带失败步与场次 log 路径 |
+| 各步全部落定（`done` / `skipped`；`post` 那一格的终态是 `waiting`，也算落定）且无 `failed` | `done` | 停在 `ended` | 保留（时长冻结，界面画「已结束·已完成」） | 放行，从 `ended` 直接进 `recording` |
+| 有任一步 `failed`，或各步没全落定就走到了出口 | 保持 `draining` | 停在 `ended` | 保留 | 收尾闸收窄后的两档见下；`detail` 带失败步与场次 log 路径 |
 
-骨架构建（`null` 替身或 dev 替身 + `post.hook = null`）跑一场会的预期终态是固定的：`flush: skipped` / `transcode: skipped` / `log: done` / `post: waiting`（第 4 步对任何构建都停在 `waiting`），于是 `ended.phase == "done"`。
+骨架构建（`null` 替身或 dev 替身 + `post.hook = null`）跑一场会的预期终态是固定的：`flush: skipped` / `log: done` / `post: waiting`（`post` 那一格对任何构建都停在 `waiting`），于是 `ended.phase == "done"`。
 
-**真采集那一场**（`capture.backend` 取默认值 `auto`，解析到 `meeting.backends.capture:CaptureBackend`）的终态是 `flush: done` / `transcode: done` / `log: done` / `post: waiting`；收尾跑完之后场次目录里躺着两路的段归档：`meeting_audio_mic_001.pcm` + `.mp3`、`meeting_audio_loopback_001.pcm` + `.mp3`（**一段 = 一次录制**，序号三位零填充、从 1 起；续接（同一工作区再录一段）接着已有段号往下编，一场会因此可以有多段。未选中的那一路整段写数字静音，`.pcm` 照常落盘、`.mp3` 照常产出 —— 内容就是一段静音）；会后那两趟（离线链与纪要层）不自动跑，由「生成会后精细稿」/「生成纪要」按钮或 `meeting post` 拉起，产物才往同一目录里落（见第 3 章）。第 1 步落盘失败（例如磁盘满）与第 2 步转码失败（例如 `ffmpeg` 不在 PATH 上）各记 `failed`，**PCM 一个字节都不删**。第 4 步停在 `waiting` 说的是**这一格等你动手**（`ended.phase` 仍判 `done`），释放显存那一步自身出事只记一条 log、不改这一格；会后那一趟跑成什么样由场次目录里的 `meeting_offline_status.json` 与 `meeting_minutes_status.json` 回答。
+**真采集那一场**（`capture.backend` 取默认值 `auto`，解析到 `meeting.backends.capture:CaptureBackend`）的收尾终态是 `flush: done` / `log: done` / `post: waiting`；收尾跑完之后场次目录里躺着两路的段 PCM 归档（`meeting_audio_mic_001.pcm`、`meeting_audio_loopback_001.pcm`，**一段 = 一次录制**，序号三位零填充、从 1 起；续接（同一工作区再录一段）接着已有段号往下编。未选中的那一路整段写数字静音，`.pcm` 照常落盘），MP3 由转码独立工序逐段补齐（flush 落定自动起，`meeting_audio_<source>_<NNN>.mp3`，**转码成功之后 PCM 照样留着**）；会后那两趟（离线链与纪要层）不自动跑，由「生成会后精细稿」/「生成纪要」按钮或 `meeting post` 拉起，产物才往同一目录里落（见第 3 章）。第 1 步落盘失败（例如磁盘满）记 `failed`，**PCM 一个字节都不删**；转码的失败不进收尾终态，由 `meeting_transcode_status.json` 如实落 `partial` / `failed`、补跑接着做。`post` 那一格停在 `waiting` 说的是**这一格等你动手**（`ended.phase` 仍判 `done`），释放显存那一步自身出事只记一条 log、不改这一格；会后那一趟跑成什么样由场次目录里的 `meeting_offline_status.json` 与 `meeting_minutes_status.json` 回答。
 
 ### 收尾怎么跑：触发、共享预算、超时与中断
 
 **谁起这一趟**：`POST /api/actions {"action":"stop"}` 成功之后，以及录音 / 告警态下**第一次 `Ctrl+C`** —— 后一条走的是**同一条** `stop_session(reason="ctrl_c")` 路径。非 `recording` / `alert` 态收到 `stop` 回 `not_recording`(409)，不起收尾。
 
-**每一步的通用节奏**（四步都照这个走）：
+**每一步的通用节奏**（收尾三步都照这个走）：
 
 1. 该步置 `running` → 写一次 `session.json` → 广播一次全量状态；
 2. 主 log 记一条该步的**开始**（带步 id）；
 3. 执行该步的调用；
 4. 落 `done` / `skipped` / `failed`（`detail` 写人话）→ 再写一次 `session.json` → 主 log 记一条**结束 + 耗时** → 再广播一次。
 
-某一步 `failed` 之后，**后续步骤照常按顺序登记**（不许整段抛出而不写盘）。四步全部落定之后，终态由 `finish_drain()` 一处判定。
+某一步 `failed` 之后，**后续步骤照常按顺序登记**（不许整段抛出而不写盘）。各步全部落定之后，终态由 `finish_drain()` 一处判定。
 
-**四步共享一条 deadline**。收尾一开跑就先算这一趟的总上限：
+**各步共享一条 deadline**。收尾一开跑就先算这一趟的总上限：
 
 ```
 budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 秒
@@ -87,11 +96,11 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 
 `backlog` ← `TranscriberBackend.backlog_depth()`，`segment_timeout` ← `TranscriberBackend.segment_timeout()`；转写后端缺席时取 `0` / `20.0` 秒。每一步的调用都包在**剩余预算**里（`asyncio.wait_for(<该步调用>, <剩余预算>)`），所以一趟收尾的等待总量以那条 deadline 为界，**不随步数翻倍**。这三个数硬编码在 `meeting/service/runtime_drain.py`，**不开配置键**。
 
-- **唯一的例外是 `log` 步**：它的 flush 与摘除至少拿到 5 秒（`max(<剩余预算>, 5)`，不受剩余预算约束）。`log` 是四步里唯一在任何构建里都有实现、要做 IO 的一步；让前面的缺席步把 deadline 用光，本该「正常收尾」的一档就会被拖成收尾失败档。
+- **唯一的例外是 `log` 步**：它的 flush 与摘除至少拿到 5 秒（`max(<剩余预算>, 5)`，不受剩余预算约束）。`log` 是收尾各步里唯一在任何构建里都有实现、要做 IO 的一步；让前面的缺席步把 deadline 用光，本该「正常收尾」的一档就会被拖成收尾失败档。
 - **超预算的那一步落 `failed`**，`error` 写明「超出收尾预算（budget=Ns，实测耗时 Ms）」—— 到点就扔下积压段走的写法在代码里不存在。
 - 预算的输入（`backlog` / `segment_timeout`）、算出来的 `budget`、以及每一步的实测耗时**逐条进 log**。
 
-**收尾期间按第二次 `Ctrl+C`：立即中止，顺序写死。** 先把盘上写成 `state: "draining"` + `interrupted: true`（**原 `steps` 原样保留**、不写 `done`、**不写 `ended_at`**），再对收尾 task 调 `cancel()`（句柄已经是「已结束」时跳过 `cancel()`、只做落盘）。取消时的登记只补步骤状态，**不覆盖刚才那一版的 `interrupted` / `state`**；唯一的例外是「信号到达时四步恰好已全部落定」——这一档盘上最终值按终态规则由 `finish_drain()` 那一趟落。进程随后以强制打断档退出（取值见 `docs/service.md` 的退出码表）。
+**收尾期间按第二次 `Ctrl+C`：立即中止，顺序写死。** 先把盘上写成 `state: "draining"` + `interrupted: true`（**原 `steps` 原样保留**、不写 `done`、**不写 `ended_at`**），再对收尾 task 调 `cancel()`（句柄已经是「已结束」时跳过 `cancel()`、只做落盘）。取消时的登记只补步骤状态，**不覆盖刚才那一版的 `interrupted` / `state`**；唯一的例外是「信号到达时各步恰好已全部落定」——这一档盘上最终值按终态规则由 `finish_drain()` 那一趟落。进程随后以强制打断档退出（取值见 `docs/service.md` 的退出码表）。
 
 **收尾走完不回 `idle`**：成功档与失败档都停在 `ended`，`idle` 只留给「进程刚起、还没开过任何一场」。下一场的 `start` 从 `ended` 直接进 `recording`。
 
@@ -126,7 +135,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 `ended` 的语义：
 
 - `phase` 只有 `draining` / `done` 两取值。`failed` 属于盘上 `session.json` 的 `state`，在快照里没有对应位置。
-- `steps` 是四步各一条，每条四键齐：`{id, status, detail, error}`。`id` 的顺序固定在 `DRAIN_STEP_IDS = ("flush", "transcode", "log", "post")`。
+- `steps` 是收尾各步各一条，每条四键齐：`{id, status, detail, error}`。`id` 的顺序固定在 `DRAIN_STEP_IDS = ("flush", "log", "post")`（转码已摘出收尾序列，本章第 1 节）。
 - 收尾失败后 `phase` 保持 `draining`、这份摘要与 `session` 一起留在快照里。
 
 `settings` 的语义：
@@ -157,7 +166,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 
 - **没有默认落点**（`docs/design-intent.md` 第 4 条）：一场会落在 start 请求 / 命令行**显式给的已存在目录**里；服务不建目录、不按日期命名，目录名就是这场会的名字。日期仍是每一场的元信息（`session.json` 的 `date` 字段，取开场时刻），只是它不再写进目录名。
 - 对录过的目录按 start = **续接**（`docs/design-intent.md` 第 9 条翻案）：目标目录里已有 `session.json` 不再拒绝，同一场会再录一段 —— 旧段的归档一个字节不碰（新段接着已有段号编号），段记录与权威时长合并着写盘；续接开场失败时旧记录原样写回、本轮段文件收走，工作区回到按下去之前的样子。
-- 一场会一个目录，目录里只有一份 `session.json` 是服务现在写的。**两路音频归档也落在这里**（`dca4539b` 落地采集、`6ea32d8d` 落地分段）：`meeting_audio_<source>_<NNN>.pcm`（NNN 三位零填充、从 1 起；**一段 = 一次录制**，续接（同一工作区再录一段）接着已有段号编，一场会可以有多段），16k / 单声道 / int16 小端裸 PCM、无头，**边采边写**（无缓冲截断写，服务被强杀最多丢最后一个块的尾巴）；收尾第 2 步在同目录同名换扩展名**逐段**产出 `.mp3`（64k），**转码成功之后 PCM 照样留着**（`sources[*].archives` 段文件名表声明的就是它们）。**暂停、会中关掉某一路、某一路没开都不切段**：那一路写数字静音 —— 暂停窗的真音频在写侧被等长替换成数字零（内容到不了盘上），暂停只进段记录的 `pauses` 区间，两路时间轴始终等长。这些事都由动作驱动（`pause` / `resume` / `set_source`，`10770b41`）：快照 `session` 的第七子键 `paused` 就是「暂停中」的落点（顶层四态一个字不动），关掉某一路落在那一路上现成的 `health = stopped` 档；**关掉与重新打开都是用户按的按钮**，不报 `SourceLost`、不进告警（重开时设备打不开才如实回一条 `capture_unavailable`(503)）。
+- 一场会一个目录，目录里只有一份 `session.json` 是服务现在写的。**两路音频归档也落在这里**（`dca4539b` 落地采集、`6ea32d8d` 落地分段）：`meeting_audio_<source>_<NNN>.pcm`（NNN 三位零填充、从 1 起；**一段 = 一次录制**，续接（同一工作区再录一段）接着已有段号编，一场会可以有多段），16k / 单声道 / int16 小端裸 PCM、无头，**边采边写**（无缓冲截断写，服务被强杀最多丢最后一个块的尾巴）；转码独立工序（本章第 1 节；flush 落定自动起，也可补跑）在同目录同名换扩展名**逐段**产出 `.mp3`（64k），**转码成功之后 PCM 照样留着**（`sources[*].archives` 段文件名表声明的就是它们）。**暂停、会中关掉某一路、某一路没开都不切段**：那一路写数字静音 —— 暂停窗的真音频在写侧被等长替换成数字零（内容到不了盘上），暂停只进段记录的 `pauses` 区间，两路时间轴始终等长。这些事都由动作驱动（`pause` / `resume` / `set_source`，`10770b41`）：快照 `session` 的第七子键 `paused` 就是「暂停中」的落点（顶层四态一个字不动），关掉某一路落在那一路上现成的 `health = stopped` 档；**关掉与重新打开都是用户按的按钮**，不报 `SourceLost`、不进告警（重开时设备打不开才如实回一条 `capture_unavailable`(503)）。
 - **两路转写各自落一本会中临时稿**（`9e5db89c` 已落地）：`meeting_transcript_mic.md` 与 `meeting_transcript_loopback.md`，追加写、逐行 flush，每行 `[HH:MM] 正文` —— 时间戳取**分钟级**的采集时刻：段一入队就盖上，识别慢也不会把后面几行的时间戳挤到一起。某一段识别不出来也照落一行，正文是**占位符**：`[[识别失败: 超时 20s]]` / `[[识别失败: 重复循环]]` / `[[识别失败: 无输出]]`（双层方括号、裸文本、不带时间戳、**不含 `**`**；识别过程抛错那一档落 `[[识别失败: 错误]]`）；纯噪声的段落一行都不写，连占位符也不写 —— 暂停窗（归档里那一段数字静音）同样一行都不产。同一行同时经 SSE 的 `transcript` 通道推给界面（第 6 章）。**续接的那一场开场**（同一工作区再录一段）各路先追加一条注释形的记号行，形状是 `<!-- [HH:MM] 续接：上面是上一段的稿子，两段之间有一段没录 -->`，落在旧正文与新正文之间 —— `<!-- … -->` 形的行不算发言行，读侧（纪要切块、行数统计）跳过它；两段之间那截没录的时间从此在稿子里留着一道看得见的口子。同一时刻各路还经 SSE 各推一条 `kind="gap"` 的行，转写区把它画成断口。转写的读头从盘上实有的**最大段号**接起，旧段一个字节不重读 —— 临时稿里的旧正文不会被抄第二遍。它是**临时稿**：会后那条带说话人编号的稿另落一份，两份平级放在一起对拍、谁也不顶掉谁（R11，`docs/ui-design.md` 第 3 章的标签口径）。
 - `session.json` **原子写**：同目录临时文件 + `os.replace` + `flush`。**每个阶段变更都写一次**（`start` 的第一版、进收尾中、每一步的 `status`/`detail`、终态那一版），被打断不留半截文件、工作区目录里不留 `.tmp` 残骸。
 
@@ -183,7 +192,6 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
   "audio_duration_seconds": 61.5,
   "drain": {"steps": [
     {"id": "flush", "status": "waiting", "detail": "", "error": null},
-    {"id": "transcode", "status": "waiting", "detail": "", "error": null},
     {"id": "log", "status": "waiting", "detail": "", "error": null},
     {"id": "post", "status": "waiting", "detail": "", "error": null}
   ]},
@@ -316,9 +324,9 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 **启动时不再去读任何别的场次目录**（`docs/design-intent.md` 第 4 条）：原「扫输出根下最新的一场 → 挂 `notice.restart_unfinished` → 把那份记录改写成 `draining + interrupted` → 拦住新场次」这一整条，随「默认输出根」的退场一并拆掉，**不影子保留**。启动序列现在只做：解析后端、探设备、组装初始快照 —— 绝不自动开始录音、也绝不读别的场次目录（唯一的定向例外见本章末条：在飞记录核对，b1c6a58e）。
 
 - 没走完收尾就被打断的那一场，盘上那版 `session.json` 原样留在原地：谁都不去改写它、也不拦新场次的 `start`。工作区对它的读数也不卡：`GET /api/sessions` 每一行的 `state` 是**三档口径**（`"recording"` 仅当这一行就是本进程此刻在录的活跃场次；盘上有 `session.json` 一律 `"ended"`；没有则 `null`）——被强杀丢在收尾半路的那一场读数就是「录音结束」，会后动作能不能按只由「还在录音中 / 有一趟在飞」两道闸决定（判据的正本在 `docs/contract.md` 4.8 与 4.3，「落盘没落定就拒」已作废）。
-- 工作区的登记与"最近一场"由收编节点（e2f6166b）落地：注册表住在配置目录 `workspaces.json`，界面经 `GET /api/sessions` 读（形状见 `docs/contract.md` 4.8）——启动序列对场次目录照旧一个字不读（唯一的定向例外见本章末条）。`GET /api/sessions` 顶层另有一格 `post_job`（`52b24392`）：服务进程里此刻在飞的那趟会后（`{kind, dir, started_at}` 或 `null`），它是**内存里的单槽事实**（`runtime.post_job_state()`），不落盘、不进注册表文件，服务重启后自然从 `null` 起步。
+- 工作区的登记与"最近一场"由收编节点（e2f6166b）落地：注册表住在配置目录 `workspaces.json`，界面经 `GET /api/sessions` 读（形状见 `docs/contract.md` 4.8）——启动序列对场次目录照旧一个字不读（唯一的定向例外见本章末条）。`GET /api/sessions` 顶层另有一格 `post_jobs`（本节点改多槽）：服务进程里此刻在飞的那几趟活（`{kind, dir, started_at}` 三格一项的数组，空数组 = 没有在跑的；`kind` 认 `offline` / `minutes` / `transcode` 三种），它是**内存里按 `(种类, 场次)` 一格一趟的多槽事实**（`runtime.post_jobs_state()`），不落盘、不进注册表文件，服务重启后自然从空数组起步。
 - **这一场此刻跑到哪一档**由 `GET /api/sessions/{id}` 回答（`a9affaa8` 已落地，形状见 `docs/contract.md` 4.9）：会后离线跑到第几块 / 共几块、正在跑哪一路、已经跑了多久。它也是纯读：**启动序列照旧不碰任何场次目录**（唯一的定向例外见下一条），这只端点是有人问才去读那一场。
-- **启动序列唯一的定向例外**（b1c6a58e）：上一趟会后被进程死掉截断时，盘上停着 `running`、`post_job`（内存事实）已经没了——服务起一条「在飞」记录（配置目录 `post_jobs.json`，`meeting/service/postjobs.py`，起 offline / minutes 时落、收工时清），启动时按它把**记录里点名的那一场** offline 会后核对成 `interrupted`（缺口注记从逐块记录读出），然后清记录。minutes 档的记录只清 + log（纪要那一层有自己的钩子兜底）；盘上不是 `running` 的只清记录、一个字节不写；CLI（`meeting post`）不落记录也不被核对碰——它活在另一个进程，服务分不清「另一进程还在跑」与「都死了」，如实不猜。范围只有记录里点名的这一场：**不扫任何目录**，「杀了进程就永远停在在跑」那条病从根上收口。
+- **启动序列唯一的定向例外**（b1c6a58e）：上一趟会后被进程死掉截断时，盘上停着 `running`、`post_jobs`（内存事实）已经没了——服务起「在飞」记录（配置目录 `post_jobs.json`，`meeting/service/postjobs.py`；多槽世界里按 `(种类, 场次)` 一格一条，起 offline / minutes 时落、收工只摘自己那一格），启动时逐条按它把**记录里点名的那些场** offline 会后核对成 `interrupted`（缺口注记从逐块记录读出），然后把整份清掉。minutes 档的记录只清 + log（纪要那一层有自己的钩子兜底）；盘上不是 `running` 的只清记录、一个字节不写；CLI（`meeting post`）不落记录也不被核对碰——它活在另一个进程，服务分不清「另一进程还在跑」与「都死了」，如实不猜。范围只有记录里点名的这几场：**不扫任何目录**，「杀了进程就永远停在在跑」那条病从根上收口。
 
 ## 4. 心跳与 `recording_alive`
 
@@ -415,7 +423,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 
 - 对同一路再次注入（无论故障是否已恢复）**替换前一次注入**并按新的 `after_seconds` / `duration_seconds` 重新计时。
 - 三档故障都**不动状态机的迁移路径**：能不能回 `recording` 由 `alerts.py` 的判定说了算。
-- 它**不写真实音频**，`finalize()` / `transcode()` 只登记。所以收尾第 1、2 步在它身上记 `skipped`。
+- 它**不写真实音频**，`finalize()` 只登记，所以收尾第 1 步在它身上记 `skipped`；转码独立工序在它身上不自动起（`capture_capabilities["transcode"]` 为假，没有真实 PCM 可转），补跑那几只动作对它的场次也如实答「没有可转的段」。
 - `dev_inject` 要有正在进行的场次：`recording` / `alert` 态可注入，其余态回 `not_recording`(409)。
 
 **转写替身**（`DevTranscriberBackend`）是「会中能看见字幕在动」的那一条：开场 2.0 秒后首发、之后每 0.5 秒经行出口产一行两路轮换的合成转写（`kind = "line"`，正文形如 `dev 替身合成的一行转写（mic #1）`）。它不读归档、不加载模型、**不写产物文件**，`health()` 恒 `normal`、`backlog_depth()` 恒 `0`、`segment_timeout()` 报 `20.0`；`stop()` 之后线程收队、一行都不再产。**它没有环境变量** —— `MEETING_CAPTURE` 只映射 `capture.backend`，要开它在配置文件里写 `"transcriber.backend": "dev"`。

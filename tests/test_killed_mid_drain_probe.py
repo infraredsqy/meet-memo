@@ -109,7 +109,6 @@ def _craft_killed_mid_drain_session(place: Path) -> Path:
         "drain": {
             "steps": [
                 {"id": "flush", "status": "running", "detail": "", "error": None},
-                {"id": "transcode", "status": "waiting", "detail": "", "error": None},
                 {"id": "log", "status": "waiting", "detail": "", "error": None},
                 {"id": "post", "status": "waiting", "detail": "", "error": None},
             ]
@@ -184,9 +183,9 @@ def test_a_session_killed_mid_drain_reads_ended_and_post_actions_are_acceptable(
     assert isinstance(body["revision"], int), body
     assert body["post"] == {"kind": "offline", "dir": str(workspace)}, body
 
-    # 等离线那一趟收工（假件引擎 + 场里没有音频，毫秒级）：顶层 post_job 翻回 null
+    # 等离线那一趟收工（假件引擎 + 场里没有音频，毫秒级）：顶层 post_jobs 退回空数组
     wait_until(
-        lambda: _get(base_url, "/api/sessions").json()["post_job"] is None,
+        lambda: _get(base_url, "/api/sessions").json()["post_jobs"] == [],
         timeout=3.0,
     )
 
@@ -196,7 +195,11 @@ def test_a_session_killed_mid_drain_reads_ended_and_post_actions_are_acceptable(
     minutes_body = minutes_receipt.json()
     assert minutes_body["ok"] is True
     assert isinstance(minutes_body["revision"], int), minutes_body
-    assert minutes_body["post"] == {"kind": "minutes", "dir": str(workspace)}, minutes_body
+    assert minutes_body["post"] == {
+        "kind": "minutes",
+        "dir": str(workspace),
+        "inputs": "none",  # 现场没有稿子：回执如实说破输入档位（纪要免闸的读数）
+    }, minutes_body
 
     # ⑥ 第二发并发：撞上「已经有一趟在飞」的闸（409 draining，理由落在闸上）
     second = post_action(base_url, "post_minutes", {"dir": str(workspace)})

@@ -202,8 +202,9 @@ class RuntimeBackendsMixin:
         self._open_browser()
 
     def _reconcile_interrupted_post_jobs(self) -> None:
-        """启动时对一次「在飞」记录（b1c6a58e 的 d5）：记录里点名的、盘上仍 `running` 的
-        那一场 offline 会后，补成 `interrupted`，然后清记录。
+        """启动时对一遍「在飞」记录（b1c6a58e 的 d5；记录按 `(种类, 场次)` 一格一条，
+        这里逐条走）：记录里点名的、盘上仍 `running` 的那一场 offline 会后，补成
+        `interrupted`，然后清记录。
 
         三档，逐档口径：
 
@@ -218,9 +219,11 @@ class RuntimeBackendsMixin:
           - **盘上不是 `running`**（那趟其实跑完了、或状态文件读不出）→ 只清记录 + log，
             一个字节都不写 —— 核对不许把已经落定的终态翻掉。
 
-        范围**只有记录里点名的那一场**：记录文件里至多一条（服务单槽），这里读它、处置
-        它、清它，不扫任何目录。CLI（`meeting post`）那一趟既不落记录也不被这一步碰 ——
-        它活在另一个进程，服务分不清「另一进程还在跑」与「都死了」，如实不猜。
+        范围**只有记录里点名的那几场**：记录按 `(种类, 场次)` 一格一条（多槽世界：
+        offline 与 minutes 可同时在飞），这里逐条读、逐条处置，然后整份清掉
+        （`clear_all`），不扫任何目录。CLI（`meeting post`）那一趟既不落记录也不被
+        这一步碰 —— 它活在另一个进程，服务分不清「另一进程还在跑」与「都死了」，
+        如实不猜。
         """
         from meeting.service import postjobs
 
@@ -228,7 +231,7 @@ class RuntimeBackendsMixin:
         if not records:
             return
         try:
-            postjobs.clear()
+            postjobs.clear_all()
         except Exception:  # pragma: no cover - 清不上只警告：盘上状态处置照旧做
             _log.warning("启动核对：在飞记录清不掉", exc_info=True)
         for item in records:
@@ -301,7 +304,7 @@ class RuntimeBackendsMixin:
                 self.transcriber_backend.stop()
         except Exception:
             _log.exception("关停时停转写失败（如实登记，不静默）")
-        # 收尾四步的执行器**不等**（工作线程是 daemon：第二次 `Ctrl+C` 之后进程不许被在飞的
+        # 收尾三步的执行器**不等**（工作线程是 daemon：第二次 `Ctrl+C` 之后进程不许被在飞的
         # 同步步拖住）——`wait=False` 顺带把已排队的收尾步丢掉，这正是「立即中止」要的形态。
         self._shutdown_drain_executor()
         # 会中总结那台执行器照同一口径收场：到点被放弃的那次调用仍在飞，关停不等它

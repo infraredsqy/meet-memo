@@ -12,7 +12,7 @@ import type { EventsSource } from './events-source';
  * `EventSource`，本组件不再自持连接），具体条件在 `home/gate.ts`
  * （`showsWorkspaceHome()`）里逐条写着，本组件只照它选一屏：
  *
- * - 回工作台：`idle` 且没有场次；以及 `ended` 且收尾四步都落定（按「结束录音」之后
+ * - 回工作台：`idle` 且没有场次；以及 `ended` 且收尾三步都落定（按「结束录音」之后
  *   会后一个动作都不自动跑，工作区回到「当前没有进行中的会议」——「我这些会」那一行还在，
  *   右边是这一场的详情，会后那两个按钮住在那里）；
  * - 留在会中那一屏：`recording` / `alert` / 收尾还在跑。

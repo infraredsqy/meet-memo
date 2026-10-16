@@ -11,7 +11,7 @@ b1c6a58e 加 `post_stop` 那只停掉动作；资料节点 285bf58c 加会议资
   - `GET /api/state`（完整版，body 就是 `to_dict()` 的产出）；
   - `GET /api/events`（SSE：`snapshot` 先行 + `state` / `levels` / `transcript` 三通道）；
   - `GET /api/heartbeat`（完整版，`service` 字面量必须有）；
-  - `POST /api/actions`（信封 + 十六个动作名 + `code` 表；分发走 `_ACTION_HANDLERS`
+  - `POST /api/actions`（信封 + 十九个动作名 + `code` 表；分发走 `_ACTION_HANDLERS`
     那张「动作名 → 处理器」登记表，并在导入时与 runtime 的 `ACTION_NAMES` 核对 ——
     两份名单对不上，服务起不来）；
   - `GET /api/summaries`（本场按过的、成功产出的那几次会中总结；读内存，不落文件）；
@@ -482,6 +482,9 @@ _ActionHandler = Callable[[ServiceRuntime, dict[str, Any]], Any]
 
 
 async def _act_start(runtime: ServiceRuntime, args: dict[str, Any]) -> None:
+    # flush 已落定而收尾尾巴（log/post）还在飞的那一档，start 的闸放行 —— 这里先等
+    # 尾巴落定再动手（只等不拒；等不到才如实 409），快照不会被半路的收尾踩到。
+    await runtime.settle_drain_tail()
     runtime.start_session(args.get("mode"), args.get("dir"))
 
 
@@ -542,6 +545,20 @@ async def _act_post_stop(runtime: ServiceRuntime, args: dict[str, Any]) -> dict[
     return {"post": runtime.post_stop(args)}
 
 
+async def _act_transcode_run(runtime: ServiceRuntime, args: dict[str, Any]) -> dict[str, Any]:
+    # 成功体在通用信封上多一个 `transcode` 键（与 `post` 键同族）：回执只说「起没起、
+    # 跑的哪一场」，跑成什么样由场次目录里的 `meeting_transcode_status.json` 回答。
+    return {"transcode": runtime.transcode_run(args)}
+
+
+async def _act_transcode_pause(runtime: ServiceRuntime, args: dict[str, Any]) -> dict[str, Any]:
+    return {"transcode": runtime.transcode_pause(args)}
+
+
+async def _act_transcode_resume(runtime: ServiceRuntime, args: dict[str, Any]) -> dict[str, Any]:
+    return {"transcode": runtime.transcode_resume(args)}
+
+
 async def _act_pause(runtime: ServiceRuntime, args: dict[str, Any]) -> None:
     runtime.pause_session()
 
@@ -578,6 +595,9 @@ _ACTION_HANDLERS: dict[str, _ActionHandler] = {
     "post_offline": _act_post_offline,
     "post_minutes": _act_post_minutes,
     "post_stop": _act_post_stop,
+    "transcode_run": _act_transcode_run,
+    "transcode_pause": _act_transcode_pause,
+    "transcode_resume": _act_transcode_resume,
     "pause": _act_pause,
     "resume": _act_resume,
     "set_source": _act_set_source,
@@ -611,7 +631,7 @@ _reconcile_action_registry()
 
 
 async def _api_actions(request: Request) -> Response:
-    """动作端点：信封 + 十六个动作名 + `code` 表（中间件已校验两个必需请求头）。
+    """动作端点：信封 + 十九个动作名 + `code` 表（中间件已校验两个必需请求头）。
 
     分发走模块顶那张「动作名 → 处理器」登记表（`_ACTION_HANDLERS`）：表是分发的唯一
     依据，并在本模块导入时与 `ACTION_NAMES` 核对过（`_reconcile_action_registry()`）。

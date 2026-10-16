@@ -174,19 +174,30 @@ const POST_LABELS: Readonly<Record<string, string>> = {
   [POST_MINUTES_ACTION]: '生成纪要',
 };
 
+/**
+ * 纪要回执 `inputs` 四档 → 人话（`docs/contract.md` 4.3：受理那一刻读到的输入档位）。
+ * 服务只给枚举值，标签由界面翻（契约章 6：按有哪格画哪格）。
+ */
+const POST_INPUT_LABELS: Readonly<Record<string, string>> = {
+  both: '会中稿 + 会后稿',
+  live_only: '只有会中稿',
+  offline_only: '只有会后稿',
+  none: '会中稿与会后稿都没有',
+};
+
 /** 面板头上那只动作钮的悬停小注（可按时的说明；按不动时换成那句原因）。 */
 const RECORD_HINT = '在这一场工作区里开始一段新录音；已有段落会保留，续接在它们之后';
 
 /**
- * 待确认的三只弹窗：收编非空目录 / 从列表移除 / 「新会议会打断正在跑的会后」。
- * 打断那只只在 **offline 档在飞**时摆出来（minutes 在飞没有东西会被打断，不弹）；
- * `viaConfirm` 记登记走哪半边——非空目录收编那半边要带 `confirm: true`（R20），
- * 空/会议目录那半边走普通登记。
+ * 待确认的三只弹窗：收编非空目录 / 从列表移除 / 「启动新会议会打断会后总结」。
+ * 打断那只挂在**开始录音**上、只在 **offline 档在飞**时摆出来（唯一硬闸：
+ * 会后精细稿与会中录音不并排；minutes / 转码在飞没有东西会被打断，不弹）；
+ * `dir` 是确认之后要开始的那一场。
  */
 type ConfirmState =
   | { what: 'unknown'; dir: string }
   | { what: 'remove'; dir: string }
-  | { what: 'post-interrupt'; dir: string; viaConfirm: boolean };
+  | { what: 'start-interrupt'; dir: string };
 
 // ---------------------------------------------------------------------------
 // 首页本体
@@ -204,7 +215,10 @@ export function WorkspaceHome({
   /** 选择器的取数（换层 / 跳层 / 失败那一行）——本体在 `./DirPicker`（老路径不带文件）。 */
   const dirBrowse = useDirBrowse(false);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
-  /** 会后那两个按钮的动作回执（一句话：这一趟已起 / 被拒的原因在失败块里）。 */
+  /**
+   * 会后那两个按钮的动作回执（一句话：这一趟已起；`post_minutes` 的回执带 `inputs` /
+   * `note` 时把输入档位与说破句也画进来；被拒的原因在失败块里）。
+   */
   const [postNote, setPostNote] = useState<string | null>(null);
   /** 说话人名字那只弹窗开没有（R10 第四条：唯一要动手的地方，入口在会后区那一行）。 */
   const [namesOpen, setNamesOpen] = useState(false);
@@ -267,7 +281,9 @@ export function WorkspaceHome({
   const selected: SessionRow | null = (sessions?.sessions ?? []).find(
     (row) => row.dir === selection,
   ) ?? null;
-  const postJob = sessions?.post_job ?? null;
+  const postJobs = sessions?.post_jobs ?? [];
+  /** 会后精细稿（offline 档）有没有在飞：唯一硬闸的读数（弹窗与服务侧 409 同源）。 */
+  const offlineFlying = postJobs.find((job) => job.kind === 'offline') ?? null;
 
   /** 一跳读数进来：逐块行按差值追加（首跳把已跑过的补成行；记录已重置——重跑那一跳
    * ——整段重播，review-2 m2），读数整块替换。 */
@@ -319,7 +335,7 @@ export function WorkspaceHome({
 
   // 有活动才持续轮询：联结命中（会后那趟在跑）或读数说「真在跑 / 停着 running」。
   // 从「在刷」翻到「不用刷」的那一下顺手刷一遍列表 —— post_job 那格与行四态要跟上。
-  const watch = selected !== null && shouldWatch(selected, postJob, status);
+  const watch = selected !== null && shouldWatch(selected, postJobs, status);
   const watchRef = useRef(false);
   /** 心跳补问用的「此刻 post_job 命中的目录」：ref 转手，interval 闭包不握挂表那一刻
    * 的旧对象（m1，review-3）。 */
@@ -354,7 +370,7 @@ export function WorkspaceHome({
   // m1（review-3）：这一跳遇瞬态失败后 postDir 不变、watch 仍假 —— 重问点由下面
   // postFlying 的列表心跳接住（同一趟内按心跳节奏自动补问，最多一个心跳周期内自愈），
   // 这里仍是起跑的那一跳；新一趟起跑时把 404 记档清掉，别让上一趟的停表挡这一趟。
-  const postDir = postJob?.dir ?? null;
+  const postDir = postJobs[0]?.dir ?? null;
   postDirRef.current = postDir;
   useEffect(() => {
     if (postDir === null || watch) return;
@@ -373,7 +389,7 @@ export function WorkspaceHome({
   // 「联结命中的还是选中行 ∧ 轮询没起 ∧ 未进 404 记档」就再问一跳，失败后最多一个
   // 心跳周期内自愈、无需用户动作；watch 翻真（轮询接管）或 post_job 翻 null（本
   // effect 拆掉）自然停。判等全走 ref：闭包里的 postJob 是挂 interval 那一刻的对象。
-  const postFlying = postJob !== null;
+  const postFlying = postJobs.length > 0;
   useEffect(() => {
     if (!postFlying) return;
     const seconds = clampHeartbeatInterval(heartbeatSeconds ?? HEARTBEAT_INTERVAL_DEFAULT_SECONDS);
@@ -396,12 +412,10 @@ export function WorkspaceHome({
   // -- 动作 ----------------------------------------------------------------
 
   /**
-   * 「新会议」的登记入口。**offline 档会后在跑时先弹一句确认**（R28 / 设计意图第
-   * 13 条）：「启动新会议会打断会后总结，是否继续」——在飞的是 minutes 时**不弹**
-   * （没有东西会被打断；服务对 minutes 的停止也如实拒，d3），登记直接走。非空目录
-   * （need-confirm）先按 R20 问收编，过了之后再按同一条件问打断（两问都过才登记）。
-   * 不确认就什么都不发；确认之后先打停止动作（受理即回，不等块边界），再走原来的
-   * 登记。读数是顶层 `post_job`，服务端对登记动作不设闸 —— 拦与放都在这一只弹窗里。
+   * 「新会议」的登记入口。**登记不再打断任何在飞的活**（进程级一刀切已废：登记只是
+   * 写一行名单，与在飞的精细稿 / 纪要 / 转码互不冲突）；唯一要确认的打断挂在
+   * **开始录音**那只按钮上（见 `startSelected`）。非空目录（need-confirm）先按 R20
+   * 问收编，过了就登记。
    */
   const openDir = (
     dir: string,
@@ -409,10 +423,6 @@ export function WorkspaceHome({
   ): void => {
     if (kindHint === 'need-confirm') {
       setConfirm({ what: 'unknown', dir });
-      return;
-    }
-    if (postJob !== null && postJob.kind === 'offline') {
-      setConfirm({ what: 'post-interrupt', dir, viaConfirm: false });
       return;
     }
     openDirNow(dir);
@@ -438,11 +448,11 @@ export function WorkspaceHome({
    * 界面随即靠轮询看到状态翻成「被打断」、按钮回到可按。
    */
   const stopPost = (): void => {
-    if (postJob === null || postJob.kind !== 'offline') return;
+    if (offlineFlying === null) return;
     setFailure(null);
     setPostNote(null);
     setBusy(true);
-    void postAction(POST_STOP_ACTION, { dir: postJob.dir })
+    void postAction(POST_STOP_ACTION, { dir: offlineFlying.dir })
       .then(
         () =>
           setPostNote(
@@ -460,9 +470,21 @@ export function WorkspaceHome({
     if (selection === null) return;
     const row = sessions?.sessions.find((item) => item.dir === selection) ?? null;
     if (row === null || startWhy(row) !== null) return;
+    // 唯一硬闸的前台半边：会后精细稿在飞时先弹确认（设计意图第 13 条那句原话）。
+    // 确认 = 先打 post_stop（受理即回）→ 等它在块边界停下 → 再起录（模型释放顺序照
+    // 设计意图第 21 条：先放会后的模型，再拉会中的）。
+    if (offlineFlying !== null) {
+      setConfirm({ what: 'start-interrupt', dir: row.dir });
+      return;
+    }
+    startNow(row.dir);
+  };
+
+  /** 起录本体（`start` 动作 + 失败块 + 刷新）。 */
+  const startNow = (dir: string): void => {
     setFailure(null);
     setBusy(true);
-    void postAction('start', { dir: row.dir, mode: 'both' })
+    void postAction('start', { dir, mode: 'both' })
       .then(
         () => undefined,
         (error) => setFailure(failureFrom(error)),
@@ -474,10 +496,49 @@ export function WorkspaceHome({
   };
 
   /**
+   * 确认打断之后的起录：先停（`post_stop` 受理即回，当前块收尾后才真停），再等
+   * 在飞清空、起录。那一等靠 `start` 自己的 409 兜底（服务侧硬闸同一句读数）：
+   * 还没停到块边界就按 409 退回，这里隔一拍再试（上限 60 拍，超了如实画失败块）。
+   */
+  const START_RETRY_LIMIT = 60;
+  const START_RETRY_MS = 500;
+  const startAfterInterrupt = (dir: string): void => {
+    setFailure(null);
+    setBusy(true);
+    const attempt = (left: number): void => {
+      void postAction('start', { dir, mode: 'both' })
+        .then(
+          () => true,
+          (error) => {
+            const failure = failureFrom(error);
+            if (failure.kind === 'envelope' && failure.code === 'draining' && left > 0) {
+              return false; // 还没停到块边界：隔一拍再试
+            }
+            setFailure(failure);
+            return true;
+          },
+        )
+        .then((settled) => {
+          if (!settled) {
+            window.setTimeout(() => attempt(left - 1), START_RETRY_MS);
+            return;
+          }
+          setBusy(false);
+          reloadAfterAction();
+        });
+    };
+    attempt(START_RETRY_LIMIT);
+  };
+
+  /**
    * 会后那两个按钮：各自打一个动作，回执只说「这一趟跑的是哪一场」。
    *
    * 起成功之后**不当场宣称跑完了**（那一趟可能跑一小时），只把动作回执如实写在下面，
    * 并重取一遍列表（`state` / `has_offline` 这些现场读数都从服务来）。
+   *
+   * **纪要免闸的说破半边**（spec「纪要免闸」条）：`post_minutes` 的回执带 `inputs`
+   * （当时读到的输入档位）与 `note`（同场会后精细稿还在跑时的说破句），照实画进
+   * 下面这一行 —— `docs/ui-design.md` 3.1：那一句照实画在这一格，不许静默降级。
    */
   const postSelected = (action: string): void => {
     if (selection === null) return;
@@ -486,7 +547,16 @@ export function WorkspaceHome({
     setBusy(true);
     void postAction(action, { dir: selection })
       .then(
-        () => setPostNote(`${POST_LABELS[action]}：这一趟已起。`),
+        (result) => {
+          const parts = [`${POST_LABELS[action]}：这一趟已起。`];
+          if (result.kind === 'post' && result.post.inputs !== undefined) {
+            parts.push(`这次读到的输入档位：${POST_INPUT_LABELS[result.post.inputs] ?? result.post.inputs}。`);
+          }
+          if (result.kind === 'post' && result.post.note !== undefined) {
+            parts.push(`${result.post.note}。`);
+          }
+          setPostNote(parts.join(''));
+        },
         (error) => {
           setFailure(failureFrom(error));
           setPostNote(null);
@@ -525,12 +595,12 @@ export function WorkspaceHome({
   const post = selected === null ? null : postButtonsView(selected);
   const lines = emptyStateLines();
   /** 全局「显卡忙不忙」：会中模型在这一屏必关着（闸只在 idle / 收尾落定后进本屏）。 */
-  const gpu = gpuBusyView(postJob, false);
+  const gpu = gpuBusyView(postJobs, false);
   /** 进度区的读数（有读数才算；读不出来就画失败那一行）。 */
   const prog = status === null ? null : progressView(status);
   const progMark = prog === null ? null : phaseMark(prog.phase);
   /** 停止入口（R28 / b1c6a58e）：这一场的 offline 在飞时出现在进度区头行。 */
-  const stop = postStopView(postJob, selected?.dir ?? null);
+  const stop = postStopView(postJobs, selected?.dir ?? null);
 
   /** 一场都没有：右栏让给那张空态（左栏照旧留着「添加工作区」）。 */
   const isEmpty = sessions !== null && sessions.sessions.length === 0;
@@ -575,7 +645,7 @@ export function WorkspaceHome({
               </div>
               <div className="list wslist" role="listbox" aria-label="工作区列表">
               {sessions.sessions.map((row) => {
-                const cell = rowStatusView(row, postJob);
+                const cell = rowStatusView(row, postJobs);
                 const dur = rowDurationLabel(row);
                 return (
                 <div
@@ -680,7 +750,7 @@ export function WorkspaceHome({
                 <span className="kv__v num">{selected.dir}</span>
               </p>
               {(() => {
-                const cell = rowStatusView(selected, postJob);
+                const cell = rowStatusView(selected, postJobs);
                 return (
                   <p className="kv">
                     <span className="kv__k">状态</span>
@@ -927,12 +997,7 @@ export function WorkspaceHome({
           onConfirm={() => {
             const dir = confirm.dir;
             setConfirm(null);
-            // 收编这一问过了（R20）；offline 档在飞时接着问打断（review-1 m2）——
-            // 两问都过才登记，任何一问取消都零发送。
-            if (postJob !== null && postJob.kind === 'offline') {
-              setConfirm({ what: 'post-interrupt', dir, viaConfirm: true });
-              return;
-            }
+            // 收编这一问过了（R20）：登记不打断任何在飞的活（一刀切已废），直接登记。
             setFailure(null);
             setBusy(true);
             void confirmWorkspaceOpen(dir, {
@@ -972,42 +1037,32 @@ export function WorkspaceHome({
         />
       )}
 
-      {confirm !== null && confirm.what === 'post-interrupt' && (
+      {confirm !== null && confirm.what === 'start-interrupt' && (
         <ConfirmDialog
-          title="正在运行的会后任务将被中断，是否继续？"
-          text="「生成会后精细稿」正在运行。继续将先停止该任务（已完成的块保留在逐块记录中，可重新运行），然后登记所选目录；取消则不执行任何操作。"
-          confirmLabel="中断并继续"
+          title="启动新会议会打断会后总结，是否继续"
+          text="「生成会后精细稿」正在运行。继续将先停止该任务（已完成的块保留在逐块记录中，可重新运行），等它停下后开始新一场录音；取消则不执行任何操作。"
+          confirmLabel="打断并开始录音"
           busy={busy}
           onConfirm={() => {
-            const { dir, viaConfirm } = confirm;
+            const { dir } = confirm;
             setConfirm(null);
             setFailure(null);
             setBusy(true);
-            // 确认 = 先停、再登记（R28）：停止动作受理即回（不等块边界），登记照走。
-            // 弹窗只在 offline 档在飞时出现；这只守卫接的是「弹窗开着的那一会儿，
-            // 在飞那趟自己收了工」——此刻不发 stop、登记照走。minutes 在飞不弹此窗
-            // （openDir 已收窄，没有东西会被打断）。登记按来路走：非空目录收编那半边
-            // 带 `confirm: true`（R20 / review-1 m2），其余走普通登记。
-            const flying = postJob;
+            // 确认 = 先停、再起录（设计意图第 13 / 21 条）：post_stop 受理即回（当前块
+            // 收尾后才真停），stop 的应答回来再发起录——那一刻在飞多半还没清，`start`
+            // 的 409（服务侧硬闸）兜住，`startAfterInterrupt` 隔一拍再试。这只守卫接的
+            // 是「弹窗开着的那一会儿，在飞那趟自己收了工」——此刻不发 stop、直接起录。
+            const flying = postJobs.find((job) => job.kind === 'offline') ?? null;
             const stopFirst =
-              flying !== null && flying.kind === 'offline'
+              flying !== null
                 ? postAction(POST_STOP_ACTION, { dir: flying.dir }).then(
                     () => undefined,
                     (error) => setFailure(failureFrom(error)),
                   )
                 : Promise.resolve();
             void stopFirst.then(() => {
-              if (viaConfirm) {
-                void confirmWorkspaceOpen(dir, {
-                  onFail: setFailure,
-                  reload: () => {
-                    setBusy(false);
-                    reloadAfterAction();
-                  },
-                });
-                return;
-              }
-              openDirNow(dir);
+              setBusy(false);
+              startAfterInterrupt(dir);
             });
           }}
           onCancel={() => setConfirm(null)}

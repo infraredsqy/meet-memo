@@ -76,17 +76,18 @@ def _post_job_progress(job: PostJob | None, directory: str) -> Any:
     return job.get("progress")
 
 
-def _post_job_view(job: PostJob | None, directory: str) -> dict[str, Any] | None:
-    """`GET /api/sessions/{id}` 的 `post` 那一格：上一趟/这一趟是哪一趟、在不在飞。
+def _post_flight_view(job: PostJob, directory: str) -> dict[str, Any]:
+    """`GET /api/sessions/{id}` 的 `post` 清单里的一行：哪一趟、起止时刻、在不在飞。
 
-    `running` 由调用方按 `post_job_state()` 那一套判据盖上来（这里只看线程活没活着，
-    不另发明一套判据）。isinstance + dir 相等走 `_job_matches()` 这一处公共判据。
+    `running` 按线程活没活着答（`post_jobs_state()` 同一套判据，不另发明）。
+    isinstance + dir 相等走 `_job_matches()` 这一处公共判据。
     """
-    if not _job_matches(job, directory):
-        return None
+    thread = job.get("thread")
+    running = thread is not None and thread.is_alive()
     return {
-        "running": False,
+        "running": running,
         "kind": job.get("kind"),
+        "dir": str(job.get("dir")),
         "started_at": job.get("started_at"),
         "finished_at": job.get("finished_at"),
     }
@@ -418,7 +419,7 @@ class RuntimeCatalogMixin:
         有没有那份更细的稿。**这一格走本端点，不塞进快照**（推送出去的东西只认那九个顶层键，
         前端两道硬门钉着）。
 
-        顶层第三格 `post_job`（会后进度界面节点 `52b24392`）：`post_job_state()` 的原文
+        顶层第三格 `post_jobs`（本节点重排）：`post_jobs_state()` 的原文
         —— 此刻服务进程里在飞的那一趟会后（`{kind, dir, started_at}`）或 `null`。它是
         界面那格全局「显卡忙不忙」的会后一半读数（另一半「本机正在录」从快照状态读，
         不走这里）；**每行十二键**，这一格在应答体顶层、不进任何一行，快照九键
@@ -452,52 +453,23 @@ class RuntimeCatalogMixin:
         return {
             "sessions": rows,
             "recent": None if recent is None else str(recent["dir"]),
-            "post_job": self.post_job_state(),
+            "post_jobs": self.post_jobs_state(),
         }
 
-    # -- 会后的两趟活（人按才起：`post_offline` / `post_minutes` 两个动作）-----
-
-    def post_job_state(self) -> dict[str, Any] | None:
-        """会后那两趟活的现场读数（`None` = 没有在跑的）。
-
-        `running` 由线程自己落（跑完那一刻清掉），因此这一格不会永远停在"在跑"。
-        它只进动作回执与 log，不进快照。**跑完那一刻不把它抹掉**：抹掉之后按「生成会后
-        精细稿」跑完一场、再去读那一场的进度，读到的就是一片空白（`GET /api/sessions/{id}`
-        的 `post` 那一格要回答「上一趟是哪一趟、什么时候起的」）。判"有没有在飞"看
-        `thread.is_alive()`，`post_job['finished_at']` 是它收工的时刻。
-        """
-        job = self.post_job
-        if job is None:
-            return None
-        thread = job.get("thread")
-        if thread is not None and not thread.is_alive():
-            if job.get("finished_at") is None:
-                job["finished_at"] = now_iso()
-            return None
-        return {
-            "kind": job["kind"],
-            "dir": job["dir"],
-            "started_at": job["started_at"],
-        }
+    # -- 会后的多趟活与转码工序（闸与登记的读法归 runtime_post / runtime_transcode）
 
     # -- 单场状态（`GET /api/sessions/{id}`：会后视图的进度区）-----------------
 
     def _offline_job_running(self, directory: str) -> bool:
         """这一场**此刻有没有离线那一趟在本进程里跑**（`GET /api/sessions/{id}` 的
-        `offline.in_process` 那一格，判据与 `post_job_state()` 同源）。
+        `offline.in_process` 那一格，判据与 `post_jobs_state()` 同源）。
 
         三样都对上才算「在跑」：这一趟的路是 `offline`、跑的是这一场、线程还活着。
-        **跑完那一刻这条线程就死了** —— 与 `post_job_state()` 同一套判据（那一格跑完之后
-        也不把 job 抹掉，靠 `thread.is_alive()` 分「在飞」与「跑完了」）。不另发明一套。
-        **在飞判据是这一处自己的形状**（与 `post_stop()` 那一处逐字同形：`thread`
-        缺席就算「不在飞」；`post_job_state()` 对 `thread` 缺席答「在飞」，三处并不同形，
-        复审 #2 的裁定因此只抽 isinstance + dir 相等这一段公共判据）。
+        **跑完那一刻这条线程就死了** —— 与 `post_jobs_state()` 同一套判据（那一格跑完
+        之后也不把登记抹掉，靠 `thread.is_alive()` 分「在飞」与「跑完了」）。判据收在
+        `_post_job_slot()` 一处，不另发明一套。
         """
-        job = self.post_job
-        if not _job_matches(job, directory) or str(job.get("kind")) != "offline":
-            return False
-        thread = job.get("thread")
-        return thread is not None and thread.is_alive()
+        return self._post_job_slot("offline", directory) is not None
 
     def session_status_dict(self, target: Any) -> dict[str, Any]:
         """`GET /api/sessions/{id}` 的应答体：**这一场此刻跑到哪儿了**。
@@ -555,9 +527,14 @@ class RuntimeCatalogMixin:
             )
         record = self.store.read_session_json(directory)
         state, date, mode = self._disk_record_cells(record, directory)
-        post = _post_job_view(self.post_job, directory)
-        if post is not None:
-            post["running"] = self.post_job_state() is not None
+        wanted = canonical_dir(directory)
+        # 契约 4.9：这张清单只收 `post_offline` / `post_minutes` 两趟；转码那一趟不进
+        # （它的读数在下面的 `transcode` 格）——收工后留在 `post_jobs` 里的那一格不外泄。
+        post = [
+            _post_flight_view(job, directory)
+            for (_kind, job_dir), job in sorted(self.post_jobs.items())
+            if job_dir == wanted and _kind in ("offline", "minutes")
+        ]
         return {
             "dir": str(directory),
             "session_id": None if record is None else (
@@ -571,6 +548,7 @@ class RuntimeCatalogMixin:
             "has_offline": has_offline_transcript(directory),
             "post": post,
             "offline": self._offline_progress_for(directory),
+            "transcode": self._transcode_progress_for(directory),
             "speakers": speaker_identity_rows(directory),
         }
 
@@ -594,7 +572,9 @@ class RuntimeCatalogMixin:
         终态**（b1c6a58e 落地）：停掉的那一场照盘上答 `interrupted`，这一格照旧只透传、
         不替它下结论，也**不参与任何判定**（进度是给人看的读数）。
         """
-        ledger = _post_job_progress(self.post_job, directory)
+        ledger = _post_job_progress(
+            self.post_jobs.get(("offline", canonical_dir(directory))), directory
+        )
         running = self._offline_job_running(directory)
         if ledger is not None and running:
             # 这一趟正在本进程里跑：块数、当前哪一路、已跑多久都由现场给
@@ -627,39 +607,6 @@ class RuntimeCatalogMixin:
             )
         snapshot["in_process"] = False
         return snapshot
-
-    def _reject_post_job(self) -> None:
-        """会后那两趟活的两道闸：本场还在录音，或已经有一趟没跑完。
-
-        「本场还在录音」按 `draining` 档报（409）：会还在录着，会后那两个按钮要等
-        录音结束（工作区清单上那一行还是「录音中」）。**「落盘没落定」不再是闸**
-        ——收尾走到哪一步、成没成，都不拦会后动作；盘上停在收尾半路的那一场，
-        工作区读数就是「录音结束」，按钮照按。
-
-        「已经有一趟在飞」同样按 `draining` 报：一张显卡上不并排开两份模型
-        （`docs/design-intent.md` 第 21 条）。`action_unavailable`（404）留给
-        「这台机器上没接这一层的实现」那一档。
-        """
-        job = self.post_job_state()
-        if job is not None:
-            raise ActionError(
-                "draining",
-                f"会后的活儿正在跑（{job['kind']}）：{job['dir']}；等它跑完再按",
-                status=409,
-                detail={"kind": job["kind"], "dir": job["dir"], "started_at": job["started_at"]},
-            )
-        if self.snapshot.top_state in ("recording", "alert"):
-            session = self.snapshot.session
-            raise ActionError(
-                "draining",
-                "这一场还在录音中：会后的两个按钮要等录音结束",
-                status=409,
-                detail={
-                    "top_state": self.snapshot.top_state,
-                    "session_id": None if session is None else session.id,
-                    "dir": None if session is None else session.dir,
-                },
-            )
 
     def _registry_entry_for(self, target: str) -> dict[str, Any] | None:
         """`target` 在注册表里那一条（判据与 `GET /api/sessions` **同一套**：`normcase` 后的

@@ -15,7 +15,7 @@
 **`to_dict()` 与 `commit()` 配合**：状态变更后经 `commit()` 一次完成「`revision +1` +
 广播一次全量 `state`」，别处一律不自己改 `revision`、不自己发 `state`。
 
-**唯一的例外是「等待一条同步调用」**：收尾四步（`_drain_wait()`）与会中总结那一次模型调用
+**唯一的例外是「等待一条同步调用」**：收尾三步（`_drain_wait()`）与会中总结那一次模型调用
 （`summarize()` → `_summary_wait()`，`1987cb20` phase2 的复审裁定）都**不**在事件循环上跑
 同步实现 —— 它们提交到各自的 daemon 工作线程，事件循环只等结果，`/api/state`、三个 SSE 通道、
 心跳与健康节拍照旧转。两条等待的上限都是自己那条 deadline（收尾是 `compute_drain_budget()`、
@@ -149,6 +149,7 @@ from meeting.service.runtime_sessions import (
     MODEL_EXECUTOR_MAX_WORKERS,
     RuntimeSessionsMixin,
 )
+from meeting.service.runtime_transcode import RuntimeTranscodeMixin
 from meeting.service.runtime_shared import (
     ACTION_CODES,
     ACTION_NAMES,
@@ -174,6 +175,7 @@ class ServiceRuntime(
     RuntimeSessionsMixin,
     RuntimeCatalogMixin,
     RuntimePostMixin,
+    RuntimeTranscodeMixin,
     RuntimeSummaryMixin,
     RuntimeMaterialsMixin,
     RuntimeDrainMixin,
@@ -248,11 +250,11 @@ class ServiceRuntime(
 
         # 收尾 task 句柄（属性名冻结；启动时赋值、走完含被取消那趟后置空）
         self._drain_task: asyncio.Task | None = None
-        #: 收尾四步的**同步调用专用**执行器（工作线程是 daemon，见
+        #: 收尾三步的**同步调用专用**执行器（工作线程是 daemon，见
         #: `_DaemonThreadPoolExecutor` 的说明：第二次 `Ctrl+C` 的「立即中止」不许被在飞的
         #: 同步步拖住）。**惰性创建**：不跑收尾的进程一个线程都不起。
         self._drain_executor: _DaemonThreadPoolExecutor | None = None
-        #: 这一趟收尾的共享 deadline（`drain()` 开头算出来、四步共用；不在收尾中时为 `None`）
+        #: 这一趟收尾的共享 deadline（`drain()` 开头算出来、三步共用；不在收尾中时为 `None`）
         self._drain_deadline: float | None = None
         #: 最近一趟收尾**自己算出来的**那笔预算（`compute_drain_budget()` 的输出，见
         #: `_run_drain_steps()` 开头）。`_drain_deadline` 在收尾跑完时清空，这一笔留着：
@@ -297,7 +299,7 @@ class ServiceRuntime(
         self.summary_records: list[dict[str, Any]] = []
         self.summary_client: Any = None
         #: 会中总结那一次模型调用的**同步调用专用**执行器（工作线程是 daemon，
-        #: 与收尾四步那台分属两台池，见 `_DaemonThreadPoolExecutor` 的说明）
+        #: 与收尾三步那台分属两台池，见 `_DaemonThreadPoolExecutor` 的说明）
         self._summary_executor: _DaemonThreadPoolExecutor | None = None
 
         #: 会中模型「收 / 放」两次调用（`release_gpu()` / `acquire_gpu()`）的**同步调用专用**
@@ -306,16 +308,20 @@ class ServiceRuntime(
         #: 没人按过暂停/继续的进程一个线程都不起。
         self._model_executor: _DaemonThreadPoolExecutor | None = None
 
-        # -- 会后的两趟活（人按才起，`d63b0f4a` 的两个按钮）--------------------
+        # -- 会后的多趟活与转码工序（人按才起；转码由 flush 落定自动起）----------
         #
-        # `self.post_job` 记**这一趟会后活跑到哪一档**（`None` = 没有在跑的）：
-        #   七键形状冻结在 `PostJob`（runtime_shared；`{"kind", "dir", "thread",
-        #   "started_at", "finished_at", "progress", "cancel"}`）
+        # `self.post_jobs` 按 `(kind, dir)` 记每一趟在飞的活（`None` 不存在——空 dict =
+        # 没有在跑的）：`{"offline"|"minutes"|"transcode", 场次目录}` 一格一趟。
+        #   - offline / minutes 是会后那两个按钮；transcode 是 flush 落定自动起的那道
+        #     独立工序（`transcode_run` / `transcode_pause` / `transcode_resume` 三个动作
+        #     也落在这张登记上）；
+        #   - **进程级一刀切已废**：不同场次、不同种类的活可以并排飞；唯一的槽判据是
+        #     `(kind, dir)` —— 同一种重活在同一场上只能有一趟（第二趟如实拒）；
+        #   - 唯一硬闸 = 本地大模型互斥：offline 会后精细稿与会中录音不并排（`start` 按
+        #     409 拒、录音中按「生成会后精细稿」按 409 拒），纪要与转码都免闸；
         # 它**不写快照、不落盘**：这一格是服务进程自己的现场（界面问「有没有会后精细稿」
         # 走 `GET /api/sessions` 的 `has_offline`，那一条读盘，与本字段无关）。
-        # 「一趟没跑完就按第二个按钮」当场拒（409 `draining`）：一张显卡上不该同时开两份模型
-        # （`docs/design-intent.md` 第 21 条）。
-        self.post_job: PostJob | None = None
+        self.post_jobs: dict[tuple[str, str], PostJob] = {}
 
     # -- 状态 JSON 产出（唯一产出者） -------------------------------------
 

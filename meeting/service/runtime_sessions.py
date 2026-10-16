@@ -191,11 +191,12 @@ class RuntimeSessionsMixin:
         """
         mode = DEFAULT_SESSION_MODE if mode is None else mode
 
-        # ① 判态两档（已录 / 收尾中）
+        # ① 判态三档：已录 / 收尾闸（收窄后）/ 硬闸（会后精细稿在飞）
         if self.snapshot.top_state in ("recording", "alert"):
             raise self._already_recording_error()
-        if self.snapshot.top_state == "ended" and self._is_draining():
-            raise self._draining_error(self.snapshot.session)
+        if self.snapshot.top_state == "ended":
+            self._reject_start_during_drain()
+        self._reject_start_on_offline_post()
 
         # ② 校验落点（**显式给、已存在**；不建目录）。已有记录的那一档 = 续接：
         #    先把旧记录读进来（本场落盘的每一版都要跟它合并），再动任何东西
@@ -420,7 +421,7 @@ class RuntimeSessionsMixin:
         begin_drain(self.snapshot, reason=reason)
         # 进 `ended` 这一刻提示级一并归零（提示条只在 recording / alert 上成立）：清在下面那次
         # 提交之前，于是广播出去的「结束档」那一份里 `alerts.hints` 就是空数组 —— 不必等
-        # 0.5 秒那一拍来收尾（收尾四步期间没有任何转写刷新，等节拍会留下一段「已结束、
+        # 0.5 秒那一拍来收尾（收尾三步期间没有任何转写刷新，等节拍会留下一段「已结束、
         # 还挂着提示条」的窗口）。
         self._clear_hints()
         _log.info(
@@ -484,7 +485,7 @@ class RuntimeSessionsMixin:
         界面照旧转。释放要等在飞的推理收干净（上界 5 秒），拉起之后紧接着就是权重的加载
         （秒级）；这两段工夫若花在事件循环上，暂停/继续那几秒里 `/api/heartbeat`、
         `/api/state`、SSE 与其它动作会一起停摆，界面的心跳探测因此判成「失联」
-        （第 17 条那一条致命级）。于是把它们交给后台那条线程慢慢做，取舍与收尾四步、
+        （第 17 条那一条致命级）。于是把它们交给后台那条线程慢慢做，取舍与收尾三步、
         会中总结那两处同源。
 
         **提交进单线程池**（`MODEL_EXECUTOR_MAX_WORKERS` = 1）：一进一出按用户按下的顺序

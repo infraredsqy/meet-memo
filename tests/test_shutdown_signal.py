@@ -154,7 +154,7 @@ SIGBREAK_STATE_POLL_TIMEOUT_SECONDS = 20
 #: `running`」这条论证余量充足，用例的墙钟也留得住余量。
 #:
 #: **它与下面那条退出时延上限的关系**（审查问题 M10 改掉的说法）：这两笔钱**互不相干** ——
-#: 收尾四步的同步调用由**收尾专用的 daemon 执行器**推进工作线程，进程退出时**不等**在飞的
+#: 收尾各步的同步调用由**收尾专用的 daemon 执行器**推进工作线程，进程退出时**不等**在飞的
 #: 那一步，因此「第二次按下 → 进程退出」的时延**与剩余阻塞时长无关**（阻塞 2.0 秒的现场实测
 #: 0.172 秒；同一个现场切回非 daemon 的默认执行器才是等满的 2.007 秒）。下面那条 1.0 秒的
 #: 上限，咬的是「**退出不等在飞步**」这件事 —— 它量的是关停这一路自己的时延，
@@ -171,7 +171,7 @@ SHUTDOWN_BLOCKING_STEP_SECONDS = 2.0
 #: task 的等待，已经交给工作线程的那次同步调用（这里就是假采集件 `finalize()` 的
 #: `time.sleep`）**照跑到底**
 #: —— 若解释器收尾要 join 它，「立即中止」就被在飞的同步步拖着走（**修 M5 之前实测：
-#: 第二次按下 → 进程退出要等满那次阻塞**）。收尾四步的工作线程因此是 daemon
+#: 第二次按下 → 进程退出要等满那次阻塞**）。收尾各步的工作线程因此是 daemon
 #: （`meeting/service/runtime.py` 的 `_DaemonThreadPoolExecutor`），本上限就是这条行为的判据。
 #:
 #: **这条上限盯的是什么（审查问题 M10 改掉的说法）**：daemon 执行器下，进程退出的时延与
@@ -179,7 +179,7 @@ SHUTDOWN_BLOCKING_STEP_SECONDS = 2.0
 #: 「退出**没等**在飞步」这一件事，而不是「离阻塞结束还剩多少秒」。1.0 秒相对一次正常的
 #: 关停（几十毫秒）足够宽，而**任何一条把在飞步等满的路径都远远越过它**。
 #:
-#: **取值论证**：同一个现场（在飞的那一步阻塞 2.0 秒）上量两次 —— 收尾四步走 daemon 执行器时
+#: **取值论证**：同一个现场（在飞的那一步阻塞 2.0 秒）上量两次 —— 收尾各步走 daemon 执行器时
 #: **0.172 秒**退出；把同一个现场临时切回事件循环的默认执行器（工作线程非 daemon）时
 #: **2.007 秒**退出 —— 后者正是「等满在飞步骤」的形状，前者与它差一个数量级。于是
 #: 「≤ 1.0 秒」在没修的那一版上必红（实测 2.0 秒），在修好的这一版上实测 0.17 秒。
@@ -581,7 +581,7 @@ def _assert_interrupted_face(proc: Any) -> dict[str, Any]:
     # 在飞的那一步只报真事：假采集件的 `finalize()` 把 `flush` 钉住，取消记的就是 `running`
     assert settled["flush"] in ("running", "failed", "done", "skipped"), record
     # `log` 在任何构建里都有真实实现：它要么还没轮到、要么已经落定（不许被改回 `waiting`）
-    for step_id in ("transcode", "log"):
+    for step_id in ("log",):
         assert settled[step_id] in ("waiting", "running", "done", "failed"), record
         assert settled[step_id] in DRAIN_STEP_STATUS, record
     return record
@@ -946,7 +946,7 @@ def test_second_sigbreak_during_drain_exits_130(service_process, case_env):
 
     **「立即中止」的时延**（§3.5 行为表第二行、修审查问题 M5）：第二次按下之后进程必须在
     `INTERRUPT_EXIT_LATENCY_LIMIT_SECONDS` 之内退出，而**在飞的同步步还剩
-    `SHUTDOWN_BLOCKING_STEP_SECONDS` 那么久** —— 收尾四步的工作线程是 daemon，所以这段
+    `SHUTDOWN_BLOCKING_STEP_SECONDS` 那么久** —— 收尾各步的工作线程是 daemon，所以这段
     剩余时长不参与进程退出（判据与实测见那个常量的说明）。
     """
     case_started = time.monotonic()
@@ -1523,7 +1523,7 @@ def test_drain_exit_code_matrix_including_the_server_crash_fallback():
     # ② 收尾干净档：四步都落在 done / skipped → EXIT_OK
     assert (
         cli_module._drain_exit_code(
-            _exit_code_runtime(statuses=("done", "skipped", "done", "skipped")),
+            _exit_code_runtime(statuses=("done", "done", "skipped")),
             fallback=EXIT_OK,
         )
         == EXIT_OK
@@ -1531,7 +1531,7 @@ def test_drain_exit_code_matrix_including_the_server_crash_fallback():
     # ③ 收尾失败档：有步骤 failed → EXIT_FAILURE（这一档与兜底值无关）
     assert (
         cli_module._drain_exit_code(
-            _exit_code_runtime(statuses=("done", "done", "done", "failed")),
+            _exit_code_runtime(statuses=("done", "done", "failed")),
             fallback=EXIT_OK,
         )
         == EXIT_FAILURE
@@ -1548,7 +1548,7 @@ def test_drain_exit_code_matrix_including_the_server_crash_fallback():
     # 收尾干净这一格抹不掉它（若把兜底值丢掉，这一行会拿到 EXIT_OK）
     assert (
         cli_module._drain_exit_code(
-            _exit_code_runtime(statuses=("done", "skipped", "done", "skipped")),
+            _exit_code_runtime(statuses=("done", "done", "skipped")),
             fallback=EXIT_FAILURE,
         )
         == EXIT_FAILURE
@@ -1568,7 +1568,7 @@ def test_drain_exit_code_matrix_including_the_server_crash_fallback():
 #
 # `_drain_exit_code()` 这一档里压着**两件正交的事**：「收尾有步骤 `failed`」与
 # 「`server.run()` 自己抛了异常」。修 M1 之前 `_report_drain_outcome()` 只看
-# `exit_code != EXIT_FAILURE` 就早退，于是「收尾四步全绿、只是服务器自己炸了」的现场也会在
+# `exit_code != EXIT_FAILURE` 就早退，于是「收尾各步全绿、只是服务器自己炸了」的现场也会在
 # 终端打出「收尾有步骤失败，服务不自杀（现场仍在）」与「出路一：`meeting post <场次目录>`」
 # —— 那两句话与现场（盘上是 `done`）对不上。
 #
@@ -1591,8 +1591,8 @@ def test_drain_report_speaks_for_the_real_face_not_the_exit_code(capsys):
       3. **`ended` 为空**（空闲态退出这一格）：同样一个字都不打。
     """
     logger = _FakeLogger()
-    clean = _exit_code_runtime(statuses=("done", "skipped", "done", "skipped"))
-    failed = _exit_code_runtime(statuses=("done", "skipped", "done", "failed"))
+    clean = _exit_code_runtime(statuses=("done", "done", "skipped"))
+    failed = _exit_code_runtime(statuses=("done", "done", "failed"))
     idle = _exit_code_runtime(statuses=None)
 
     # 现场档位的读法（`cli.py` 的判据）：干净档与空闲档都不是收尾失败档
@@ -1648,7 +1648,7 @@ def test_interrupted_report_speaks_for_the_forced_interrupt_not_the_failed_face(
     现场逐项照实造（进程内纯函数级，不占墙钟）：
 
       - `shutdown_interrupted=True`（第二次 `Ctrl+C` / 已停在 `draining` 再按那一档），
-        `ended.steps` 里 `post` 是 `failed`（前面已经失败过一步，`flush` / `transcode` / `log`
+        `ended.steps` 里 `post` 是 `failed`（前面已经失败过一步，`flush` / `log`
         都已有终态）—— `_drain_reported_failed()` 因此是 `True`，正是会误报「服务不自杀」的那一格；
       - `_drain_exit_code()` 对这一组报 `EXIT_INTERRUPTED`（档位压过现场：强制打断那一支先判）。
 
@@ -1657,7 +1657,7 @@ def test_interrupted_report_speaks_for_the_forced_interrupt_not_the_failed_face(
     """
     logger = _FakeLogger()
     runtime = _exit_code_runtime(
-        interrupted=True, statuses=("done", "skipped", "done", "failed")
+        interrupted=True, statuses=("done", "done", "failed")
     )
     assert cli_module._drain_reported_failed(runtime) is True, "这一格现场确实有 failed 步"
     assert cli_module._drain_exit_code(runtime, fallback=EXIT_OK) == EXIT_INTERRUPTED

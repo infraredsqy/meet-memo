@@ -515,8 +515,8 @@ def test_capture_ended_done(tmp_path, make_client, contract_regen):
     _assert_snapshot_shape(snapshot, top_state="ended", envelope_filled=True)
     assert snapshot["ended"]["error"] is None
     assert [step["status"] for step in snapshot["ended"]["steps"]] == [
-        "skipped", "skipped", "done", "waiting",
-    ]
+        "skipped", "done", "waiting",
+    ]  # 三步（转码已摘出收尾序列）：flush skipped / log done / post waiting
     assert all(step["error"] is None for step in snapshot["ended"]["steps"])
     assert snapshot["session"]["frozen"] is True
     # 成功档的收尾副作用：两路从 stopped 回 unprobed
@@ -754,11 +754,11 @@ def test_capture_workspace_group(tmp_path, make_client, contract_regen):
     """
     client = make_client({"capture.backend": "dev"})
 
-    # 空注册表的那一份（顶层第三格 `post_job`：此刻没有会后那一趟在飞 → `None`）
+    # 空注册表的那一份（顶层第三格 `post_jobs`：此刻没有活儿在飞 → 空数组）
     listed = client.get("/api/sessions")
     assert listed.status_code == 200
     empty_listing = listed.json()
-    assert empty_listing == {"sessions": [], "recent": None, "post_job": None}
+    assert empty_listing == {"sessions": [], "recent": None, "post_jobs": []}
 
     # 造三个目的目录并逐个走「新会议」：空的 / 有会议材料的 / 疑似会议目录
     place = tmp_path / "contract-workspaces"

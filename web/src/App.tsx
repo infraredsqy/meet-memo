@@ -328,7 +328,7 @@ export function LiveView({
    * 的会后一半读数。之前这一屏硬编码 `null`，收尾窗口显假「闲」（review-1 m2）——
    * 同一服务的同一份读数，按下面的心跳节奏伸手取即可。
    */
-  const [postJob, setPostJob] = useState<PostJobCell | null>(null);
+  const [postJobs, setPostJobs] = useState<PostJobCell[]>([]);
   /** 总结区那台状态机（这一次请求的状态、当前档位、记录那一份）。 */
   const summaryRef = useRef<SummaryController | null>(null);
   if (summaryRef.current === null) {
@@ -423,7 +423,7 @@ export function LiveView({
   }, [heartbeatSeconds]);
 
   // 会后在飞读数（review-1 m2）：挂上这一屏就按心跳节奏取一遍 `GET /api/sessions`，
-  // 把顶层的 `post_job` 喂给全局那格「显卡忙不忙」——录着的那一档它本来就答忙，
+  // 把顶层的 `post_jobs` 喂给全局那格「显卡忙不忙」——录着的那一档它本来就答忙，
   // 真正要这份读数的是收尾窗口那一档（recording 已假、会后模型还开着）。取不到的
   // 那一跳（瞬态失联）手上这份照旧，下一跳再试；周期与心跳同一个可配节奏。
   useEffect(() => {
@@ -432,7 +432,7 @@ export function LiveView({
     const load = (): void => {
       void fetchSessions().then(
         (data) => {
-          if (!cancelled) setPostJob(data.post_job);
+          if (!cancelled) setPostJobs(data.post_jobs);
         },
         () => undefined,
       );
@@ -631,11 +631,11 @@ export function LiveView({
   const logPath = snapshot?.service.log_path ?? null;
   const alarmSoundOn = snapshot?.settings.alarm_sound ?? false;
   // 全局「显卡忙不忙」（R31）：忙 = 有模型开着 —— 快照说录着（含告警）是会中那一半，
-  // `GET /api/sessions` 顶层的 `post_job` 是会后那一半（上面的 effect 按心跳节奏取）。
-  // 收尾窗口那一档（ended + 收尾未落定）recording 已假，这一格靠 post_job 答忙闲，
-  // 不再显假「闲」（review-1 m2）。
+  // `GET /api/sessions` 顶层的 `post_jobs` 是会后那一半（上面的 effect 按心跳节奏取；
+  // 转码那趟不吃显卡，gpuBusyView 不把它数进来）。收尾窗口那一档（ended + 收尾未落定）
+  // recording 已假，这一格靠 post_jobs 答忙闲，不再显假「闲」（review-1 m2）。
   const gpu = gpuBusyView(
-    postJob,
+    postJobs,
     snapshot !== null && (snapshot.top_state === 'recording' || snapshot.top_state === 'alert'),
   );
   const chips = useMemo(() => {

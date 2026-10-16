@@ -143,13 +143,13 @@ def test_start_action_resumes_a_workspace_that_already_has_a_session(tmp_path):
         assert _post(client, "start", {"dir": str(taken)}).status_code == 200
         assert runtime.snapshot.session.dir == str(taken)
         resumed = read_json(taken / SESSION_FILE_NAME)
-        # 身份三格沿用开场那一次（一场会一个身份）；收尾四步重新起算
+        # 身份三格沿用开场那一次（一场会一个身份）；收尾各步重新起算
         assert resumed["session_id"] == first["session_id"]
         assert resumed["created_at"] == first["created_at"]
         assert resumed["started_at"] == first["started_at"]
         assert resumed["mode"] == first["mode"]
         assert resumed["date"] == first["date"]
-        assert [step["status"] for step in resumed["drain"]["steps"]] == ["waiting"] * 4
+        assert [step["status"] for step in resumed["drain"]["steps"]] == ["waiting"] * 3  # 转码已摘出收尾序列（三步）
         assert resumed["interrupted"] is False
     finally:
         stack.close()
@@ -381,7 +381,7 @@ def test_every_phase_change_writes_the_session_file(tmp_path, monkeypatch):
         assert first["state"] == "recording"
         assert first["session_id"] == session_dir.name
         assert first["dir"] == str(session_dir)
-        assert [step["status"] for step in first["drain"]["steps"]] == ["waiting"] * 4
+        assert [step["status"] for step in first["drain"]["steps"]] == ["waiting"] * 3  # 转码已摘出收尾序列（三步）
         assert first["interrupted"] is False
         assert first["created_at"] and first["started_at"]
         assert first["ended_at"] is None
@@ -431,7 +431,6 @@ def test_every_phase_change_writes_the_session_file(tmp_path, monkeypatch):
         assert during["ended_at"] is None
         steps_during = {step["id"]: step["status"] for step in during["drain"]["steps"]}
         assert steps_during["flush"] == "skipped"
-        assert steps_during["transcode"] == "skipped"
         assert steps_during["log"] == "done"
         assert steps_during["post"] == "running"
         hook.release.set()
@@ -446,7 +445,7 @@ def test_every_phase_change_writes_the_session_file(tmp_path, monkeypatch):
         )
         steps = {step["id"]: step["status"] for step in done["drain"]["steps"]}
         assert steps == {
-            "flush": "skipped", "transcode": "skipped", "log": "done", "post": "waiting",
+            "flush": "skipped", "log": "done", "post": "waiting",
         }
         assert done["ended_at"]
         assert done["interrupted"] is False

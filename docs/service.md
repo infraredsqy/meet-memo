@@ -94,7 +94,7 @@ $env:MEETING_CAPTURE="dev"; $env:MEETING_NO_BROWSER="1"; meeting web
 
 被强制打断的场次，盘上留的是「收尾中 + 已打断」，没有 `ended_at` —— 重启与 `meeting post` 都还接得上。第二次按下时终端会打出行踪：档位、盘上那一格与 log 路径。
 
-**收尾有步骤 `failed` 时服务不自杀**：进程继续活着、页面还能看、新的「开始录音」一律回 `409 draining`（带上失败那一步与 log 路径），出路是 `meeting post <场次目录>` 或看清现场后重启服务。收尾这一段本身的进度（四步、预算、耗时）见 `docs/state.md` 第 1 章。
+**收尾有步骤 `failed` 时服务不自杀**：进程继续活着、页面还能看、新的「开始录音」一律回 `409 draining`（带上失败那一步与 log 路径），出路是 `meeting post <场次目录>` 或看清现场后重启服务。收尾这一段本身的进度（三步、预算、耗时）见 `docs/state.md`。
 
 **关停时会等转写收尾，事件循环在这段时间里被占住（有意的取舍）**：`shutdown()` 关掉转写这一档走的是 `TranscriberBackend.stop()`，它是**同步**等待 —— 流水线的收尾（关读线程、送 VAD 尾段、在预算内把队列里剩下的段做完）放进一条 daemon 线程，`stop()` 就在调用方线程里 `join` 它，而调用方正是事件循环上的那条 lifespan 协程。于是这一段里 `/api/heartbeat`、SSE、动作端点都不应答，进程也退不出去。取舍的理由是：此刻服务正在离场、录音已经收尾，等的就是「把临时稿的尾巴尽量做完」（不等就会丢尾巴，异步化要改整个关停编排）。
 
@@ -122,12 +122,12 @@ $env:MEETING_CAPTURE="dev"; $env:MEETING_NO_BROWSER="1"; meeting web
 | `GET /api/events` | SSE，四个事件（`snapshot` / `state` / `levels` / `transcript`）。首帧一定是 `snapshot`。帧形状见 `docs/state.md` 第 6 章 |
 | `GET /api/heartbeat` | 七字段，任何状态下都 `200`。`service` 这个字面量是端口探测认亲用的，必须有 |
 | `GET /api/summaries` | 本场按过的、成功产出的那几次会中总结（时刻 + 窗口 + 那几条），任何状态下都 `200`。记录活在内存里、不落文件，新的一场 `start` 清空 |
-| `GET /api/sessions` | 工作区注册表 + `recent`（最近一场）+ 顶层 `post_job`（此刻在飞的那趟会后，全局「显卡忙不忙」的会后一半读数），任何状态下都 `200`，**纯读**。形状见 `docs/contract.md` 4.8 |
+| `GET /api/sessions` | 工作区注册表 + `recent`（最近一场）+ 顶层 `post_jobs`（此刻在飞的那几趟活，`(种类, 场次)` 多槽；全局「显卡忙不忙」的会后一半读数），任何状态下都 `200`，**纯读**。形状见 `docs/contract.md` 4.8 |
 | `GET /api/sessions/{id}` | 单场状态：这一场此刻跑到哪一档、各段时长与时间、会后离线跑到第几块 / 共几块、正在跑哪一路、已经跑了多久，`200`，**纯读**。`{id}` 是这一场的目录路径（URL 编码的绝对路径）。形状见 `docs/contract.md` 4.9 |
 | `GET /api/dirs` | 目录选择器的一层现场（起点用户主目录，`?dir=` 换层，`up` 到盘根才 `null`）+ 正在浏览这一层自己的名目（`here`），`200`，**纯读**。形状见 `docs/contract.md` 4.8 |
 | `POST /api/dirs` | 目录选择器里就地新建目录：在正在浏览的这一层建一个（`?dir=` 父层、省略时主目录；`?name=` 新目录名，必须用户给），成功体 = 通用信封 + `directory`（新建那一行的名目判读，界面拿它插行并直接置为选定）。拒绝档（父层不存在 / 非法名 / 同名已存在）与盘上出岔档见 `docs/contract.md` 4.8；**不走动作信封**的写端点 |
 | `GET /api/devices` | 两路各自的候选设备端点表（`{mic, loopback}` 每项六格），`200`，**纯读、只枚举、不开设备**（设置抽屉的两个下拉读它） |
-| `POST /api/actions` | 十六个动作（`start` / `stop` / `mute_session` / `settings_update` / `reprobe` / `dev_inject` / `summarize` / `workspace_open` / `workspace_remove` / `post_offline` / `post_minutes` / `post_stop` / `pause` / `resume` / `set_source` / `speaker_rename`）。信封、动作表与 `code` 表见 `docs/api.md`；`post_offline` / `post_minutes` 是会后两个按钮（R26），`post_stop` 停掉正在跑的精细稿（R28，`b1c6a58e`），`pause` / `resume` / `set_source` 是会中的暂停、继续与逐路开关（`10770b41`），`speaker_rename` 把一个说话人编号的名字写进这一场目录里的人名表（R10 第四条，`91b6752e`） |
+| `POST /api/actions` | 十九个动作（`start` / `stop` / `mute_session` / `settings_update` / `reprobe` / `dev_inject` / `summarize` / `workspace_open` / `workspace_remove` / `post_offline` / `post_minutes` / `post_stop` / `transcode_run` / `transcode_pause` / `transcode_resume` / `pause` / `resume` / `set_source` / `speaker_rename`）。信封、动作表与 `code` 表见 `docs/api.md`；`post_offline` / `post_minutes` 是会后两个按钮（R26），`post_stop` 停掉正在跑的精细稿（R28，`b1c6a58e`），`transcode_run` / `transcode_pause` / `transcode_resume` 是转码独立工序的补跑 / 暂停 / 继续（flush 落定自动在后台起，这三只管人手那一半），`pause` / `resume` / `set_source` 是会中的暂停、继续与逐路开关（`10770b41`），`speaker_rename` 把一个说话人编号的名字写进这一场目录里的人名表（R10 第四条，`91b6752e`） |
 | `GET /api/sessions/{id}/materials` | 会议资料的清单（`{dir, materials_dir, items:[{name, size_bytes, added_at}]}`），`200`，**纯读**；目录就是清单，`meeting_materials/` 还不在时 `items` 是空数组、目录也不建。资料层口径见 `docs/api.md` 第 3 章末与 `docs/contract.md` 4.12 |
 | `POST /api/sessions/{id}/materials?name=<文件名>` | 上传：请求体就是文件的原样字节，**流式写盘**；`name` 不可信（服务侧清洗），重名自动加序号后缀。成功体 = 通用信封 + `material` |
 | `GET /api/sessions/{id}/materials/{name}` | 取原文件：原始字节从盘上流式读出，`Content-Type` 按扩展名判 |
@@ -224,7 +224,7 @@ $env:MEETING_CAPTURE="dev"; $env:MEETING_NO_BROWSER="1"; meeting web
   - **结束标记是这一场的最后一行**，格式串是 `logging_setup.py` 里的具名常量 `SESSION_END_MARKER`：
 
     ```
-    场次结束：state=<draining|done|failed>；收尾四步：<每步 status 概要>；服务级 log：<路径>
+    场次结束：state=<draining|done|failed>；收尾步骤：<每步 status 概要>；服务级 log：<路径>
     ```
 
     场次 id 由格式串里的 `session=%(session)s` 带上（场次级 handler 的 `SessionFilter` 写的就是场次目录名）。
@@ -259,7 +259,7 @@ $env:MEETING_CAPTURE="dev"; $env:MEETING_NO_BROWSER="1"; meeting web
 
 | 常量 | 取值 | 触发条件 | 现在能走到吗 |
 |---|---|---|---|
-| `EXIT_OK` | `0` | 正常跑完：空闲态按 `Ctrl+C`；收尾四步走到 `done` / `skipped` 之后关停 | 能 |
+| `EXIT_OK` | `0` | 正常跑完：空闲态按 `Ctrl+C`；收尾各步走到 `done` / `skipped` 之后关停 | 能 |
 | `EXIT_FAILURE` | `1` | 收尾有步骤 `failed`；`meeting post` 那一趟没做成（音频转不动、离线那一层 `failed`、纪要落 `failed` 或等它落终态等过了 `minutes.timeout_seconds`）；`meeting replay` 那一趟没做成（整场落在 `failed`，或重放路上抛异常）；`meeting web` 起步这一路（组装应用 / 构造服务器对象）出的意外 | 能 |
 | `EXIT_REJECTED` | `2` | 四个触发面：**用法错误**（不带参数 / 动作词不在 `web` `post` `replay` 里 / `post` 或 `replay` 的位置参数不对 / 未定义的开关；`meeting replay` 的上限换算不出——两开关同给、`--chunks` 撞上 `post.chunk_seconds <= 0`——与素材目录指不对也落这一档）、**配置值非法**、**端口被占**（两种情形都算）、**`meeting post` 的幂等闸拒跑**（有状态文件停在 `running`） | 能 |
 | `EXIT_STARTUP_UNMET` | `3` | 启动前提不成立：主 log 不可写、`config.json` 读不出来或不是合法 JSON | 能 |
@@ -382,8 +382,8 @@ state_machine / config_isolation / minutes_dsh_web 里「真子进程 / 真阈�
 
 **能**（细节一律看对应章节，这里不复述实现）：
 
-- 服务本体：起停、启动序列、五档退出码、`Ctrl+C` 两阶段、收尾四步跑到终态（自适应预算、超时如实上报、失败后服务不自杀）、场次 log 的挂摘、配置原子写与热读键、端口与三道本地防线（第 1–6 章）；
-- 端点与动作：`/`（产物或说明页）、`/debug` 自检页、`/api/state`、四事件 SSE、心跳（含帧空洞记录 `capture_gaps`）、十六个动作、`GET /api/summaries`、工作区注册表两只读端点与收编两动作、单场状态（第 3 章那张表）；
+- 服务本体：起停、启动序列、五档退出码、`Ctrl+C` 两阶段、收尾三步跑到终态（自适应预算、超时如实上报、失败后服务不自杀；转码独立工序在 flush 落定后自动另起）、场次 log 的挂摘、配置原子写与热读键、端口与三道本地防线（第 1–6 章）；
+- 端点与动作：`/`（产物或说明页）、`/debug` 自检页、`/api/state`、四事件 SSE、心跳（含帧空洞记录 `capture_gaps`）、十九个动作、`GET /api/summaries`、工作区注册表两只读端点与收编两动作、单场状态（第 3 章那张表）；
 - 真采集：两路各自独立、边采边落盘按段命名的裸 PCM、0.5 秒电平帧、对录过的目录续接（同一场再录一段，旧段一个字节不碰）、暂停与「会中关一路」（动作 `pause` / `resume` / `set_source`）、收尾逐段转 64k MP3（PCM 保留）；
 - 真转写：两路各一本会中临时稿（`[HH:MM] 正文`），四层退化防护；防护在本机对 V1 事故素材实测过（读数与口径见下面「防护实测」）；
 - 会后离线：按钮或 `meeting post` 按需拉起，两路各出会后稿与说话人对照表，逐块进度落盘、`GET /api/sessions/{id}` 答跑到哪一块，数字静音门拦全零段，`meeting replay` 重放验证；

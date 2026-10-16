@@ -105,19 +105,18 @@ describe('快照样本', () => {
     expect(snap.sources.find((s) => s.id === 'mic')?.health).toBe('capturing');
   });
 
-  it('ended-done：四步次序 flush/transcode/log/post，status 是 skipped/skipped/done/waiting', () => {
+  it('ended-done：三步次序 flush/log/post，status 是 skipped/done/waiting（转码已摘出收尾序列）', () => {
     const snap = snapshotSchema.parse(readFixture('snapshot', 'ended-done'));
     expect(snap.ended?.phase).toBe('done');
     expect(snap.ended?.error).toBeNull();
     expect(snap.ended?.steps.map((step) => step.id)).toEqual([
       'flush',
-      'transcode',
       'log',
       'post',
     ]);
-    // 第 4 步 `post` 停在 `waiting`（＝等你动手）：按「结束录音」之后会后一个动作都不自动跑（R26）
+    // `post` 那一格停在 `waiting`（＝等你动手）：按「结束录音」之后会后一个动作都不自动跑（R26）。
+    // 转码不再是收尾的一步：它是 flush 落定自动起的独立后台工序，读数在 4.9 的 `transcode` 格。
     expect(snap.ended?.steps.map((step) => step.status)).toEqual([
-      'skipped',
       'skipped',
       'done',
       'waiting',
@@ -137,7 +136,7 @@ describe('快照样本', () => {
     const failed = snap.ended?.steps.find((step) => step.status === 'failed');
     expect(failed?.id).toBe('log');
     expect(failed?.error).toBe(snap.ended?.error);
-    // 第 4 步那一格与成败无关：它照旧停在「等你动手」
+    // `post` 那一格与成败无关：它照旧停在「等你动手」
     const post = snap.ended?.steps.find((step) => step.id === 'post');
     expect(post?.status).toBe('waiting');
     expect(post?.error).toBeNull();
@@ -197,7 +196,7 @@ describe('快照样本', () => {
   it('revision 保留真实值（掩码不盖它）', () => {
     expect(snapshotSchema.parse(readFixture('snapshot', 'idle')).revision).toBe(1);
     expect(snapshotSchema.parse(readFixture('snapshot', 'recording')).revision).toBe(2);
-    expect(snapshotSchema.parse(readFixture('snapshot', 'ended-done')).revision).toBe(11);
+    expect(snapshotSchema.parse(readFixture('snapshot', 'ended-done')).revision).toBe(9);
   });
 });
 
@@ -641,8 +640,8 @@ describe('工作区样本（4.8 / 4.9，会后进度界面节点 52b24392 接的
       expect(parsed.offline.state).toBe('interrupted');
     } else {
       const parsed = sessionsResponseSchema.parse(readFixture('sessions', name));
-      // 两份采集里都没有会后的活儿在飞 → 顶层第三格如实 null
-      expect(parsed.post_job).toBeNull();
+      // 两份采集里都没有活儿在飞 → 顶层第三格如实空数组
+      expect(parsed.post_jobs).toEqual([]);
     }
   });
 
@@ -650,9 +649,9 @@ describe('工作区样本（4.8 / 4.9，会后进度界面节点 52b24392 接的
     expect(listFixtures('sessions')).toEqual([...SESSIONS_FIXTURES].sort());
   });
 
-  it('应答体顶层恰好三键；每行恰好十二键，post_job 不进任何一行', () => {
+  it('应答体顶层恰好三键；每行恰好十二键，post_jobs 不进任何一行', () => {
     const listing = sessionsResponseSchema.parse(readFixture('sessions', 'after-open'));
-    expect(Object.keys(listing).sort()).toEqual(['post_job', 'recent', 'sessions']);
+    expect(Object.keys(listing).sort()).toEqual(['post_jobs', 'recent', 'sessions']);
     expect(listing.sessions.length).toBeGreaterThan(0);
     for (const row of listing.sessions) {
       expect(Object.keys(row), row.dir).toHaveLength(12);
@@ -662,8 +661,8 @@ describe('工作区样本（4.8 / 4.9，会后进度界面节点 52b24392 接的
   it('顶层多一格/少一格、行里多一格，全都不符合契约（两道硬门都在）', () => {
     const empty = readFixture('sessions', 'empty') as Record<string, unknown>;
     expect(sessionsResponseSchema.safeParse({ ...empty, extra: 1 }).success).toBe(false);
-    const { post_job: _dropped, ...withoutPostJob } = empty;
-    expect(sessionsResponseSchema.safeParse(withoutPostJob).success).toBe(false);
+    const { post_jobs: _dropped, ...withoutPostJobs } = empty;
+    expect(sessionsResponseSchema.safeParse(withoutPostJobs).success).toBe(false);
 
     const afterOpen = structuredClone(
       readFixture('sessions', 'after-open') as Record<string, unknown>,
@@ -672,13 +671,24 @@ describe('工作区样本（4.8 / 4.9，会后进度界面节点 52b24392 接的
     expect(sessionsResponseSchema.safeParse(afterOpen).success).toBe(false);
   });
 
-  it('单场状态样本：前八格与列表同源，post / offline / speakers 三格回答「跑到哪儿了、有谁」', () => {
+  it('单场状态样本：前八格与列表同源，post / offline / transcode / speakers 四格回答「跑到哪儿了、有谁」', () => {
     const parsed = sessionStatusSchema.parse(readFixture('sessions', 'status-after-run'));
     expect(Object.keys(parsed).sort()).toEqual([
       'date', 'dir', 'has_offline', 'kind', 'mode', 'offline', 'post', 'segments',
-      'session_id', 'speakers', 'state',
+      'session_id', 'speakers', 'state', 'transcode',
     ]);
-    expect(parsed.post).toBeNull();
+    // `post` 是多槽登记里这一场的在飞清单：样本那一场此刻没有活儿在飞 → 空数组
+    expect(parsed.post).toEqual([]);
+    // 转码独立工序那格：样本那一场没转过 → `idle`、不在本进程
+    expect(parsed.transcode).toEqual({
+      state: 'idle',
+      in_process: false,
+      started_at: null,
+      finished_at: null,
+      elapsed_seconds: null,
+      current_source: null,
+      sources: [],
+    });
     // 段读数与列表同行同源：盘上段记录的原文（这一场恰好一段；秒数走掩码落 0）
     expect(parsed.segments).toEqual([
       { index: 1, started_at: expect.any(String), ended_at: expect.any(String), duration_seconds: 0 },

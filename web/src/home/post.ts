@@ -98,15 +98,17 @@ export interface PostStopView {
 /**
  * 停止入口的判据：**这一场**的 offline 那一趟正在本进程里飞。
  *
- * 三条同时成立才出现：`post_job` 在飞（顶层第三格非 null）、跑的是精细稿那一趟
+ * 三条同时成立才出现：`post_jobs` 里有这一场的在飞趟（多槽登记：可以同时不止一趟，
+ * 转码那一趟不在此列 —— 它的暂停走 `transcode_pause`）、跑的是精细稿那一趟
  * （`kind: 'offline'` —— 纪要那一趟是另一套机制，服务对它的 stop 请求如实拒，入口
  * 因此不摆）、跑的正是选中这一场（入口长在进度区头行上，只管自己这一场）。
  */
-export function postStopView(postJob: PostJobCell | null, selectedDir: string | null): PostStopView {
+export function postStopView(
+  postJobs: readonly PostJobCell[],
+  selectedDir: string | null,
+): PostStopView {
   const visible =
-    postJob !== null &&
-    postJob.kind === 'offline' &&
     selectedDir !== null &&
-    postJob.dir === selectedDir;
+    postJobs.some((job) => job.kind === 'offline' && job.dir === selectedDir);
   return { visible };
 }

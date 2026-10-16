@@ -46,12 +46,27 @@ function row(over: Partial<SessionRow> = {}): SessionRow {
   };
 }
 
-function job(over: Partial<PostJobCell> = {}): PostJobCell {
+function job(over: Partial<PostJobCell> = {}): PostJobCell[] {
+  return [
+    {
+      kind: 'offline',
+      dir: 'C:\\会议\\跟老王聊周会',
+      started_at: '2026-09-21T22:10:00+08:00',
+      ...over,
+    },
+  ];
+}
+
+/** 一格「没跑过」的转码工序读数（`transcode` 格的空档形状）。 */
+function transcodeIdle(): SessionStatus['transcode'] {
   return {
-    kind: 'offline',
-    dir: 'C:\\会议\\跟老王聊周会',
-    started_at: '2026-09-21T22:10:00+08:00',
-    ...over,
+    state: 'idle',
+    in_process: false,
+    started_at: null,
+    finished_at: null,
+    elapsed_seconds: null,
+    current_source: null,
+    sources: [],
   };
 }
 
@@ -80,7 +95,8 @@ function status(
     mode: 'both',
     segments: [],
     has_offline: false,
-    post: null,
+    post: [],
+    transcode: transcodeIdle(),
     speakers: [],
     offline: {
       ledger: 'meeting_offline_progress.jsonl',
@@ -103,25 +119,25 @@ function status(
 
 describe('列表行四态（R27，字与图形并存）', () => {
   it('空闲：没开过会的目录各有原话，形状是空心框', () => {
-    expect(rowStatusView(row({ kind: 'empty' }), null)).toEqual({
+    expect(rowStatusView(row({ kind: 'empty' }), [])).toEqual({
       tone: 'idle', label: '空白工作区', mark: 'glyph--idle', dim: false,
     });
-    expect(rowStatusView(row({ kind: 'meeting' }), null)?.label).toBe('会议目录');
-    expect(rowStatusView(row({ kind: 'unknown' }), null)?.label).toBe('普通目录');
-    expect(rowStatusView(row({ kind: 'meeting', suspected: true }), null)?.label).toBe(
+    expect(rowStatusView(row({ kind: 'meeting' }), [])?.label).toBe('会议目录');
+    expect(rowStatusView(row({ kind: 'unknown' }), [])?.label).toBe('普通目录');
+    expect(rowStatusView(row({ kind: 'meeting', suspected: true }), [])?.label).toBe(
       '疑似会议目录（缺少元数据）',
     );
   });
 
   it('录音中：state=recording，实心红灯 + 字，两条通道都在', () => {
-    const view = rowStatusView(row({ state: 'recording' }), null);
+    const view = rowStatusView(row({ state: 'recording' }), []);
     expect(view.tone).toBe('recording');
     expect(view.label).toBe('录音中');
     expect(view.mark).toBe('glyph--rec');
   });
 
   it('等着人动手：录音结束（ended）就是 waiting 语义（三档口径，收尾进度不进行状态）', () => {
-    const ended = rowStatusView(row({ state: 'ended', kind: 'meeting' }), null);
+    const ended = rowStatusView(row({ state: 'ended', kind: 'meeting' }), []);
     expect(ended.tone).toBe('waiting');
     expect(ended.label).toBe('待处理');
     expect(ended.mark).toBe('glyph--dashed');
@@ -152,7 +168,7 @@ describe('列表行四态（R27，字与图形并存）', () => {
   });
 
   it('被强杀在收尾半路的那一场：三档口径里它就是 ended，行翻「待处理」（旧 draining 档删除）', () => {
-    const view = rowStatusView(row({ state: 'ended', kind: 'meeting' }), null);
+    const view = rowStatusView(row({ state: 'ended', kind: 'meeting' }), []);
     expect(view.tone).toBe('waiting');
     expect(view.label).toBe('待处理');
   });
@@ -403,7 +419,7 @@ describe('记录重置检出（review-2 m2：重跑一场逐块行要整段重�
 
 describe('全局「忙不忙」（R31）', () => {
   it('闲：没有模型开着 —— 空心框 + 字', () => {
-    const view = gpuBusyView(null, false);
+    const view = gpuBusyView([], false);
     expect(view).toEqual({ busy: false, label: '空闲', note: '没有模型开着', mark: 'glyph--idle' });
   });
 
@@ -415,7 +431,7 @@ describe('全局「忙不忙」（R31）', () => {
       mark: 'glyph--rec',
     });
     expect(gpuBusyView(job({ kind: 'minutes' }), false)?.note).toBe('会后那趟在跑（纪要）');
-    expect(gpuBusyView(null, true)?.note).toBe('会中模型开着');
+    expect(gpuBusyView([], true)?.note).toBe('会中模型开着');
     const both = gpuBusyView(job(), true);
     expect(both.busy).toBe(true);
     expect(both.note).toBe('会中模型开着；会后那趟在跑（会后精细稿）');
@@ -430,8 +446,8 @@ describe('要不要轮询（有活动才问）', () => {
     expect(
       shouldWatch(selected, job(), status({}, { state: 'running', in_process: true })),
     ).toBe(true);
-    expect(shouldWatch(selected, null, status({}, { state: 'running', in_process: true }))).toBe(true);
-    expect(shouldWatch(selected, null, status({}, { state: 'running', in_process: false }))).toBe(true);
+    expect(shouldWatch(selected, [], status({}, { state: 'running', in_process: true }))).toBe(true);
+    expect(shouldWatch(selected, [], status({}, { state: 'running', in_process: false }))).toBe(true);
   });
 
   it('联结命中但读数已落定（终态那一跳）：不问了 —— watch 要翻 false 才收得了尾（review-1 C1）', () => {
@@ -444,10 +460,10 @@ describe('要不要轮询（有活动才问）', () => {
 
   it('终态、没跑过、没选中：不问', () => {
     const selected = row({ state: 'ended', kind: 'meeting' });
-    expect(shouldWatch(selected, null, status({}, { state: 'done', in_process: false }))).toBe(false);
-    expect(shouldWatch(selected, null, status({}, { state: 'idle' }))).toBe(false);
-    expect(shouldWatch(selected, null, status({}, { state: 'interrupted', in_process: false }))).toBe(false);
-    expect(shouldWatch(selected, null, null)).toBe(false);
+    expect(shouldWatch(selected, [], status({}, { state: 'done', in_process: false }))).toBe(false);
+    expect(shouldWatch(selected, [], status({}, { state: 'idle' }))).toBe(false);
+    expect(shouldWatch(selected, [], status({}, { state: 'interrupted', in_process: false }))).toBe(false);
+    expect(shouldWatch(selected, [], null)).toBe(false);
     expect(shouldWatch(null, job(), null)).toBe(false);
   });
 });

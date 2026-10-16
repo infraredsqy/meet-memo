@@ -15,7 +15,7 @@
 | `ui-design.md` | 界面设计的唯一权威说明（四态、迁移、告警分级、设计 token、视觉硬门槛） | 做界面、定事件契约时 |
 | `ui/` | 设计稿本体（`*.html` + `tokens.css` / `ui.css` + `shots/*.png`）。它是 `ui-design.md` 的渲染载体，不进构建、不被服务引用 | 看视觉效果时 |
 | `service.md` | **服务现状**：怎么起、起了之后有什么、配置键、log 在哪（含场次 log 的挂摘）、退出码五档、`Ctrl+C` 两阶段、收尾怎么跑与失败后的两条出路、测试怎么跑、还差什么 | 装起来用、或接手改服务时 |
-| `state.md` | **状态、场次与推送**：四态与迁移、收尾四步与共享预算、快照九键与取值域、`session.json` schema、心跳判据、告警判定、SSE 三通道与帧形状、dev 替身（采集 / 转写）怎么用 | 接这份数据、写前端或验收脚本时 |
+| `state.md` | **状态、场次与推送**：四态与迁移、收尾三步与共享预算、转码独立工序、快照九键与取值域、`session.json` schema、心跳判据、告警判定、SSE 三通道与帧形状、dev 替身（采集 / 转写）怎么用 | 接这份数据、写前端或验收脚本时 |
 | `api.md` | **HTTP 面**：十六条端点（十四条 `/api/*` + 静态首页 + `/debug`）、动作信封、动作表与 `code` 表、`settings_update` 的键态两分、端口与本地防线 | 打这套接口时 |
 | `contract.md` | **双端契约**：快照九键的 schema、SSE 四事件与重连语义、动作信封与逐档 `detail`、心跳与客户端义务、定名未实现的保留登记；正文后接两章附录（fixtures 与掩码、复核手法）。每条都在 `contract/fixtures/` 有一个 golden 样本，跟代码行为漂移就红 | 写界面、写验收脚本，或改服务对外形状时 |
 | `backend-protocols.md` | 四个后端协议的成员与数据结构、解析入口、`skipped` / `failed` 的判据、采集与转写两个真实现的落点、两个会后钩子（`post.hook` / `minutes.hook`）与它们各自的开关、dev 替身（按 key 分流） | 往服务里插真后端时 |
@@ -28,7 +28,7 @@
 
 | 路径 | 是什么 |
 |---|---|
-| `meeting/` | 服务本体（Python 包）：起停、端口与三道防线、配置、日志、四态状态机、场次目录与 `session.json`、**工作区注册表（`workspace.py`）**、告警判定、SSE 推送、十六个动作（含会后两个按钮 `post_offline` / `post_minutes`、停掉正在跑精细稿的 `post_stop`、会中那三个 `pause` / `resume` / `set_source` 与改名的 `speaker_rename`）、四个后端协议与两个替身、五档退出码与三条命令行入口（`meeting web` / `meeting post` / `meeting replay`）；`meeting post` 的会后编排（`cli.py` 的 `run_post()`，含幂等闸与 `--force`）、`meeting replay` 的重放验证（素材截断复制进自己的落地，只验证离线链） |
+| `meeting/` | 服务本体（Python 包）：起停、端口与三道防线、配置、日志、四态状态机、场次目录与 `session.json`、**工作区注册表（`workspace.py`）**、告警判定、SSE 推送、十九个动作（含会后两个按钮 `post_offline` / `post_minutes`、停掉正在跑精细稿的 `post_stop`、转码独立工序的三只 `transcode_run` / `transcode_pause` / `transcode_resume`、会中那三个 `pause` / `resume` / `set_source` 与改名的 `speaker_rename`）、四个后端协议与两个替身、五档退出码与三条命令行入口（`meeting web` / `meeting post` / `meeting replay`）；`meeting post` 的会后编排（`cli.py` 的 `run_post()`，含幂等闸与 `--force`）、`meeting replay` 的重放验证（素材截断复制进自己的落地，只验证离线链） |
 | `meeting/workspace.py` | **工作区注册表**（e2f6166b）：登记「我这些会」，文件住服务侧配置目录 `workspaces.json`、按规范化路径去重、原子写；`classify_workspace_dir()` 对一个目录判名目（空目录当新会 / 有会议材料（含疑似档）当收编 / 非空未知）供 `workspace_open` 与目录选择器共用；启动、读端点都不扫任何场次目录（`docs/design-intent.md` 第 4 条）。口径见 `docs/contract.md` 4.8 |
 | `meeting/service/` | 应用装配、十五条路由的唯一注册点（十四条 `/api/*` + `/debug`）、`ServiceRuntime`（唯一状态权威）、收尾编排与共享预算、信号处理与关停接线、SSE 广播中心、`/debug` 自检页 |
 | `meeting/backends/` | 协议与数据结构、`null` 替身、dev 替身（采集合成电平 + **转写合成行**，按 key 分流）、采集后端 `capture.py`（设备枚举与试开）、转写后端 `transcribe.py`（`9e5db89c` phase2：把 `meeting/asr/pipeline.py` 那条流水线包成协议实现，重依赖全在函数体内惰性 import）、会后钩子 `post.py`（`7c6952e5`：起一条 daemon 线程跑 `meeting/offline/runner.py`，**返回即算启动成功**，线程里的异常落进状态文件；收尾第 4 步不再拉起它，`post.hook` 在「生成会后精细稿」按钮那一侧只答「这一层接没接」，`null` → 按钮 404）、纪要钩子 `minutes.py`（`41465462` phase2：由 `meeting post` 的离线尾巴或「生成纪要」按钮拉起，起一条 daemon 线程跑 `meeting/minutes/runner.py`，同样返回即算启动成功；`65dd3e4c` 补的**在飞标记**：建线程之前先同步落一版 `running`，盘上已经停着一版时抛 `AlreadyRunningError` 拒跑）、后端解析入口 `registry.py` |

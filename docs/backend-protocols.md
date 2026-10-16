@@ -140,7 +140,7 @@
 
 判定规则：`has_implementation == false` → 该步记 **`skipped`**；`has_implementation == true` 且 `run_ok == false` → 该步记 **`failed`**。**缺席记「跳过」，在场却抛错记「失败」** —— `has_implementation` 只由解析结果回答，调用阶段的异常只许写进 `run_ok`。
 
-`capabilities_of(implementation)` 另外回答采集实现有没有 `finalize` / `transcode` / `dev_inject` 三项能力：`null` / `dev` 这类不写真实音频的替身没有前两项，于是收尾第 1、2 步记 `skipped`；真采集后端（`meeting.backends.capture:CaptureBackend`）前两项都是 `True`，收尾第 1、2 步因此会真的调它（这两步的闸门**只看采集侧**：解析结论与 `capture_capabilities["finalize"]` / `["transcode"]`，transcode 是采集后端的能力，转写后端在不在场与这道闸门无关 —— 见 `docs/state.md` 的「收尾四步与终态」）；`dev_inject` 这一项只有 dev 替身在 —— 真后端**有意不加** `inject_fault`，给真后端加上它会把开发替身的非产品动作在真后端上打开。
+`capabilities_of(implementation)` 另外回答采集实现有没有 `finalize` / `transcode` / `dev_inject` 三项能力：`null` / `dev` 这类不写真实音频的替身没有前两项，于是收尾第 1 步记 `skipped`；真采集后端（`meeting.backends.capture:CaptureBackend`）前两项都是 `True`，收尾第 1 步因此会真的调它（闸门**只看采集侧**：解析结论与 `capture_capabilities["finalize"]`）；`finalize` 落定那一刻，`transcode` 能力在场的构建**自动在后台起转码独立工序**（不占收尾预算、不挡任何人，判据与读数见 `meeting/capture/transcode.py` 与 `docs/state.md` 的「收尾三步与终态」「转码独立工序」两节）；`dev_inject` 这一项只有 dev 替身在 —— 真后端**有意不加** `inject_fault`，给真后端加上它会把开发替身的非产品动作在真后端上打开。
 
 ### 会后离线那一层的四个开关
 
@@ -192,7 +192,7 @@
 
 - 配置键与默认值：`docs/service.md` 第 4 章
 - 服务侧现状与不可用清单：`docs/service.md` 第 8 章
-- 四态、快照、收尾四步、dev 替身怎么用：`docs/state.md`
+- 四态、快照、收尾三步与转码独立工序、dev 替身怎么用：`docs/state.md`
 - 会后纪要那一层吃什么、经哪几步、怎么手动跑：`docs/minutes.md`
 - 会中与会后两套模型的选型、四个 `post.*` 键的取值依据与本机实测：`docs/asr-backends.md`
 - V1 里可搬的转写退化防护逻辑与参数标定：`docs/v1-lineage.md` 第 1 章

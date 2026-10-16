@@ -46,8 +46,9 @@ ALERT_LEVEL: tuple[str, ...] = ("critical", "hint")
 #: `ended.phase` 两取值
 ENDED_PHASE: tuple[str, ...] = ("draining", "done")
 
-#: 收尾四步的顺序
-DRAIN_STEP_IDS: tuple[str, ...] = ("flush", "transcode", "log", "post")
+#: 收尾三步的顺序（转码已摘出收尾序列：它是这一场的独立后台工序，flush 落定即自动在
+#: 后台起，不占收尾预算、不挡 start 与会后动作 —— 见 `meeting/capture/transcode.py`）
+DRAIN_STEP_IDS: tuple[str, ...] = ("flush", "log", "post")
 
 #: 收尾那一步"留给用户按按钮"的格子（`post`）：它停在 `waiting` 也算收尾走完，
 #: 因为按「结束录音」之后会后一个动作都不自动跑（R26），这一格本来就该空着等人。
@@ -335,7 +336,7 @@ class TranscriptState:
 
 @dataclass
 class DrainStep:
-    """收尾四步里的一步（四键齐，含 `error`）。"""
+    """收尾三步里的一步（四键齐，含 `error`）。"""
 
     id: str
     status: str = "waiting"
@@ -582,9 +583,9 @@ def recover_source(snapshot: Snapshot, *, source: str) -> bool:
 
 
 def begin_drain(snapshot: Snapshot, *, reason: str, error: str | None = None) -> EndedState:
-    """`recording` / `alert` → `ended`（子状态 `draining`）：时长冻结、四步全 `waiting`。
+    """`recording` / `alert` → `ended`（子状态 `draining`）：时长冻结、三步全 `waiting`。
 
-    四步的顺序与取值域取自 `DRAIN_STEP_IDS` / `DRAIN_STEP_STATUS`（不重抄字面量）。
+    三步的顺序与取值域取自 `DRAIN_STEP_IDS` / `DRAIN_STEP_STATUS`（不重抄字面量）。
     """
     if snapshot.top_state not in ("recording", "alert"):
         raise InvalidTransitionError(
@@ -629,7 +630,7 @@ def end_session(snapshot: Snapshot) -> None:
 # 调用形态说明（phase2 §3.5.6 的三条文字与 phase3 §3.2 的「phase3 照签名调用」一起读）：
 #   * 名字与语义逐字照契约：`begin_drain_step(step_id)` 把该步置 `running`；
 #     `finish_drain_step(step_id, status, detail=None, error=None)` 落该步终态；
-#     `finish_drain()`（**无参**）读当前四步结果判终态、是收尾的唯一出口；
+#     `finish_drain()`（**无参**）读当前三步结果判终态、是收尾的唯一出口；
 #   * 这三个函数作用在**哪一份内存快照**上由调用方指定：`ServiceRuntime` 在收尾编排里
 #     把自己的快照交给它们（`envelope=` 关键字），phase3 照同一分工调用；
 #     省略时用本模块的当前快照（由 `ServiceRuntime` 在启动时经 `bind_snapshot()` 写入），
@@ -693,7 +694,7 @@ def finish_drain_step(
     按「结束录音」之后会后一个动作都不自动跑，那一步做完它该做的（释放会中模型）就如实
     空着等人按按钮 —— 它没有别的词可用（`running` 是"正在跑"、`done` 是"跑完了"、
     `skipped` 是"这一格不存在"、`failed` 是"搞砸了"）。别的步骤仍不许落回 `waiting`：
-    那会把"收尾协程被取消、四步都还没轮到"与"这一步不归我管"混成同一副面孔。
+    那会把"收尾协程被取消、三步都还没轮到"与"这一步不归我管"混成同一副面孔。
     """
     if status not in DRAIN_STEP_STATUS:
         raise DrainStateError(f"未知的收尾状态：{status!r}（取值域 {DRAIN_STEP_STATUS}）")
@@ -716,12 +717,12 @@ def finish_drain_step(
 
 
 def finish_drain(snapshot: Snapshot | None = None, *, cancelled: bool = False) -> str:
-    """**收尾的唯一出口**：按当前四步结果判终态，只有两种结果。
+    """**收尾的唯一出口**：按当前三步结果判终态，只有两种结果。
 
-      - 四步都落定（`status` 全部落在 `{done, skipped, waiting}`，
+      - 三步都落定（`status` 全部落在 `{done, skipped, waiting}`，
         或者**只差 `post` 那一格还停在 `running`**）且没有任何一步 `failed`
         → `ended.phase = "done"`（`top_state` **停在 `ended`**、`session` 保留）；
-      - 有任一步 `failed`，或**取消**那一趟进来的（`cancelled=True`，四步没跑完）
+      - 有任一步 `failed`，或**取消**那一趟进来的（`cancelled=True`，三步没跑完）
         → `ended.phase` **保持 `draining`**（`top_state` 停在 `ended`、`session` 保留）。
 
     返回最终 `ended.phase`（`"done"` / `"draining"`），**写盘与提交都不在这里**。
@@ -734,8 +735,8 @@ def finish_drain(snapshot: Snapshot | None = None, *, cancelled: bool = False) -
     ## 为什么 `post` 空着也算收尾走完
 
     按「结束录音」之后会后一个动作都不自动跑（R26 / `docs/design-intent.md` 第 10 条）：
-    第 4 步做完它该做的（释放会中模型）之后，如实停在"还没做、等你按按钮"那一格，
-    于是收尾四步跑完时那一格正是 `waiting`（在飞时被取消的那一趟记 `running`，
+    `post` 步做完它该做的（释放会中模型）之后，如实停在"还没做、等你按按钮"那一格，
+    于是收尾三步跑完时那一格正是 `waiting`（在飞时被取消的那一趟记 `running`，
     而那一趟走的是上面第二条、终态是 `draining`）。`drain_has_settled()` 一直把 `waiting`
     算作"已落定"，本函数跟着认下 `post` 这一格的两种读数，收尾才走得进 `done`。
     """

@@ -36,7 +36,7 @@ from tests.test_api_actions import live, post, snapshot_of, wait_until
 #: 慢档标记：起真采集引擎与真收尾（含 ffmpeg 转码），单条实测见 report.md。
 pytestmark = pytest.mark.slow
 
-#: 进程内用例的轮询超时（收尾四步跑在收尾线程池里；与既有端到端同档）
+#: 进程内用例的轮询超时（收尾三步跑在收尾线程池里；与既有端到端同档）
 POLL_TIMEOUT_SECONDS = 20.0
 
 #: 两场各喂多少块（0.1 秒一块）：第一场 10 块、续接那一场 12 块，两段的时长拉开可辨
@@ -154,7 +154,18 @@ def test_a_resumed_session_keeps_the_old_segment_and_adds_a_new_one(tmp_path, mo
                 archive_name(item["id"], 2),
             ]
 
-        # ③ 收尾转码给两段各产一份 MP3；目录里没有半截残骸
+        # ③ 转码独立工序（flush 落定自动起的那一道）给两段各产一份 MP3；目录里没有半截残骸
+        from meeting.capture import transcode as transcode_module
+
+        wait_until(
+            lambda: (
+                doc
+                if (doc := transcode_module.read_status(workspace)) is not None
+                and doc.get("state") == "done"
+                else None
+            ),
+            timeout=POLL_TIMEOUT_SECONDS,
+        )
         for source in ("mic", "loopback"):
             for index in (1, 2):
                 assert (workspace / archive_name(source, index)).with_suffix(".mp3").is_file()

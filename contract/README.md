@@ -13,8 +13,8 @@
 | `snapshot/` | `idle.json` | 进程内 TestClient（`capture.backend: dev`） | 空闲态：`session` / `ended` 两处 `null`、两路 `ready`、包络空数组 |
 | | `recording.json` | 进程内 TestClient（dev 替身）+ 等两路包络长满 15 根 | 录音态：`session` 六键、两路 `capturing`、包络长度 15 |
 | | `alert.json` | 进程内 TestClient：配 `alert.silence_seconds: 1` + `dev_inject(loopback, silence)` | 告警态：`alerts.critical` 一条、告警路 `lost`、另一路 `capturing` |
-| | `ended-done.json` | 进程内 TestClient：`stop` 之后等 `ended.phase == done` | 成功档：四步 `skipped/skipped/done/waiting`（第 4 步照实停 `waiting` 等人按按钮）、两路回 `unprobed`、`session.frozen` 为真 |
-| | `ended-draining.json` | 进程内 TestClient：换一个抛错的假场次 log（`tests/_drain_fakes.py`） | 失败停留档：`log` 步 `failed`、`ended.error` 有值、第 4 步照常停 `waiting`、两路停 `stopped` |
+| | `ended-done.json` | 进程内 TestClient：`stop` 之后等 `ended.phase == done` | 成功档：收尾三步 `skipped/done/waiting`（转码已摘出收尾序列；`post` 照实停 `waiting` 等人按按钮）、两路回 `unprobed`、`session.frozen` 为真 |
+| | `ended-draining.json` | 进程内 TestClient：换一个抛错的假场次 log（`tests/_drain_fakes.py`） | 失败停留档：`log` 步 `failed`、`ended.error` 有值、`post` 照常停 `waiting`、两路停 `stopped` |
 | `sse/` | `first-snapshot.json` | **真服务子进程**的 `/api/events` 首帧 | 首帧是 `snapshot`、带 `id`、`data` 就是九键快照 |
 | | `state.json` | 同上，`mute_session` 触发一次广播 | `state` 是全量快照、`id == data.revision` |
 | | `levels.json` | 同上，`read_until("levels")` | 两路五键、`ts` 恒 `null`、包络 15、`bar == envelope[-1]` |
@@ -29,7 +29,7 @@
 | | `fail-capture-unavailable.json` | 进程内 TestClient（显式配 `capture.backend: null` 替身；默认 `auto` 已接真采集，`start` 会真开一场） | 503 + `detail` 三键（`{session_id, dir, reason}` 那一档） |
 | | `fail-not-recording.json` | 空闲态 `stop` | 409 + **空对象** `detail` |
 | | `fail-invalid-setting.json` | `start` 带 `mode: "burst"` | 400 + `detail` 三键（`{key, value, legal}`） |
-| | `fail-invalid-setting-unknown-action.json` | 打一个不认识的动作名 | 400 + `detail` 两键（`{action, known}`，`known` 是**十六个动作名**） |
+| | `fail-invalid-setting-unknown-action.json` | 打一个不认识的动作名 | 400 + `detail` 两键（`{action, known}`，`known` 是**十九个动作名**） |
 | | `fail-persist-failed.json` | `monkeypatch` 把 `write_config_values` 换成抛 `OSError` | 500 + `detail = {error}` |
 | | `fail-action-unavailable.json` | 空闲态 `dev_inject`（非 dev 后端） | 404 + **空对象** `detail` |
 | | `fail-transcript-unavailable.json` | 录音中把转写后端拿掉再 `summarize` | 503 + `detail = {health: "stopped"}` |
@@ -42,8 +42,8 @@
 | | `after-upload.json` | 同上：再传一次同名（样本里看得出 `报告 (2).pdf` 的序号后缀）与一个穿越加非法字符的脏名字（清洗后 `假报告_v__.pdf`），然后读 `GET …/materials` | `{dir, materials_dir, items:[{name, size_bytes, added_at}]}`：三格的清单形状、按名字排序的确定次序；路径走 `<path>` 掩码 |
 | | `delete-ok.json` | 同上：`DELETE …/materials/报告 (2).pdf`（带头） | 成功体 = 通用信封 + `material: {name}` |
 | | `missing.json` | 同上：删除之后再 GET 那同一个名字 | 404 + 失败信封，`code = material_missing`、`detail = {name}`（4.12 那一片自己的 `code`） |
-| `sessions/` | `empty.json` / `after-open.json` | 进程内 TestClient（工作台收编节点 e2f6166b）：空注册表一份；再往临时根下造的三个目的目录（空 / 带 `session.json` / 只有音频归档名的疑似档）逐个走 `workspace_open` 之后读 `GET /api/sessions` | `{sessions, recent, post_job}`、每行十二键（`dir` / `session_id` / `dir_exists` / `kind` / `suspected` / `state` / `date` / `mode` / `segments` / `has_offline` / `added_at` / `last_opened_at`；`state` 是三档口径：`recording` 仅当这一行就是本进程此刻在录的活跃场次、盘上有 `session.json` 一律 `ended`、没有则 `null` —— 判据正本在 `docs/contract.md` 4.8）；路径与目录名掩成 `<path>` / `<session-id>` |
-| | `status-after-run.json` | 进程内 TestClient（会后进度读数节点 `a9affaa8`；`speakers` 一格由人名节点 `91b6752e` 加进来）：往临时场次目录里按真实形状落那份逐块进度记录（两路各两块，一块静音、一块失败）与状态文件，登记进工作台之后读 `GET /api/sessions/{id}` | `dir` / `session_id` / `kind` / `state` / `date` / `mode` / `has_offline` / `post` / `offline` / `speakers` 十键；`offline` 里两路各一格（`source` / `done` / `total` / `remaining` / `current_chunk` / `counts` 四档计数）；`speakers` 是身份集（样本那一场只有 mic 一路有稿、没有人名表 → 路级身份一行，名字与次数读数如实 `null`）。块号、块数、四档计数是确定值，路径与场次目录名掩成 `<path>` / `<session-id>`，两个墙钟戳掩成 `<iso>`，走秒的量掩成 `0` / `null`。这一份采的是**跨进程那一档**（这一趟早已收工）：`offline.state` 照盘上那份如实答 `done`、`offline.in_process` 如实答 `false` |
+| `sessions/` | `empty.json` / `after-open.json` | 进程内 TestClient（工作台收编节点 e2f6166b）：空注册表一份；再往临时根下造的三个目的目录（空 / 带 `session.json` / 只有音频归档名的疑似档）逐个走 `workspace_open` 之后读 `GET /api/sessions` | `{sessions, recent, post_jobs}`（在飞清单，`(种类, 场次)` 多槽：`offline` / `minutes` / `transcode`）、每行十二键（`dir` / `session_id` / `dir_exists` / `kind` / `suspected` / `state` / `date` / `mode` / `segments` / `has_offline` / `added_at` / `last_opened_at`；`state` 是三档口径：`recording` 仅当这一行就是本进程此刻在录的活跃场次、盘上有 `session.json` 一律 `ended`、没有则 `null` —— 判据正本在 `docs/contract.md` 4.8）；路径与目录名掩成 `<path>` / `<session-id>` |
+| | `status-after-run.json` | 进程内 TestClient（会后进度读数节点 `a9affaa8`；`speakers` 一格由人名节点 `91b6752e` 加进来）：往临时场次目录里按真实形状落那份逐块进度记录（两路各两块，一块静音、一块失败）与状态文件，登记进工作台之后读 `GET /api/sessions/{id}` | `dir` / `session_id` / `kind` / `state` / `date` / `mode` / `has_offline` / `post` / `offline` / `transcode` / `speakers` 十一键；`offline` 里两路各一格（`source` / `done` / `total` / `remaining` / `current_chunk` / `counts` 四档计数）；`speakers` 是身份集（样本那一场只有 mic 一路有稿、没有人名表 → 路级身份一行，名字与次数读数如实 `null`）。块号、块数、四档计数是确定值，路径与场次目录名掩成 `<path>` / `<session-id>`，两个墙钟戳掩成 `<iso>`，走秒的量掩成 `0` / `null`。这一份采的是**跨进程那一档**（这一趟早已收工）：`offline.state` 照盘上那份如实答 `done`、`offline.in_process` 如实答 `false` |
 | | `status-interrupted.json` | 进程内 TestClient（打断会后节点 `b1c6a58e`）：往临时场次目录里落那份逐块进度记录（mic 两块里跑了一块）与一版 `interrupted` 状态文件，登记进工作台之后读 `GET /api/sessions/{id}` | 形状与 `status-after-run` 同体：`offline.state` 照盘答 **`interrupted`**（折档白名单里有它，不许折回 `running`）、`in_process` 如实 `false`；`sources` 两路各一格（mic `1/2`、loopback `0/null`——没开跑的那一路分母读不出如实 `null`）。路径与目录名掩 `<path>` / `<session-id>`，墙钟戳掩 `<iso>`，走秒量掩 `0` / `null` |
 | `heartbeat/` | `idle.json` | 进程内 TestClient（dev 替身） | 七字段、两字段 `null`、空洞记录为空 |
 | | `recording.json` | 同上，等 `recording_alive is True` | 七字段、`recording_alive` 为 `true` |

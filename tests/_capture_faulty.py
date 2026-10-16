@@ -11,7 +11,7 @@
     使用者全在进程内，配置键这一条通道原样够用，不必再复制一份写盘工厂。
   - **本文件带进场的是「真后端 + 假源」这一对搭档**：`FaultyCaptureBackend` 继承生产类
     `meeting.backends.capture.CaptureBackend`，只把「端点表 / 试开 / 造源」三个接缝换成
-    假件；`probe()` / `start()` / 归档 / 电平刻度 / 收尾四步走的都是生产代码。`registry`
+    假件；`probe()` / `start()` / 归档 / 电平刻度 / 收尾各步走的都是生产代码。`registry`
     的 `capabilities_of()` 按实现类的 `__module__` 判替身（只认 `meeting.backends.null` /
     `meeting.backends.dev`），本类的 `__module__` 是 `tests._capture_faulty`，两项收尾能力
     如实为 `True` —— 收尾第 1、2 步因此真的调它。

@@ -59,24 +59,26 @@ export const sessionRowSchema = z
   .strict();
 
 /**
- * 服务进程里在飞的那一趟会后（`GET /api/sessions` 顶层第三格，`null` = 没有在跑的）。
+ * 服务进程里在飞的那一趟活（`GET /api/sessions` 顶层第三格的成员）。三种：
+ * `offline`（会后精细稿）/ `minutes`（纪要）/ `transcode`（转码独立工序）。
  * 全局「显卡忙不忙」的会后一半读数；**不进任何一行**（行十二键一字不动）。
+ * 多槽登记（`(kind, dir)` 一趟一格）：可以同时不止一趟在飞。
  */
 export const postJobCellSchema = z
   .object({
-    kind: z.enum(['offline', 'minutes']),
+    kind: z.enum(['offline', 'minutes', 'transcode']),
     dir: z.string(),
     started_at: isoStringSchema,
   })
   .strict();
 
 /** `GET /api/sessions` 的应答体。`recent` = 最近一次被打开/切换那条的目录（或 `null`）；
- *  `post_job` = 此刻在飞的那一趟会后（或 `null`）。 */
+ *  `post_jobs` = 此刻在飞的那几趟活（多槽登记，空数组 = 没有在跑的）。 */
 export const sessionsResponseSchema = z
   .object({
     sessions: z.array(sessionRowSchema),
     recent: z.string().nullable(),
-    post_job: postJobCellSchema.nullable(),
+    post_jobs: z.array(postJobCellSchema),
   })
   .strict();
 
@@ -159,11 +161,15 @@ export const workspaceOkSchema = z
 // 单场状态（`docs/contract.md` 4.9，会后进度界面节点 52b24392 接的取数）
 // ---------------------------------------------------------------------------
 
-/** 会后那一趟（`post_offline` / `post_minutes`）此刻在不在飞：服务进程单槽的现场。 */
+/**
+ * 这一场的一趟在飞/已收工的活（`GET /api/sessions/{id}` 的 `post` 清单成员）：
+ * `(kind, dir)` 多槽登记里**这一场**的那几趟 —— `running` 按线程活没活着答。
+ */
 export const sessionPostViewSchema = z
   .object({
     running: z.boolean(),
     kind: z.enum(['offline', 'minutes']),
+    dir: z.string(),
     started_at: isoStringSchema,
     finished_at: isoStringSchema.nullable(),
   })
@@ -226,8 +232,41 @@ export const speakerIdentitySchema = z
   })
   .strict();
 
+/** 一路的转码工序读数：分母是**这一路**的段数（一段 = 一次录制），两路各算各的。 */
+export const transcodeSourceProgressSchema = z
+  .object({
+    source: z.enum(['mic', 'loopback']),
+    /** 凭据认账的段数（转好的与空段的和）。 */
+    done: z.number().int(),
+    /** 这一路共几段；工序还没排出的那一场如实 `null`（现行为总给得出计划数）。 */
+    total: z.number().int().nullable(),
+    remaining: z.number().int().nullable(),
+    /** 此刻在转第几段（这一路转完、或还没轮到它时是 `null`）。 */
+    current_segment: z.number().int().nullable(),
+  })
+  .strict();
+
 /**
- * `GET /api/sessions/{id}` 的应答体（4.9）：前八格与列表同一行同源，后三格回答
+ * 转码独立工序的进度读数（4.9 的 `transcode` 格）：`state` 照盘上那份状态文件答、
+ * `in_process` 另答「本进程里此刻有没有这道工序」—— 与 `offline` 那一格同一套读法。
+ * **判据读盘**（凭据 + `meeting_transcode_status.json`）：服务重启之后照旧读得到。
+ */
+export const transcodeProgressSchema = z
+  .object({
+    /** `paused` 是「跑到段边界被人暂停」那一档；盘上停着一版 `running` 而没人跑也照它答。 */
+    state: z.enum(['running', 'paused', 'done', 'partial', 'failed', 'idle']),
+    in_process: z.boolean(),
+    started_at: isoStringSchema.nullable(),
+    finished_at: isoStringSchema.nullable(),
+    /** 跨进程算不出单调钟的差值，这一格如实 `null`（只在本进程在飞时给）。 */
+    elapsed_seconds: z.number().nullable(),
+    current_source: z.enum(['mic', 'loopback']).nullable(),
+    sources: z.array(transcodeSourceProgressSchema),
+  })
+  .strict();
+
+/**
+ * `GET /api/sessions/{id}` 的应答体（4.9）：前八格与列表同一行同源，后四格回答
  * 「这一场此刻跑到哪儿了、这一场的说话人有谁」。**它不进快照、也不进列表行** ——
  * 快照九键与行十二键两道 `.strict()` 硬门一个字没动。
  */
@@ -242,8 +281,10 @@ export const sessionStatusSchema = z
     mode: z.string().nullable(),
     segments: z.array(sessionSegmentCellSchema),
     has_offline: z.boolean(),
-    post: sessionPostViewSchema.nullable(),
+    /** `(kind, dir)` 多槽登记里这一场的在飞清单（空数组 = 没有这一趟的活）。 */
+    post: z.array(sessionPostViewSchema),
     offline: offlineProgressSchema,
+    transcode: transcodeProgressSchema,
     speakers: z.array(speakerIdentitySchema),
   })
   .strict();

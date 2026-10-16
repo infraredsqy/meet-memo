@@ -10,7 +10,7 @@ import type { Snapshot } from '../contract';
  * 两档回工作台（`docs/requirements.md` R26 / R18）：
  *
  *   - `idle` 且没有场次：还没开过会的那种空闲；
- *   - `ended` 且**收尾四步都落定**：按「结束录音」之后会后一个动作都不自动跑，
+ *   - `ended` 且**收尾三步都落定**：按「结束录音」之后会后一个动作都不自动跑，
  *     工作区于是回到「当前没有进行中的会议」——「我这些会」那一行还在，
  *     右边是这一场的详情，会后那两个按钮住在那里。
  *
@@ -22,7 +22,7 @@ export function showsWorkspaceHome(snapshot: Snapshot): boolean {
   return snapshot.top_state === 'ended' && drainSettled(snapshot);
 }
 
-/** 收尾四步是否都落定（`waiting` 是第 4 步 `post` 的终态：它停在那里等人按按钮）。 */
+/** 收尾三步是否都落定（`waiting` 是 `post` 那一格的终态：它停在那里等人按按钮）。 */
 export function drainSettled(snapshot: Snapshot): boolean {
   const ended = snapshot.ended;
   if (ended === null) return false;

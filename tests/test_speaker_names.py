@@ -9,7 +9,7 @@ R10 第四条 / R30 的三条口径各有一组用例盯着：
     提示词不带表、单场状态的名字一格 `null`，不报错、不改结论。
 
 改名动作（`speaker_rename`）的用例全走真运行时 + 真目录：**不拉离线、不拉纪要**
-（R26：动作只写表），断言 `post_job` 始终是空的。
+（R26：动作只写表），断言 `post_jobs` 始终是空的。
 """
 
 from __future__ import annotations
@@ -350,7 +350,7 @@ def test_speaker_rename_writes_the_roster_and_answers_a_receipt(
         assert receipt == {"dir": str(session), "key": "mic", "name": "老王"}
         assert read_names_entries(session) == {"mic": "老王"}
         assert runtime.revision == revision_before, "写表不动快照：不提交、不涨 revision"
-        assert runtime.post_job_state() is None, "改名不拉起任何会后活（R26）"
+        assert not runtime.post_jobs_state(), "改名不拉起任何会后活（R26）"
     finally:
         config_module.set_current(previous)
 

@@ -1,22 +1,35 @@
-"""会后作业 mixin：精细稿 / 纪要 / 停止 / 分钟层认领（自 meeting/service/runtime.py 机械拆分，逐行照抄）。"""
+"""会后作业 mixin：精细稿 / 纪要 / 停止 / 分钟层认领。
+
+**闸按（种类, 场次）重排**（转码搬出收尾节点）：进程级一刀切（「任何一趟会后在飞，
+别的按钮一律拒」）已废 —— 每一种活按 `(kind, dir)` 一趟一格，同一种重活在同一场上
+只能有一趟、第二趟如实拒；**纪要免闸**（与转码、与其它场次、与别的会后动作都并行）；
+唯一硬闸 = 本地大模型互斥（录音中拒「生成会后精细稿」，反向由 `start` 那一侧拒）。
+"""
 
 from __future__ import annotations
 
 import logging
 import threading
+from pathlib import Path
 from typing import Any
 
-from meeting.service.runtime_shared import ActionError, PostJob
+from meeting.backends.base import SOURCE_IDS
+from meeting.service.runtime_shared import ActionError, PostJob, _slot_alive, name_of_kind
 from meeting.state import now_iso
-from meeting.workspace import canonical_dir, classify_workspace_dir
+from meeting.workspace import canonical_dir, classify_workspace_dir, has_offline_transcript
 
 _log = logging.getLogger("meeting.service.runtime")
+
+#: 纪要免闸下「同一场会后精细稿还在跑」的如实说破句（回执与界面读数同源，不许静默降级）
+MINUTES_DEGRADED_NOTE = (
+    "会后的精细稿还在跑：这一趟拿到的是会中稿；等它跑完再出纪要能对上会后稿"
+)
 
 
 def _mark_post_job_finished(job: PostJob | None, finished_at: str) -> None:
     """把会后那一趟的现场读数标成"已收工"（**不把那一格抹掉**）。
 
-    判"有没有在飞"的那一问由 `ServiceRuntime.post_job_state()` 按 `thread.is_alive()`
+    判"有没有在飞"的那一问由 `ServiceRuntime.post_jobs_state()` 按 `thread.is_alive()`
     回答；这一格留着是为了让「上一趟是哪一趟、什么时候起的、什么时候收的」在跑完之后
     还读得到（`GET /api/sessions/{id}` 的 `post` 那一格）。
     """
@@ -40,13 +53,13 @@ class RuntimePostMixin:
         `session.json` 停在哪一档（收尾半路 `draining`、录音半路 `state="recording"` 的
         强杀残档）都不拦：收尾走到哪一步、录音有没有好好收场，都不是会后动作的闸（被强杀
         丢在半路的那一场，工作区读数就是「录音结束」，按钮照按）。本进程在录的那一场对
-        `post_offline` / `post_minutes` 到不了这里——动作本体先走 `_reject_post_job()`
+        `post_offline` / `post_minutes` 到不了这里——动作本体先走 `_reject_recording_post()`
         的运行时闸、按 `draining`(409) 拦下；这一道 400 只落到不走那道闸的
         `speaker_rename`（会中不提供改名）头上。
         **没给 `dir` 时退回原来那条**：跑**收尾刚走完、盘上停着的那一场**
         （`session` 还在，命令行与既有用例都走这一路）。
 
-        没有场次时按 `draining` 档拒（见 `_reject_post_job()` 的第二道闸）。
+        没有场次时按 `draining` 档拒（`_session_dir_for_post()` 尾上那一档）。
         """
         raw = None if args is None else args.get("dir")
         if raw is not None and str(raw).strip():
@@ -91,51 +104,63 @@ class RuntimePostMixin:
             )
         return str(session.dir)
 
-    def _start_post_job(self, kind: str, target: str, *, claimed_minutes: bool = False) -> None:
-        """起一条 daemon 线程跑这一趟，并把它记进 `post_job`。
+    def _start_post_job(
+        self,
+        kind: str,
+        target: str,
+        *,
+        claimed_minutes: bool = False,
+        record_inflight: bool = True,
+    ) -> None:
+        """起一条 daemon 线程跑这一趟，并把它记进 `(kind, dir)` 那一格。
 
         线程体里的异常**只落 log**：这一趟的成不成由盘上的产物与状态文件回答
-        （`meeting_offline_status.json` / `meeting_minutes_status.json`），
-        与 `PostProcessHook` / `MinutesHook` 那两条既有契约同一姿态。
+        （`meeting_offline_status.json` / `meeting_minutes_status.json` /
+        `meeting_transcode_status.json`），与既有钩子那几条契约同一姿态。
 
         `claimed_minutes=True` 表示纪要那一层的 claim 已经在动作本体里同步认过（m2），
         线程体那一趟因此直接起线程、不再认第二次。
 
         **`cancel` 是打断那一趟的接缝**（b1c6a58e）：offline 档起一条 `threading.Event`
-        塞进 `post_job`，线程体把它以 `is_set` 的形状递给 `run_session(cancel=…)` ——
+        塞进登记，线程体把它以 `is_set` 的形状递给 `run_session(cancel=…)` ——
         旗标立起后线程在**下一块开跑前**收场，盘上状态由 `run_session` 写成
-        `interrupted`。minutes 档没有这格（`None`）：两档机制不同，本节点只停 offline。
+        `interrupted`。minutes 档没有这格（`None`）。转码档的 `cancel` 是**暂停旗标**
+        （`transcode_pause` 立它；线程体递给 `run_transcode(pause=…)`，段落边界收场）。
 
         **起线程之前落一条「在飞」记录**（`meeting/service/postjobs.py`，配置目录的
-        `post_jobs.json`）：`post_job` 是内存事实、进程一死就没，记录是跨进程的那一格
-        ——服务重启时按它把「盘上停着 running」的那一场核对成 `interrupted`（治「杀了
-        进程就永远停在在跑」）。写不上只警告、不挡动作：这张网兜的是重启后那一场，
-        动作本身照常起跑。
+        `post_jobs.json`；`record_inflight` 缺省真，转码工序传假 —— 那道重启核对只认
+        offline / minutes 两档，转码的进度靠盘上凭据与状态文件自己活）。写不上只警告、
+        不挡动作。
         """
-        cancel = threading.Event() if kind == "offline" else None
+        cancel = (
+            threading.Event()
+            if kind in ("offline", "transcode")
+            else None
+        )
         thread = threading.Thread(
             target=self._run_post_job,
             args=(kind, target, claimed_minutes, cancel),
             name=f"post-{kind}",
             daemon=True,
         )
-        self.post_job = {
-            "kind": kind,
-            "dir": target,
+        self.post_jobs[(str(kind), canonical_dir(target))] = {
+            "kind": str(kind),
+            "dir": str(target),
             "thread": thread,
             "started_at": now_iso(),
             "finished_at": None,
-            #: 离线那一趟的逐块进度记录（下线那条链跑起来之后自己塞进来；纪要那趟是 `None`）
+            #: 离线那一趟的逐块进度记录（下线那条链跑起来之后自己塞进来；其余是 `None`）
             "progress": None,
-            #: 打断接缝（b1c6a58e）：offline 档是一条 `Event`，`post_stop` 立它；纪要那趟 `None`
+            #: 打断 / 暂停接缝：offline 与 transcode 是一条 `Event`；纪要那趟 `None`
             "cancel": cancel,
         }
-        try:
-            from meeting.service import postjobs
+        if record_inflight:
+            try:
+                from meeting.service import postjobs
 
-            postjobs.record(kind, target, now=self.post_job["started_at"])
-        except Exception:  # 记录落不上只警告：安全网缺席不该挡住产品动作
-            _log.warning("会后在飞记录落不上（不影响这一趟起跑）：%s", target, exc_info=True)
+                postjobs.record(kind, target, now=self.post_jobs[(str(kind), canonical_dir(target))]["started_at"])
+            except Exception:  # 记录落不上只警告：安全网缺席不该挡住产品动作
+                _log.warning("会后在飞记录落不上（不影响这一趟起跑）：%s", target, exc_info=True)
         thread.start()
 
     def _run_post_job(
@@ -147,29 +172,35 @@ class RuntimePostMixin:
     ) -> None:
         """线程体：跑会后的某一趟，跑完当场结束（模型用完就关，不留在显存里等下一次）。
 
-        **收工那一刻把 `post_job` 记成"已收工"而不是抹掉**：抹掉之后按「生成会后精细稿」
-        跑完一场、再去读那一场的进度，读到的就是一片空白。判"有没有在飞"看
-        `post_job_state()`（它按 `thread.is_alive()` 答），占位的那一格留着。
+        **收工那一刻把 `(kind, dir)` 那一格记成"已收工"而不是抹掉**：抹掉之后按「生成会后
+        精细稿」跑完一场、再去读那一场的进度，读到的就是一片空白。判"有没有在飞"看
+        `post_jobs_state()`（它按 `thread.is_alive()` 答），占位的那一格留着。
 
-        收工**顺带把在飞记录清掉**：记录还写着而线程活着收了工，说明这一趟是自己跑完的
-        （没被杀），下一趟起跑时会落新记录 —— 留着旧记录会让下一次启动多做一次无谓的
-        核对读盘。清不上只警告（安全网的那一半归启动核对兜）。
+        收工**顺带把这一趟的在飞记录摘掉**（offline / minutes 那两档，只摘 `(kind, dir)`
+        自己那一格）：记录还写着而线程活着收了工，说明这一趟是自己跑完的（没被杀），
+        下一趟起跑时会落新记录 —— 留着旧记录会让下一次启动多做一次无谓的核对读盘；
+        别的槽（还在飞的那几趟）原样保留。清不上只警告（安全网的那一半归启动核对兜）。
         """
         try:
             if kind == "offline":
                 self._run_post_offline(target, cancel=cancel)
+            elif kind == "transcode":
+                self._run_transcode_job(target, pause=cancel)
             else:
                 self._run_post_minutes(target, claimed=claimed_minutes)
         except BaseException:  # 后台线程的异常没有别的落点，兜到底
             _log.exception("会后的活儿（%s）抛出来了：%s", kind, target)
         finally:
-            _mark_post_job_finished(self.post_job, now_iso())
-            try:
-                from meeting.service import postjobs
+            _mark_post_job_finished(
+                self.post_jobs.get((str(kind), canonical_dir(target))), now_iso()
+            )
+            if kind in ("offline", "minutes"):
+                try:
+                    from meeting.service import postjobs
 
-                postjobs.clear()
-            except Exception:  # pragma: no cover - 清记录失败只警告
-                _log.warning("会后在飞记录清不掉（不影响这一趟收工）", exc_info=True)
+                    postjobs.clear(kind, target)
+                except Exception:  # pragma: no cover - 清记录失败只警告
+                    _log.warning("会后在飞记录清不掉（不影响这一趟收工）", exc_info=True)
             _log.info("会后的活儿（%s）收工：%s", kind, target)
 
     def _run_post_offline(self, target: str, cancel: threading.Event | None = None) -> None:
@@ -192,8 +223,8 @@ class RuntimePostMixin:
         from meeting.offline import runner as offline_runner
 
         ledger = progress_module.OfflineProgressLedger.for_session(target)
-        job = self.post_job
-        if isinstance(job, dict) and str(job.get("dir")) == str(target):
+        job = self.post_jobs.get(("offline", canonical_dir(target)))
+        if isinstance(job, dict):
             job["progress"] = ledger
         _log.info("按「生成会后精细稿」起这一趟离线链：%s", target)
         offline_runner.run_session(
@@ -231,19 +262,101 @@ class RuntimePostMixin:
         else:
             resolution.implementation.launch(target, deliver=True)
 
+    def _reject_start_on_offline_post(self) -> None:
+        """唯一硬闸的**另一侧**：会后精细稿在飞时，「开始录音」如实拒。
+
+        本地大模型互斥（`docs/design-intent.md` 第 21 条）：会后精细稿那条链跑在本地
+        离线模型上，会中录音要拉起会中模型 —— 两份不并排。界面上按「开始录音」先弹
+        「启动新会议会打断会后总结，是否继续」，确认才打断（`post_stop` 受理即回、
+        当前块收尾后停、状态 `interrupted`）再起录 —— 服务侧这一道 409 拦的是没走
+        弹窗的调用方（脚本、第二个页面），并给「先停再开」的顺序兜底。
+
+        拒的是**任意一场**在飞的 offline（模型只有一份，跟哪一场无关）；detail 与
+        「有一趟在飞」既有那一档同形（`{kind, dir, started_at}`）。
+        """
+        flying = self._post_jobs_of_kind("offline")
+        if not flying:
+            return
+        job = flying[0]
+        raise ActionError(
+            "draining",
+            f"会后的精细稿还在跑（{job.get('dir')}）：先按「停止」打断它（或等当前块收尾），"
+            "再开始新一场",
+            status=409,
+            detail={
+                "kind": str(job.get("kind")),
+                "dir": str(job.get("dir")),
+                "started_at": job.get("started_at"),
+            },
+        )
+
+    def _reject_recording_post(self, target: str | None = None) -> None:
+        """唯一硬闸的**这一侧**：这一场还在录音中时，会后两个按钮都如实拒。
+
+        409 `draining`（理由句照旧口径「还在录音中」）：会还在录着，会后那两个按钮要等
+        录音结束。**「落盘没落定」不再是闸** —— 收尾走到哪一步、成没成，都不拦会后动作。
+
+        「这一场还在录音中」指**本进程此刻在录的那一场**（`_is_actively_recording()`）：
+        `args["dir"]` 显式点名的那一场在录，同样落这一档（`detail` 带 `top_state` 与那
+        一场的两格）。
+        """
+        if self.snapshot.top_state in ("recording", "alert"):
+            session = self.snapshot.session
+            raise ActionError(
+                "draining",
+                "这一场还在录音中：会后的两个按钮要等录音结束",
+                status=409,
+                detail={
+                    "top_state": self.snapshot.top_state,
+                    "session_id": None if session is None else session.id,
+                    "dir": None if session is None else session.dir,
+                },
+            )
+        if target is not None and self._is_actively_recording(target):
+            raise ActionError(
+                "draining",
+                "这一场还在录音中：会后的两个按钮要等录音结束",
+                status=409,
+                detail={
+                    "top_state": self.snapshot.top_state,
+                    "session_id": Path(target).name,
+                    "dir": str(target),
+                },
+            )
+
+    def _reject_kind_slot(self, kind: str, target: str) -> None:
+        """`(种类, 场次)` 的槽闸：同一种重活在同一场上只能有一趟，第二趟如实拒。
+
+        409 `draining`，`detail = {kind, dir, started_at}`（与「有一趟在飞」既有那一档
+        同形）。**别的场次、别的种类都不挡**（进程级一刀切已废）；纪要那趟另有盘上的
+        claim 闸同步兜着（跨进程也拦得住）。
+        """
+        job = self._post_job_slot(kind, target)
+        if job is not None:
+            raise ActionError(
+                "draining",
+                f"这一场已经有一趟{name_of_kind(kind)}在跑：{target}；等它跑完再按",
+                status=409,
+                detail={
+                    "kind": str(job.get("kind")),
+                    "dir": str(job.get("dir")),
+                    "started_at": job.get("started_at"),
+                },
+            )
+
     def post_offline(self, args: dict[str, Any] | None = None) -> dict[str, Any]:
         """`post_offline` 动作：「生成会后精细稿（走离线模型）」。
 
         跑的是会后**离线**那一条链（慢、占显卡、出带说话人编号的那一份稿）；这一趟
         **不碰纪要**（R26 的两个独立按钮）。起一条 daemon 线程即算启动成功，
-        这一趟跑多久由 `/api/state` 与盘上的离线状态文件回答。
+        这一趟跑多久由盘上的离线状态文件回答。
 
-        这台机器上没接会后钩子（`post.hook = null`）时当场拒（404 `action_unavailable`）：
-        按钮按下去什么都不发生比报一句实话更坏。
+        拒绝顺序固定：① 录音中（唯一硬闸的这一侧，409）→ ② 这台机器没接这一层
+        （404）→ ③ `dir` 校验（400）→ ④ 同一场已有一趟在跑（409）。
 
         `args["dir"]` 给定时跑它指定的那一场（校验见 `_session_dir_for_post()`）。
         """
-        self._reject_post_job()
+        self._reject_recording_post()
         resolution = self.post_resolution
         if resolution is None or resolution.skipped():
             raise ActionError(
@@ -253,6 +366,7 @@ class RuntimePostMixin:
                 detail={"key": "post.hook", "selector": None if resolution is None else resolution.selector},
             )
         target = self._session_dir_for_post(args)
+        self._reject_kind_slot("offline", target)
         self._start_post_job("offline", target)
         return {"kind": "offline", "dir": target}
 
@@ -262,6 +376,11 @@ class RuntimePostMixin:
         **不补跑离线那一层**（R9 的「这一条是可选的」）：手上有会中稿就拿它出纪要，
         会后稿在的话两份一起给（R11 的两份对拍）；两份都没有时由纪要那一层按现成档位
         记 `failed` + 原因，不静默出一份空纪要。起一条 daemon 线程即算启动成功。
+
+        **纪要免闸**：与转码、与其它场次、与别的会后动作都并行 —— 同一场上会后精细稿
+        还在跑时这一趟**照常受理**，但回执**必须说破当时读到的输入档位**（`inputs` 格
+        + `note` 那一句），不许静默降级。同一场已有 claim（`AlreadyRunningError`）的
+        现行闸保留。
 
         `minutes.hook = null`（这台机器上不接纪要这一层）时当场拒（404 `action_unavailable`）。
 
@@ -273,7 +392,7 @@ class RuntimePostMixin:
         如实回一句「已经在飞」，而不是回 `{kind: 'minutes'}` 那个假成功（线程体里那条
         `AlreadyRunningError` 原先只落一条 log，动作本体早就把「已起」答出去了）。
         """
-        self._reject_post_job()
+        self._reject_recording_post()
         from meeting.backends.registry import resolve_minutes_hook
 
         resolution = resolve_minutes_hook()
@@ -285,6 +404,9 @@ class RuntimePostMixin:
                 detail={"key": "minutes.hook", "selector": resolution.selector},
             )
         target = self._session_dir_for_post(args)
+        receipt: dict[str, Any] = {"kind": "minutes", "dir": target}
+        receipt.update(self._minutes_inputs_tier(target))
+        self._reject_kind_slot("minutes", target)
         claimed = self._claim_minutes_layer(resolution, target)
         try:
             self._start_post_job("minutes", target, claimed_minutes=claimed)
@@ -295,58 +417,125 @@ class RuntimePostMixin:
             if claimed:
                 self._release_minutes_claim(resolution, target, exc)
             raise
-        return {"kind": "minutes", "dir": target}
+        return receipt
+
+    def _minutes_inputs_tier(self, target: str) -> dict[str, Any]:
+        """这一场此刻的纪要输入档位与降级说破句（**动作受理时**当场读盘）。
+
+        四档口径照纪要层：`both`（两份都在）/ `live_only`（只有会中稿）/
+        `offline_only`（只有会后稿）/ `none`。**同一场的会后精细稿还在跑**时，这一趟
+        注定拿不到它 —— 回执必须把这件事说破（`note` 一句），不许静默降级。
+        """
+        directory = Path(target)
+        live = any(
+            (directory / f"meeting_transcript_{source}.md").is_file() for source in SOURCE_IDS
+        )
+        offline = bool(has_offline_transcript(directory))
+        if live and offline:
+            tier = "both"
+        elif live:
+            tier = "live_only"
+        elif offline:
+            tier = "offline_only"
+        else:
+            tier = "none"
+        receipt: dict[str, Any] = {"inputs": tier}
+        if self._post_job_slot("offline", target) is not None:
+            receipt["note"] = MINUTES_DEGRADED_NOTE
+        return receipt
 
     def post_stop(self, args: dict[str, Any] | None = None) -> dict[str, Any]:
         """`post_stop` 动作：停掉正在跑的「生成会后精细稿」那一趟（b1c6a58e，R28）。
 
-        **受理即回，不等块边界**：立起 `post_job` 里那条取消旗标就交回执 —— 线程在
+        **受理即回，不等块边界**：立起取消旗标就交回执 —— 线程在
         下一块开跑前收场（正在跑的那一块不掐：引擎是同步推理），盘上状态由
         `run_session` 自己写成 `interrupted`（终态写入只归它）。界面随后按读数看到
         状态翻档、按钮回到可按（重跑闸只拦 `running`，`interrupted` 天然放行）。
 
-        拒的三档（`code` 全落在既有九个里，不加新）：
+        **多趟在飞后的指向**（转码搬出收尾节点）：在飞的可以不止一场 —— `args["dir"]`
+        点名停哪一场；省略时**恰好只有一场 offline 在飞**才停它，多场在飞按 400
+        `invalid_setting` 让 `dir` 点名（不猜）。转码那一趟不归它停（暂停走
+        `transcode_pause`，机制两样）；在飞的只有纪要那一趟时**如实拒**（机制两样，
+        不假装停得了）。
 
-          - **没有在飞的会后**（或最后一趟已收工）→ 409 `draining`，`detail = {}`；
-          - **在飞的是纪要那一趟**（minutes）→ 409 `draining`：本动作只停 offline——
-            minutes 那一趟「在跑」的可能是 DSH 侧的会话或 headless 子进程，机制两样，
-            本节点不纳入（如实拒，不假装停得了）；`detail` 与「有一趟在飞」同一形状；
-          - **`args["dir"]` 指了另一场** → 400 `invalid_setting`（在飞的永远只有一场，
-            停就停它；指错目录按参数错回）。
+        拒的四档（`code` 全落在既有九个里，不加新）：
+
+          - 没有任何 offline 在飞（没有在飞的会后）→ 409 `draining`，`detail = {}`；
+          - `args["dir"]` 点的那一场在飞的是纪要 → 409 `draining`，`detail` 带那一趟
+            的 `{kind, dir, started_at}`；
+          - 省略 `dir` 而多场 offline 在飞 → 400 `invalid_setting`，`legal` 列在飞那几场；
+          - `args["dir"]` 指到既无 offline 也无 minutes 在飞的一场 → 409 `draining`。
 
         成功体与两个按钮同一信封（`post` 键），多一格 `stopping: true` 说出
         「停的是哪一场、受理了没有」——「停没停成」由盘上那份状态文件回答。
         """
         args = dict(args or {})
-        job = self.post_job
-        thread = job.get("thread") if isinstance(job, dict) else None
-        flying = isinstance(job, dict) and thread is not None and thread.is_alive()
-        if not flying:
-            raise ActionError(
-                "draining",
-                "没有正在跑的会后可停（最后一趟已经收工；被打断/跑完的那一场直接重按按钮即可）",
-                status=409,
-                detail={},
-            )
+        raw_dir = args.get("dir")
+        wanted = None if raw_dir is None or not str(raw_dir).strip() else canonical_dir(raw_dir)
+        flying_offline: list[PostJob] = [
+            job
+            for (kind, _dir), job in sorted(self.post_jobs.items())
+            if kind == "offline" and _slot_alive(job)
+        ]
+        if wanted is None:
+            if not flying_offline:
+                minutes = self._post_jobs_of_kind("minutes")
+                if minutes:
+                    job = minutes[0]
+                    raise ActionError(
+                        "draining",
+                        "在飞的是纪要那一趟：停的动作只接「生成会后精细稿」（offline）"
+                        "——纪要那一层是另一套机制，本动作停不了它",
+                        status=409,
+                        detail={
+                            "kind": str(job.get("kind")),
+                            "dir": str(job.get("dir")),
+                            "started_at": job.get("started_at"),
+                        },
+                    )
+                raise ActionError(
+                    "draining",
+                    "没有正在跑的会后可停（最后一趟已经收工；被打断/跑完的那一场直接重按按钮即可）",
+                    status=409,
+                    detail={},
+                )
+            if len(flying_offline) > 1:
+                raise ActionError(
+                    "invalid_setting",
+                    "在飞的「生成会后精细稿」不止一场：用 dir 点名要停哪一场",
+                    status=400,
+                    detail={
+                        "key": "dir",
+                        "value": None,
+                        "legal": [str(job.get("dir")) for job in flying_offline],
+                    },
+                )
+            job = flying_offline[0]
+        else:
+            job = self._post_job_slot("offline", wanted)
+            if job is None:
+                minutes = self._post_job_slot("minutes", wanted)
+                if minutes is not None:
+                    raise ActionError(
+                        "draining",
+                        "在飞的是纪要那一趟：停的动作只接「生成会后精细稿」（offline）"
+                        "——纪要那一层是另一套机制，本动作停不了它",
+                        status=409,
+                        detail={
+                            "kind": str(minutes.get("kind")),
+                            "dir": str(minutes.get("dir")),
+                            "started_at": minutes.get("started_at"),
+                        },
+                    )
+                raise ActionError(
+                    "draining",
+                    f"这一场没有在飞的会后可停：{wanted}（最后一趟已经收工；重按按钮即可）",
+                    status=409,
+                    detail={},
+                )
         kind = str(job.get("kind"))
         target = str(job.get("dir"))
         started_at = job.get("started_at")
-        raw_dir = args.get("dir")
-        if raw_dir is not None and str(raw_dir).strip() and canonical_dir(raw_dir) != canonical_dir(target):
-            raise ActionError(
-                "invalid_setting",
-                f"在飞的会是另一场（{target}）；停就停在飞的那一场",
-                status=400,
-                detail={"key": "dir", "value": str(raw_dir), "legal": [target]},
-            )
-        if kind != "offline":
-            raise ActionError(
-                "draining",
-                f"在飞的是纪要那一趟（{kind}）：停的动作只接「生成会后精细稿」（offline）"
-                "——纪要那一层是另一套机制，本动作停不了它",
-                status=409,
-                detail={"kind": kind, "dir": target, "started_at": started_at},
-            )
         cancel = job.get("cancel")
         if not isinstance(cancel, threading.Event):  # pragma: no cover - 旧现场兜底
             raise ActionError(

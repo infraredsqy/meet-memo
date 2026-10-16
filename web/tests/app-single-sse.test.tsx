@@ -79,7 +79,7 @@ function stubGlobals(): void {
           Promise.resolve({
             sessions: [],
             recent: null,
-            post_job: null,
+            post_jobs: [],
             service: 'meeting',
             server_time: '2026-09-21T20:00:00+08:00',
             revision: 0,

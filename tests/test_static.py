@@ -529,7 +529,7 @@ def test_api_state_revision_grows_by_one_per_state_change(tmp_path, client_facto
     assert duplicate.json()["code"] == "already_recording"
     assert client.get("/api/state").json()["revision"] == after_start + 1
 
-    # 完成收尾（一次 stop，收尾四步各自提交）之后 revision 仍在单调往上走
+    # 完成收尾（一次 stop，收尾三步各自提交）之后 revision 仍在单调往上走
     assert client.post(
         "/api/actions", json={"action": "stop"}, headers={"X-Meeting-Service": "1"}
     ).status_code == 200

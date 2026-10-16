@@ -300,7 +300,8 @@ def capabilities_of(implementation: Any) -> dict[str, bool]:
     """一个采集实现声明的能力（收尾记录的输入）。
 
     `finalize` / `transcode` 两项按实现在场与否单独回答：`null` / `dev` 这一类不写真实音频的
-    采集替身不具备这两项能力，于是收尾第 1、2 步记 `skipped`。
+    采集替身不具备这两项能力，于是收尾第 1 步记 `skipped`、flush 落定后的转码独立工序
+    不自动起（判据都是采集侧，见 `docs/state.md` 第 1 章）。
     """
     is_stand_in = implementation.__class__.__module__ in (
         "meeting.backends.null",

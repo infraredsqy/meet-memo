@@ -349,7 +349,7 @@ class _SourceWorker:
 
 
 class CaptureSession:
-    """一场会话的采集引擎：两路读侧 / 写侧 / 0.5 秒电平刻度，收尾 `finalize()` + `transcode()`。
+    """一场会话的采集引擎：两路读侧 / 写侧 / 0.5 秒电平刻度，收尾 `finalize()`；`transcode()` 是采集后端的协议成员。
 
     生命周期（`meeting/service/runtime.py` 的调用顺序）：
 
@@ -367,7 +367,9 @@ class CaptureSession:
       - `activate_source()`：用户重新打开某一路——把新开起来的源接回读线程；
       - `finalize()`：停流 + join + 关文件 + `fsync`（收尾第 1 步），落下本段终点戳
         并结出**在录时长**（实际录到的音频时长，不含暂停；权威数只从写侧的字节计数来）；
-      - `transcode()`：把各段 PCM 转成 MP3（收尾第 2 步）；转不动**原样上抛**，PCM 留着；
+      - `transcode()`：把各段 PCM 转成 MP3（采集后端的协议成员；转码独立工序走的是
+        `meeting/capture/transcode.py` 那一条带凭据判据的路，本方法不再被收尾序列调用）；
+        转不动**原样上抛**，PCM 留着；
       - `stop()`：幂等收场（进程关停时调；已经收过尾就什么都不做）。
 
     段记录（`segment_records()` / `audio_duration_seconds()`）由服务侧落进 `session.json`；
@@ -607,7 +609,10 @@ class CaptureSession:
         )
 
     def transcode(self) -> None:
-        """收尾第 2 步：各段 PCM → MP3。**不做决定论的口径**，转不动就抛（该步记 `failed`）。
+        """采集后端协议成员：各段 PCM → MP3。**不做决定论的口径**，转不动就抛。
+
+        （转码已摘出收尾序列：服务侧那道独立工序走 `meeting/capture/transcode.py` 的
+        逐段凭据判据，不再调本方法；本方法保留为后端协议的成员。）
 
         逐段转（`meeting/session.py` 枚举出的**整场**段文件——续接过的会每路多段，
         旧段与新段一并转；旧段 MP3 已在的也照转一遍，产物内容不变）。判据照旧是

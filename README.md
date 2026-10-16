@@ -148,7 +148,7 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
   收尾 `log` 那一步落 `failed`、状态里看得见、主 log 里留一条。
 - 这一场结束时，场次 log 的最后一行是**结束标记**：
 
-      场次结束：state=<draining|done|failed>；收尾四步：<每步状态>；服务级 log：<路径>
+      场次结束：state=<draining|done|failed>；收尾步骤：<每步状态>；服务级 log：<路径>
 
 ---
 

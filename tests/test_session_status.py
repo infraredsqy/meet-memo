@@ -72,14 +72,17 @@ def _workspace_with_audio(tmp_path: Path, *, seconds: float = 25.0) -> Path:
 def _wait_job_done(runtime) -> None:
     """等后台那一趟收工：**直接 join 那条线程**（它是这一格的观测量，不必轮询）。
 
-    线程对象由运行时自己拿着（`post_job['thread']`）；这里先取它、再等它 —— 与
-    `post_job_state()` 那条"看线程活没活着"的判据同源。
+    线程对象由运行时自己拿着（`post_jobs` 的 `(kind, dir)` 那一格）；这里先取它、再等它
+    —— 与 `post_jobs_state()` 那条"看线程活没活着"的判据同源。
     """
-    job = runtime.post_job
-    thread = None if not isinstance(job, dict) else job.get("thread")
-    if thread is not None:
+    threads = [
+        job.get("thread")
+        for job in runtime.post_jobs.values()
+        if isinstance(job, dict) and job.get("thread") is not None
+    ]
+    for thread in threads:
         thread.join(timeout=JOB_TIMEOUT_SECONDS)
-    assert runtime.post_job_state() is None, "等不到会后的活儿收工"
+    assert not runtime.post_jobs_state(), "等不到会后的活儿收工"
 
 
 def _write_session_json(session: Path, document: dict) -> None:
@@ -159,9 +162,10 @@ def test_the_progress_is_readable_while_the_offline_run_is_in_flight(
         assert body["kind"] == "meeting"
         assert body["state"] == "ended"  # 三档口径：盘上有 session.json（录音已发生过）
         assert body["has_offline"] is False, "跑到一半时正式稿还没落，那一格照旧是假"
-        assert body["post"]["kind"] == "offline"
-        assert body["post"]["running"] is True, "这一趟正在飞"
-        assert body["post"]["finished_at"] is None, "还没收工，这一格如实为空"
+        # `post` 那一格是多槽登记里**这一场**的在飞清单（可以同时有 offline 与 minutes）
+        assert [item["kind"] for item in body["post"]] == ["offline"], body["post"]
+        assert body["post"][0]["running"] is True, "这一趟正在飞"
+        assert body["post"][0]["finished_at"] is None, "还没收工，这一格如实为空"
         offline = body["offline"]
         assert offline["state"] == "running"
         assert offline["in_process"] is True, "这一趟正在本进程里跑（与 post.running 同源）"
@@ -203,7 +207,7 @@ def test_the_endpoint_falls_back_to_the_ledger_after_a_process_restart(
     try:
         # 直接用产品那一段实现跑一趟（不经过线程，模拟"上一次服务进程跑完的那一趟"）
         runtime._run_post_offline(str(session))
-        runtime.post_job = None  # 假装本进程没有这一趟的现场
+        runtime.post_jobs.pop(("offline", str(session)), None)  # 假装本进程没有这一趟的现场
         body = runtime.session_status_dict(str(session))
         offline = body["offline"]
         assert offline["state"] == "done"
@@ -280,7 +284,7 @@ def test_a_stale_running_status_file_is_answered_as_it_is_on_disk(
         per_source = {item["source"]: item for item in offline["sources"]}
         assert (per_source["mic"]["done"], per_source["mic"]["total"]) == (1, 3)
         assert per_source["mic"]["current_chunk"] is None
-        assert body["post"] is None
+        assert body["post"] == []
     finally:
         config_module.set_current(previous)
 
@@ -300,7 +304,7 @@ def test_a_failed_status_file_is_answered_as_failed(tmp_path, monkeypatch, resto
         body = runtime.session_status_dict(str(session))
         assert body["offline"]["state"] == "failed", "盘上那份的终态照它答"
         assert body["offline"]["in_process"] is False
-        assert body["post"] is None
+        assert body["post"] == []
     finally:
         config_module.set_current(previous)
 
@@ -322,7 +326,7 @@ def test_a_partial_status_file_is_answered_as_partial(
         body = runtime.session_status_dict(str(session))
         assert body["offline"]["state"] == "partial", "盘上那份的终态照它答"
         assert body["offline"]["in_process"] is False
-        assert body["post"] is None
+        assert body["post"] == []
     finally:
         config_module.set_current(previous)
 
@@ -344,7 +348,7 @@ def test_an_interrupted_status_file_is_answered_as_interrupted(
         body = runtime.session_status_dict(str(session))
         assert body["offline"]["state"] == "interrupted", "盘上那份的终态照它答"
         assert body["offline"]["in_process"] is False, "此刻没有任何东西在跑"
-        assert body["post"] is None
+        assert body["post"] == []
     finally:
         config_module.set_current(previous)
 
@@ -410,7 +414,7 @@ def test_a_session_that_never_ran_post_reports_an_empty_reading(
     runtime.workspace_open(str(session))
     try:
         body = runtime.session_status_dict(str(session))
-        assert body["post"] is None
+        assert body["post"] == []
         assert body["offline"]["state"] == "idle"
         assert body["offline"]["current_source"] is None
         assert body["offline"]["elapsed_seconds"] is None
@@ -448,13 +452,14 @@ def test_the_endpoint_leaves_the_snapshot_and_the_list_alone(
 def test_the_list_carries_the_post_job_cell_at_the_top_level(
     tmp_path, monkeypatch, restore_config
 ) -> None:
-    """`GET /api/sessions` 顶层第三格 `post_job`：会后进度界面那格「显卡忙不忙」的读数。
+    """`GET /api/sessions` 顶层第三格 `post_jobs`：会后进度界面那格「显卡忙不忙」的读数。
 
-    - 没有会后的活儿在飞时它如实是 `None`；**每行照旧十二键**（这一格在顶层，
-      不进任何行 —— 快照九键那道硬门原样）；
-    - 离线那一趟在本进程里飞着时它带 `{kind, dir, started_at}` 三格（`post_job_state()`
-      的原文，不另造一份形状）；`kind` 答**这一趟跑的是哪条路**（`offline` / `minutes`）；
-    - 跑完那一刻线程收工，同一格翻回 `None`（`post_job_state()` 的既有判据）。
+    - 没有活儿在飞时它如实是**空数组**（多槽登记：`(kind, dir)` 一趟一格，可以不止一趟
+      在飞）；**每行照旧十二键**（这一格在顶层，不进任何行 —— 快照九键那道硬门原样）；
+    - 离线那一趟在本进程里飞着时它带 `{kind, dir, started_at}` 三格（`post_jobs_state()`
+      的原文，不另造一份形状）；`kind` 答**这一趟跑的是哪条路**（`offline` / `minutes` /
+      `transcode`）；
+    - 跑完那一刻线程收工，这一格退回空数组（`post_jobs_state()` 的既有判据）。
     """
     runtime, previous = _runtime(tmp_path, monkeypatch, **{"post.chunk_seconds": CHUNK_SECONDS})
     session = _workspace_with_audio(tmp_path)
@@ -465,16 +470,17 @@ def test_the_list_carries_the_post_job_cell_at_the_top_level(
     monkeypatch.setattr(offline_runner, "build_engine", lambda config=None: engine)
     try:
         idle = runtime.sessions_dict()
-        assert set(idle) == {"sessions", "recent", "post_job"}, sorted(idle)
-        assert idle["post_job"] is None
+        assert set(idle) == {"sessions", "recent", "post_jobs"}, sorted(idle)
+        assert idle["post_jobs"] == []
 
         runtime.post_offline({"dir": str(session)})
         assert engine.reached.wait(timeout=JOB_TIMEOUT_SECONDS), "引擎没跑到 mic 的第 1 块"
 
         revision_before = runtime.revision
         flying = runtime.sessions_dict()
-        job = flying["post_job"]
-        assert job is not None
+        jobs = flying["post_jobs"]
+        assert len(jobs) == 1, jobs
+        job = jobs[0]
         assert set(job) == {"kind", "dir", "started_at"}, sorted(job)
         assert job["kind"] == "offline"
         assert job["dir"] == str(session)
@@ -489,5 +495,5 @@ def test_the_list_carries_the_post_job_cell_at_the_top_level(
         config_module.set_current(previous)
 
     done = runtime.sessions_dict()
-    assert done["post_job"] is None, "跑完那一刻这一格翻回 None"
+    assert done["post_jobs"] == [], "跑完那一刻这一格退回空数组"
     assert {row["dir"]: row for row in done["sessions"]}[str(session)]["state"] == "ended"

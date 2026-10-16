@@ -13,14 +13,16 @@ import { failureFrom } from '../src/failure';
 import { probeDecision } from '../src/api/sessions';
 import type { PostJobCell, SessionRow, Snapshot } from '../src/contract';
 
-/** 造一份 post_job 读数（顶层第三格的形状，用例只翻自己要翻的那几格）。 */
-function job(over: Partial<PostJobCell> = {}): PostJobCell {
-  return {
-    kind: 'offline',
-    dir: 'C:\\会议\\跟老王聊周会',
-    started_at: '2026-09-21T22:10:00+08:00',
-    ...over,
-  };
+/** 造一份 post_jobs 读数（顶层第三格的形状，用例只翻自己要翻的那几格）。 */
+function job(over: Partial<PostJobCell> = {}): PostJobCell[] {
+  return [
+    {
+      kind: 'offline',
+      dir: 'C:\\会议\\跟老王聊周会',
+      started_at: '2026-09-21T22:10:00+08:00',
+      ...over,
+    },
+  ];
 }
 
 /** 造一行注册表（空缺全给 null / 无害值，用例只翻自己要翻的那几格）。 */
@@ -196,7 +198,7 @@ describe('停止入口（R28 / b1c6a58e）', () => {
   });
 
   it('没有在飞的会后 / 没选中：入口不出现', () => {
-    expect(postStopView(null, dir)).toEqual({ visible: false });
+    expect(postStopView([], dir)).toEqual({ visible: false });
     expect(postStopView(job(), null)).toEqual({ visible: false });
   });
 });

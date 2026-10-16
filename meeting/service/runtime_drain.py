@@ -1,4 +1,4 @@
-"""收尾与关停 mixin：收尾四步编排、强制打断与服务关停（自 meeting/service/runtime.py 机械拆分，逐行照抄）。"""
+"""收尾与关停 mixin：收尾三步编排、强制打断与服务关停（自 meeting/service/runtime.py 机械拆分，逐行照抄）。"""
 
 from __future__ import annotations
 
@@ -69,8 +69,8 @@ DRAIN_DEFAULT_SEGMENT_TIMEOUT_SECONDS = 20.0
 
 #: `log` 步的 flush 与摘除**至少**拿到的预算（秒）。
 #:
-#: 共享预算里的唯一例外：`log` 是四步里唯一在任何构建里都有真实实现、要做 IO 的步骤；
-#: 骨架构建下 `flush` / `transcode` / `post` 三步都是 `skipped`，一旦末尾那步把 deadline
+#: 共享预算里的唯一例外：`log` 是收尾各步里唯一在任何构建里都有真实实现、要做 IO 的步骤；
+#: 骨架构建下 `flush` / `post` 两步都是 `skipped`，一旦末尾那步把 deadline
 #: 耗尽，`log` 会落 `failed`，本该「正常收尾」的一档就被拖成收尾失败档（用例会以偶发形式红）。
 #: 缺席步与末尾那步**不消耗 deadline**（它们的耗时按实测扣减，不把共享预算一次性吃掉）。
 #:
@@ -112,9 +112,6 @@ class RuntimeDrainMixin:
     """收尾与关停 mixin。"""
 
     # -- 动作错误（拒绝路径的 detail 三件套） ------------------------------
-
-    def _is_draining(self) -> bool:
-        return self.snapshot.ended is None or self.snapshot.ended.phase == "draining"
 
     def _failed_steps_detail(self) -> list[dict[str, Any]]:
         if self.snapshot.ended is None:
@@ -158,13 +155,54 @@ class RuntimeDrainMixin:
             },
         )
 
+    def _reject_start_during_drain(self) -> None:
+        """`start` 的收尾闸（**收窄后**）：只挡两档。
+
+          - **本进程收尾 task 真在飞、且 flush 尚未落定** → 409（归档还没落稳，音频
+            不可再生 —— `docs/design-intent.md` 第 1 条）。失败步明细照旧带回（此时
+            为空数组）；
+          - **历史失败档**（收尾已走完、停在 `ended·draining` 的失败现场）→ 409，
+            失败步明细照旧带回。
+
+        **flush 已落定而尾巴（log / post）还在飞的那一档放行** —— 转码更不构成阻挡
+        （它已经不在收尾序列里）；放行的那一档由 routes 在动手前经 `settle_drain_tail()`
+        等尾巴落定（那一步只等不拒，等不到才如实拒），快照因此不会被半路的收尾踩到。
+        """
+        if self.drain_in_progress():
+            if not self.flush_settled():
+                raise self._draining_error(self.snapshot.session)
+            return
+        if self._drain_failed_face():
+            raise self._draining_error(self.snapshot.session)
+
+    async def settle_drain_tail(self, *, timeout: float | None = None) -> None:
+        """routes 的 `start` 在动手前等收尾尾巴落定（flush 已落定、task 还在飞那一档）。
+
+        收尾的编排协程与动作处理跑在同一个事件循环上，但每一步的调用都提交到工作线程
+        —— 不等尾巴就开新一场，收尾后半路的步骤会踩到已经被新一场换掉的快照。这里
+        **只等不拒**：尾巴落定（常态是几百毫秒）就放行；等到上限（收尾自己的预算口径，
+        封顶 30 秒）还在飞才如实拒 —— 那是「收尾卡死」的另一档病，不该被悄悄带过去。
+        """
+        if not self.drain_in_progress() or not self.flush_settled():
+            return
+        if timeout is None:
+            timeout = min(30.0, float(self._drain_wait_timeout()))
+        await self._wait_drain_settled(timeout=timeout)
+        if self.drain_in_progress():
+            raise ActionError(
+                "draining",
+                "上一场收尾的尾巴迟迟不落定：稍后再试（或强制打断收尾）",
+                status=409,
+                detail={"log_path": self.log_path},
+            )
+
     # -- 收尾编排（三步登记 + 终态判定；预算与失败出路的完整语义归 phase3） --
 
     async def drain(self) -> str:
         """收尾协程（**普通协程、持有 task 句柄、可被 `cancel()`**）。
 
-        编排：`flush` → `transcode` → `log` → `post`；每步进入与落定各写一次盘、各提交一次；
-        **四步全部落定之后把前提交给 `finish_drain()`** 判终态。被取消时按收尾步骤表落盘
+        编排：`flush` → `log` → `post`（转码已摘出收尾序列，flush 落定即自动在后台另起）；每步进入与落定各写一次盘、各提交一次；
+        **各步全部落定之后把前提交给 `finish_drain()`** 判终态。被取消时按收尾步骤表落盘
         （已落定的保持原样、未开跑的维持 `waiting`、**不伪造终态**），随后同样走
         `finish_drain()` 这一个出口。
 
@@ -177,10 +215,10 @@ class RuntimeDrainMixin:
         `ended_at` 不被补写**（§3.5 的三条不覆盖约束）。
 
         **自适应预算（phase3 §3.3）**：一开头按积压量与段长算出这一趟收尾的总上限
-        `compute_drain_budget(backlog, segment_timeout)`，**四步共享同一条 deadline**，
+        `compute_drain_budget(backlog, segment_timeout)`，**各步共享同一条 deadline**，
         每一步的调用都经 `_drain_wait()` 包在「剩余预算」里 —— 于是等待总量以那条 deadline
         为界、不随步数翻倍，且**绝不阻塞事件循环**（收尾期间 `/api/state`、SSE 与
-        `POST /api/actions` 照常应答）。**四步调用无一例外都经 `_drain_wait()`**；
+        `POST /api/actions` 照常应答）。**各步调用无一例外都经 `_drain_wait()`**；
         唯一例外是 `log` 步的 flush 与摘除，它至少拿到 `DRAIN_LOG_MIN_BUDGET_SECONDS`。
         """
         try:
@@ -204,7 +242,7 @@ class RuntimeDrainMixin:
         `_settle_step(..., cancelled=True)` 一处调用点都没有，`frozen_*` 收到的永远是默认的
         `False`，那三条不覆盖约束没有一条被实际走到。
 
-        没有 `ended`（重启现场那一档，此时也没有收尾在跑）时什么也不做；四步恰好已全部落定时
+        没有 `ended`（重启现场那一档，此时也没有收尾在跑）时什么也不做；各步恰好已全部落定时
         也不补这一笔（那一档盘上最终值由 `_finish_drain(cancelled=True)` 那一趟收口，§3.5 第 3 条）。
 
         **在飞的是 `post` 那一格时照实记 `running`**（与别的步骤同一个口径：取消打断的只是
@@ -264,21 +302,21 @@ class RuntimeDrainMixin:
     def _remaining_budget(self, deadline: float | None) -> float:
         """这一趟还剩下多少预算（秒）：`deadline` 减此刻的单调钟，**下限夹在 0**。
 
-        契约口径（§3.3）：**四步共享同一条 deadline**，每一步的调用都拿它的剩余时间当上限，
-        所以四步调用点一律把 `_run_drain_steps()` 算出来的那一条传进来（判据见
-        `tests/test_drain.py` 的 ⑤h：四步读到的截止时刻逐值相等、开跑时的剩余预算逐级变小）。
+        契约口径（§3.3）：**各步共享同一条 deadline**，每一步的调用都拿它的剩余时间当上限，
+        所以各步调用点一律把 `_run_drain_steps()` 算出来的那一条传进来（判据见
+        `tests/test_drain.py` 的 ⑤h：各步读到的截止时刻逐值相等、开跑时的剩余预算逐级变小）。
 
         **`deadline is None` 在这里显式报错，不给出任何上限**（审查问题 m2 的直接修复）：
         这条上限只能来自 `compute_drain_budget()`（§8 的坑表），而 `None` 换不出一个**说得清**
         的数 —— 退成 `float("inf")` 就是「没有上限」（§3.3 点名要避免的静默退化），退成
-        `DRAIN_BUDGET_MIN_SECONDS` 是另一条凭空的保守上界、把「谁忘了传」这件事盖住（四步
+        `DRAIN_BUDGET_MIN_SECONDS` 是另一条凭空的保守上界、把「谁忘了传」这件事盖住（各步
         调用点现下无一例外都传得进 deadline，那一支此前是不可达的死代码，改成 `inf` 也全绿）。
         于是这里选择**当场说话**：拿到 `None` 就抛 `ValueError`，报出「上限只能来自
         `compute_drain_budget()`」，调用点不会静默退化成一个猜出来的秒数。
         """
         if deadline is None:
             raise ValueError(
-                "收尾等待上限必须是一条具体的 deadline（四步共享的那条）："
+                "收尾等待上限必须是一条具体的 deadline（各步共享的那条）："
                 "上限只能来自 compute_drain_budget()，收到 None 时这里不会给出任何兜底秒数"
             )
         return max(0.0, deadline - time.monotonic())
@@ -300,7 +338,7 @@ class RuntimeDrainMixin:
         共享预算之外的唯一开销：`log` 步的 flush 与摘除至少拿到
         `DRAIN_LOG_MIN_BUDGET_SECONDS`）。收尾此刻还在跑 → 用剩余时间；收尾已经跑完
         （或还没开跑）→ `_drain_deadline` 已清空，按本次那笔预算全额等，与
-        「四步共享一条 deadline」这条口径同源。
+        「各步共享一条 deadline」这条口径同源。
         """
         deadline = self._drain_deadline
         budget = float(
@@ -310,12 +348,12 @@ class RuntimeDrainMixin:
         return remaining + float(DRAIN_LOG_MIN_BUDGET_SECONDS)
 
     def _drain_executor_or_create(self) -> _DaemonThreadPoolExecutor:
-        """取（必要时建）收尾四步的同步执行器：工作线程是 daemon。
+        """取（必要时建）收尾各步的同步执行器：工作线程是 daemon。
 
         用 `loop.run_in_executor(<这个执行器>, ...)` 而**不是** `asyncio.to_thread()`：
         后者固定走事件循环的**默认**执行器（非 daemon 工作线程），第二次 `Ctrl+C` 之后
         解释器会 join 它，进程于是被在飞的同步步拖住（§3.5 行为表第二行的「立即中止」）。
-        显式传执行器只影响收尾四步，默认执行器那一路一个字不动。
+        显式传执行器只影响收尾各步，默认执行器那一路一个字不动。
         """
         if self._drain_executor is None:
             self._drain_executor = _DaemonThreadPoolExecutor()
@@ -334,7 +372,7 @@ class RuntimeDrainMixin:
 
             `asyncio.wait_for(<该步调用>, max(<剩余预算>, min_budget))`
 
-        **四步的调用无一例外都经这里**，因此一趟收尾的等待总量以那条 deadline 为界。
+        **各步的调用无一例外都经这里**，因此一趟收尾的等待总量以那条 deadline 为界。
         `deadline` 是**必传**的（`_remaining_budget()` 在收到 `None` 时当场抛 `ValueError`，
         不给兜底秒数：上限只能来自 `compute_drain_budget()`）。
         `min_budget` 只给 `log` 步用（`DRAIN_LOG_MIN_BUDGET_SECONDS`）：它的 flush 与摘除
@@ -412,13 +450,12 @@ class RuntimeDrainMixin:
         self._drain_deadline = deadline
         _log.info(
             "收尾开始：backlog=%s segment_timeout=%ss -> budget=%ss（下限 %ss、封顶 %ss）；"
-            "四步共享这一条 deadline（log 步的 flush 与摘除另保底 %ss）",
+            "各步共享这一条 deadline（log 步的 flush 与摘除另保底 %ss）",
             backlog, segment_timeout, budget,
             DRAIN_BUDGET_MIN_SECONDS, DRAIN_BUDGET_MAX_SECONDS, DRAIN_LOG_MIN_BUDGET_SECONDS,
         )
         try:
             await self._drain_flush(deadline)
-            await self._drain_transcode(deadline)
             await self._drain_log(deadline)
             await self._drain_post(deadline)
         finally:
@@ -434,7 +471,12 @@ class RuntimeDrainMixin:
         )
 
     async def _drain_flush(self, deadline: float) -> None:
-        """第 1 步 `flush`：停采集、落盘（后端 `finalize()`）；采集替身记 `skipped`。"""
+        """第 1 步 `flush`：停采集、落盘（后端 `finalize()`）；采集替身记 `skipped`。
+
+        **flush 落定那一刻，转码在后台自动起**（转码已摘出收尾序列：它是这一场的独立
+        工序，`meeting/capture/transcode.py`；不占收尾预算、不挡 start 与会后动作）。
+        采集替身（没有 transcode 能力）那一档不起 —— 没有真实 PCM 可转。
+        """
         step_id = "flush"
         self._begin_step(step_id, "停采集并把这一场的归档落盘（后端 finalize()）")
         resolution = self.capture_resolution
@@ -453,31 +495,20 @@ class RuntimeDrainMixin:
             self._fail_step(step_id, exc, resolution, "采集归档落盘失败")
             return
         self._done_step(step_id, "归档已落盘（finalize() 返回）", resolution, elapsed=elapsed)
+        # 落盘一落定，转码就自动在后台接着做（起不等于挡路：它不占收尾预算，也不挡任何人）
+        self._start_transcode_after_flush()
 
-    async def _drain_transcode(self, deadline: float) -> None:
-        """第 2 步 `transcode`：收尾转换（后端 `transcode()`）；采集替身记 `skipped`、抛错记 `failed`。
+    def flush_settled(self) -> bool:
+        """收尾的 `flush` 步是否已落定（`done` / `failed` / `skipped` 都算终态）。
 
-        闸门只看**采集侧**：transcode 是 CaptureBackend 的能力（`registry.capabilities_of()`
-        的第三项），转写后端在不在场与这一步无关 —— 解析结论、`run_ok` 也都记在采集侧。
+        `start` 的收尾闸判据用它：收尾 task 还在飞而 flush 已落定时，新一场**放行**
+        （盘上落盘已完成、音频已安全；剩下的 log / post 两步归收尾自己的尾巴）。
         """
-        step_id = "transcode"
-        self._begin_step(step_id, "收尾转换（后端 transcode()）")
-        resolution = self.capture_resolution
-        if resolution is None or resolution.skipped() or not self.capture_capabilities.get("transcode"):
-            self._skip_step(
-                step_id,
-                "这一场没有可转码的产物（未接真采集后端 / 采集替身没有 transcode 能力；转码归 dca4539b）",
-                resolution,
-            )
-            return
-        try:
-            _value, elapsed = await self._drain_wait(
-                step_id, self.capture_backend.transcode, deadline=deadline, invoke=True
-            )
-        except Exception as exc:
-            self._fail_step(step_id, exc, resolution, "收尾转换失败")
-            return
-        self._done_step(step_id, "收尾转换完成（transcode() 返回）", resolution, elapsed=elapsed)
+        ended = self.snapshot.ended
+        if ended is None:
+            return False
+        step = ended.drain_step("flush")
+        return step.status in ("done", "skipped", "failed")
 
     async def _drain_log(self, deadline: float) -> None:
         """第 3 步 `log`：写 `session.json` 的结束标记，并 flush / 写结束标记 / 摘掉场次 log。
@@ -500,7 +531,7 @@ class RuntimeDrainMixin:
             # 这一步原先跟着写 `ended_at`，于是盘上会出现「`state=draining` + `ended_at`
             # 有值」的瞬态（`log` 步落下时收尾还没走完、`ended` 里那一刻也没有失败步），
             # 与「强制打断路径不写 `ended_at`」那条口径也读不顺。这里只把这一半的
-            # **结束标记**（`state` 与四步概要先算出来交给场次 log）落稳。
+            # **结束标记**（`state` 与各步概要先算出来交给场次 log）落稳。
             self._write_session()
             _log.info("场次结束标记已写入 session.json（会话文件这一半）")
         except Exception as exc:
@@ -543,7 +574,7 @@ class RuntimeDrainMixin:
         )
 
     async def _drain_post(self, deadline: float) -> None:
-        """第 4 步 `post`：让会中模型退出显存，**把会后留给用户按按钮**。
+        """`post` 步 `post`：让会中模型退出显存，**把会后留给用户按按钮**。
 
         按「结束录音」之后**什么都不发生**（R26 / `docs/design-intent.md` 第 10 条）：
         这一步原先无条件 `post_hook.launch()`，现在**一个会后动作都不启动** ——
@@ -585,7 +616,7 @@ class RuntimeDrainMixin:
             self.post_resolution,
         )
         _log.info(
-            "收尾第 4 步：会后流程不自动拉起（这一格停在 waiting，两个按钮归用户按）：%s",
+            "收尾`post` 步：会后流程不自动拉起（这一格停在 waiting，两个按钮归用户按）：%s",
             self.snapshot.session.dir if self.snapshot.session else "?",
         )
 
@@ -699,7 +730,7 @@ class RuntimeDrainMixin:
         final_state = finish_drain(self.snapshot, cancelled=cancelled)
         ended = self.snapshot.ended
         if final_state == "done":
-            _log.info("收尾完成：四步全部落定且没有失败步（ended.phase=done，top_state 停在 ended）")
+            _log.info("收尾完成：各步全部落定且没有失败步（ended.phase=done，top_state 停在 ended）")
             # 成功档的收尾副作用把两路 `health` 从 `stopped` 带回 `unprobed`（phase2 §3.5.2），
             # 逐路落一条（失败档保留 `stopped` 现场，health 不动、因此这里不落）
             self._log_health_migrations(
@@ -709,7 +740,7 @@ class RuntimeDrainMixin:
         else:
             if cancelled:
                 _log.warning(
-                    "收尾被取消且四步未全部落定：ended.phase 保持 draining"
+                    "收尾被取消且各步未全部落定：ended.phase 保持 draining"
                     "、top_state 停在 ended、session 保留（不判 done）"
                 )
             else:
@@ -733,7 +764,7 @@ class RuntimeDrainMixin:
           （同一入口、同一原子写），**本 Phase 不开第二个写盘入口、不新开文件句柄**；
           `state` / `interrupted` / `ended_at` 三个参数的组装**在那层薄封装里**，
           这里只负责「取出现场记录 → 调它 → 落 log」（phase3 §2.4 / §4 的薄封装口径）；
-        - 只在**四步尚未全部落定**这一档负责盘上最终那一版；四步恰好已全部落定时按终态规则
+        - 只在**各步尚未全部落定**这一档负责盘上最终那一版；各步恰好已全部落定时按终态规则
           由 `finish_drain()` 那一趟落（见 `trigger_shutdown()` 的判据）。
 
         取消时的登记不覆盖这一版（`_settle_step(cancelled=True)` 与 `_write_session()` 的
@@ -766,9 +797,9 @@ class RuntimeDrainMixin:
         return written
 
     def drain_has_settled(self) -> bool:
-        """四步是否全部落定（`running` 不算落定；`waiting` 是 `post` 那一格的终态，算）。
+        """各步是否全部落定（`running` 不算落定；`waiting` 是 `post` 那一格的终态，算）。
 
-        第 4 步 `post` 按「结束录音」之后不自动拉起会后（R26），它做完该做的（释放会中模型）
+        `post` 步 `post` 按「结束录音」之后不自动拉起会后（R26），它做完该做的（释放会中模型）
         就停在 `waiting`（＝界面上那句"等你动手"）。因此这一格与 `finish_drain()` 同口径：
         `waiting` 是落定，`running` 还在跑。
         """
@@ -811,7 +842,7 @@ class RuntimeDrainMixin:
 
           - `force=False` 且**当场没有收尾要管** → 直接退出（空闲退出档）：`idle`（进程刚起、
             没开过任何一场）、以及
-            `ended` 且四步已全部落定**无 `failed`**（`ended.phase == "done"`，收尾干净走完）
+            `ended` 且各步已全部落定**无 `failed`**（`ended.phase == "done"`，收尾干净走完）
             两格都落在这一支 —— 第二种是审查问题 C1 补上的那一格，它**不写盘**；
           - `force=False` 且当时 `recording` / `alert` → 走**同一条**
             `stop_session(reason="ctrl_c")` 路径起收尾，等它落定再请求关停；
@@ -829,7 +860,7 @@ class RuntimeDrainMixin:
 
         if not force and self._first_press_can_just_exit():
             # 这一支有三格（§3.5 行为表的二 / 四 / 收尾干净那一格），都不是「有收尾要做」：
-            # 空闲态、重启提示态、以及「四步已全部落定且无 failed」的收尾干净档。
+            # 空闲态、重启提示态、以及「各步已全部落定且无 failed」的收尾干净档。
             # 三格都不写盘、不 `cancel()`、不写 `interrupted`（C1 的那一格就在第三种）。
             _log.info("这一次 Ctrl+C 落在「没有收尾要管」这一格：不写盘、直接退出（空闲退出档）")
             self._shutdown_interrupted = False
@@ -849,7 +880,7 @@ class RuntimeDrainMixin:
             return "drained"
 
         # 第二次按下 / 已经停在 ended·draining 再按：立即中止，顺序写死（先落盘、再 cancel()）。
-        # **先挡一格**：四步已全部落定且**无 `failed`** 时，这一场已经收尾干净（`ended.phase` 已是
+        # **先挡一格**：各步已全部落定且**无 `failed`** 时，这一场已经收尾干净（`ended.phase` 已是
         # `done`、盘上是 `state="done"` + `ended_at`），当场**没有收尾要管** —— 不落盘、不 `cancel()`、
         # 不写 `interrupted`，直接走空闲退出档。判据与 `_first_press_can_just_exit()` 同一句，
         # 两处都不许把「收尾干净走完」读成「已停在 `ended·draining` 再按」（审查问题 C1）。
@@ -895,7 +926,7 @@ class RuntimeDrainMixin:
     def _drain_failed_face(self) -> bool:
         """是不是「收尾已经跑完、停在 `ended·draining` 的**失败现场**」（§3.5 行为表第四行）。
 
-        两个条件缺一不可：四步都落定、且四步里**有 `failed`**。
+        两个条件缺一不可：各步都落定、且各步里**有 `failed`**。
         **只判「落定」会把「收尾干净走完」那一格也吞进来** —— `stop` 已收尾干净
         （`ended.phase == "done"`、盘上 `state="done"` + `ended_at`）时这样误判，第一次
         `Ctrl+C` 就会被当成「已停在 `ended·draining` 再按」，把盘上那一版无条件改写成
@@ -917,9 +948,9 @@ class RuntimeDrainMixin:
 
           - `recording` / `alert` → 起收尾，等它落定再关停（行为表第一行，不算「直接退出」）；
           - `ended` + 收尾还在跑 → 等同第二次按下（行为表第三行）；
-          - `ended` + 收尾已落定的**失败现场**（四步落定且有 `failed`）→ 等同第二次按下
+          - `ended` + 收尾已落定的**失败现场**（各步落定且有 `failed`）→ 等同第二次按下
             （行为表第四行）；
-          - `ended` + 四步已全部落定且**无 `failed`**（`ended.phase == "done"`）→ **没有收尾要管**：
+          - `ended` + 各步已全部落定且**无 `failed`**（`ended.phase == "done"`）→ **没有收尾要管**：
             收尾终态已经由 `finish_drain()` 那一趟落稳（盘上 `state="done"` + `ended_at` 都在），
             这一刻直接退出即可（空闲退出档），**盘上一个字节都不改**（C1 的那一格）；
           - **其余情形直接退出、走空闲退出档** —— `idle`（手上没有场次）正落在这一格：
@@ -932,7 +963,7 @@ class RuntimeDrainMixin:
             return False
         if self._drain_failed_face():
             return False
-        # 剩下的两格都落在这一句上（四步已全部落定且**无 `failed`** 的「收尾干净走完」，
+        # 剩下的两格都落在这一句上（各步已全部落定且**无 `failed`** 的「收尾干净走完」，
         # 与「其余情形」）：两者当场都没有收尾要管，盘上那一版由上一趟自己落稳，
         # 这里**不产生任何写盘动作**。
         return True
@@ -940,7 +971,7 @@ class RuntimeDrainMixin:
     async def _wait_drain_settled(self, *, timeout: float | None = None) -> None:
         """等这一趟收尾落定（第一次 `Ctrl+C` 的「收尾真的跑完」）。
 
-        退出条件只有两条：收尾走到终态（`ended.phase == "done"`），或四步全部落定且收尾 task
+        退出条件只有两条：收尾走到终态（`ended.phase == "done"`），或各步全部落定且收尾 task
         已经不在跑（失败档 / 取消档）。上限**与本次收尾同源** —— 不传 `timeout` 时取
         `_drain_wait_timeout()`（本次那笔预算 / 本次 deadline 的剩余时间加 `log` 步那条最小
         预算），**这里不把 `_drain_inputs()` 读第二遍**：真转写后端的积压量会随收尾下降，

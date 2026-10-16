@@ -314,9 +314,9 @@ def test_the_backend_release_still_runs_on_the_drain_post_step(tmp_path, monkeyp
     assert events == ["release"], f"释放该被喊到一次，会后一个动作都不许起：{events}"
     step = next(item for item in runtime.snapshot.ended.steps if item.id == "post")
     assert step.status == "waiting", (step.status, step.detail, step.error)
-    # **没有新增 step_id**：`state.py` 的取值域只认 flush / transcode / log / post
+    # **没有新增 step_id**：`state.py` 的取值域只认 flush / log / post（转码已摘出收尾序列）
     assert {item.id for item in runtime.snapshot.ended.steps} == {
-        "flush", "transcode", "log", "post",
+        "flush", "log", "post",
     }
 
 

@@ -39,7 +39,7 @@ from tests.test_api_actions import live, post, snapshot_of, wait_until
 #: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md` 第 7 章。
 pytestmark = pytest.mark.slow
 
-#: 进程内用例的轮询超时（收尾四步跑在收尾线程池里；与既有端到端同档）
+#: 进程内用例的轮询超时（收尾三步跑在收尾线程池里；与既有端到端同档）
 POLL_TIMEOUT_SECONDS = 15.0
 
 #: 暂停前后各采这么多块（0.1 秒一块）：素材量级与 e2e ① 同档，MP3 与段记录都有得比
@@ -130,19 +130,35 @@ def test_a_pause_records_silence_and_the_ledger_adds_up(tmp_path: Path, monkeypa
         )
         assert post(client, "stop").status_code == 200
         done = _wait_for_done(client)
+        # `post` 那一格按 R26 落 `waiting`；转码已摘出收尾序列，flush 落定自动在后台另起
         assert _drain_steps(done) == {
-            "flush": "done", "transcode": "done", "log": "done", "post": "waiting",
+            "flush": "done", "log": "done", "post": "waiting",
         }
 
         session_dir = Path(snapshot_of(client)["session"]["dir"])
         assert str(session_dir).startswith(str(out_root))
-        # ① 按序号命名的段：两路各一个段 1，外加各自的 MP3 与场次文件
+        # 等转码独立工序收工（真后端带 transcode 能力 → flush 落定自动起），MP3 才算在场
+        from meeting.capture import transcode as transcode_module
+
+        wait_until(
+            lambda: (
+                doc
+                if (doc := transcode_module.read_status(session_dir)) is not None
+                and doc.get("state") == "done"
+                else None
+            ),
+            timeout=POLL_TIMEOUT_SECONDS,
+            what="转码独立工序落 done",
+        )
+        # ① 按序号命名的段：两路各一个段 1，外加各自的 MP3、场次文件与转码工序的三层记录
         assert sorted(item.name for item in session_dir.iterdir()) == sorted(
             [
                 SESSION_FILE_NAME,
                 archive_name("mic"), archive_name("loopback"),
                 "meeting_audio_mic_001.mp3", "meeting_audio_loopback_001.mp3",
                 "meeting.log",
+                "meeting_transcode_status.json", "meeting_transcode_progress.jsonl",
+                "meeting_transcode_mic_001.json", "meeting_transcode_loopback_001.json",
             ]
         )
 
