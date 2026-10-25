@@ -115,7 +115,7 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 （纪要正文 + 说话人附录，附录里写清每个人名的依据与把握，猜不出的单列一节），
 状态在 `meeting_minutes_status.json`，中间产物在 `working/` 下；这一层跑砸了不影响离线那几份产物。
 这一层由 `minutes.*` 配置键接（`minutes.hook` 写 `null` 时「生成纪要」按钮当场回 404；
-键与默认值见 `docs/service.md` 第 4 章）。拉起之前先探一次 `minutes.dsh_url`
+键与默认值见 `docs/service.md`）。拉起之前先探一次 `minutes.dsh_url`
 （默认 `http://127.0.0.1:3080`，就是 `dsh web` 的默认地址）：**在跑**就把这一场交付给它，
 投递成功即算交付完成，状态记 `delivered`，后面的活不归这一层管（产物在 DSH 界面的那条会话里
 看得见）；**没在跑**才落回 headless 子进程，那一趟会等子进程退出、按产物判据校验，
@@ -129,7 +129,7 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 本场按过的、成功产出的那几次可以从 `GET /api/summaries` 取回来回看（记录只活在内存里，
 新的一场 `start` 清空）。模型端点由 `summary.*` 配置键定：多套预设可整装一个键，
 设置抽屉的「快速总结模型」下拉**会中就能换**，写盘即生效不必重启（键的取值与生效档位见
-`docs/summary.md` 与 `docs/service.md` 第 4 章）。
+`docs/summary.md` 与 `docs/service.md`）。
 这一层怎么切窗口、提示词与模型输出是什么形状、超时与重试的预算落在哪，见 `docs/summary.md`。
 
 ---
@@ -158,7 +158,7 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 按新值挑；出声开关勾选那一刻就换；换一套总结模型会中当场走新的）。
 其余配置键（`web.*` / `log.*` / `alert.*` / `capture.*` / `transcriber.*` / `post.*` /
 `minutes.*` 与其余 `summary.*`）**改完要重启**。逐键的分档以 `meeting/config.py` 的
-`SETTING_KEY_GROUPS` 为准，口径见 `docs/service.md` 第 4 章。**没有 `output.root` 键**：
+`SETTING_KEY_GROUPS` 为准，口径见 `docs/service.md`。**没有 `output.root` 键**：
 一场会放哪由它的工作区目录给（start 显式传 `args.dir`），配置清空也照样能开会。
 
 **环境变量一律在启动时求值**，改了不会热生效。本服务的环境变量一共四个：
@@ -187,7 +187,7 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
   恢复之后心跳的 `capture_gaps` 会记下一条空洞、秒数就是停发了多久 —— 停发的这段内容确实没记上）；
 - `lost`：直接来一条 `SourceLost`。
 
-三档故障到点生效、到点自动恢复；注入的语义与恢复口径见 `docs/state.md` 第 7 章。
+三档故障到点生效、到点自动恢复；注入的语义与恢复口径见 `docs/state.md`。
 
 采集后端不是 dev 时，这个动作回 `action_unavailable`（`404`）。
 另有自检页 `GET /debug`（骨架自检，不是产品界面）。
@@ -200,7 +200,7 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 （或 `meeting post` / `meeting replay` 那一趟没做成、服务起步出意外）；`2` 端口被占、
 用法错误、配置值非法；`3` 启动前提不成立（`config.json` 损坏、主 log 不可写）；
 `130` 收尾中途第二次 `Ctrl+C`（立即中止，盘上绝不写 `done`）。
-逐档触发条件、`Ctrl+C` 两阶段语义与「收尾失败后服务不自杀」的出路见 `docs/service.md` 第 2、6 章；
+逐档触发条件与 `Ctrl+C` 两阶段语义见 `docs/service.md`，「收尾失败后服务不自杀」的出路也在其中；
 纪要那一层落在 `delivered`（已交付 DSH）按成功算。
 
 ---
@@ -224,7 +224,7 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 拿不准就跑全量（两分半上下，不加 `-m` 时默认就是
 它）。慢档比快档慢在真子进程与真墙钟等待上，跳过它不等于跳过覆盖率 —— 但**被测代码落在慢档
 文件里时必须跑全量**。归位判据（一条用例什么时候算慢）与慢档清单的现算命令在
-`docs/service.md` 第 7 章「快慢分档」，标记 `slow` 注册在 `pyproject.toml` 的
+`docs/service.md`，标记 `slow` 注册在 `pyproject.toml` 的
 `[tool.pytest.ini_options]`（带 `--strict-markers`：代码里 `pytest.mark.xxx` 用到的标记名
 必须先在 `markers` 里注册，没注册就当场报 unknown mark）。
 
@@ -285,4 +285,4 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
   先报 `null`（还不知道，不算停），窗口过了仍一帧没有才如实报 `false`；界面上判
   「采集已停止」还要**连续两次**读到 `false` 才弹横幅，单次读数不弹。
 
-两者互不参与对方的计算：收尾预算也不拿这两个周期做任何计算。判据细节见 `docs/state.md` 第 4 章。
+两者互不参与对方的计算：收尾预算也不拿这两个周期做任何计算。判据细节见 `docs/state.md`。
