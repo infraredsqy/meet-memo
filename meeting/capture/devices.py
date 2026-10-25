@@ -23,9 +23,9 @@
 本机实测（原始输出见 `phase1/report.md` 与 `phase1/fix3.md`）：系统默认输入是
 `Analogue 1 + 2 (2- Focusrite US`（MME #1）；序号最小的 `#0` 是 MME 的
 `Microsoft 声音映射器 - Input`——Windows 的 WAVE_MAPPER，跟随系统默认输入、报出的是
-跟着变的别名（旧稿按序号最小取种子落到的就是它，C1）。VB-Cable 的抓取侧 `CABLE Output`
+跟着变的别名（旧稿按序号最小取种子落到的就是它）。VB-Cable 的抓取侧 `CABLE Output`
 是抓取型端点，抓的是「往 CABLE Input 播出去的声音」＝远端那一路；当麦克风录下来 mic 与
-loopback 会抓到同一路（spec 第 22 行的 C6）。因此在 V1 候选筛选之上多一条：抓取型虚拟端点
+loopback 会抓到同一路。因此在 V1 候选筛选之上多一条：抓取型虚拟端点
 不进候选（`is_pseudo_capture()`）；用户显式配了这类端点时照办，只在 `detail` 里提醒。
 """
 

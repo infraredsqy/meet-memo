@@ -1,8 +1,8 @@
-"""日志（phase1 §3.13，R16；D4 的三个毛病一起修掉）。
+"""日志（phase1 §3.13，R16）。
 
 服务级 `~/.config/meeting/logs/meeting.log`（`log.dir` / `MEETING_LOG_DIR` 可改）；
 场次级 `<场次目录>/meeting.log`，`start` 时挂上、收尾 `log` 步 flush 后摘掉（R16 的 log
-要能按场查）。D4 三处必改：主 log 不可写即抛 `OSError`（映射 `EXIT_STARTUP_UNMET`），
+要能按场查）。三处必改：主 log 不可写即抛 `OSError`（映射 `EXIT_STARTUP_UNMET`），
 不做 V1 的静默降级；轮转保留整份旧文件；服务级 + 场次级两层。
 
 轮转参数一律从配置取（`log.max_bytes` / `log.backup_count`），不许写死；记录器命名

@@ -1,42 +1,7 @@
-"""编排提示词的渲染（`41465462` spec「可搬资产」D2 / D3 两条的渲染器一侧）。
+"""编排提示词的渲染：把路径、档位与输入清单填进模板，交出主 agent 照着读的提示词全文。
 
-这个模块服务 spec 里这一条：主 agent 拿到的那份提示词里，**这一轮有哪几条输入、每条几行、
-分了几块、块文件在哪**必须写得清清楚楚，模型照着读就行，不必自己去找文件。编排正文归
-`prompts/meeting_final.md`，渲染器只做两件事：把路径与档位填进模板、把清单拼出来。
-
-三条硬口径：
-
-  - **渲染出来的路径一律正斜杠**：DSH 子会话拿到的是一段文本，里面混着反斜杠容易被当成转义
-    （`\\t`、`\\n` 这类），路径里出现一个反斜杠就可能让模型读错文件；
-  - **模板缺席、占位符对不上、路径为空一律抛错**：半份提示词比没有提示词更坏——模型会拿它去
-    跑一条走不通的流程，而人从产物上看不出哪里缺了；
-  - **降级档要写在提示词里**（`{{MODE_NOTE}}`）：只喂一条时明写「本次只有 X 稿」，
-    读到这份提示词的模型因此知道这一档本来就分不出个人，附录里该如实写这句话。
-
-模板占位符一共七个，其中**五处必须逐处写在模板里**：
-`{{SESSION_DIR}}` / `{{MODE}}` / `{{MODE_NOTE}}` / `{{INPUTS}}` /
-`{{SPEAKER_NAMES}}`（机主确认过的「编号 → 人名」表，节点 `91b6752e`；读不出就如实渲染
-「没有确认过的名字」，不挡渲染）。`{{MAX_SEGMENTS}}` **可以省略**：纪要流程不再产出分段方案，
-模板用不上这一格时就整处不写；写了照样替换。`{{PHASE_BODY}}` 也一样可以省略：编排正文写在两块
-标记（`PHASE_BODY_BEGIN` / `PHASE_BODY_END`）之间，**标记块本身就是正文的落点**——渲染时把整块
-就地换成正文，正文因此只有一份可维护，不必在别处再放一个 `{{PHASE_BODY}}`；写在别处时才填同一份正文。
-
-`{{SESSION_DIR}}` 填的是**模型的工作目录那一点**（`.`）：提示词里给模型看的路径一律相对场次目录，
-`working/inputs.json` 里那一格 `session_dir` 才是给程序读的绝对路径，两者不要混。
-正文里可以照常写 `{{SESSION_DIR}}` / `{{MAX_SEGMENTS}}` 这类占位符，
-它们在填进正文之前先被替换掉。
-
-**档位与说明段都按「逐 source」口径**（`41465462` phase2 第 0 节 M1 的定案）：每一条输入各自
-判它手上有哪几份稿（`both` / `live_only` / `offline_only`），说明段**逐 source 各写一句**它这一路
-有什么；整体 `{{MODE}}` 取「两路合并后的公共档位」，两路不同时取 `both`（至少有一份真·会后稿
-在，不许再把整场说成降级）。此前那一版在「一路两份都在、另一路只有会中稿」时会渲染出
-自相矛盾的提示词：说明段说「本次只有会中稿、不要为任何人名给出推断」，同一份提示词的
-清单里却写着另一路「带聚类编号」。
-
-**两份稿平级、一起喂**（`docs/design-intent.md` 第 11 条、R11 / R12）：清单里**逐份稿印一条**
-（同一路两份都在时两行），块落在 `working/<source>/<kind>/`（`<kind>` = `live` / `offline`），
-`{{MODE_NOTE}}` 只陈述事实。**这一层里不存在任何"哪一份更可信 / 更权威"的排序** ——
-实测并不保证会后那份更好，把结论写进提示词就是替模型下判断。
+编排正文归 `prompts/meeting_final.md`，渲染器只做两件事：把路径与档位填进模板、把清单
+拼出来。各占位符与档位说明段的口径见对应常量与函数的注释。
 """
 
 from __future__ import annotations
@@ -62,7 +27,7 @@ from meeting.minutes.chunk import (
 from meeting.minutes.lines import count_lines
 from meeting.speaker_names import identity_rows
 
-#: 模板的默认落点（仓库根下的 `prompts/meeting_final.md`，phase2 写）
+#: 模板的默认落点（仓库根下的 `prompts/meeting_final.md`）
 DEFAULT_TEMPLATE = Path(__file__).resolve().parents[2] / "prompts" / "meeting_final.md"
 
 #: 引擎认识的全部占位符（模板里出现这些之外的花括号内容一律判错）
@@ -101,7 +66,7 @@ SPEAKER_SHAPE_NOTES: dict[str, str] = {
 }
 
 #: 两份稿的人话标签。**只有这两份稿这一个维度，没有排序**：谁也不叫"权威"、谁也不"优先"
-#: （`docs/design-intent.md` 第 11 条、R11 —— 实测并不保证某一份稳定更好）。
+#: （`docs/design-intent.md` 第 11 条、R11 / R12 —— 实测并不保证某一份稳定更好）。
 KIND_LABELS: dict[str, str] = {
     "live": "会中稿",
     "offline": "会后稿",
@@ -120,18 +85,16 @@ KINDS: tuple[str, ...] = ("live", "offline")
 #: 只有会后。清单与说明段都按它说话，`kinds_per_source()` 的分类也落在这三个词上。
 INPUT_KINDS: tuple[str, ...] = ("both", "live_only", "offline_only")
 
-#: 一份稿的形态说明（写进清单与说明段：这一份长什么样）
 def shape_of(kind: str) -> str:
-    """某一份稿的形态说明（`会中稿，无说话人标签（…）`）。"""
+    """某一份稿的形态说明（`会中稿，无说话人标签（…）`；写进清单与说明段）。"""
     return f"{KIND_LABELS[kind]}，{SPEAKER_SHAPE_NOTES[kind]}"
 
 
 def kind_for(kinds: Sequence[str]) -> str:
     """这一路**手上有哪几份稿** → `both` / `live_only` / `offline_only`。
 
-    只按「哪几份在」判，不排先后、不说哪一份更好（R11：两份平级）。映射本体在
-    `chunk.classify()`（三处共用那一份）；集合里混进 `live` / `offline` 之外的词、
-    或者一份稿都没有，都照原话抛 `PromptTemplateError`。
+    只按「哪几份在」判，不排先后、不说哪一份更好（R11：两份平级）；映射本体在
+    `chunk.classify()`（三处共用那一份）。
     """
     present = set(kinds)
     if present - set(KINDS):
@@ -145,8 +108,8 @@ def kind_for(kinds: Sequence[str]) -> str:
 def _note_sentence(source: str, kinds: Sequence[str]) -> str:
     """说明段里**某一路**那一句：它这一路手上有哪几份稿、每一份长什么样。
 
-    **逐条写清、不做排序**：两条都在时把两份的名字与形态各说一句，并明说「不合并、没有先后」；
-    缺一条时如实写缺的是哪一份（以及缺的那一步对不上），**不把缺的那一条说成不可信**。
+    逐条写清、不做排序（R11）；缺一条时如实写缺的是哪一份，
+    **不把缺的那一条说成不可信**。
     """
     kind = kind_for(kinds)
     if kind == "both":
@@ -172,8 +135,8 @@ def _note_sentence(source: str, kinds: Sequence[str]) -> str:
 class PromptTemplateError(ValueError):
     """提示词渲染不出来（模板缺席、占位符对不上、某条输入的路径是空）。
 
-    继承 `ValueError`，与 `meeting` 里别的「值不对」错误同档：调用方（phase2 的 runner）
-    据此把这一趟记成 `failed` + 原因，**不拿半份提示词去启动子会话**。
+    继承 `ValueError`，与 `meeting` 里别的「值不对」错误同档：调用方据此把这一趟
+    记成 `failed` + 原因，**不拿半份提示词去启动子会话**。
     """
 
 
@@ -181,13 +144,10 @@ class PromptTemplateError(ValueError):
 class PromptInput:
     """提示词清单里的一条：**某一路的某一份稿**（`live` 或 `offline`）。
 
-    `transcript` 是**相对场次目录**的转写路径（那一份稿的原始文件），`index` / `chunk_dir`
-    是那一份稿的分块产物（`working/<source>/<kind>/…`）。这条稿在不在盘上由这一格回答 ——
-    **两条都在时它出现两次（两条各一条），谁也不替谁**（R11：两份稿平级、一起喂给模型）。
-    路径一律正斜杠（构造时就把反斜杠换掉，见 `_posix()`）：渲染器任何一处都不该把反斜杠漏出去。
-
-    `kind` 是这一条是**哪一份稿**（`live` / `offline`）：`{{MODE}}` 那一格、清单里那句
-    说话人形态说明与说明段都按它说话，**不拿文件名的子串猜**。
+    `transcript` 是**相对场次目录**的转写路径，`index` / `chunk_dir` 是那一份稿的分块产物
+    （`working/<source>/<kind>/…`）；路径一律正斜杠（构造时经 `_posix()`，渲染器任何一处
+    都不该把反斜杠漏出去）。**两条都在时它出现两次（两条各一条），谁也不替谁**
+    （R11：两份稿平级、一起喂给模型）；`kind` 由调用方给死，不拿文件名的子串猜。
     """
 
     source: str
@@ -235,7 +195,6 @@ class InputsListing:
     def kinds_per_source(self) -> tuple[tuple[str, str], ...]:
         """逐 source 的稿型：`(("mic", "both"), ("loopback", "live_only"))`。
 
-        每一条 source 答一格（同一个 source 的两份稿在这三格里合成一个词），
         说明段与整场档位都按它说话。
         """
         return tuple((source, kind_for(self.kinds_of(source))) for source in self.sources)
@@ -247,27 +206,20 @@ def _posix(value: object) -> str:
 
 
 def mode_note_text(mode: str, per_source: Sequence[tuple[str, str]]) -> str:
-    """档位说明段（`both` 档、且每一路两份都在时也**逐路写一句事实**）。
+    """档位说明段（`{{MODE_NOTE}}` 的正文，`both` 档、且每一路两份都在时也**逐路写一句事实**）。
 
     `per_source` 是**逐 source 的稿型**（`InputsListing.kinds_per_source()` 那个形状），
-    说明段因此逐 source 各写一句它这一路有哪几份稿。整体 `mode` 决定这一段说的是哪一种话：
-
-      - `both`：两路合并后的公共档位。每一路两份都在时这一段写一句「两路两份都在」的
-        事实句（`post/loopback` 这类名字逐路列出来）；某一两路缺稿时逐 source 各写一句
-        它缺的是哪一份 —— **不许出现与清单不符的话**
-        （phase2 第 0 节 M1：这个混合形状曾经渲染出自相矛盾的提示词）；
-      - `live_only` / `offline_only`：整场只有哪一份稿，那句话把两路的名字一起列出来，
-        再嘱咐附录如实写「这一路分不出个人」。
-
-    这一层是**事实陈述**：写出来的每句话都要在清单里找得到依据，且**不出现任何
-    「哪一份更可信 / 更权威」的排序**（R11、`docs/design-intent.md` 第 11 条）。
+    说明段逐 source 各写一句它这一路有哪几份稿。这一层是**事实陈述**：写出来的每句话都要在
+    清单里找得到依据，且**不出现任何「哪一份更可信 / 更权威」的排序**（R11、
+    `docs/design-intent.md` 第 11 条）——混合形状曾经渲染出自相矛盾的提示词
+    （说明段说「本次只有会中稿」，清单里却写着另一路「带聚类编号」）。
     """
     if mode not in MODES:
         raise PromptTemplateError(f"档位只认 {MODES}，收到 {mode!r}")
     where = "、".join(source for source, _ in per_source) if per_source else "（没有输入）"
     if mode == "both":
         if all(kind == "both" for _, kind in per_source) and per_source:
-            # 两份都全这一档不再是空的（复审 m9）：spec 完成判定第 3 条要求「说明段逐条写清
+            # 两份都全这一档不再是空的：spec 完成判定第 3 条要求「说明段逐条写清
             # 这一场手上有哪几份」，只有这一档原先什么都没写、那一格渲染成空白行。
             shape = "；".join(shape_of(item) for item in ("live", "offline"))
             return (
@@ -315,12 +267,10 @@ def speaker_names_section(rows: Sequence[Mapping[str, object]]) -> str:
     """身份集 → `{{SPEAKER_NAMES}}` 的正文（**纯函数**，不碰盘）。
 
     `rows` 是 `meeting.speaker_names.identity_rows()` 那个形状（每行 `key` / `source` /
-    `label` / `name` / `segments` 五格）。**只印确认过的名字**（`name` 非空的行）：
-    表是机主逐条确认的记录，附录那一格照抄它，不作任何推断；表里没有的编号照旧
-    推断。行形与附录那张表对齐（路 + 编号 + 人名），模型照抄时不许再猜一次格。
-
-    没有任何确认过的名字时渲染 `SPEAKER_NAMES_EMPTY`（如实一句，不是空字符串——
-    占位符渲染完不许留下空白段落让模型猜这里本来该有什么）。
+    `label` / `name` / `segments` 五格）。**只印确认过的名字**（`name` 非空的行）——表是
+    机主逐条确认的记录，附录那一格照抄它、不作任何推断；行形与附录那张表对齐，模型照抄时
+    不许再猜一次格。没有任何确认过的名字时渲染 `SPEAKER_NAMES_EMPTY`（如实一句，不是空
+    字符串——占位符渲染完不许留下空白段落让模型猜这里本来该有什么）。
     """
     named = [row for row in rows if str(row.get("name") or "").strip()]
     if not named:
@@ -355,7 +305,7 @@ def speaker_names_section(rows: Sequence[Mapping[str, object]]) -> str:
 def speaker_names_text_for_session(session_dir: str | Path) -> str:
     """从盘上取这一场的身份集与确认过的名字，拼 `{{SPEAKER_NAMES}}` 的正文。
 
-    读侧只做结构解析：人名表读不出（缺席或坏了）就如实渲染 `SPEAKER_NAMES_EMPTY`，
+    人名表读不出（缺席或坏了）就如实渲染 `SPEAKER_NAMES_EMPTY`，
     **不抛错、不挡渲染**（`meeting.speaker_names` 的读方口径）。
     """
     return speaker_names_section(identity_rows(session_dir))
@@ -365,11 +315,8 @@ def build_inputs_text(listing: InputsListing) -> str:
     """把「有哪几条输入、每条几行、分几块、块文件在哪」拼成一段清单。
 
     清单给两条读法：一段人话（一眼看清这一轮吃什么）与一份 JSON（模型与程序都能照字段读）。
-    路径都是**相对场次目录**的，模型的工作目录就是那个场次目录。
-
-    **逐份稿印一条**：同一路两条稿都在时它出现两行（会中稿一行、会后稿一行），
-    每行写清它那一份的文件名、行数、块数与区间表 —— 模型照清单读得到两份，
-    不必自己去猜另一份在哪（R11 / R29 的提示词这一侧）。
+    **逐份稿印一条**：同一路两条稿都在时它出现两行（会中稿一行、会后稿一行）——模型照清单
+    读得到两份，不必自己去猜另一份在哪（R11 / R29 的提示词这一侧）。
     """
     lines = [
         f"本轮输入 {len(listing.sources)} 路、共 {len(listing.inputs)} 份稿，"
@@ -444,10 +391,9 @@ def extract_phase_body(template_text: str, template: object, *, token: str = "{{
     """从模板里抽出编排正文（两块标记之间的部分），顺手摘掉正文里的那一处 `token`。
 
     正文**保留** `{{SESSION_DIR}}` / `{{MAX_SEGMENTS}}` 这类占位符：调用方拿走这份正文之后
-    先把它们填掉，再把整份正文放回标记块（标记连同标记一起换掉，见 `render_prompt()`）。
-
-    标记缺席就抛错：这一格没有正文可填时硬渲染出来的提示词会让子会话拿着一条没有阶段的编排
-    跑一趟，代价是整场会的模型调用。
+    先把它们填掉，再把整份正文放回标记块（见 `render_prompt()`）。标记缺席就抛错——
+    这一格没有正文可填时硬渲染出来的提示词，会让子会话拿着一条没有阶段的编排跑一趟，
+    代价是整场会的模型调用。
     """
     begin = template_text.find(PHASE_BODY_BEGIN)
     end = template_text.find(PHASE_BODY_END)
@@ -471,16 +417,13 @@ def render_prompt(
     template: object = "<内存里的模板>",
     speaker_names: str | None = None,
 ) -> str:
-    """把清单与档位填进模板，返回提示词全文。
+    """把清单与档位填进模板，返回提示词全文；缺任何一样都抛 `PromptTemplateError`。
 
-    缺任何一样都抛 `PromptTemplateError`，绝不交出半份提示词：**五处**占位符必须逐处出现
-    （`{{MAX_SEGMENTS}}` / `{{PHASE_BODY}}` 可以省略，正文由两块标记就地替换，见模块头），
-    某条输入的转写路径为空、`max_segments` 不是正整数同样当场拦下。
-
-    `speaker_names` 是 `{{SPEAKER_NAMES}}` 的正文：**本函数不碰盘**（纯渲染），调用方
-    从盘上取好了递进来（`render_session_prompt()` 走 `speaker_names_text_for_session()`）；
-    不传时按「没有确认过的名字」的空态正文填（`SPEAKER_NAMES_EMPTY`），照样是完整的
-    一段话，绝不留下一个没填的占位符。
+    绝不交出半份提示词——模型会拿它去跑一条走不通的流程，而人从产物上看不出哪里缺了。
+    **五处**占位符必须逐处出现（`{{MAX_SEGMENTS}}` / `{{PHASE_BODY}}` 可以省略，见
+    `PHASE_BODY_BEGIN` 的注释）；某条输入的转写路径为空、`max_segments` 不是正整数同样当场拦下。
+    `speaker_names` 是 `{{SPEAKER_NAMES}}` 的正文：**本函数不碰盘**（纯渲染），调用方从盘上
+    取好了递进来；不传时按「没有确认过的名字」的空态正文 `SPEAKER_NAMES_EMPTY` 填。
     """
     if listing.mode not in MODES:
         raise PromptTemplateError(f"档位只认 {MODES}，收到 {listing.mode!r}")
@@ -497,7 +440,6 @@ def render_prompt(
     if len(set(pairs)) != len(pairs):
         raise PromptTemplateError(f"输入清单里有重复的 (source, kind)：{pairs}")
 
-    #: 占位符的名字与它的字面量（渲染时逐个替换）
     defined = {name: "{{" + name + "}}" for name in PLACEHOLDER_NAMES}
     tokens = tuple(defined.values())
 
@@ -511,21 +453,16 @@ def render_prompt(
         raise PromptTemplateError(
             f"模板里有对不上号的占位符 {sorted(set(unknown))}（认识的是 {tokens}）：{template}"
         )
-    # `{{PHASE_BODY}}` 与 `{{MAX_SEGMENTS}}` 允许省略：两块标记之间的正文本身就是完整的一份
-    # 正文，标记块就是它的落点；分段方案不再是纪要流程的产物，模板可以整处不写那一格。
-    # 其余五处必须逐处写出来，缺一处就说明模板还没写完。
+    # `{{MAX_SEGMENTS}}` 允许整处省略：分段方案不再是纪要流程的产物（`{{PHASE_BODY}}`
+    # 同理，标记块就是正文的落点，见 `PHASE_BODY_BEGIN` 的注释）。
     for name in PLACEHOLDER_NAMES:
         if name in ("PHASE_BODY", "MAX_SEGMENTS"):
             continue
         if defined[name] not in template_text:
             raise PromptTemplateError(f"模板里缺占位符 {defined[name]}：{template}")
 
-    # 两块标记之间的正文是**唯一一份**正文：先把它自己用的那几个占位符填掉，再用它把整块
-    # （连同两块标记）换掉。`{{PHASE_BODY}}` **可以整处不写**（标记块就是落点）；写在别处时，
-    # 那一处也一并换成同一份正文。
     body = extract_phase_body(template_text, template, token=defined["PHASE_BODY"])
     values = {
-        # 给模型看的那一点一律相对场次目录（见 `MODEL_CWD`）；绝对路径只出现在清单那段 JSON 里
         "SESSION_DIR": MODEL_CWD,
         "MODE": listing.mode,
         "MODE_NOTE": mode_note_text(listing.mode, listing.kinds_per_source()),
@@ -560,8 +497,8 @@ def render_session_prompt(
 ) -> str:
     """读盘一遍：认输入、读模板、渲染，返回提示词全文。
 
-    `mode` 缺席时按盘上有哪几份转写自己判（`chunk.mode_for`）。**一条都没有时不渲染**：
-    spec 明写这一档不启动 DSH，渲染器跟着不给出提示词。
+    `mode` 缺席时按盘上有哪几份转写自己判（`chunk.mode_for`）；**一条都没有时不渲染**——
+    这一档不启动 DSH，渲染器跟着不给出提示词。
     """
     listing = listing_for_session(session_dir, mode=mode)
     template = Path(template_path)
@@ -581,14 +518,7 @@ def render_session_prompt(
 
 
 def listing_for_session(session_dir: str | Path, *, mode: str | None = None) -> InputsListing:
-    """按盘上的转写与分块产物拼出一份 `InputsListing`。
-
-    每条输入的块数与行数从**那一份稿自己的** `working/<source>/<kind>/00_index.md` 读
-    （`- total_lines:` 与 `- chunk_count:` 两条 bullet；那一份是这一路唯一在手的稿时，旧位置
-    `working/<source>/00_index.md` 是它的退路，见 `_prompt_inputs()`）；区间表还没切出来时
-    块数记 0，行数退回数转写本身的行数 —— 刚录完、还没切块时渲染一次提示词是正常用法，
-    这一档不该抛错。
-    """
+    """按盘上的转写与分块产物拼出一份 `InputsListing`（每条输入的读数细则见 `_prompt_inputs()`）。"""
     session = Path(session_dir)
     specs = discover_inputs(session)
     resolved = mode or mode_for(specs)
@@ -603,7 +533,7 @@ def listing_for_session(session_dir: str | Path, *, mode: str | None = None) -> 
 def _prompt_inputs(session: Path, spec: InputSpec) -> tuple[PromptInput, ...]:
     """一条输入的分块产物读数：**它手上每一份稿各答一条**（顺序恒为 `live` → `offline`）。
 
-    两份都在时交出两条 —— 清单与说明段因此逐份说清，模型读得到两份（R11 / R29）。
+    两份都在时交出两条 —— 清单与说明段因此逐份说清，模型读得到两份（R11 / R29）；
     某一份缺席时那一条不出现在返回值里（不编一份不在的稿）。
 
     块数与行数从**那一份稿自己的** `working/<source>/<kind>/00_index.md` 读
@@ -612,9 +542,6 @@ def _prompt_inputs(session: Path, spec: InputSpec) -> tuple[PromptInput, ...]:
     这一档不该抛错。**某一档缺席时的退路**是这条 source 名下的旧位置（`working/<source>/`，
     两份稿只切了一套时的历史产物）：只在那一份就是这一路**唯一**在手的稿时兜一次，
     免得旧场次目录渲染不出提示词。
-
-    这一份稿的文件名在盘上不在、区间表也没有时抛 `PromptTemplateError`
-    （与渲染器其它坏输入同档），不把裸 `OSError` 漏给调用方。
     """
     found: list[PromptInput] = []
     for kind, name in (("live", spec.live), ("offline", spec.offline)):
@@ -709,7 +636,6 @@ def main(argv: Sequence[str] | None = None, *, prog: str = "python -m meeting.mi
     return 0
 
 
-#: 直接跑 `python -m meeting.minutes.prompt` 时走这里
 if __name__ == "__main__":  # pragma: no cover - 进程入口
     sys.exit(main())
 

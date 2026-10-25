@@ -661,7 +661,7 @@ def validate_value(key: str, value: Any) -> Any:
 
 
 def _validate_cross_rules(applied: dict[str, Any]) -> None:
-    """键间规则（D6 / 方案 §5.3）：`asr.timeout_seconds` 必须大于 `asr.max_segment_seconds`。"""
+    """键间规则：`asr.timeout_seconds` 必须大于 `asr.max_segment_seconds`。"""
     segment = applied["asr.max_segment_seconds"]
     timeout = applied["asr.timeout_seconds"]
     if timeout <= segment:
