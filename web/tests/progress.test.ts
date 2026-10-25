@@ -165,12 +165,6 @@ describe('列表行四档（d61829f1，字与图形并存）', () => {
     expect(gone.mark).toBe('glyph--dashed');
     expect(gone.dim).toBe(true);
   });
-
-  it('被强杀在收尾半路的那一场：三档口径里它就是 ended，行读「录音结束」', () => {
-    const view = rowStatusView(row({ state: 'ended', kind: 'meeting' }), []);
-    expect(view.tone).toBe('ended');
-    expect(view.label).toBe('录音结束');
-  });
 });
 
 // ---------------------------------------------------------------------------

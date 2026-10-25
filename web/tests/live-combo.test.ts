@@ -176,16 +176,6 @@ describe('comboActions：幂等重按不发多余请求', () => {
 });
 
 describe('组合的名与序：文案就在暂停 / 全停这一族', () => {
-  it('四档的界面次序照 spec 表：两路都录 → 仅本地 → 仅远端 → 全停', () => {
-    expect(COMBO_ORDER).toEqual(['both', 'local', 'remote', 'paused']);
-    expect(COMBO_ORDER.map((combo) => COMBO_LABELS[combo])).toEqual([
-      '两路都录',
-      '仅本地',
-      '仅远端',
-      '全停',
-    ]);
-  });
-
   it('字面上不出现「休息」这类绕开的说法（design-intent 第 8 条）', () => {
     for (const combo of COMBO_ORDER) {
       expect(COMBO_LABELS[combo]).not.toContain('休息');

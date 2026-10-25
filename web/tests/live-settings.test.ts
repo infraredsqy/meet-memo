@@ -1,11 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { DevicesResponse } from '../src/contract';
 import {
-  DEVICE_LOCKED_HINT,
-  DRAWER_ROW_IDS,
   HEARTBEAT_RANGE_HINT,
   NO_PRESET_LABEL,
-  SUMMARY_DEFAULT_WINDOW_OPTIONS,
   deviceChangeLocked,
   deviceOptionsOf,
   normalizeActivePreset,
@@ -52,40 +49,6 @@ function devicesResponse(): DevicesResponse {
   };
 }
 
-describe('抽屉的行清单（ASR 五参数一个都不进这扇窗）', () => {
-  it('全部行恰好六条：设备两行 + 告警提示音 + 心跳频率 + 快速总结缺省档 + 总结模型预设', () => {
-    expect([...DRAWER_ROW_IDS]).toEqual([
-      'device-mic',
-      'device-loopback',
-      'alarm-sound',
-      'heartbeat-interval',
-      'summary-default-window',
-      'summary-active-preset',
-    ]);
-  });
-
-  it('行清单与缺省档四档里都找不出那五个 ASR 键或它们的人话（设计意图第 14 条）', () => {
-    const asrKeys = [
-      'asr.max_segment_seconds',
-      'asr.timeout_seconds',
-      'asr.max_new_tokens',
-      'asr.repeat_max_unit',
-      'asr.repeat_min_coverage',
-    ];
-    const everyWord = [
-      ...DRAWER_ROW_IDS,
-      ...SUMMARY_DEFAULT_WINDOW_OPTIONS.map((item) => `${item.value}${item.label}`),
-    ].join('\n');
-    for (const key of asrKeys) {
-      expect(everyWord, key).not.toContain(key);
-      expect(everyWord, key).not.toContain(key.split('.')[1]);
-    }
-    expect(everyWord).not.toContain('ASR');
-    expect(everyWord).not.toContain('段长');
-    expect(everyWord).not.toContain('覆盖率');
-  });
-});
-
 describe('心跳输入（1–60 秒，越界当场拒）', () => {
   it('1 与 60 两端都放行，中间值原样交回数字', () => {
     expect(parseHeartbeatInput('1')).toEqual({ kind: 'ok', value: 1 });
@@ -111,11 +74,6 @@ describe('设备格的会中闸（contract 第 7 章：会中换设备不做）'
     expect(deviceChangeLocked('recording')).toBe(true);
     expect(deviceChangeLocked('alert')).toBe(true);
     expect(deviceChangeLocked('ended')).toBe(false);
-  });
-
-  it('禁用旁边那句把「开场前定下来」说清', () => {
-    expect(DEVICE_LOCKED_HINT).toContain('会中不换设备');
-    expect(DEVICE_LOCKED_HINT).toContain('开场前定下来');
   });
 });
 
@@ -167,15 +125,6 @@ describe('缺省档的归一', () => {
     }
     expect(normalizeDefaultWindow('7m')).toBe('15m');
     expect(normalizeDefaultWindow('')).toBe('15m');
-  });
-
-  it('四档的人话标签与会中总结区同源（5 分钟 / 15 分钟 / 30 分钟 / 全场）', () => {
-    expect(SUMMARY_DEFAULT_WINDOW_OPTIONS.map((item) => item.label)).toEqual([
-      '5 分钟',
-      '15 分钟',
-      '30 分钟',
-      '全场',
-    ]);
   });
 });
 

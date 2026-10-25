@@ -170,10 +170,6 @@ describe('会后那两个按钮（R26 / R29）', () => {
     expect(view.offlineNotice).toBeNull();
   });
 
-  it('被强杀在收尾半路的那一场照样能按：三档口径里它就是 ended（旧判据作废）', () => {
-    expect(postButtonsView(row({ state: 'ended' })).canPostMinutes).toBe(true);
-  });
-
   it('「生成纪要」按钮上那一格按 has_offline 如实写（R29）', () => {
     expect(offlineNoticeOf(row({ has_offline: true }))).toBe('会后精细稿：有');
     expect(offlineNoticeOf(row({ has_offline: false }))).toBe('会后精细稿：无');

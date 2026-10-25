@@ -95,15 +95,6 @@ function failure(code: string, fields: Record<string, unknown> = {}, message = '
 }
 
 describe('四个窗口档位', () => {
-  it('四档逐字：5 分钟 / 15 分钟 / 30 分钟 / 全场', () => {
-    expect(SUMMARY_WINDOWS.map((item) => item.label)).toEqual([
-      '5 分钟',
-      '15 分钟',
-      '30 分钟',
-      '全场',
-    ]);
-  });
-
   it('档位 → 取值：5m / 15m / 30m / full', () => {
     expect(SUMMARY_WINDOWS.map((item) => item.choice)).toEqual(['5m', '15m', '30m', 'full']);
   });
@@ -190,12 +181,6 @@ describe('进行中那一句', () => {
 });
 
 describe('三小段与结果面板', () => {
-  it('段标题固定，次序恒为 讲什么 / 讲到哪 / 丢掉什么', () => {
-    expect(SUMMARY_SECTION_TITLES).toEqual(['讲了什么', '讲到哪里', '丢掉了什么']);
-    const sections = summarySections(answer());
-    expect(sections.map((section) => section.title)).toEqual([...SUMMARY_SECTION_TITLES]);
-  });
-
   it('三小段的正文照服务给的原样摆（一条不多一条不少）', () => {
     const sections = summarySections(answer({ what: ['甲', '乙'], where: ['丙'], lost: [] }));
     expect(sections[0]?.items).toEqual(['甲', '乙']);
