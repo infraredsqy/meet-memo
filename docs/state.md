@@ -303,7 +303,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 | `meeting_minutes_status.lock` | **瞬态**的 claim 锁：只盖住「读一遍现状 + 写一版 `running`」那一小段，写完就删掉。**它不是产物**（进程被强杀时可能留一份残锁，下一趟按有界等待兜住）；上面那张产物清单里因此没有它的位置 | 拉起方自己 |
 | `working/inputs.json` | 输入清单：这一场有哪几条转写、每条几行、走的是哪一档 | 程序 + 人 |
 | `working/<source>/<kind>/chunks/chunk_NN.md` + `working/<source>/<kind>/00_index.md` | 按行切出来的块（默认 100 行一块）与行号区间表（`total_lines` / `chunk_size` / `chunk_count` 与每块的闭区间） | DSH 子会话 |
-| `working/segment-*.md`、`working/segmentation.json` | 逐段总结与分段方案（子会话产出，一份方案覆盖一到两条输入、每条段带 `source`） | DSH 子会话 |
+| `working/plan.md`、`working/part-<k>.md` | 编排判断（档位、依据、写手数与分批）与分批写手的半成品；短会由那一个写手直接出终稿，不写这两类 | DSH 子会话 |
 | `working/run_prompt.md`、`working/minutes-run.log` | 那一次运行的提示词正文，以及这一趟留下的记录：headless 那一趟是子进程的 stdout / stderr，web 那一趟是三步 RPC 的请求与应答摘要 | 排查现场 |
 
 - **起线程就返回，不占收尾预算**：它炸了不带走进度更早的产物，`meeting_offline_status.json` 与那四份离线产物一个字节都不改（`try/except BaseException` 兜住，只记主 log 一条）。

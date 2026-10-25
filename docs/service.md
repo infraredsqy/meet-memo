@@ -173,7 +173,7 @@ $env:MEETING_CAPTURE="dev"; $env:MEETING_NO_BROWSER="1"; meeting web
 | `post.chunk_seconds` | `450`（合法范围 `0–86400`） | 会后离线那一层（每块音频的长度上限秒数，`0` = 关掉分块、整段一次跑；默认值理由见 `docs/backend-protocols.md` 第 3 章） |
 | `minutes.hook` | `auto` | 会后纪要那一层（选取纪要钩子；`auto` 解析到 `meeting.backends.minutes:MinutesHook`，`null` → 「生成纪要」按钮 404 `action_unavailable`，`meeting post` 补纪要那一路安静跳过） |
 | `minutes.chunk_lines` | `100`（合法范围 `10–1000`） | 会后纪要那一层（每块行数，切块与行号区间表都用它） |
-| `minutes.max_segments` | `8`（合法范围 `1–20`） | 会后纪要那一层（每条 source 的分段上限，契约校验与提示词都用它） |
+| `minutes.max_segments` | `8`（合法范围 `1–20`） | 会后纪要那一层（分段方案契约的每条 source 段数上限；纪要流程不再切段，`check` 子命令用它） |
 | `minutes.timeout_seconds` | `14400`（合法范围 `60–86400`） | 会后纪要那一层（一次纪要生成的墙钟上限，默认四小时） |
 | `minutes.dsh_url` | `http://127.0.0.1:3080` | 会后纪要那一层（`dsh web` 服务端的地址；拉起之前先探它，**在跑**就把这一场交付给它、终态记 `delivered`，没在跑才落回 headless 子进程。任意非空字符串，本层不校验 URL 形状） |
 | `summary.base_url` | `https://api.deepseek.com/v1` | 会中总结那一层（OpenAI 兼容端点的地址；换厂商改这个键） |
@@ -315,7 +315,7 @@ fix 每改一点再跑一遍、发现一个错修完还要再跑一遍——跑�
 
 1. `webbrowser.open` 换成只记录不开窗的假替身（`tests/_fake_webbrowser/`）；
 2. `_no_real_audio_capture`：把真采集入口打成「一碰就炸」的桩 —— `sounddevice.InputStream` / `rec` / `check_input_settings` / `soundcard.get_microphone`；异常类 `RealCaptureForbidden` 不继承 `Exception`，不会被生产代码的 `except Exception` 吞掉；只读枚举不禁；
-3. `_no_real_minutes_session`：立起 `MEETING_MINUTES_CHILD=1`，让离线链收尾处那次 `minutes.hook` 通知当场走再入闸 —— 本机 PATH 上真的有 `dsh`，不立这一格，每场跑完整条离线链的用例都会真拉起一个 headless 子会话去跑五阶段；
+3. `_no_real_minutes_session`：立起 `MEETING_MINUTES_CHILD=1`，让离线链收尾处那次 `minutes.hook` 通知当场走再入闸 —— 本机 PATH 上真的有 `dsh`，不立这一格，每场跑完整条离线链的用例都会真拉起一个 headless 子会话去跑纪要；
 4. `_no_real_model_call`：盯**会中总结那条 HTTP 出口**（`meeting/summary/client.py` 的 `_http_post()`），`urllib.request.urlopen` 按目标地址判，本机回环放行、其余当场抛 `RealModelCallForbidden` —— `summary.base_url` 的配置默认值就是真地址，忘了注入假客户端就会真花机主的 token；
 5. **PATH 守卫**（会话级 `_no_real_dsh_on_path` 与用例级 `_no_real_dsh_launch` 两条夹具）：在临时目录里造一件假的 `dsh.cmd`（只往记录追加一行）并前置到测试进程 `PATH` 的最前面，漏网的用例命中的是它、真会话起不来；用例级那一条再拿记录把「这一趟真的叫了它」当场判红（要故意走到可执行文件解析那一步的用例，显式请 opt-out 夹具 `allow_real_dsh_resolution`）；
 6. `_no_writes_to_the_real_home`：开工记下机主真实家目录下那个配置目录（`~/.config/meeting`）的文件集合与逐个 sha256，每一条用例收工与整场收场各复查一次，被建出或改过就当场判红并打出差（含收工时那份文件的内容）；

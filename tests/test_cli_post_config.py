@@ -648,7 +648,7 @@ def test_a_null_minutes_hook_is_never_launched_and_lands_on_the_absent_tier(
     """`config.json` 里 `minutes.hook = null` → 这一趟**不拉起纪要层**，落安静的缺席档。
 
     **这是最要命的那一档**：没有配置层时 `minutes.hook` 退回默认的 `auto`，`meeting post`
-    会照旧拉起 headless DSH 子会话去跑五阶段 —— 真花钱，而且违背用户显式写的「不要会后
+    会照旧拉起 headless DSH 子会话去跑纪要 —— 真花钱，而且违背用户显式写的「不要会后
     纪要」。下面 `delenv` 摘掉的是**再入闸那一层网**（摘掉之后解析这一格才会真的被走到），
     本文件自己那两处登记照旧挡在真子会话之前。
 

@@ -331,7 +331,7 @@ DEFAULT_POST_HOOK = "null"
 #:
 #: 与 `DEFAULT_POST_HOOK` 同一个理由，而且这一档更要紧：本机 PATH 上真的有 `dsh`
 #: （`C:\Users\<user>\AppData\Roaming\npm\dsh.cmd`），产品缺省 `auto` 会让每一场跑完整条离线链的
-#: 用例都**真的拉起一个 headless DSH 子会话**去跑五阶段（那是一次真模型调用，几十分钟的
+#: 用例都**真的拉起一个 headless DSH 子会话**去跑纪要（那是一次真模型调用，几十分钟的
 #: 墙钟、还占着显卡），而用例只想知道离线那三份产物长什么样。
 #: 要验钩子本身的用例显式给 `minutes.hook = "auto"` 并注入假启动器
 #: （`tests/test_minutes_runner.py` 走的就是那一档）。

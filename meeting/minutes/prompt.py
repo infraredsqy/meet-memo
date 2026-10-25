@@ -1,8 +1,8 @@
 """编排提示词的渲染（`41465462` spec「可搬资产」D2 / D3 两条的渲染器一侧）。
 
 这个模块服务 spec 里这一条：主 agent 拿到的那份提示词里，**这一轮有哪几条输入、每条几行、
-分了几块、块文件在哪**必须写得清清楚楚，模型照着读就行，不必自己去找文件。五阶段的正文归
-`prompts/meeting_final.md`（phase2 写），渲染器只做两件事：把路径与档位填进模板、把清单拼出来。
+分了几块、块文件在哪**必须写得清清楚楚，模型照着读就行，不必自己去找文件。编排正文归
+`prompts/meeting_final.md`，渲染器只做两件事：把路径与档位填进模板、把清单拼出来。
 
 三条硬口径：
 
@@ -13,11 +13,12 @@
   - **降级档要写在提示词里**（`{{MODE_NOTE}}`）：只喂一条时明写「本次只有 X 稿」，
     读到这份提示词的模型因此知道这一档本来就分不出个人，附录里该如实写这句话。
 
-模板占位符一共七个，其中**六处必须逐处写在模板里**：
-`{{SESSION_DIR}}` / `{{MODE}}` / `{{MODE_NOTE}}` / `{{INPUTS}}` / `{{MAX_SEGMENTS}}` /
+模板占位符一共七个，其中**五处必须逐处写在模板里**：
+`{{SESSION_DIR}}` / `{{MODE}}` / `{{MODE_NOTE}}` / `{{INPUTS}}` /
 `{{SPEAKER_NAMES}}`（机主确认过的「编号 → 人名」表，节点 `91b6752e`；读不出就如实渲染
-「没有确认过的名字」，不挡渲染）。第七处 `{{PHASE_BODY}}` **可以省略**：五阶段正文写在两块标记
-（`PHASE_BODY_BEGIN` / `PHASE_BODY_END`）之间，**标记块本身就是正文的落点**——渲染时把整块
+「没有确认过的名字」，不挡渲染）。`{{MAX_SEGMENTS}}` **可以省略**：纪要流程不再产出分段方案，
+模板用不上这一格时就整处不写；写了照样替换。`{{PHASE_BODY}}` 也一样可以省略：编排正文写在两块
+标记（`PHASE_BODY_BEGIN` / `PHASE_BODY_END`）之间，**标记块本身就是正文的落点**——渲染时把整块
 就地换成正文，正文因此只有一份可维护，不必在别处再放一个 `{{PHASE_BODY}}`；写在别处时才填同一份正文。
 
 `{{SESSION_DIR}}` 填的是**模型的工作目录那一点**（`.`）：提示词里给模型看的路径一律相对场次目录，
@@ -75,7 +76,7 @@ PLACEHOLDER_NAMES: tuple[str, ...] = (
     "PHASE_BODY",
 )
 
-#: 五阶段正文在模板里的两块标记：渲染时把整块就地换成正文（正文的落点就是标记块本身，
+#: 编排正文在模板里的两块标记：渲染时把整块就地换成正文（正文的落点就是标记块本身，
 #: 模板里因此**可以没有** `{{PHASE_BODY}}`；写在别处时那一处也填同一份正文）
 PHASE_BODY_BEGIN = "<!-- PHASE_BODY:BEGIN -->"
 PHASE_BODY_END = "<!-- PHASE_BODY:END -->"
@@ -440,7 +441,7 @@ def _listing_payload(listing: InputsListing) -> dict:
 
 
 def extract_phase_body(template_text: str, template: object, *, token: str = "{{PHASE_BODY}}") -> str:
-    """从模板里抽出五阶段正文（两块标记之间的部分），顺手摘掉正文里的那一处 `token`。
+    """从模板里抽出编排正文（两块标记之间的部分），顺手摘掉正文里的那一处 `token`。
 
     正文**保留** `{{SESSION_DIR}}` / `{{MAX_SEGMENTS}}` 这类占位符：调用方拿走这份正文之后
     先把它们填掉，再把整份正文放回标记块（标记连同标记一起换掉，见 `render_prompt()`）。
@@ -452,7 +453,7 @@ def extract_phase_body(template_text: str, template: object, *, token: str = "{{
     end = template_text.find(PHASE_BODY_END)
     if begin < 0 or end < 0:
         raise PromptTemplateError(
-            f"模板里找不到五阶段正文的标记（要有 {PHASE_BODY_BEGIN} 与 {PHASE_BODY_END}）：{template}"
+            f"模板里找不到编排正文的标记（要有 {PHASE_BODY_BEGIN} 与 {PHASE_BODY_END}）：{template}"
         )
     if end <= begin:
         raise PromptTemplateError(
@@ -472,8 +473,8 @@ def render_prompt(
 ) -> str:
     """把清单与档位填进模板，返回提示词全文。
 
-    缺任何一样都抛 `PromptTemplateError`，绝不交出半份提示词：**六处**占位符必须逐处出现
-    （`{{PHASE_BODY}}` 可以省略，正文由两块标记就地替换，见模块头），
+    缺任何一样都抛 `PromptTemplateError`，绝不交出半份提示词：**五处**占位符必须逐处出现
+    （`{{MAX_SEGMENTS}}` / `{{PHASE_BODY}}` 可以省略，正文由两块标记就地替换，见模块头），
     某条输入的转写路径为空、`max_segments` 不是正整数同样当场拦下。
 
     `speaker_names` 是 `{{SPEAKER_NAMES}}` 的正文：**本函数不碰盘**（纯渲染），调用方
@@ -503,18 +504,18 @@ def render_prompt(
     if not isinstance(template_text, str) or not template_text.strip():
         raise PromptTemplateError(f"模板是空的：{template}")
 
-    # 对不上号的占位符要在**替换之前**从模板原文里找：五阶段正文自己也会用 `{{SESSION_DIR}}`
+    # 对不上号的占位符要在**替换之前**从模板原文里找：编排正文自己也会用 `{{SESSION_DIR}}`
     # 这类占位符，替换之后再去扫全文，那些合法的用法会被误报成「对不上号」。
     unknown = [name for name in PLACEHOLDER_RE.findall(template_text) if name not in tokens]
     if unknown:
         raise PromptTemplateError(
             f"模板里有对不上号的占位符 {sorted(set(unknown))}（认识的是 {tokens}）：{template}"
         )
-    # `{{PHASE_BODY}}` 允许省略：两块标记之间的正文本身就是完整的一份正文，标记块就是它的落点。
-    # 其余六处必须逐处写出来，缺一处就说明模板还没写完（省略 `{{PHASE_BODY}}` 不等于少写正文——
-    # 真模板走的就是这一条，见模块头与 `prompts/meeting_final.md` 顶部那段说明）。
+    # `{{PHASE_BODY}}` 与 `{{MAX_SEGMENTS}}` 允许省略：两块标记之间的正文本身就是完整的一份
+    # 正文，标记块就是它的落点；分段方案不再是纪要流程的产物，模板可以整处不写那一格。
+    # 其余五处必须逐处写出来，缺一处就说明模板还没写完。
     for name in PLACEHOLDER_NAMES:
-        if name == "PHASE_BODY":
+        if name in ("PHASE_BODY", "MAX_SEGMENTS"):
             continue
         if defined[name] not in template_text:
             raise PromptTemplateError(f"模板里缺占位符 {defined[name]}：{template}")

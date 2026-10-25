@@ -310,7 +310,7 @@ def _no_real_minutes_session(monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
     理由与上面两个兜底同一条：本机 PATH 上真的有 `dsh`
     （`C:\\Users\\<user>\\AppData\\Roaming\\npm\\dsh.cmd`）。生产路径上离线的尾巴会调
     `minutes.hook`，而 `minutes.hook = auto` 那一档会**真的**起一个 headless DSH 子会话去跑
-    五阶段 —— 那是一次真模型调用、几十分钟的墙钟、还占着显卡，而绝大多数用例只想知道
+    纪要提示词 —— 那是一次真模型调用、几十分钟的墙钟、还占着显卡，而绝大多数用例只想知道
     离线那三份产物长什么样。
 
     立起这一格之后 `meeting.minutes.runner.run()` **最前面**的再入闸当场返回 `skipped`，
@@ -1002,7 +1002,7 @@ def _no_real_dsh_web_call(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]
 #
 # 事故背景（2026-09 夜）：一个复现脚本调了真的 `run_session()` 顶层入口，收尾按设计通知了
 # 纪要层，纪要层探到机主正在跑的 DSH web 服务端、走了 web 分支真交付 —— DSH 侧多出工作区、
-# 按五阶段流程拉起了 7 个 subagent。产品侧的隔离闸（`announce_minutes` / `deliver` /
+# 按纪要流程拉起了多个 subagent。产品侧的隔离闸（`announce_minutes` / `deliver` /
 # `allow_dsh` 三层默认拒绝）已把这条路封死，这一道是**测试基建**那一层：测试进程里谁碰到
 # 探针 / 交付 / headless 拉起这三个原语，就当场把那条用例判红 —— 「用例里不该有 DSH 触达」
 # 因此不靠单条用例自觉，而靠夹具这一张网。

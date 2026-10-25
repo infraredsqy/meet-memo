@@ -100,7 +100,7 @@ class FakeConfig:
             "post.chunk_seconds": 450,
             # 会后纪要那一层的钩子：测试层收成缺席档（`minutes.hook = null`）——
             # 本机 PATH 上真的有 `dsh`，`auto` 会让每一场跑完离线链的用例都真的拉起一个
-            # headless 子会话去跑五阶段。要验钩子的用例自己传 `minutes.hook` 覆盖它。
+            # headless 子会话去跑纪要。要验钩子的用例自己传 `minutes.hook` 覆盖它。
             "minutes.hook": "null",
         }
         self.values.update(values)

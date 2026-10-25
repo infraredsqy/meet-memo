@@ -498,8 +498,8 @@ def test_a_source_with_no_declared_total_lines_at_all_is_not_silently_skipped() 
 def test_expected_lines_from_inputs_uses_the_live_transcript() -> None:
     """划段的分母是**会中稿**那一份：两份都在时取会中稿的行数，缺席时退回会后稿。
 
-    这一条与提示词阶段 2 那句「划段按这一路在场那份稿的行号空间来：两份都在按会中稿，
-    只有会后稿的场次按会后稿」是同一个口径：会中稿每一路都有（离线那一趟是可选的），
+    这一条与分段方案契约同一口径：分母按这一路在场那份稿来（两份都在按会中稿，
+    只有会后稿的场次按会后稿）：会中稿每一路都有（离线那一趟是可选的），
     两份稿的行号空间又各算各的。缺 `lines` 或两份都不在的那一条
     整个不出现（不猜）。
     """
@@ -549,7 +549,7 @@ def test_the_check_subcommand_checks_coverage_against_inputs_json(
 ) -> None:
     """`check` 找到方案旁边的 `inputs.json` 时，按逐 source 的真实行数核覆盖完整性。
 
-    这一条同时锁住提示词阶段 2 末尾那条手动命令的行为：多 source 场次上「少盖一行」在这里
+    这一条同时锁住 `meeting.minutes check` 的行为：多 source 场次上「少盖一行」在这里
     必须报错，而不是因为方案没写 `total_lines` 就一路放过。
     """
     working = tmp_path / "working"
@@ -664,7 +664,7 @@ def test_load_segmentation_reports_a_contract_failure(tmp_path: Path) -> None:
 def test_segmentation_lands_in_the_working_directory(tmp_path: Path) -> None:
     """方案的落点就是 `working/` 那一层（`working/segmentation.json`，**一份**）。
 
-    `SEGMENTATION_NAME` 与那一层是各处的共同口径（`runner` 落盘、提示词阶段 2、`check` 入口），
+    `SEGMENTATION_NAME` 与那一层是各处的共同口径（契约校验、`check` 入口），
     所以这一条把它们一起钉住；`_inputs_near` 另外三条用例盖两种调用写法与「找不到清单」。
     """
     assert SEGMENTATION_NAME == "segmentation.json"
@@ -712,7 +712,7 @@ def test_no_module_advertises_a_segmentation_plan_below_a_source_directory() -> 
     """本包的源码里没有一个字把 `working/<source>/` 说成方案那一份的落点。
 
     这条钉的是那个坑本身：`contract.py` 里曾有一个算路径的帮手 + 两处注释把它写成 spec 钉死
-    的落点，而 `runner` 与提示词阶段 2 都只落 `working/` 这一份，照着它写就写进一个没人读的
+    的落点，而契约层与 `check` 都只把 `working/` 这一份当落点，照着它写就写进一个没人读的
     地方。落点口径改了，这里就先报错。
     """
     hits = [

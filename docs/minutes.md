@@ -54,30 +54,28 @@
 - **两份稿平级、一起切、一起喂**（`docs/design-intent.md` 第 11 条、R11）：两条都在时**两份各切一套块**，
   落在 `working/<source>/live/` 与 `working/<source>/offline/`（各带自己的 `chunks/` 与 `00_index.md`），
   提示词清单里逐份写清在不在、在哪一份 —— **谁也不叫"权威"，两路永不合并**。
-- **行数一律 `lines.count_lines()`**（`splitlines()`，空行计入），但**每份稿各算各的分母**：行号区间表用自己那一份稿的总行数；分段契约那一层的分母跟「在场那份稿」走 —— 两份都在按会中稿，只有会后稿的场次按会后稿（`meeting/minutes/contract.py` 的 `expected_lines_from_inputs()` 与提示词阶段 2 同一条口径）。
+- **行数一律 `lines.count_lines()`**（`splitlines()`，空行计入），但**每份稿各算各的分母**：行号区间表用自己那一份稿的总行数；分段契约那一层的分母跟「在场那份稿」走 —— 两份都在按会中稿，只有会后稿的场次按会后稿（`meeting/minutes/contract.py` 的 `expected_lines_from_inputs()` 与分段方案契约同一条口径）。
 - **两个来源一条都没有** → 不启动 DSH、不渲染提示词，状态落 `failed` + 原因。一份没有输入的纪要会以「这场会什么都没定」的样子交出去，这一档不许静默出空产物。
 - **人名表也是一份输入**（`91b6752e`）：场次目录根的 `meeting_speaker_names.json`，里面只有机主在工作台上确认过的 `(编号, 名字)` 对。它不进切块、不影响档位，只在渲染提示词时读一遍（第 3 章的 `{{SPEAKER_NAMES}}`）：确认过的名字随提示词进来、附录照抄；表缺席或读不出（坏 JSON / 主版本不认识）就按「没有确认过的名字」渲染，**不挡出纪要**。
 
-## 3. 提示词与五个阶段
+## 3. 提示词与编排流程
 
 模板是仓库根的 `prompts/meeting_final.md`，渲染器是 `meeting/minutes/prompt.py`。渲染器把路径与档位填进模板、把输入清单拼出来（人话一段 + 机器读的 JSON 一份），再按这一场的人名表填 `{{SPEAKER_NAMES}}`。
 
 - 给模型看的路径**一律正斜杠、一律相对场次目录**（`{{SESSION_DIR}}` 填的是 `.`）；绝对路径只出现在清单那段 JSON 里。反斜杠在一段文本里容易被当成转义。
-- 模板缺席、有对不上号的占位符、某条输入的路径为空 —— 一律抛 `PromptTemplateError`，**不拿半份提示词去启动子会话**。认识的占位符是 `SESSION_DIR` / `MODE` / `MODE_NOTE` / `INPUTS` / `MAX_SEGMENTS` / `SPEAKER_NAMES` / `PHASE_BODY`；前六处必须逐处写在模板里，`PHASE_BODY` 可以省略（两块 `PHASE_BODY` 注释标记之间的正文本身就是落点，渲染时整块就地替换）。`{{SPEAKER_NAMES}}` 由程序按这一场的人名表渲染（`render_session_prompt()` 读盘取数）：机主确认过的名字拼成一张表带进提示词，附录那一格照抄；读不出（缺席或坏表）就如实渲染「没有确认过的名字」，照样不挡渲染。
+- 模板缺席、有对不上号的占位符、某条输入的路径为空 —— 一律抛 `PromptTemplateError`，**不拿半份提示词去启动子会话**。认识的占位符是 `SESSION_DIR` / `MODE` / `MODE_NOTE` / `INPUTS` / `MAX_SEGMENTS` / `SPEAKER_NAMES` / `PHASE_BODY`；前五处必须逐处写在模板里，`MAX_SEGMENTS` 与 `PHASE_BODY` 可以省略（两块标记之间的正文本身就是落点）。`{{SPEAKER_NAMES}}` 由程序按这一场的人名表渲染（`render_session_prompt()` 读盘取数）：机主确认过的名字拼成一张表带进提示词，附录那一格照抄；读不出（缺席或坏表）就如实渲染「没有确认过的名字」，照样不挡渲染。
 
-模板正文规定五阶段，主 agent 只编排、不读块、不读段总结、不读原始转写：
+模板正文让主 agent 先定档、再派活，**整场 sub agent 不超过 3 个**：
 
-| 阶段 | 谁做 | 读什么 | 产出 |
-|---|---|---|---|
-| 1 分割 | **不用做** —— 块已经切好了 | `working/<source>/<kind>/00_index.md` | 认下盘上的分块产物 |
-| 2 分割方案 | sub agent A | 每一条输入的区间表与全部块 | `working/segmentation.json` |
-| 3 逐段总结 | sub agent B1…Bn（每段一个） | 这一段覆盖的块，两条稿都读；相关的会议资料也读 | `working/segment-<id>.md` |
-| 4 合并 | sub agent C | `segmentation.json` + 全部 `segment-*.md`，扫一眼资料 | 场次目录根的 `meeting_final.md` |
-| 5 只读检查 | 1–2 个只读 sub agent | 终稿与块，来自资料的内容对着资料核 | 报告，主 agent 一次性改稿 |
+1. **定档**：看清单里的行数与 `00_index.md` 的块区间，再抽读每块开头几行，按**实质讨论量**判短 / 中 / 长——会议时长与总行数只作参考，空转、等人、调设备、寒暄、散场闲聊都不算讨论量。判断连同依据写进 `working/plan.md`，再按它派活。
+2. **派活**：短会 1 个写手，读完所有块直接写场次目录根的 `meeting_final.md`；中会 2 个、长会 3 个，各领一批写 `working/part-<k>.md`，由主 agent 合并成 `meeting_final.md`。
+3. **收尾**：主 agent 合并时按主题归并、去重，P0 与花絮各留最多 3 条；定稿前抽几处数字、人名、引语回块里核对。
 
-两条转写的核对在流程内部完成：第 3 阶段每个 sub agent 把这一段在两条稿上并排读，按内容判哪一边可信；判不出哪边对的地方如实写「两条稿不一致」。
+两条转写的核对在写手那一层完成：两份稿都在时两份都读，按内容判哪一边可信；判不出哪边对的地方如实写「两条稿不一致」。
 
-**会议资料（`meeting_materials/`，若在）也是这一轮的输入**（纪要提示词节点 `e8fe7da9`）：场次目录下的 `meeting_materials/` 目录（资料服务端落下来的，目录名是与服务端共享的固定产品约定，见 `docs/contract.md` 4.12）由生成纪要的 AI 当这场会的一部分消化，口径固定写在模板里、共三处——**逐段总结**把与这段讨论相关的资料读进来、当会议内容融进总结（文件修改时间是时机参考，资料可能会前贴、会中贴、会后补）；**合并**扫一眼资料、把段总结漏掉的补进正文；**只读检查**对资料核——正文里来自资料的内容对着资料查，转写块里找不到不算幻觉。资料只进模型的 context：纪要正文的格式骨架、章节结构、说话人附录、质量目标一格不改，没有「参考资料」一节；模板对有料与没料的场次是同一份（有就多看一眼，没有就跳过），渲染器与占位符一字未动——这层口径没有程序性映射。
+`working/segmentation.json` 与 `working/segment-*.md` 不再是纪要流程的产物；分段方案那一套校验（`python -m meeting.minutes check`）只留给手动跑。程序只校验场次目录根的 `meeting_final.md`。
+
+**会议资料（`meeting_materials/`，若在）也是这一轮的输入**（纪要提示词节点 `e8fe7da9`）：场次目录下的 `meeting_materials/` 目录（资料服务端落下来的，目录名是与服务端共享的固定产品约定，见 `docs/contract.md` 4.12）由写手当这场会的一部分消化：与讨论相关的文件读进来、结论与数字照实吸收；文件修改时间是时机参考，资料可能会前贴、会中贴、会后补。资料只进模型的 context：纪要正文的格式骨架、章节结构、说话人附录一格不改，没有「参考资料」一节；模板对有料与没料的场次是同一份（有就多看一眼，没有就跳过）。
 
 ## 4. 拉起子会话
 
@@ -138,7 +136,7 @@
 |---|---|---|---|
 | `minutes.hook` | `auto` | `auto` / `null` / `dev` / `module:Class`，或 JSON `null` | 解析层：`auto` 落 `meeting.backends.minutes:MinutesHook`；`null` 是**缺席**（「生成纪要」按钮当场回 404 `action_unavailable`，这一场不出纪要） |
 | `minutes.chunk_lines` | `100` | 整数 `10–1000` | 每块行数（与 V1 那套切块口径同值） |
-| `minutes.max_segments` | `8` | 整数 `1–20` | 每条 source 的分段上限，契约校验与提示词都用它 |
+| `minutes.max_segments` | `8` | 整数 `1–20` | 分段方案契约的每条 source 段数上限（纪要流程不再切段；`python -m meeting.minutes check` 用它） |
 | `minutes.timeout_seconds` | `14400` | 整数 `60–86400` | 一次生成的墙钟上限（默认四小时：会后时间宽裕换质量，但它仍然要有一个上限） |
 | `minutes.dsh_url` | `http://127.0.0.1:3080` | 任意非空字符串 | 拉起之前探的那台 DSH web 服务端的地址（与 `summary.base_url` 同一条口径：本层不校验 URL 形状，探不通就落回 headless 分支）。默认值就是 `dsh web` 的默认监听地址 |
 
@@ -158,7 +156,7 @@ python -m meeting.minutes check  <segmentation.json> [--max-segments N] [--input
 - `prompt`：渲染不出来（模板读不动、占位符对不上、一条输入都没有）退 `1`。
 - `check`：方案文件不在退 `2`；契约不过退 `1`，消息里点出是哪一条 source 的哪一段不对。它顺带在方案旁边找 `working/inputs.json`（先看方案自己那一层、再看 `working/` 那一层），**读得到就拿逐 source 的真实行数当判据**（分母跟「在场那份稿」走：会中稿在按会中稿，只有会后稿的那一路按会后稿），读不到才退回方案自己声明的 `total_lines`。
 
-提示词正文里让子会话自己跑的那一条是 `python -m meeting.minutes check working/segmentation.json`（阶段 2 末尾的自检）。
+提示词正文里**不再让子会话跑任何 `python -m` 命令**（子会话的 cwd 在场次目录，`meeting` 包不在它的模块搜索路径上）：块由编排层提前切好，写手自己对照块写终稿；`check` 只留给手动跑。
 
 ## 8. 相关文档
 

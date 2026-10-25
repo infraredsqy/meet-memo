@@ -165,7 +165,7 @@
 |---|---|---|
 | `minutes.hook` | `auto` | `meeting/backends/registry.py` 的 `resolve_minutes_hook()`（`meeting post` 的离线尾巴与 `post_minutes` 按钮经它拿实现；缺席档按钮当场 404、`meeting post` 补纪要那一路安静跳过）。取值口径与 `post.hook` 同形，另加「配置里写 JSON `null` 也落缺席档」这一条 |
 | `minutes.chunk_lines` | `100` | `meeting/minutes/runner.py` 的 `chunk_lines_of()` → `chunk.chunk_session()`，合法范围 `10–1000`（与 `chunk.MIN_CHUNK_LINES` / `MAX_CHUNK_LINES` 同值） |
-| `minutes.max_segments` | `8` | `runner.py` 的 `max_segments_of()` → 契约校验与提示词渲染各用一次，合法范围 `1–20`（默认值与 `contract.DEFAULT_MAX_SEGMENTS` 同值） |
+| `minutes.max_segments` | `8` | `runner.py` 的 `max_segments_of()` → 分段方案契约校验用，合法范围 `1–20`（默认值与 `contract.DEFAULT_MAX_SEGMENTS` 同值；提示词模板不再用这一格） |
 | `minutes.timeout_seconds` | `14400` | `runner.py` 的 `_timeout_seconds()` → 启动器那一次子进程的墙钟上限，合法范围 `60–86400` |
 | `minutes.dsh_url` | `http://127.0.0.1:3080` | `meeting/minutes/dsh_web.py` 的 `probe()` 在拉起之前探的那台 DSH web 服务端（非空字符串，本层不校验 URL 形状；探不通就落回 headless 分支）。默认值就是 `dsh web` 的默认监听地址 |
 

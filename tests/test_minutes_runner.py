@@ -366,7 +366,6 @@ def test_the_launcher_is_handed_the_rendered_prompt(tmp_path: Path) -> None:
 
     text = launcher.calls[0]["prompt_text"]
     assert "{{" not in text
-    assert "阶段 1：分割" in text
     assert "## 说话人附录" in text
     # **M4**：交出去的这份提示词里，给模型看的路径一律相对场次目录；
     # 提示词里唯一那段绝对路径在清单那段 JSON 的 `session_dir` 一格（给程序读的字段）

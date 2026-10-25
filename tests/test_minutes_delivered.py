@@ -227,7 +227,7 @@ def test_a_live_dsh_web_server_takes_the_delivery_branch(tmp_path: Path) -> None
     assert headless.calls == [], "走交付那一趟就不该再起 headless 子进程"
     assert not (session / "meeting_final.md").exists(), "这一趟不等产物、也不校验它"
     assert len(handoff.calls) == 1
-    assert "阶段" in handoff.calls[0]["prompt_text"], "送过去的是渲染好的提示词全文"
+    assert "## 说话人附录" in handoff.calls[0]["prompt_text"], "送过去的是渲染好的提示词全文"
     assert "{{" not in handoff.calls[0]["prompt_text"], "模板占位符已经渲染干净"
 
 

@@ -471,8 +471,8 @@ def test_a_second_table_in_the_appendix_does_not_rescue_the_first_one(tmp_path: 
 def _template_fixed_block() -> str:
     """真模板里那段固定文字（落在产物里的那一段）的正文。
 
-    它在模板里住在一个引用着的围栏代码块里（阶段 4 给 sub agent 的指令），因此每行的
-    `> ` 前缀先摘掉再认围栏。抠出来的是**要上生产的那一份**，判据对它的态度就是真产物的待遇。
+    它在模板给写手的终稿骨架里（一个围栏代码块），因此每行的行首前缀先摘掉再认围栏。
+    抠出来的是**要上生产的那一份**，判据对它的态度就是真产物的待遇。
     """
     blocks: list[list[str]] = []
     inside = False
