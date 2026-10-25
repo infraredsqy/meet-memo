@@ -3,6 +3,11 @@
 命令词三个：`meeting web` / `meeting post` / `meeting replay`——每条仍是 `meeting <动词>`
 的两词命令形（R15）。`replay` 是重放验证工具（`a3b684bd`），只验证、不是第二条生产路径。
 
+参数面走 argparse（`_Parser`）：三个动作词各有一个解析器，`-h` / `--help` 打印说明后按
+`EXIT_OK` 收场；用法错不由 argparse 直接退（它默认打英文模板），而是抛 `ValueError`
+交回入口函数打用法说明、按 `EXIT_REJECTED` 收场——退出码与终端口径都不变。动作词的路由
+留在 `main()`：`post()` / `replay()` 是直接可调的入口（用例 seam），各自解析各自的串。
+
 五个退出码常量在本模块模块级定义（§3.4 冻结表），每个出口一律 `sys.exit(<常量>)`，
 log 写常量名——本模块不出现裸数字。`config.py` / `logging_setup.py` 不定义退出码常量，
 只抛已定的异常，由 `main()` 映射。配置与日志的时序四步定死（§3.5 第 1 条，不得对调）：
@@ -14,11 +19,13 @@ log 写常量名——本模块不出现裸数字。`config.py` / `logging_setup
 
 from __future__ import annotations
 
+import argparse
 import logging
+import re
 import sys
 import time
 from pathlib import Path
-from typing import Any, Callable, Iterable, Sequence
+from typing import Any, Callable, Iterable, NoReturn, Sequence
 
 from meeting import config as config_module
 from meeting import logging_setup
@@ -52,37 +59,236 @@ EXIT_NAMES: tuple[tuple[str, int], ...] = (
 
 ACTIONS = ("web", "post", "replay")
 
-USAGE = (
-    "用法：meeting <动作词>\n"
-    "  可用动作词：web / post / replay\n"
-    "    web    起本地服务（只监听 127.0.0.1），前台跑到 Ctrl+C\n"
-    "    post   只跑会后那一套：meeting post <场次目录> [--force]\n"
-    "    replay 拿旧录音全速重跑离线链（验证用）：meeting replay <场次目录> "
-    "[--seconds N | --chunks N]\n"
-)
-
-#: `post` 那一行在用法说明里的样子（字符串常量名进文案，**不写裸数字**）
-POST_USAGE = (
-    "用法：meeting post <场次目录> [--force]\n"
-    "  <场次目录>  要收干净的哪一场（不猜最新一场、不列目录内容、没有交互菜单）\n"
-    "  --force     无视两层的终态，重跑离线段与纪要段（离线段与纪要段都会再花一次钱）\n"
-)
-
-#: `post` 认的开关（本轮**只有** `--force` 一个）
+#: `post` 认的开关（**只有** `--force` 一个；它是唯一会再次花钱的开关）
 POST_FLAGS: tuple[str, ...] = ("--force",)
-
-#: `replay` 那一行在用法说明里的样子（验证工具：只读素材、产物写自己的落地）
-REPLAY_USAGE = (
-    "用法：meeting replay <场次目录> [--seconds N | --chunks N] [--out 目录]\n"
-    "  <场次目录>   拿哪一场的录音来重放（素材只读，原目录一个字节不动）\n"
-    "  --seconds N  只重放前 N 秒（上限表达一：秒）\n"
-    "  --chunks N   只重放每路前 N 块（按生效的 post.chunk_seconds 换算成秒；"
-    "该值 <= 0 时这一档拒跑）\n"
-    "  --out 目录   拷贝与产物的落点（每遍给一个新目录；缺省落在系统临时目录）\n"
-)
 
 #: `replay` 认的开关（三个都带取值）
 REPLAY_FLAGS: tuple[str, ...] = ("--seconds", "--chunks", "--out")
+
+#: 主解析器的描述（动作词清单与各自的一句话；RawDescription 原样排版）
+MAIN_DESCRIPTION = """\
+本地会议录制服务。动作词三个，每条都是 `meeting <动作词>` 的两词命令形（R15）：
+
+  web     起本地服务（只监听 127.0.0.1），前台跑到 Ctrl+C
+  post    只跑会后那一套：音频归档补齐 -> 会后离线 -> 会后纪要，跑完就退
+  replay  拿旧录音全速重跑离线链（验证用）：只验证、不是第二条生产路径
+
+每条命令都认 -h / --help，看各自那份更细的用法，例如 `meeting post --help`。
+"""
+
+#: 主解析器的 epilog：五个退出码与各自触发条件（口径 = README「退出码」节的正本；
+#: 逐档触发条件与 Ctrl+C 两阶段语义见 docs/service.md）
+EXIT_CODE_EPILOG = """\
+退出码：
+  0    正常收场（空闲态按 Ctrl+C 收场，或 `meeting post` 收尾干净）
+  1    收尾有步骤 failed（或 post / replay 那一趟没做成、服务起步出意外）
+  2    端口被占、用法错误、配置值非法
+  3    启动前提不成立（config.json 损坏、主 log 不可写）
+  130  收尾中途第二次 Ctrl+C（立即中止，盘上绝不写 done）
+"""
+
+# ---------------------------------------------------------------------------
+# argparse 参数面（用法说明的正本：`-h` / `--help` 与用法错时打的就是这一份）
+# ---------------------------------------------------------------------------
+
+
+class _UsageHelpFormatter(argparse.RawDescriptionHelpFormatter):
+    """help 排版：描述与 epilog 原样保留（RawDescription）；分组标题与前缀换中文。"""
+
+    _SECTION_TITLES = {
+        "positional arguments": "位置参数",
+        "options": "选项",
+        "optional arguments": "选项",
+    }
+
+    def add_usage(self, usage: Any, actions: Any, groups: Any, prefix: Any = None) -> None:
+        super().add_usage(usage, actions, groups, "用法：" if prefix is None else prefix)
+
+    def start_section(self, heading: str) -> None:
+        super().start_section(self._SECTION_TITLES.get(heading, heading))
+
+
+class _Parser(argparse.ArgumentParser):
+    """本 CLI 的 argparse 解析器：用法错不进 argparse 的默认出口。
+
+    argparse 默认的用法错出口是打一句英文模板然后按退出码 2 收场——退出码碰巧同
+    `EXIT_REJECTED`，但终端口径不是。这里改成 `error()` 抛 `ValueError`（那句话就是
+    终端要打的原因），由入口函数打印用法说明并按 `EXIT_REJECTED` 收场；`-h` / `--help`
+    仍走 argparse 本来的出口（打印说明、按 `EXIT_OK` 退）。`allow_abbrev` 关掉：
+    `--for` 这类缩写展开不是既有行为（手写解析那一版不认缩写，改了就是静默变行为）。
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        kwargs["add_help"] = False
+        kwargs["allow_abbrev"] = False
+        super().__init__(*args, **kwargs)
+        self.add_argument(
+            "-h",
+            "--help",
+            action="help",
+            default=argparse.SUPPRESS,
+            help="打印这份说明并退出（退出码 0）",
+        )
+        # 用法错文案的两半句，由各 builder 按自己的参数面填
+        self.flags_label = "本轮不认任何开关"
+        self.positional_label = ""
+
+    def error(self, message: str) -> NoReturn:
+        raise ValueError(self._zh_message(message))
+
+    def _zh_message(self, message: str) -> str:
+        """把 argparse 的英文模板翻成终端一直用的那几句中文（只翻本 CLI 会产生的几条）。
+
+        认不出的模板原样放行——与其翻错不如照实说。模板清单按 Python 3.13 的
+        argparse 实测（`tests/test_cli_post.py` 的参数面用例逐条压着这几句话）。
+        """
+        if message.startswith("the following arguments are required: "):
+            name = message.removeprefix("the following arguments are required: ")
+            return f"缺少位置参数 <{name}>"
+        matched = re.fullmatch(r"unrecognized arguments: (.+)", message)
+        if matched is not None:
+            extras = matched.group(1).split()
+            flag = next((item for item in extras if item.startswith("-")), None)
+            if flag is not None:
+                return f"未定义的开关：{flag!r}（{self.flags_label}）"
+            if self.positional_label:
+                return (
+                    f"位置参数只收一个 <{self.positional_label}>，收到 "
+                    + "、".join(repr(item) for item in extras)
+                )
+            return f"未识别的参数：{matched.group(1)}"
+        matched = re.fullmatch(r"argument (.+?): (.+)", message)
+        if matched is not None:
+            name, rest = matched.group(1), matched.group(2)
+            if rest == "expected one argument":
+                return f"{name} 缺少取值"
+            if rest.startswith("ignored explicit argument"):
+                return f"{name} 不带取值，却收到 {rest.removeprefix('ignored explicit argument ')}"
+            return f"{name} {rest}"
+        return message
+
+
+def _build_main_parser() -> _Parser:
+    """`meeting [-h]` 的解析器：只管总说明（描述、动作词清单、退出码 epilog）。"""
+    return _Parser(
+        prog="meeting",
+        usage="meeting <动作词> [-h]",
+        description=MAIN_DESCRIPTION,
+        epilog=EXIT_CODE_EPILOG,
+        formatter_class=_UsageHelpFormatter,
+    )
+
+
+def _build_web_parser() -> _Parser:
+    """`meeting web [-h]` 的解析器：`web()` 不认任何开关（缺了也不猜）。"""
+    return _Parser(
+        prog="meeting web",
+        usage="meeting web [-h]",
+        description=(
+            "起本地服务（只监听 127.0.0.1），前台跑到 Ctrl+C。\n"
+            "端口走配置键 web.port 或环境变量 MEETING_PORT，被占就拒绝启动（退出码 2）；\n"
+            "起服务时会打开浏览器，MEETING_NO_BROWSER=1 关掉这一步。"
+        ),
+        formatter_class=_UsageHelpFormatter,
+    )
+
+
+def _add_post_arguments(parser: _Parser) -> None:
+    parser.add_argument(
+        "session_dir",
+        metavar="场次目录",
+        help="要收干净的哪一场（不猜最新一场、不列目录内容、没有交互菜单）",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "无视两层的终态，重跑离线段与纪要段"
+            "（这是唯一会再次花钱的开关：离线段与纪要段都会再花一次钱）"
+        ),
+    )
+
+
+def _build_post_parser() -> _Parser:
+    """`meeting post <场次目录> [--force]` 的解析器。"""
+    parser = _Parser(
+        prog="meeting post",
+        usage="meeting post <场次目录> [--force]",
+        description=(
+            "只跑会后那一套：音频归档补齐（PCM -> MP3）-> 会后离线（离线转写与说话人聚类）\n"
+            "-> 会后纪要（纪要生成），跑完打印每层的结论与产物绝对路径就退。\n"
+            "不开界面、不起服务；重跑是安全的（两层各有「已完成」判据），任一层停在\n"
+            "running 默认拒跑，确认上一趟已经收工之后加 --force 再来。"
+        ),
+        formatter_class=_UsageHelpFormatter,
+    )
+    _add_post_arguments(parser)
+    parser.flags_label = "本轮只认 " + " / ".join(POST_FLAGS)
+    parser.positional_label = "场次目录"
+    return parser
+
+
+def _seconds_value(text: str) -> float:
+    try:
+        return float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"要一个正数，收到 {text!r}") from None
+
+
+def _chunks_value(text: str) -> int:
+    try:
+        return int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"要一个正整数，收到 {text!r}") from None
+
+
+def _add_replay_arguments(parser: _Parser) -> None:
+    parser.add_argument(
+        "session_dir",
+        metavar="场次目录",
+        help="拿哪一场的录音来重放（素材只读，原目录一个字节不动）",
+    )
+    parser.add_argument(
+        "--seconds",
+        type=_seconds_value,
+        metavar="N",
+        help="只重放前 N 秒（上限表达一：秒）",
+    )
+    parser.add_argument(
+        "--chunks",
+        type=_chunks_value,
+        metavar="N",
+        help="只重放每路前 N 块（按生效的 post.chunk_seconds 换算成秒；该值 <= 0 时这一档拒跑）",
+    )
+    parser.add_argument(
+        "--out",
+        type=Path,
+        metavar="目录",
+        help="拷贝与产物的落点（每遍给一个新目录；缺省落在系统临时目录）",
+    )
+
+
+def _build_replay_parser() -> _Parser:
+    """`meeting replay <场次目录> [--seconds N | --chunks N] [--out 目录]` 的解析器。"""
+    parser = _Parser(
+        prog="meeting replay",
+        usage="meeting replay <场次目录> [--seconds N | --chunks N] [--out 目录]",
+        description=(
+            "重放验证工具：把那一场的素材截断复制进 --out（缺省落系统临时目录），\n"
+            "在拷贝上全速重跑会后离线转写链，跑完打印实时率、每块耗时与失败原因分布。\n"
+            "上限两种给其一（都不给就是整场，同给两个拒绝）；只验证离线链、绝不拉纪要。"
+        ),
+        formatter_class=_UsageHelpFormatter,
+    )
+    _add_replay_arguments(parser)
+    parser.flags_label = "本轮只认 " + " / ".join(REPLAY_FLAGS)
+    parser.positional_label = "场次目录"
+    return parser
+
+
+#: `meeting [-h | --help]` 认的写法（总说明；子命令各自的 `-h` 归各自的解析器）
+_HELP_FLAGS: tuple[str, ...] = ("-h", "--help")
+
 
 # 会后编排（`meeting post` 这条入口的 run_post()；收尾不自动跑、按钮走 run_session 直路）
 
@@ -155,27 +361,45 @@ def _log() -> logging.Logger:
 
 
 def main(argv: list[str] | None = None) -> None:
-    """唯一入口：`web` / `post` / `replay` 三个词。"""
+    """唯一入口：`web` / `post` / `replay` 三个词。
+
+    动作词的路由留在本函数（`post()` / `replay()` 是直接可调的入口，各自的参数面
+    归各自的解析器）；`-h` / `--help` 与「缺少动作词 / 未定义的动作词」两档用法错的
+    终端说法与退出码保持既有口径。
+    """
+    parser = _build_main_parser()
     args = list(sys.argv[1:] if argv is None else argv)
 
     if not args:
-        print(USAGE, end="", file=sys.stderr)
+        print(parser.format_help(), end="", file=sys.stderr)
         print("退出原因与退出码：用法错误（缺少动作词） -> EXIT_REJECTED", file=sys.stderr)
         sys.exit(EXIT_REJECTED)
 
-    action = args[0]
+    action, rest = args[0], args[1:]
     if action == "web":
+        web_parser = _build_web_parser()
+        try:
+            web_parser.parse_args(rest)
+        except ValueError as exc:
+            print(web_parser.format_help(), end="", file=sys.stderr)
+            print(f"用法错误：{exc}", file=sys.stderr)
+            print("退出原因与退出码：用法错误（web 的参数） -> EXIT_REJECTED", file=sys.stderr)
+            sys.exit(EXIT_REJECTED)
         web()
         return
     if action == "post":
-        post(args[1:])
+        post(rest)
         return
     if action == "replay":
-        replay(args[1:])
+        replay(rest)
+        return
+    if action in _HELP_FLAGS:
+        # `meeting [-h | --help]`：打印总说明后按 EXIT_OK 退（help action 自己收场）。
+        parser.parse_args(args)
         return
 
-    print(USAGE, end="", file=sys.stderr)
     print(f"未定义的动作词：{action!r}", file=sys.stderr)
+    print(parser.format_usage(), end="", file=sys.stderr)
     print("退出原因与退出码：用法错误（未定义的动作词） -> EXIT_REJECTED", file=sys.stderr)
     sys.exit(EXIT_REJECTED)
 
@@ -186,38 +410,21 @@ def main(argv: list[str] | None = None) -> None:
 
 
 def _parse_post_args(argv: Sequence[str]) -> dict[str, Any]:
-    """解析 `meeting post` 后面那一串：交回 `{"dir": <path>, "force": <bool>}`；用法错就抛。
+    """解析 `meeting post` 后面那一串（argparse）：交回 `{"dir": <path>, "force": <bool>}`。
 
     **不猜目录、不挂菜单、不列目录内容**（R17 / 不做 TUI）：位置参数缺了就报用法，
-    给了就用它；指到不存在的路径就报那一条路径。`--force` 是本轮**唯一**的开关，
+    给了就用它；指到不存在的路径就报那一条路径。`--force` 是唯一会再次花钱的开关，
     重复给也照收（幂等的布尔值）。
 
-    抛出来的 `ValueError` 里那句话就是终端要打的原因，调用方（`post()`）接住它，
-    打用法说明 + `EXIT_REJECTED`。
+    抛出来的 `ValueError` 里那句话就是终端要打的原因（argparse 的用法错经
+    `_Parser.error()` 接到这里），调用方（`post()`）接住它，打用法说明 + `EXIT_REJECTED`。
     """
-    args = list(argv)
-    force = False
-    positionals: list[str] = []
-    for item in args:
-        if item in POST_FLAGS:
-            force = True
-            continue
-        if item.startswith("-") and item != "-":
-            raise ValueError(f"未定义的开关：{item!r}（本轮只认 {' / '.join(POST_FLAGS)}）")
-        positionals.append(item)
-
-    if not positionals:
-        raise ValueError("缺少位置参数 <场次目录>")
-    if len(positionals) > 1:
-        raise ValueError(
-            "位置参数只收一个 <场次目录>，收到 "
-            + "、".join(repr(item) for item in positionals)
-        )
-    directory = Path(positionals[0])
+    parser = _build_post_parser()
+    namespace = parser.parse_args(list(argv))
+    directory = Path(str(namespace.session_dir))
     if not directory.is_dir():
         raise ValueError(f"场次目录不存在（或者不是目录）：{directory}")
-
-    return {"dir": directory.resolve(), "force": force}
+    return {"dir": directory.resolve(), "force": bool(namespace.force)}
 
 
 # `meeting post` —— 参数面（校验落在可被用例直接调用的函数上，不埋在 main() 里）
@@ -273,10 +480,11 @@ def post(argv: Sequence[str] | None = None) -> None:
     `sys.stdout.flush()`——不 flush 的话管道里读不到（用例也没法断言）。
     `Ctrl+C` 由本函数接住，按强制打断档的既有常量收场。
     """
+    parser = _build_post_parser()
     try:
         options = _parse_post_args(sys.argv[2:] if argv is None else argv)
     except ValueError as exc:
-        print(POST_USAGE, end="", file=sys.stderr, flush=True)
+        print(parser.format_help(), end="", file=sys.stderr, flush=True)
         print(f"用法错误：{exc}", file=sys.stderr, flush=True)
         print("退出原因与退出码：用法错误（post 的参数） -> EXIT_REJECTED", file=sys.stderr, flush=True)
         sys.stdout.flush()
@@ -460,59 +668,23 @@ def _report_post_outcome(outcome: dict[str, Any], exit_code: int) -> None:
 
 
 def _parse_replay_args(argv: Sequence[str]) -> dict[str, Any]:
-    """解析 `meeting replay` 后面那一串：交回 `{"dir", "seconds", "chunks", "out"}`。
+    """解析 `meeting replay` 后面那一串（argparse）：交回 `{"dir", "seconds", "chunks", "out"}`。
 
     形状照 `_parse_post_args()`：校验落在可直调的函数上、`ValueError` 里那句话就是
     终端文案。三个开关都带取值（`--seconds 300` 这种）；上限两种给其一，都给与都不给
     的裁决在 `offline_replay.cap_to_seconds()` 里（这里只认形）。`--out` 只记形状，
     存不存在由工具侧现建。
     """
-    args = list(argv)
-    seconds: float | None = None
-    chunks: int | None = None
-    out: Path | None = None
-    positionals: list[str] = []
-    index = 0
-    while index < len(args):
-        item = args[index]
-        if item in REPLAY_FLAGS:
-            if index + 1 >= len(args):
-                raise ValueError(f"{item} 缺少取值")
-            value = args[index + 1]
-            if item == "--seconds":
-                try:
-                    seconds = float(value)
-                except ValueError:
-                    raise ValueError(f"--seconds 要一个正数，收到 {value!r}") from None
-            elif item == "--chunks":
-                try:
-                    chunks = int(value)
-                except ValueError:
-                    raise ValueError(f"--chunks 要一个正整数，收到 {value!r}") from None
-            else:
-                out = Path(value)
-            index += 2
-            continue
-        if item.startswith("-") and item != "-":
-            raise ValueError(f"未定义的开关：{item!r}（本轮只认 {' / '.join(REPLAY_FLAGS)}）")
-        positionals.append(item)
-        index += 1
-
-    if not positionals:
-        raise ValueError("缺少位置参数 <场次目录>")
-    if len(positionals) > 1:
-        raise ValueError(
-            "位置参数只收一个 <场次目录>，收到 "
-            + "、".join(repr(item) for item in positionals)
-        )
-    directory = Path(positionals[0])
+    parser = _build_replay_parser()
+    namespace = parser.parse_args(list(argv))
+    directory = Path(str(namespace.session_dir))
     if not directory.is_dir():
         raise ValueError(f"场次目录不存在（或者不是目录）：{directory}")
     return {
         "dir": directory.resolve(),
-        "seconds": seconds,
-        "chunks": chunks,
-        "out": out,
+        "seconds": namespace.seconds,
+        "chunks": namespace.chunks,
+        "out": namespace.out,
     }
 
 
@@ -529,10 +701,11 @@ def replay(argv: Sequence[str] | None = None) -> None:
     既有纪律）。这一条**不碰纪要层**：`run_replay()` 直调 `run_session(minutes=False)`，
     `announce_minutes` 保持缺省的隔离闸——本工具只验证离线转写链。
     """
+    parser = _build_replay_parser()
     try:
         options = _parse_replay_args(sys.argv[2:] if argv is None else argv)
     except ValueError as exc:
-        print(REPLAY_USAGE, end="", file=sys.stderr, flush=True)
+        print(parser.format_help(), end="", file=sys.stderr, flush=True)
         print(f"用法错误：{exc}", file=sys.stderr, flush=True)
         print(
             "退出原因与退出码：用法错误（replay 的参数） -> EXIT_REJECTED",
@@ -2068,8 +2241,6 @@ __all__ = [
     "OUTCOME_NO_WORK",
     "POST_FLAGS",
     "POST_STEPS",
-    "POST_USAGE",
-    "USAGE",
     "main",
     "post",
     "run_post",
