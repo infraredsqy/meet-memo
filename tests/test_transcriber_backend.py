@@ -53,7 +53,7 @@ from meeting.service.runtime import compute_drain_budget
 from meeting.session import archive_name
 from tests import _helpers as helpers
 
-#: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md` 第 7 章。
+#: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md`。
 pytestmark = pytest.mark.slow
 
 # ---------------------------------------------------------------------------
@@ -789,7 +789,7 @@ def _no_transcript_line_allowed(line) -> None:  # noqa: ARG001
 def test_backlog_changes_reach_the_snapshot_without_touching_the_revision(session_dir: Path):
     """**积压量变化不参与状态迁移**：`revision` 原地不动，`buffered_lines` 照旧写进快照。
 
-    契约第 3.3 节（`docs/contract.md:208`）：一行到来时服务侧只更新 `transcript.last_line_at`
+    契约（`docs/contract.md`）：一行到来时服务侧只更新 `transcript.last_line_at`
     并推那一帧，**不参与状态迁移、不涨 `revision`**；`state` / `snapshot` 的帧级 `id` 与
     `data.revision` 是同一次提交的那个数，界面靠「`id` 变了就是状态变了」判断。积压量几乎
     每一行都在变，让它触发 `commit()` 等于给 `state` 通道加一份高频抖动，那句承诺当场失效

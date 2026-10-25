@@ -110,7 +110,7 @@ from tests import _drain_fakes as fakes
 from tests import _helpers as helpers
 from tests._service import post_action, read_session_json, wait_until
 
-#: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md` 第 7 章。
+#: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md`。
 pytestmark = pytest.mark.slow
 
 # ---------------------------------------------------------------------------

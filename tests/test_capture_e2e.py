@@ -57,7 +57,7 @@ from tests.test_capture_accounting import (
 )
 from tests.test_capture_engine import FakeCaptureSource
 
-#: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md` 第 7 章。
+#: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md`。
 pytestmark = pytest.mark.slow
 
 #: 进程内用例的轮询超时（收尾三步跑在收尾线程池里；与既有端到端同档）
@@ -368,7 +368,7 @@ THROUGHPUT_MINUTES = 10
 #: 一分钟多少块（一块 0.1 秒）
 _CHUNKS_PER_MINUTE = 600
 
-#: 收尾预算的 30 秒是给**整趟收尾**的（`docs/state.md` 第 1 章）；两小时外推不得越过它
+#: 收尾预算的 30 秒是给**整趟收尾**的（`docs/state.md`）；两小时外推不得越过它
 TWO_HOUR_BUDGET_SECONDS = 30.0
 
 

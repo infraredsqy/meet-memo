@@ -44,7 +44,7 @@ from meeting.asr.pipeline import (
 from meeting.service.runtime import compute_drain_budget
 from meeting.session import archive_name
 
-#: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md` 第 7 章。
+#: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md`。
 pytestmark = pytest.mark.slow
 
 # ---------------------------------------------------------------------------

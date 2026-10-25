@@ -118,7 +118,7 @@ pythonpath = ["."]
 testpaths = ["tests"]
 markers = [
     # 慢档：起真服务子进程 / 真墙钟等待 / 注入慢模型 / 单条实测 > 2.0s 的用例（文件粒度）。
-    # 归位判据、23 个文件与三条命令的实测耗时见 `docs/service.md` 第 7 章「快慢分档」。
+    # 归位判据、23 个文件与三条命令的实测耗时见 `docs/service.md`。
     "slow: 需要真子进程或真实墙钟等待；未改动核心代码时可跳过",
 ]
 # `--strict-markers` 管的是代码里 `pytest.mark.xxx` 那一侧：标记名必须已在 markers 里注册，

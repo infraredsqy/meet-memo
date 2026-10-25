@@ -32,7 +32,7 @@ from meeting.backends.dev import (
     DevCaptureBackend,
 )
 
-#: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md` 第 7 章。
+#: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md`。
 pytestmark = pytest.mark.slow
 
 #: 显式等待上限（秒）

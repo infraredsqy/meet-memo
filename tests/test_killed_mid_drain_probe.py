@@ -5,7 +5,7 @@
   1. 工作区里躺着一场会，盘上停在收尾半路：`state="draining"` + `interrupted: true`、
      **`ended_at` 缺失**（结束标记没写成）、`drain.steps` 里 `flush` 停在 `running`、
      其余 `waiting` —— 正是「收尾期间按第二次 Ctrl+C 落盘之后进程被杀」的现场
-     （`docs/state.md` 第 1 章那一段）；
+     （`docs/state.md`那一段）；
   2. 经 `workspace_open` 登记进工作台（登记不改写任何盘上文件）；
   3. 起真服务子进程（`MEETING_NO_BROWSER=1`，窗口纪律由测试层兜底）。
 

@@ -594,7 +594,7 @@ def test_the_product_transcriber_backend_really_takes_both_lanes(tmp_path, monke
 def test_a_backend_without_the_lifecycle_members_pauses_and_resumes_as_usual(tmp_path, monkeypatch):
     """替身后端（生产那一份 `null` 档）没有这两个成员：暂停与继续照常，且**一个线程都不起**。
 
-    协议里没有这两个方法（`docs/backend-protocols.md` 第 3 章把它们记成可选成员），
+    协议里没有这两个方法（`docs/backend-protocols.md` 把它们记成可选成员），
     防御式取法因此是必须的：取不到就跳过，动作一个字都不许失败。
     """
     from meeting.backends.null import NullTranscriberBackend

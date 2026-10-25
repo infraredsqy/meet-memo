@@ -38,7 +38,7 @@ from meeting import config as config_module
 from meeting.service import runtime as runtime_module
 from meeting.service.runtime import ACTION_CODES, ACTION_NAMES
 
-#: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md` 第 7 章。
+#: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md`。
 pytestmark = pytest.mark.slow
 
 #: 用例里的显式超时（不留裸秒数）
@@ -647,7 +647,7 @@ def test_settings_update_applies_the_alarm_sound_switch_at_once(tmp_path):
     """`alarm.sound` 收在热读档：写盘那一刻快照就换过去，`revision` 跟着涨一格。
 
     「写盘成功」与「快照立刻反映」在这里合成了同一件事 —— 出声开关要在勾选那一刻就改运行期
-    行为（`docs/contract.md` 第 4.6 章）。四条判据逐条咬住：应答分类、快照值、`revision`、
+    行为（`docs/contract.md`）。四条判据逐条咬住：应答分类、快照值、`revision`、
     写盘确实落了盘。
     """
     with live(tmp_path) as (client, _runtime, home, _out):

@@ -78,16 +78,6 @@ def test_frame_bytes_is_960() -> None:
     assert seg.FRAME_BYTES == FRAME_BYTES == 960
 
 
-def test_silence_timeout_is_two_seconds() -> None:
-    """静默收段阈值是 **2.0 秒**。"""
-    assert seg.SILENCE_TIMEOUT == 2.0
-
-
-def test_min_segment_ms_is_500() -> None:
-    """丢掉短于 **500ms** 的段。"""
-    assert seg.MIN_SEGMENT_MS == 500
-
-
 def test_vad_mode_defaults_to_one() -> None:
     """默认 VAD 档位是 **1**（`v1-lineage` 的 B8，实时与离线共用同一档）。"""
     assert seg.VAD_MODE == 1

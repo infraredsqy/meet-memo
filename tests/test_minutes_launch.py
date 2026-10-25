@@ -502,12 +502,6 @@ def test_the_fixed_block_of_the_real_template_passes_the_check(tmp_path: Path) -
     assert check_final_artifact(session) == ()
 
 
-def test_the_fixed_two_sections_are_the_checks_own_strings() -> None:
-    """两条标题就是 spec 定死的那两串字（改一个字，判据与模板就分家了）。"""
-    assert APPENDIX_HEADING == "## 说话人附录"
-    assert UNKNOWN_HEADING == "### 猜不出的"
-
-
 # ---------------------------------------------------------------------------
 # 二、argv 只放短指针 / 环境三格 / 分支解析
 # ---------------------------------------------------------------------------

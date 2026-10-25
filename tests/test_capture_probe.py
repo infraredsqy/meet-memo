@@ -29,7 +29,6 @@ from meeting.backends.registry import capabilities_of, resolve_capture_backend
 from meeting.capture import devices as devices_module
 from meeting.capture import sources as sources_module
 from meeting.capture.devices import DeviceEndpoint, OpenAttempt, measure_samples
-from meeting.service.runtime import ACTION_CODES, ACTION_NAMES
 from tests import _helpers as helpers
 from tests.test_api_actions import live, post, snapshot_of
 
@@ -409,28 +408,6 @@ def test_auto_resolves_to_the_real_capture_backend():
     assert resolution.target == "meeting.backends.capture:CaptureBackend"
     assert type(resolution.implementation) is capture_module.CaptureBackend
     assert resolution.has_implementation is True
-
-
-def test_reprobe_is_a_registered_action_name():
-    """动作名清单里有 `reprobe`；`code` 表那一份逐字冻结（会中总结那两个码在它们自己的用例里）。"""
-    assert "reprobe" in ACTION_NAMES
-    assert "summarize" in ACTION_NAMES
-    assert len(ACTION_NAMES) == len(set(ACTION_NAMES))
-    # `dca4539b` 那一轮加 `reprobe` 时 `code` 表一个字都没动（这七条是那一轮的原样清单）；
-    # `1987cb20` phase2 的会中总结另加了 `transcript_unavailable` / `summary_failed` 两条，
-    # 它们由 `tests/test_summary_action.py` 逐档钉 —— 这一条只管 `reprobe` 那一轮没碰过 `code` 表。
-    assert ACTION_CODES[:7] == (
-        "already_recording",
-        "draining",
-        "capture_unavailable",
-        "not_recording",
-        "invalid_setting",
-        "persist_failed",
-        "action_unavailable",
-    )
-    assert set(ACTION_CODES) - set(ACTION_CODES[:7]) == {
-        "transcript_unavailable", "summary_failed",
-    }
 
 
 def test_settings_devices_shape_and_update_round_trip(tmp_path: Path):

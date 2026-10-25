@@ -1141,7 +1141,7 @@ def test_capture_session_transcripts_group(tmp_path, make_client, contract_regen
     """`GET /api/sessions/{id}/transcripts` 那只稿子正文端点的四档样本（本节点）。
 
     spec 完成判定点的四档：**两路都有 / 缺一路 / 两路都缺 / 目录不在**，逐份采集
-    （`contract/README.md` 第 1 章的清单随改）。样本记的是**形状**：
+    （`contract/README.md`的清单随改）。样本记的是**形状**：
 
     - `transcripts-both.json`：四份文件都在，正文逐字原样（`text` 是确定值）；
     - `transcripts-one-missing.json`：`mode = "mic"` 只采了一路——另一路的缺稿落
