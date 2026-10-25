@@ -1,33 +1,16 @@
 """日志（phase1 §3.13，R16；D4 的三个毛病一起修掉）。
 
-- **服务级**：`~/.config/meeting/logs/meeting.log`（`log.dir` / `MEETING_LOG_DIR` 可改）。
-- **场次级**：`<场次目录>/meeting.log`，`start` 时挂上、收尾 `log` 那一步 flush 后摘掉 —— R16 的
-  log 要能**按场查**（V1 的固定单文件做不到）。本 Phase 只落挂/摘机制
-  （`attach_session_log()` / `detach_session_log()`），调用点归 phase2 / phase3。
+服务级 `~/.config/meeting/logs/meeting.log`（`log.dir` / `MEETING_LOG_DIR` 可改）；
+场次级 `<场次目录>/meeting.log`，`start` 时挂上、收尾 `log` 步 flush 后摘掉（R16 的 log
+要能按场查）。D4 三处必改：主 log 不可写即抛 `OSError`（映射 `EXIT_STARTUP_UNMET`），
+不做 V1 的静默降级；轮转保留整份旧文件；服务级 + 场次级两层。
 
-D4 的三处必改：
-  - ① V1「日志目录不可写时 `except OSError: pass` 静默降级」→ 这里**主 log 不可写即抛出**
-    （`OSError`），由 `cli.main()` 映射成 `EXIT_STARTUP_UNMET`（拒绝启动）；bootstrap 阶段的
-    默认日志目录不可写时不在此处抛，交给调用方按同一档处理。
-  - ② V1「超过 5MB 保留后半、删掉前半」→ 轮转保留**整份**旧文件。
-  - ③ V1「固定单文件」→ 服务级 + 场次级两层。
+轮转参数一律从配置取（`log.max_bytes` / `log.backup_count`），不许写死；记录器命名
+`meeting` + `propagate = False`（不污染 torch / transformers 的日志），幂等初始化。
 
-**轮转参数一律从配置取**：`RotatingFileHandler(max_bytes=<log.max_bytes 的生效值>,
-backup_count=<log.backup_count 的生效值>)` —— 这两个数**不许**在本模块里写死；
-服务级与场次级走同一个「按配置值构造轮转处理器」入口（`build_rotating_handler`）。
-
-**记录器**：命名 `meeting` + `propagate = False`（不污染 torch / transformers 的日志），
-**幂等初始化**（重复调用不重复加 handler）。
-
-**格式**（逐字照抄）：
-
-    %(asctime)s %(levelname)-7s [%(threadName)s] session=%(session)s %(name)s: %(message)s
-
-无场次时 `session=-`。`session` 字段的注入定死用 `logging.Filter`：`SessionFilter` 在
-`filter(record)` 里给每条 record 补 `record.session`；**filter 挂在 handler 上、每个 handler
-自带它要写的那个 session 值**（服务级 handler 恒 `-`，场次级 handler 是场次目录名）。
-**不采用 `LoggerAdapter`**：服务级与场次级两个 handler 挂在同一个 `meeting` logger 上时，
-同一个 logger 给不出两份 session 值。
+`session` 字段注入定死用 `logging.Filter`：每个 handler 自带它要写的 session 值
+（服务级恒 `-`，场次级是场次目录名）。不采用 `LoggerAdapter`：两个 handler 挂在同一个
+logger 上时，同一个 logger 给不出两份 session 值。
 """
 
 from __future__ import annotations
@@ -58,11 +41,6 @@ _logger = logging.getLogger(LOGGER_NAME)
 _logger.propagate = False
 
 
-# ---------------------------------------------------------------------------
-# session 字段注入
-# ---------------------------------------------------------------------------
-
-
 class SessionFilter(logging.Filter):
     """给每条 record 补 `record.session`（挂到 handler 上，每个 handler 自带一个值）。"""
 
@@ -75,9 +53,7 @@ class SessionFilter(logging.Filter):
         return True
 
 
-# ---------------------------------------------------------------------------
 # 轮转处理器
-# ---------------------------------------------------------------------------
 
 
 def build_rotating_handler(
@@ -126,11 +102,6 @@ def _log_path_of(handler: logging.Handler) -> str:
     return str(getattr(handler, "baseFilename", ""))
 
 
-# ---------------------------------------------------------------------------
-# 初始化 / 重建
-# ---------------------------------------------------------------------------
-
-
 def setup_service_logging(
     log_dir: str,
     *,
@@ -141,12 +112,8 @@ def setup_service_logging(
 ) -> RotatingFileHandler:
     """幂等初始化入口：按配置值构造轮转处理器，并换掉 bootstrap 阶段的 handler。
 
-    §3.5 第 1 条的收尾各步都走它：
-      ① bootstrap 阶段用**默认参数**建一次；
-      ③ 读配置后按生效参数**重建**一次（先摘掉并关闭旧 handler、再加新的）。
-    **同参数重复调用时 handler 不重复叠加**（直接返回既有 handler）。
-
-    主 log 不可写 → 抛 `OSError`（由 `cli.main()` 映射成 `EXIT_STARTUP_UNMET`）。
+    bootstrap 阶段用默认参数建一次，读配置后按生效参数重建一次（先摘旧再加新）；
+    同参数重复调用不叠加 handler。主 log 不可写 → `OSError`（映射 `EXIT_STARTUP_UNMET`）。
     """
     if max_bytes is None:
         max_bytes = config_module.default_for("log.max_bytes")
@@ -207,13 +174,10 @@ def _remove_handler(handler: logging.Handler) -> None:
 
 
 def handler_snapshot() -> dict:
-    """把当前生效的 handler 抓一份快照（**查询**，不改动任何状态）。
+    """当前生效 handler 的快照（查询，不改状态）：两个槽位 + 场次目录。
 
-    服务级 `handler` 与场次级 `session_handler` 两个槽位各一个（未挂时为 `None`），
-    外加场次 handler 对应的目录。它是本模块对外的**小查询入口**：测试层要「先换掉日志
-    落点、用完再放回原样」时走 `handler_snapshot()` / `restore_handlers()` 这一对，
-    不必去读模块内部的 `_state`。**快照只读**：拿到之后本模块的接线照旧，
-    `setup_service_logging()` 该换 handler 还是换。
+    测试层「先换掉日志落点、用完再放回原样」走 `handler_snapshot()` / `restore_handlers()`
+    这一对，不必读模块内部的 `_state`。快照只读：之后 `setup_service_logging()` 该换还是换。
     """
     return {
         "handler": _state["handler"],
@@ -223,11 +187,10 @@ def handler_snapshot() -> dict:
 
 
 def restore_handlers(snapshot: dict) -> None:
-    """把 `handler_snapshot()` 抓的快照放回接线里（**先清干净自己的 handler，再放回去**）。
+    """把快照放回接线里（先清干净自己的 handler，再放回去原对象本身）。
 
-    只动本模块自己加的 handler（带 `_HANDLER_FLAG` 标记的那些），第三方挂在 `meeting`
-    logger 上的 handler 一律不碰。放回去的是**原来那两个 handler 对象本身**，
-    因此恢复之后 `service_log_path()` / `session_log_dir()` 读到的与快照那一刻一致。
+    只动本模块自己加的 handler（带 `_HANDLER_FLAG` 标记），第三方挂在 `meeting` logger
+    上的不碰。
     """
     reset_for_tests()
 
@@ -280,9 +243,7 @@ def read_log_tail(path: str, *, lines: int = 20) -> list[str]:
     return content.splitlines()[-int(lines):]
 
 
-# ---------------------------------------------------------------------------
 # 场次级 log 的挂 / 摘
-# ---------------------------------------------------------------------------
 
 
 def attach_session_log(session_dir: str, *, level: str | None = None) -> RotatingFileHandler:
@@ -355,25 +316,19 @@ def session_log_dir() -> str | None:
     return _state["session_dir"]
 
 
-# ---------------------------------------------------------------------------
 # 收尾 `log` 步：flush -> 写这一场的结束标记 -> 摘掉（phase3 §3.7）
-# ---------------------------------------------------------------------------
 
-#: 这一场的**结束标记**格式（phase3 §3.7 起的名字）。
-#:
-#: 里面有三个占位符：`{state}`（`session.json` 的 `state`：`draining` / `done` / `failed`）、
-#: `{steps}`（收尾各步 `status` 的概要，如 `flush=skipped, log=done, post=waiting`）、
-#: `{log_path}`（服务级主 log 的路径）。场次 id 由格式串里的 `session=%(session)s` 带上
-#: （场次级 handler 的 `SessionFilter` 写的就是场次目录名）。
-#: 它是**场次 log 的最后一行**（测试照这条断言）。
+#: 这一场的结束标记（场次 log 的最后一行，测试照这条断言）。
+#: 占位符：`{state}`（`session.json` 的 `state`）、`{steps}`（收尾各步 `status` 概要）、
+#: `{log_path}`（服务级主 log 路径）；场次 id 由格式串里的 `session=%(session)s` 带上。
 SESSION_END_MARKER = "场次结束：state={state}；收尾步骤：{steps}；服务级 log：{log_path}"
 
 
 def flush_session_log() -> None:
     """flush 当前挂着的场次级 handler（没挂时什么也不做）。
 
-    `log` 步的「flush 场次 log」这一步：结束标记必须落在**已经写下去的全部内容之后**，
-    因此写标记之前先把缓冲区推出去。写失败以 `OSError` 表达，不静默。
+    结束标记必须落在已写下去的全部内容之后，写标记前先把缓冲区推出去。
+    写失败以 `OSError` 表达，不静默。
     """
     handler = _state["session_handler"]
     if handler is None:
@@ -382,18 +337,13 @@ def flush_session_log() -> None:
 
 
 def write_session_end_marker(*, state: str, steps: list[str] | tuple[str, ...]) -> str | None:
-    """收尾 `log` 步的三件事一处做完：**flush 场次 log → 写结束标记 → 摘掉 handler**。
+    """收尾 `log` 步的三件事一处做完：flush 场次 log → 写结束标记 → 摘掉 handler。
 
-    结束标记是这一场的**最后一行**（直接写 handler 的流、写后立刻 flush，不再经 logger，
-    否则「摘掉之后只走服务级 log」那条口径会与「标记必须是最后一行」相抵）。
+    结束标记是这一场的最后一行：直接写 handler 的流、写后立刻 flush，不再经 logger——
+    否则「摘掉之后只走服务级 log」会与「标记必须是最后一行」相抵。
 
-    先例（本 Phase 之前就有的形态）：
-      - `session.json` 的结束标记由 runtime 的 `log` 步写；
-      - 这里补的是**场次级日志那一半**（phase2 只落了服务级那一半）。
-
-    返回值：**成功时 `None`**；写失败时返回**那条失败说明**（调用方据此落该步 `failed`，
-    **不静默**）。无论成败，场次级 handler 都已摘掉（`detach_session_log()` 的语义）。
-    摘除本身抛 `OSError` 时向上冒（同一处如实上报）。
+    成功返回 `None`；写失败返回那条失败说明（调用方据此落该步 `failed`，不静默）。
+    无论成败场次级 handler 都已摘掉；摘除本身抛 `OSError` 时向上冒。
     """
     from meeting import config as _config
 

@@ -167,7 +167,7 @@ def _disk_str_or_none(record: dict[str, Any] | None, key: str) -> str | None:
 class RuntimeCatalogMixin:
     """工作台 / 场次目录 / 状态视图 / 杂项动作 mixin。"""
 
-    # -- 设置更新 ---------------------------------------------------------
+    # 设置更新
 
     def settings_update(self, args: dict[str, Any]) -> dict[str, Any]:
         """写 `config.json`（原子写）；**可热读的键立刻生效，其余键写盘成功但要重启**。
@@ -227,9 +227,8 @@ class RuntimeCatalogMixin:
                     "settings_update：%s 被环境变量 %s 压着（写盘值 %r），运行期仍由环境变量说话",
                     key, env_name, changes[key],
                 )
-        # 这一行只对**真正要重启才生效**的那些键说：热读键（含 `alarm.sound`）走上面的
-        # `applied` 分支，写盘那一刻快照与运行期行为就已经换过去了，报「仍取启动值」
-        # 会是一句与事实相反的话（`alarm.sound` 原先归 `pending_restart`，这一行是那时的形状）。
+        # 这一行只对真正要重启才生效的键说：热读键（含 `alarm.sound`）写盘那一刻快照与
+        # 运行期行为就已换过去，报「仍取启动值」会与事实相反。
         if pending:
             _log.info(
                 "settings_update：%s 归 pending_restart，仍取启动时的生效值（改了要重启才生效）",
@@ -268,7 +267,7 @@ class RuntimeCatalogMixin:
                 detail={"source": source, "fault": fault, "error": str(exc)},
             ) from exc
 
-    # -- 会中总结（`1987cb20` phase2：动作、记录表、缓冲的清理） ------------
+    # 会中总结（`1987cb20` phase2：动作、记录表、缓冲的清理）
 
     def _clear_session_summary(self, *, reason: str) -> None:
         """把会中总结那两样**一起**清成空：内存缓冲（`summary_buffer`）与本场记录表
@@ -295,7 +294,7 @@ class RuntimeCatalogMixin:
         session = getattr(self.snapshot, "session", None)
         return None if session is None else str(session.id)
 
-    # -- 工作区注册表（工作台收编节点 e2f6166b）---------------------------
+    # 工作区注册表（工作台收编节点 e2f6166b）
 
     def _is_actively_recording(self, path: str | Path) -> bool:
         """`path` 这一场是不是**本进程此刻在录**的那一场（三档口径里 `recording` 的判据）。
@@ -485,9 +484,9 @@ class RuntimeCatalogMixin:
             "post_jobs": self.post_jobs_state(),
         }
 
-    # -- 会后的多趟活与转码工序（闸与登记的读法归 runtime_post / runtime_transcode）
+    # 会后的多趟活与转码工序（闸与登记的读法归 runtime_post / runtime_transcode）
 
-    # -- 单场状态（`GET /api/sessions/{id}`：会后视图的进度区）-----------------
+    # 单场状态（`GET /api/sessions/{id}`：会后视图的进度区）
 
     def _offline_job_running(self, directory: str) -> bool:
         """这一场**此刻有没有离线那一趟在本进程里跑**（`GET /api/sessions/{id}` 的
@@ -621,13 +620,9 @@ class RuntimeCatalogMixin:
         if read is not None:
             snapshot["started_at"] = read.get("started_at")
             snapshot["finished_at"] = read.get("finished_at")
-            # 盘上有结论可读：状态文件落在 `done` / `partial` / `failed` / `interrupted`
-            # 就**照它那一档**答，别的档（`running`）也照它自己那一档如实答 —— 那一版可能
-            # 是「真的还在跑」，也可能是「崩在半路停在那儿」，这一格不替它二选一
-            # （「此刻有没有东西在跑」由 `in_process` 那一格回答）。**这几档都不许折成
-            # `done`**：折了之后读方（界面这一格、`GET /api/sessions/{id}` 的
-            # `offline.state`）看到的是一趟整个失败的会后与一趟跑成的会后同形 ——
-            # 那正是「读方被骗」那一档。**`interrupted` 尤其不许折**（b1c6a58e）：
+            # 盘上有结论可读：状态文件落在哪一档就照它那一档答（`running` 也照实答，「此刻
+            # 有没有在跑」由 `in_process` 那格回答）。这几档都不许折成 `done`——折了之后
+            # 读方看到的是失败的会后与跑成的同形；`interrupted` 尤其不许折（b1c6a58e）：
             # 折成 `running` 就把「人停的、可以重按」说回「还在跑」。
             mapped = str(read.get("state") or "")
             snapshot["state"] = (
@@ -667,7 +662,7 @@ class RuntimeCatalogMixin:
             "error": str(error) if error else None,
         }
 
-    # -- 稿子正文（`GET /api/sessions/{id}/transcripts`：会后区的两份稿）-------
+    # 稿子正文（`GET /api/sessions/{id}/transcripts`：会后区的两份稿）
 
     def session_transcripts_dict(self, target: Any) -> dict[str, Any]:
         """`GET /api/sessions/{id}/transcripts` 的应答体：**这一场的稿子正文**。

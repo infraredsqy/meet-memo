@@ -1,47 +1,22 @@
-"""十六条路由的**唯一注册点**（十五条 `/api/*` + `/debug`；phase2 §3.7 / §3.8 / §3.9 / §3.11 / §3.12；`1987cb20` phase2 加 `summaries`；
-工作台收编节点 e2f6166b 加 `sessions` / `dirs` 两只读端点与 `workspace_open` / `workspace_remove` 两动作；
-会后进度读数节点 `a9affaa8` 加 `sessions/{dir}` 那只单场状态端点；设置抽屉节点 `311f84f5` 加
-`devices` 那只设备清单端点；人名节点 `91b6752e` 加 `speaker_rename` 那只改名动作；打断会后的
-b1c6a58e 加 `post_stop` 那只停掉动作；资料节点 285bf58c 加会议资料的四条端点
-——清单 / 上传 / 取原文件 / 删除，都在 `/api/sessions/{dir:path}` 之后那两层路径上，
-注册在单场状态那条**之前**（`{dir:path}` 收得下斜杠，注册在后会抢走资料那几条）；
-本节点（38817ecf）加 `sessions/{dir}/transcripts` 那只稿子正文端点，同一批、同样
-注册在单场状态那条之前。
+"""十六条路由的唯一注册点（十五条 `/api/*` + `/debug`）。
 
-全应用只在这里注册一次：
+- `GET /api/state`（完整版，body 就是 `to_dict()` 的产出）；
+- `GET /api/events`（SSE：`snapshot` 先行 + `state` / `levels` / `transcript` 三通道）；
+- `GET /api/heartbeat`（`service` 字面量必须有）；
+- `POST /api/actions`（信封 + 十九个动作名 + `code` 表，分发走 `_ACTION_HANDLERS`，导入时
+  与 runtime 的 `ACTION_NAMES` 核对，对不上服务起不来）；
+- `GET /api/summaries`（本场成功的会中总结，读内存不落文件）；
+- `GET /api/sessions`（工作区注册表）、`GET /api/sessions/{id}`（单场状态，
+  形状见 `docs/contract.md` 4.9）、`GET /api/sessions/{id}/transcripts`（稿子正文）；
+- 会议资料四条（资料节点 285bf58c，语义见 `docs/contract.md` 4.12）：清单 / 上传 /
+  取原文件 / 删除——上传是唯一不走 `/api/actions` 的写端点（二进制正文装不进 JSON 信封），
+  头哨由中间件按端点扩过去；
+- `GET /api/dirs` / `POST /api/dirs`（目录选择器：现场判读 + 新建目录，REST 写入口）、
+  `GET /api/devices`（设备清单，只枚举不开设备）、`GET /debug`（骨架自检页）。
 
-  - `GET /api/state`（完整版，body 就是 `to_dict()` 的产出）；
-  - `GET /api/events`（SSE：`snapshot` 先行 + `state` / `levels` / `transcript` 三通道）；
-  - `GET /api/heartbeat`（完整版，`service` 字面量必须有）；
-  - `POST /api/actions`（信封 + 十九个动作名 + `code` 表；分发走 `_ACTION_HANDLERS`
-    那张「动作名 → 处理器」登记表，并在导入时与 runtime 的 `ACTION_NAMES` 核对 ——
-    两份名单对不上，服务起不来）；
-  - `GET /api/summaries`（本场按过的、成功产出的那几次会中总结；读内存，不落文件）；
-  - `GET /api/sessions`（工作区注册表：按路径去重的那一份"我这些会"，读盘上注册表文件）；
-  - `GET /api/sessions/{id}`（单场状态：这一场此刻跑到哪一档、会后离线跑过几块 / 共几块、
-    正在跑哪一路、已经跑了多久；`{id}` 是这一场的目录路径，形状见 `docs/contract.md` 4.9）；
-  - `GET /api/sessions/{id}/transcripts`（稿子正文：两份稿 × 两路各一份，在的给
-    `text`、不在的给 `reason`；寻址与失败口径跟单场状态同一套）；
-  - 会议资料四条（资料节点 285bf58c，`{id}` 同样是 URL 编码的场次目录路径；
-    语义见 `docs/contract.md` 4.12）：
-    - `GET /api/sessions/{id}/materials`（清单：目录就是清单，没有 JSON 记录）；
-    - `POST /api/sessions/{id}/materials?name=`（上传：原样字节流式写盘；二进制正文
-      装不进 JSON 动作信封，是唯一一组不走 `/api/actions` 的写端点——头哨由中间件
-      按端点扩到它们身上，`meeting/service/app.py` 的 `_LocalGuardsMiddleware`）；
-    - `GET /api/sessions/{id}/materials/{name}`（取原文件，`Content-Type` 按扩展名）；
-    - `DELETE /api/sessions/{id}/materials/{name}`（删那一个文件）；
-  - `GET /api/dirs`（目录选择器的现场：一层子目录的名目判读 + 正在浏览这一层自己的名目
-    （`here`），读现场不写任何东西）；
-  - `POST /api/dirs`（新建目录：在选择器正在浏览的这一层里就地建一个，名字必须用户给；
-    REST 写入口、不走动作信封，头哨在中间件的核对表里）；
-  - `GET /api/devices`（两路各自的候选设备端点表：只读、纯枚举、不开设备）；
-  - `GET /debug`（骨架自检页，从包内读）。
-
-**装配模块 `app.py` 里那两条最小版注册与 `static.py` 的 `/debug` 注册都已在本 Phase 摘除**：
-路由按注册顺序匹配、同一路径重复注册不报错，留着旧注册会让完整版永远不生效。
-
-新路由全部落在 phase1 那三道本地防线中间件（Host 校验 / `X-Meeting-Service: 1` /
-`/api/*` 的 `no-store`、无 CORS）的覆盖范围内 —— 中间件在应用装配处挂上，与路由注册点无关。
+资料四条与稿子正文注册在单场状态那条**之前**：`{dir:path}` 收得下斜杠，注册在后会抢走
+那几条。装配模块与 `static.py` 里的旧注册已摘除——同一路径重复注册不报错，留着旧注册
+会让完整版永远不生效。新路由全部落在三道本地防线中间件的覆盖范围内。
 """
 
 from __future__ import annotations
@@ -97,9 +72,7 @@ def _action_error(code: str, message: str, *, status: int = 400,
     return ActionError(code, message, status=status, detail=detail)
 
 
-# ---------------------------------------------------------------------------
 # GET /api/state · GET /api/heartbeat
-# ---------------------------------------------------------------------------
 
 
 async def _api_state(request: Request) -> Response:
@@ -131,9 +104,7 @@ async def _api_heartbeat(request: Request) -> Response:
     return JSONResponse(runtime.heartbeat_dict())
 
 
-# ---------------------------------------------------------------------------
 # GET /api/summaries（`1987cb20` phase2：本场按过的那些次会中总结）
-# ---------------------------------------------------------------------------
 
 
 async def _api_summaries(request: Request) -> Response:
@@ -150,9 +121,7 @@ async def _api_summaries(request: Request) -> Response:
     return JSONResponse(runtime.summaries_dict())
 
 
-# ---------------------------------------------------------------------------
 # GET /api/events（SSE）
-# ---------------------------------------------------------------------------
 
 
 async def _api_events(request: Request) -> Response:
@@ -171,15 +140,12 @@ async def _api_events(request: Request) -> Response:
     )
 
 
-# ---------------------------------------------------------------------------
 # GET /api/sessions · GET /api/dirs（工作台收编节点 e2f6166b：两只读端点）
-# ---------------------------------------------------------------------------
 
 
-# 这三个处理器都是**同步 def**（不走协程）：它们各自整段只是调 runtime 的那只纯读
-# 读取器（`sessions_dict()` / `session_status_dict()` / `dirs_listing()` 每行 stat +
-# 读 session.json + 注册表读，都不是异步的）——写成 async 会让这些盘上读数在事件循环
-# 线程上跑；Starlette 对同步处理器自动丢线程池执行，行为与原本一致。
+# 这几个处理器是同步 def（不走协程）：它们只是调 runtime 的纯读读取器（盘上 stat 与
+# 读 session.json，都不是异步的）；写成 async 会让盘上读数在事件循环线程上跑。
+# Starlette 对同步处理器自动丢线程池执行。
 def _api_sessions(request: Request) -> Response:
     """工作区注册表：`{sessions, recent}`（**200**，任何状态下都给）。
 
@@ -300,9 +266,7 @@ async def _api_devices(request: Request) -> Response:
         return _error_response(exc)
 
 
-# ---------------------------------------------------------------------------
 # 会议资料四条（资料节点 285bf58c）：清单 / 上传 / 取原文件 / 删除
-# ---------------------------------------------------------------------------
 
 
 def _materials_missing_error(name: str) -> ActionError:
@@ -494,13 +458,10 @@ async def _api_materials_delete(request: Request) -> Response:
         return _error_response(exc)
 
 
-# ---------------------------------------------------------------------------
 # POST /api/actions —— 动作登记表（分发只认这张表，函数末尾没有第三条出路）
-# ---------------------------------------------------------------------------
 
 #: 动作处理器：`(runtime, args) → 额外成功键`（async；`None` = 通用信封
-#: `{"ok": true, "revision": N}` 就够）。每个动作成功体的形状只写在**这一处** ——
-#: 从前「分支 + 成功体」要在 if/elif 链和返回体两处一起写的日子到此为止。
+#: `{"ok": true, "revision": N}` 就够）。每个动作成功体的形状只写在这一处。
 _ActionHandler = Callable[[ServiceRuntime, dict[str, Any]], Any]
 
 
@@ -533,19 +494,14 @@ async def _act_dev_inject(runtime: ServiceRuntime, args: dict[str, Any]) -> None
 
 
 async def _act_summarize(runtime: ServiceRuntime, args: dict[str, Any]) -> dict[str, Any]:
-    # 成功体在通用信封上多一个 `summary` 键（先例是 `settings_update` 的
-    # `applied` / `pending_restart`）；`revision` 是**当前**版本号 —— 总结是只读的，
-    # 这里不提交、不涨版本、不广播。
-    # `summarize()` 是一条协程：那一次模型调用在**工作线程**里跑
-    # （`runtime._summary_wait()`，复审 minor 6），等它的只有本请求这一条协程 ——
-    # 于是总结那几秒里 `/api/state` 与三个 SSE 通道照常应答。
+    # 成功体多一个 `summary` 键；`revision` 是当前版本号（总结是只读的，不提交不广播）。
+    # `summarize()` 是协程：模型调用在工作线程里跑（`runtime._summary_wait()`），
+    # 等它的只有本请求这一条协程——总结那几秒里 `/api/state` 与三个 SSE 通道照常应答。
     return {"summary": await runtime.summarize(args)}
 
 
 async def _act_workspace_open(runtime: ServiceRuntime, args: dict[str, Any]) -> dict[str, Any]:
-    # 成功体在通用信封上多一个 `workspace` 键（先例是 `summarize` 的 `summary`）：
-    # 判别档位与去重回扣由服务给，界面不派生；失败档（目录不存在、非空未确认、
-    # 注册表写盘失败）走 ActionError 的 `code` 表。
+    # 成功体多一个 `workspace` 键：判别档位与去重回扣由服务给，界面不派生。
     return {
         "workspace": runtime.workspace_open(args.get("dir"),
                                             confirm=bool(args.get("confirm"))),
@@ -569,8 +525,8 @@ async def _act_post_stop(runtime: ServiceRuntime, args: dict[str, Any]) -> dict[
 
 
 async def _act_transcode_run(runtime: ServiceRuntime, args: dict[str, Any]) -> dict[str, Any]:
-    # 成功体在通用信封上多一个 `transcode` 键（与 `post` 键同族）：回执只说「起没起、
-    # 跑的哪一场」，跑成什么样由场次目录里的 `meeting_transcode_status.json` 回答。
+    # 成功体多一个 `transcode` 键：回执只说「起没起、跑的哪一场」，跑成什么样由盘上的
+    # `meeting_transcode_status.json` 回答。
     return {"transcode": runtime.transcode_run(args)}
 
 
@@ -595,16 +551,14 @@ async def _act_set_source(runtime: ServiceRuntime, args: dict[str, Any]) -> None
 
 
 async def _act_speaker_rename(runtime: ServiceRuntime, args: dict[str, Any]) -> dict[str, Any]:
-    # 说话人改名（R10 第四条 / R30）：只写这一场目录里的人名表（不拉任何离线/纪要、
-    # 不动快照），成功体在通用信封上多一个 `speaker` 键——写了哪一场、哪一个键、
-    # 现在叫什么；界面改完当场生效走的是重问单场状态那一跳。
+    # 说话人改名（R10 第四条 / R30）：只写这一场的人名表（不拉离线/纪要、不动快照），
+    # 成功体多一个 `speaker` 键；界面改完当场生效走的是重问单场状态那一跳。
     return {"speaker": runtime.speaker_rename(args)}
 
 
-#: 会后的两个按钮（R26）与停掉会后精细稿那一趟的动作（b1c6a58e，R28）共用同一条
-#: 成功体规矩：起一条后台线程即算启动成功 / 立起取消旗标即算受理成功，成功体在通用
-#: 信封上多一个 `post` 键——「起的是哪一场、停的是哪一场」，停没停成由盘上的状态文件
-#: 回答（`post_stop` 的受理回执多一格 `stopping: true`）。
+#: 会后的两个按钮（R26）与 `post_stop`（b1c6a58e，R28）共用同一条成功体规矩：
+#: 起一条后台线程即算启动成功 / 立起取消旗标即算受理成功，成功体多一个 `post` 键，
+#: 停没停成由盘上的状态文件回答（`post_stop` 的回执多一格 `stopping: true`）。
 _ACTION_HANDLERS: dict[str, _ActionHandler] = {
     "start": _act_start,
     "stop": _act_stop,
@@ -724,9 +678,7 @@ async def _api_actions(request: Request) -> Response:
     return JSONResponse(body)
 
 
-# ---------------------------------------------------------------------------
 # GET /debug
-# ---------------------------------------------------------------------------
 
 
 async def _debug_page(request: Request) -> Response:
@@ -738,9 +690,7 @@ async def _debug_page(request: Request) -> Response:
     return HTMLResponse(static_module.read_debug_page())
 
 
-# ---------------------------------------------------------------------------
 # 注册
-# ---------------------------------------------------------------------------
 
 
 def api_routes() -> list[Route]:
@@ -752,10 +702,9 @@ def api_routes() -> list[Route]:
         Route("/api/actions", _api_actions, methods=["POST"]),
         Route("/api/summaries", _api_summaries, methods=["GET"]),
         Route("/api/sessions", _api_sessions, methods=["GET"]),
-        # 会议资料四条（资料节点 285bf58c）：注册在单场状态那条**之前**——
-        # `{dir:path}` 收得下斜杠，单场状态若排在前面会把 `/materials` 那两层
-        # 路径整个吃进 `{dir}` 里。GET 与 DELETE 同路径异方法：Starlette 按注册
-        # 顺序找 FULL 匹配，方法不匹配的算 PARTIAL，互不抢。
+        # 会议资料四条：注册在单场状态那条之前（`{dir:path}` 收得下斜杠，排在后面会被
+        # 吃进 `{dir}`）。GET 与 DELETE 同路径异方法：Starlette 找 FULL 匹配，方法不匹配
+        # 的算 PARTIAL，互不抢。
         Route("/api/sessions/{dir:path}/materials", _api_materials_listing, methods=["GET"]),
         Route("/api/sessions/{dir:path}/materials", _api_materials_upload, methods=["POST"]),
         Route("/api/sessions/{dir:path}/materials/{name}", _api_materials_file, methods=["GET"]),
@@ -764,21 +713,20 @@ def api_routes() -> list[Route]:
             _api_materials_delete,
             methods=["DELETE"],
         ),
-        # 稿子正文（本节点）：与资料四条同一批、注册在单场状态那条**之前** ——
-        # `{dir:path}` 收得下斜杠，排在前面会把 `/transcripts` 那层路径整个吃进
-        # `{dir}` 里。
+        # 稿子正文：与资料四条同一批，注册在单场状态那条之前（`{dir:path}` 会吃进
+        # `/transcripts` 那层路径）。
         Route(
             "/api/sessions/{dir:path}/transcripts",
             _api_session_transcripts,
             methods=["GET"],
         ),
         # 单场状态（会后视图的进度区）：`{dir:path}` 是为了收下 URL 编码的绝对路径
-        # ——Windows 上的 `C:\会议\250906` 里那两段反斜杠过不了默认的路径段匹配。
-        # 注册在资料四条之后：星形路由按注册顺序匹配，资料那几条先吃自己的路径。
+        # ——Windows 路径里的反斜杠过不了默认的路径段匹配。注册在资料四条之后：
+        # 星形路由按注册顺序匹配，资料那几条先吃自己的路径。
         Route("/api/sessions/{dir:path}", _api_session_status, methods=["GET"]),
         Route("/api/dirs", _api_dirs, methods=["GET"]),
-        # 新建目录（目录选择器节点）：与 GET 同路径异方法，REST 写入口、不走动作信封
-        # ——头哨由中间件的核对表盖住（`meeting/service/app.py`）。
+        # 新建目录（目录选择器节点）：与 GET 同路径异方法，REST 写入口、不走动作信封，
+        # 头哨由中间件的核对表盖住。
         Route("/api/dirs", _api_dirs_create, methods=["POST"]),
         Route("/api/devices", _api_devices, methods=["GET"]),
     ]

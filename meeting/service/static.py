@@ -96,16 +96,11 @@ class _RootByRequest:
 
     async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
         if scope.get("type") != "http":
-            # **非 http 的一律原样转交**（`lifespan` / `websocket` 这两类）。第一版把这里
-            # 写成「非 http 且产物缺失 → 说明页分支」，而说明页分支末尾直接构造
-            # `HTMLResponse` 去应答 —— 一个 `lifespan` scope 走到那儿就是当场报错。
-            #
-            # 这一格此刻**到不了**：Starlette 的应用级 `lifespan` 由 `Router` 自己处理，
-            # 不往 `Mount` 转发（本服务也不开 websocket）。留着这道分支是为了它**日后**不
-            # 变成哑弹：`StaticFiles` 自己那第一句就是 `assert scope["type"] == "http"`，
-            # 这一格的形状是明确的 500 报错，读得出来是静态挂载接不住这个 scope。将来谁给
-            # 本服务接上一条 websocket 路由，答案也在这里 —— 静态挂载不给长连接，
-            # 交回框架报未匹配。
+            # 非 http 的一律原样转交。这一格此刻到不了（Starlette 的应用级 `lifespan`
+            # 由 Router 自己处理、不往 Mount 转发，本服务也不开 websocket），留着是为了
+            # 日后不变成哑弹：StaticFiles 第一句就是 assert scope["type"] == "http"，
+            # 这里的 500 报错读得出来是静态挂载接不住这个 scope；将来接 websocket 路由，
+            # 答案也在这里——静态挂载不给长连接。
             await self._files(scope, receive, send)
             return
         if not self._dist_path.is_dir():

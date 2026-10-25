@@ -1,19 +1,12 @@
 """工作区注册表与目录判别（工作台收编节点 e2f6166b）。
 
-口径（`docs/design-intent.md` 第 2、3、4、5 条，`docs/requirements.md` R18–R21）：
-
-  - **注册表是软件自己记的一份"我这些会"**：住在配置目录 `~/.config/meeting/` 里
-    （`workspaces.json`，与 `config.json` 两个文件各管各的 —— `config.json` 是点号扁平键名的
-    单层映射、表外键严格拒绝，注册表不能塞进去）；**按路径去重**，同一个目录只占一行；
-  - **列表从登记来**：软件不扫任何根目录、也不在启动时读任何场次目录
-    （`docs/state.md`「重启自洽」保留这条退场判据）——「最近一场」只从注册表读；
-  - **目录名就是这一场的名字**：本模块不解析目录名、不改目录名、不建目录；
-  - **判别只看会议材料的名目**，不读内容、不核对：目录里有 `session.json` 或
-    `meeting_audio_*.pcm` 两名之一即算会议材料；有音频名却没有 `session.json` 的
-    落「疑似会议目录」（照收编处理，别当杂物目录——第 3 条的兜底）；
-  - **注册表记录只增删、不反映目录内容**：每一行的"目录还在不在、里面是什么"由
-    读取方现场判（`sessions_dict()`），条目本身只记 `added_at` / `last_opened_at`
-    两个时刻。
+口径（`docs/design-intent.md` 第 2–5 条，`docs/requirements.md` R18–R21）：注册表
+`workspaces.json` 住在配置目录里（不塞进 `config.json`——那边表外键严格拒绝），
+按路径去重；列表从登记来，软件不扫任何根目录、不在启动时读任何场次目录
+（「最近一场」只从注册表读）；目录名就是这一场的名字，不解析、不改、不建目录；
+判别只看会议材料的名目（`session.json` 或 `meeting_audio_*.pcm`），不读内容不核对，
+有音频名却没有 `session.json` 的落「疑似会议目录」照收编（第 3 条的兜底）；
+注册表记录只增删、不反映目录内容——目录还在不在由读取方现场判（`sessions_dict()`）。
 """
 
 from __future__ import annotations
@@ -158,8 +151,6 @@ def _find_key(meetings: dict[str, Any], norm_key: str) -> str | None:
 class WorkspaceRegistry:
     """`workspaces.json` 的内存视图与原子写（按路径去重的最小增删查）。"""
 
-    # -- 原子写 -------------------------------------------------------------
-
     def _registry_path(self) -> str:
         return os.path.join(config_module.config_dir(), REGISTRY_FILE_NAME)
 
@@ -210,8 +201,6 @@ class WorkspaceRegistry:
                     pass
         return target
 
-    # -- 读 -----------------------------------------------------------------
-
     def entries(self) -> list[dict[str, Any]]:
         """读全部条目（形状不对的那几条**原样剔掉**，不崩整个读路径）。
 
@@ -247,8 +236,6 @@ class WorkspaceRegistry:
             entries,
             key=lambda item: (item["last_opened_at"], item["added_at"], item["dir"]),
         )
-
-    # -- 写 -----------------------------------------------------------------
 
     def open(self, value: Any, *, now: str | None = None) -> dict[str, Any]:
         """「打开目录」的一条登记：新路径加一条，老路径只更新 `last_opened_at`。

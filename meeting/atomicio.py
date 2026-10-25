@@ -1,24 +1,18 @@
-"""并发敏感的原子写：**两包共用**的一份小工具（`meeting/offline/artifacts.py` 与
-`meeting/minutes/inputs.py` 原先各留了一份逐行同构的实现，现在只留这一份）。
+"""并发敏感的原子写：两包共用（`meeting/offline/artifacts.py` 与
+`meeting/minutes/inputs.py` 原先各留一份逐行同构的实现，现在只留这一份）。
 
-写一份文本产物：先写一份**本调用独占的**临时文件，再 `os.replace` 换上去。
+写一份文本产物：先写本调用独占的临时文件，再 `os.replace` 换上去。收尾是后台线程在跑、
+界面与下游随时可能来读，半份文件比慢一点更坏。
 
-收尾是后台线程在跑，界面与下游随时可能来读；半份文件因此比慢一点更坏。
+临时文件名每个写方各不相同（`_tmp_path_for()`）：同一目标上并发两个写方（如服务侧会后链
+与另一进程 `meeting post` 的补记录）共用一个 `<名字>.tmp` 时，先落地的 `os.replace` 会把
+临时文件消费掉，另一边随即抛 `FileNotFoundError`。
 
-临时文件名**每个写方各不相同**（见 `_tmp_path_for()`）：同一个目标上并发两个写方时，
-共用一个 `<名字>.tmp` 会让先落地的 `os.replace` 把那份临时文件消费掉，另一边的
-`os.replace` 随即抛 `FileNotFoundError` —— 同一份状态文件的两个写方（比如服务侧的
-会后链与另一个进程里 `meeting post` 那一趟的补记录，都经 `write_text_atomic()` 落盘）
-正是这种并发写方。各写各的临时文件之后，两个写方都能落地，
-目标那一格任何时刻读到的都是一份完整的内容。
+Windows 上一份别人正拿在手里的文件会让 `os.replace` 抛 `PermissionError`
+（`WinError 32`）：状态文件在收尾那几十秒里被反复重写、又被界面轮询读——这一档
+与瞬时失败共用同一条短退避；重试用尽时原样抛出，由调用方如实登记。
 
-Windows 上一份**别人正拿在手里**的文件会让 `os.replace` 抛 `PermissionError`
-（`WinError 32`）：状态文件恰好在收尾那几十秒里被反复重写、又被界面轮询读。
-这一档与上面那种瞬时失败共用同一条短退避（见 `_is_transient_replace_error()`）；
-重试用尽时把异常抛出去，由调用方如实登记。
-
-纯标准库（`os` / `threading` / `time` / `uuid` / `pathlib`）：`meeting.minutes` 那一包
-从本模块取这份工具，整包的「只用标准库」不变量因此不被碰到。
+纯标准库：`meeting.minutes` 整包「只用标准库」的不变量不被碰到。
 """
 
 from __future__ import annotations
@@ -38,11 +32,10 @@ REPLACE_RETRIES = 5
 
 
 def _tmp_path_for(target: Path) -> Path:
-    """这次调用**独占**的临时文件路径（`<目标名>.<pid>.<线程 id>.<随机串>.tmp`）。
+    """这次调用独占的临时文件路径（`<目标名>.<pid>.<线程 id>.<随机串>.tmp`）。
 
-    三段都留着：pid 与线程 id 让目录列出来时一眼看得出是谁写的，随机串兜住
-    「线程 id 被复用」（线程退出之后它的 ident 会被下一条线程接着用）与「pid 被复用」
-    这两档 —— 只靠 pid + ident 的写法在长跑的收尾线程池里仍会撞名。
+    随机串兜住线程 id / pid 被复用（线程退出后 ident 会被下一条接着用）——
+    只靠 pid + ident 在长跑的收尾线程池里仍会撞名。
     """
     return target.with_name(
         f"{target.name}.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex[:8]}.tmp"
@@ -50,14 +43,11 @@ def _tmp_path_for(target: Path) -> Path:
 
 
 def _is_transient_replace_error(exc: OSError) -> bool:
-    """`os.replace` 的这次失败是不是**瞬时**那一档（退避重试还有意义）。
+    """`os.replace` 的这次失败是不是瞬时那一档（退避重试还有意义）。
 
-    收尾是后台线程在跑，界面与下游随时可能来读同一份文件，两边的窗口都很短：
-      - `PermissionError`（`WinError 32` / `5` 一档）：目标文件正被别人拿在手里；
-      - `FileNotFoundError`：目标那一格正处在「被换走 / 被删」的瞬间，或者并发写方
-        刚把文件名拿在手里 —— 这一类重试一次即可；
-      - 别的 `winerror`（`32` / `33` 那些共享与锁冲突）在部分路径上落的是裸 `OSError`。
-    其余异常（磁盘满、路径不存在、只读盘）一次都不重试，原样抛给调用方登记。
+    界面读与收尾写的窗口都很短：`PermissionError` / `FileNotFoundError`（目标正被拿着、
+    或正处在被换走 / 被删的瞬间）重试即可；部分路径上共享与锁冲突落的是裸 `OSError`
+    （winerror 32 / 33）。其余异常（磁盘满、路径不存在、只读盘）一次都不重试。
     """
     if isinstance(exc, (PermissionError, FileNotFoundError)):
         return True

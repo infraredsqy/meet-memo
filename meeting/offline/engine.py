@@ -37,12 +37,8 @@ log = logging.getLogger("meeting.offline.engine")
 
 
 class EngineShutdownInterrupted(RuntimeError):
-    """进程正在退出（`sys.is_finalizing()`），会后链的模型加载不再发起。
-
-    收尾那一段是 daemon 线程在跑，解释器退出会把进行中的 import 拦腰打断——那一档
-    报出来只会是一句不知所云的 `ImportError`。加载入口因此在触任何 import 之前先看
-    这一格，退出期就如实抛本异常：状态文件照常落 `failed`、`error` 写明「进程正在
-    退出，会后链中断，可从工作台重新发起」，下一趟从工作台重按按钮即可。
+    """进程正在退出（`sys.is_finalizing()`），会后链的模型加载不再发起：daemon 线程在
+    退出期继续首导会被拦腰打断成不知所云的 `ImportError`，如实抛本异常、状态文件落 failed。
     """
 
 #: 官方 helper 的提示词（`inference_utils.py:13-17` 的 `DEFAULT_PROMPT`，逐字）
@@ -88,41 +84,23 @@ class OfflineSegment:
 
 class OfflineEngine(Protocol):
     """离线引擎的协议：换引擎时上层（钩子、产物落盘）不动。
-
     实现只需给出 `transcribe`：吃音频文件路径，交回带 `Sxx` 原始标签的分段列表。
     """
 
     def transcribe(self, audio_path: str | Path) -> list[OfflineSegment]: ...
 
 
-# ---------------------------------------------------------------------------
-# 输出解析（自己实现，不 vendor 官方那份 transcript_parser.py）
-# ---------------------------------------------------------------------------
-
-
 def parse_transcript(text: str) -> list[OfflineSegment]:
-    """解析官方紧凑格式 `[start][Sxx]text[end]`，返回分段列表。
+    """解析官方紧凑格式 `[start][Sxx]text[end]`，返回分段列表（一次线性扫描）。
 
-    例：`[0.48][S01]大家好[2.31]` → `OfflineSegment(0.48, 2.31, "S01", "大家好")`。
-
-    做法是**一次线性扫描**（`_HEAD_RE` 找段头、`_TIME_BRACKET_RE` 找结束标签），
-    正文那一格不靠正则的贪婪/懒惰去猜。容错口径（会后整段跑，一段坏输出不该让整场作废）：
-
-      - `[结束]` 取该段正文之后**第一个严格晚于起点的**「像时间戳」的方括号：不晚于起点的
-        那些（正文里引用的更早时间）留给正文；一个都挑不出来、正文里却有这样的方括号时，
-        这一段的时间序是坏的（`[0.5][S01]正文[0.2]`），整段丢掉；
-      - **结束标签缺失**时（这一段的正文里根本没有像时间戳的方括号）照样收下这一段，
-        `end` 退回 `start`——模型少写一个 `[...]` 时不丢正文；
-      - 段头之前、两个段之间的游离文本一律丢掉：那不是转写内容；
-      - 正文为空的段丢掉。
-
-    纯文本处理，无重依赖。
+    容错口径（一段坏输出不许让整场作废）：`[结束]` 取正文之后第一个**严格晚于起点**的
+    像时间戳的方括号，一个都挑不出来而正文里却有方括号 → 时间序坏、整段丢；结束标签
+    缺失照样收下、`end` 退回 `start`（不丢正文）；段头之前的游离文本与空正文段丢掉。
     """
     out: list[OfflineSegment] = []
     cursor = 0
     while True:
-        # 用 `search` 而不是 `match`：段头之前的游离文本（模型的开场白、残留标点）
-        # 直接跳过——它不是转写内容，也不该让后面所有段都读不出来。
+        # 用 search 而不是 match：段头之前的游离文本（开场白、残留标点）直接跳过。
         head = _HEAD_RE.search(text, cursor)
         if head is None:
             break
@@ -130,9 +108,6 @@ def parse_transcript(text: str) -> list[OfflineSegment]:
         speaker = head.group("speaker")
         body_start = head.end()
 
-        # 这一段的 `[结束]`：正文之后**第一个严格晚于起点的**「像时间戳」的方括号。
-        # 不晚于起点的那些（正文里引用的更早时间、`[0.5][S01]正文[0.2]` 这种倒挂输出）
-        # 留给正文，不当边界。
         start = _to_float(start_token)
         bracket = None
         last_bracket = None
@@ -145,13 +120,11 @@ def parse_transcript(text: str) -> list[OfflineSegment]:
 
         if bracket is None:
             if last_bracket is not None:
-                # 正文里有像时间戳的方括号、却没有一个晚于起点：这一段的时间序是坏的
-                # （`[0.5][S01]正文[0.2]`），丢掉它，别把坏时间带下去。
-                # ⚠ 必须把扫描位置推过这些方括号，否则下一轮会在同一个段头上原地打转。
+                # 正文里有像时间戳的方括号、却没有一个晚于起点：时间序坏，整段丢。
+                # ⚠ 必须把扫描位置推过这些方括号，否则下一轮在同一个段头上原地打转。
                 cursor = last_bracket.end() if last_bracket is not None else len(text)
                 continue
-            # 模型漏写了 `[结束]`：正文收口在下一个段头（没有就收到文本末尾），
-            # 下一轮的扫描位置就是那个段头。
+            # 模型漏写 `[结束]`：正文收口在下一个段头（没有就收到文本末尾）。
             next_head = _HEAD_RE.search(text, body_start)
             body_end = next_head.start("head") if next_head is not None else len(text)
             cursor = next_head.start("head") if next_head is not None else len(text)
@@ -159,8 +132,7 @@ def parse_transcript(text: str) -> list[OfflineSegment]:
         else:
             body_end = bracket.start()
             end_token = bracket.group("stamp")
-            # 下一轮从**结束方括号之后**接着扫（不是从正文末尾：那会把结束标签自己
-            # 当成下一个段头的起点，于是整条链在这里断掉）。
+            # 下一轮从结束方括号之后接着扫（从正文末尾会把结束标签自己当成下一个段头）。
             cursor = bracket.end()
 
         segment = _build(start_token, speaker, text[body_start:body_end], end_token)
@@ -196,18 +168,9 @@ def _build(start_token: str, speaker: str, body: str, end_token: str | None) -> 
     return OfflineSegment(start=start, end=end, speaker=speaker, text=text)
 
 
-# ---------------------------------------------------------------------------
-# 引擎
-# ---------------------------------------------------------------------------
-
-
 class MossOfflineEngine:
-    """MOSSTD 引擎：模型**惰性加载**，第一次 `transcribe` 时才落盘。
-
-    没装模型依赖的机器上 `import meeting.offline.engine` 照样成立，`meeting web` 的
-    启动链也不会被拖慢（同 `meeting/asr/glm.py` 的纪律）。
-
-    `model` 既接受 HF 仓库 id，也接受**本地快照绝对路径**（后者是本机实测走通的那条）。
+    """MOSSTD 引擎：模型**惰性加载**，第一次 `transcribe` 时才落盘（没装模型依赖的机器
+    上 import 本模块照样成立）。`model` 接受 HF 仓库 id，也接受本地快照绝对路径。
     """
 
     def __init__(self, *, model: str, dtype: str = "bfloat16",
@@ -219,31 +182,23 @@ class MossOfflineEngine:
         self._torch_dtype = None
         self.processor = None
         self.transcriber = None
-        #: 这一台引擎**第一次加载**失手的原话（`"TypeName: 原话"`）；没失手时是 `None`。
-        #: 它同时是那道「不重试」的闸：一次加载失手之后每一趟 `transcribe()` 当场把它
-        #: 原样抛出来，不回到 `_load_models()` 再试一遍（见 `_load()`）。
+        #: 这一台引擎第一次加载失手的原话（没失手是 None）。它同时是「不重试」的闸：
+        #: 一次失手后每趟 transcribe() 当场原样抛，不回 _load_models() 再试。
         self._load_failed: str | None = None
 
     # -- 加载 ---------------------------------------------------------------
 
     @property
     def load_error(self) -> str | None:
-        """这一台引擎的加载失手了没有（失手时交回原话，否则交回 `None`）。
-
-        调用方据此把「引擎加载失败」与「引擎跑这一块时抛错」分成两档：前者是一整趟
-        都没开始，后者是某一块没成（`runner.REASON_ENGINE_LOAD_ERROR` 那一档）。
+        """加载失手时交回原话，否则 None。调用方据此把「加载失败」（一整趟没开始）与
+        「跑某一块时抛错」分成两档（runner.REASON_ENGINE_LOAD_ERROR）。
         """
         return self._load_failed
 
     def _load(self) -> None:
         """惰性加载：第一次 `transcribe()` 才落盘，加载失败**立成一档、不重试**。
-
-        `transcriber is not None` 才认「已经加载好了」——只有加载成功才会给它赋值。
-        第一次失手之后 `_load_failed` 记着原话，`_load()` 不再回到 `_load_models()`：
-        原来那版「抛出去就忘」在同一个场次目录的第二路上会把同一句加载错误再犯一次
-        （两路各一次、日志里看不出这是同一件事），重试一条真的加载不动的模型还要
-        再花一次显存与时间。**这一档只说「加载失手过一次」**：据此拒掉后续调用，
-        与「这一块跑不动」是两件事（见 `load_error`）。
+        `transcriber is not None` 才认「已加载好」。不重试的理由：同一场次目录的第二路
+        会把同一句加载错误再犯一次，重试一条真加载不动的模型还多花一次显存与时间。
         """
         if self.transcriber is not None:
             return
@@ -262,8 +217,7 @@ class MossOfflineEngine:
 
     def transcribe(self, audio_path: str | Path) -> list[OfflineSegment]:
         """跑一遍整段音频，返回引擎原始标签的分段列表（不做编号规范化）。"""
-        # `torch` 首导也进进程级锁（`meeting/importlock.py`，与 `_load_models()` 同一把；
-        # 同线程进 `_load()` 再入锁是 RLock，可重入不死锁）。只包 import 这一行。
+        # torch 首导进进程级锁（与 _load_models() 同一把；RLock 同线程可重入）。
         with heavy_imports():
             import torch
 
@@ -298,13 +252,8 @@ class MossOfflineEngine:
         return processor.tokenizer.decode(generated, skip_special_tokens=True).strip()
 
 
-# ---------------------------------------------------------------------------
-# 消息与处理器调用（公开成函数，好让用例在假件上验这一段）
-# ---------------------------------------------------------------------------
-
-
 def _decode_audio(path):
-    """解音频（`meeting/offline/audio.py` 的入口）。单列一个函数是为了给用例留接缝。"""
+    """解音频（`meeting/offline/audio.py` 的入口）；单列出来是给用例留接缝。"""
     from meeting.offline import audio as audio_module
 
     return audio_module.decode_audio(path)
@@ -312,9 +261,8 @@ def _decode_audio(path):
 
 def build_messages(waveform, *, prompt: str = DEFAULT_PROMPT) -> list[dict]:
     """构造官方形态的消息：`[{"role": "user", "content": [音频, 提示词]}]`。
-
-    音频那一项带的是**波形本身**（float32 一维 ndarray）；传路径会落到 `load_audio`
-    的 librosa 分支上（见模块头的第 1 条）。
+    音频带的是**波形本身**（float32 一维 ndarray）——传路径会落到 load_audio 的
+    librosa 分支上（见模块头第 1 条硬约束）。
     """
     return [
         {
@@ -360,11 +308,6 @@ def _autocast(torch, device, dtype):
     return torch.no_grad()
 
 
-# ---------------------------------------------------------------------------
-# 加载与设备（照官方 helper 的 `dtype_from_name` / `resolve_device`）
-# ---------------------------------------------------------------------------
-
-
 def _torch_dtype_from_name(torch, name: str):
     """精度档位名 → `torch.dtype`（认不出的名字当场报错，不静默降级）。"""
     attr = DTYPE_NAMES.get(str(name).lower())
@@ -375,9 +318,7 @@ def _torch_dtype_from_name(torch, name: str):
 
 def _resolve_device(name: str) -> str:
     """`auto` → 有 CUDA 就用 `cuda:0`，否则 `cpu`。"""
-    # `torch` 首导也进进程级锁（同一把，`meeting/importlock.py`）：构造引擎
-    # （`MossOfflineEngine.__init__`）与别的加载链并发首启时串行化。
-    # 只包 import 这一行，`is_available()` 的调用在锁外 —— 那不是首导。
+    # torch 首导进进程级锁（与别的加载链并发首启时串行化）；is_available() 在锁外。
     with heavy_imports():
         import torch
 
@@ -403,19 +344,13 @@ def _load_from_hub(loader, model: str, **kwargs):
 def _load_models(model: str, *, dtype: str, device: str):
     """加载 Processor 与模型权重，返回 `(processor, model_obj, torch_dtype)`。
 
-    重依赖全在函数体内惰性 import，且整段 import 包进 `heavy_imports()`（进程级锁，
-    `meeting/importlock.py`）：会中 ASR 与本模块都在各自的后台线程里首次 import
-    transformers，两线程同时首导同一模块时其一可能见到半初始化的模块对象
-    （260928-2 实测的 `ImportError: cannot import name AutoModelForCausalLM`），
-    进程级锁把两条首导串行化。import 前后各一条 debug 日志（带线程名），
-    下次偶现时对照日志就能定案是哪两条链撞的。
-
-    进程正在退出时（`sys.is_finalizing()`）当场抛 `EngineShutdownInterrupted`，
-    不触任何 import：daemon 线程在退出期继续首导只会被拦腰打断成一句莫名 `ImportError`。
-
-    **这是本模块唯一的模型入口**，也是测试的接缝：用例用
-    `monkeypatch.setattr(meeting.offline.engine, "_load_models", fake)` 打在
-    **同一份模块对象**上。
+    重依赖全在函数体内惰性 import，且整段 import 包进 `heavy_imports()`（进程级锁）：
+    会中 ASR 与本模块在各自后台线程首次 import transformers，两线程同时首导同一模块时
+    其一可能见到半初始化的模块对象（260928-2 实测 `ImportError: cannot import name
+    AutoModelForCausalLM`）。import 前后各一条带线程名的 debug 日志，下次偶现好定案。
+    进程退出期当场抛 `EngineShutdownInterrupted`，不触任何 import。
+    用例的接缝：`monkeypatch.setattr(meeting.offline.engine, "_load_models", fake)`
+    打在同一份模块对象上。
     """
     if sys.is_finalizing():
         raise EngineShutdownInterrupted(
@@ -444,26 +379,10 @@ def _load_models(model: str, *, dtype: str, device: str):
 
 
 def release_engine(engine: object) -> bool:
-    """**让出离线引擎占的显存**：丢掉模型引用，然后把 PyTorch 缓存还给系统。
-
-    离线链这一侧的 `release_gpu()` 对应物（会中那一份在 `meeting/backends/transcribe.py`，
-    落点是收尾第 4 步与暂停；`docs/design-intent.md` 第 21 条「跑完、打断、终止，都当场
-    结束」）。调用点在 `run_session()` 的 `finally`：跑成、失败、被打断三条出口都过它。
-
-    为什么引用计数之外还要这一步：`run_session` 返回后引擎对象随引用计数消失，权重张量
-    交还的是 **PyTorch 的缓存分配器**——它把空闲块留在自己手里等下次复用，**不会自动**
-    还给驱动。服务进程常驻，`nvidia-smi` 里那一格就一直白占；`torch.cuda.empty_cache()`
-    才把预留显存还给系统。先丢引用、后清缓存，与会中 `release_gpu()` 同一个次序。
-
-    逐条语义（照会中先例）：
-
-      - **没加载过的引擎是 no-op**：`processor` / `transcriber` 两格本来就是空（假件、
-        没跑过任何块的引擎），只尝试清缓存；
-      - **幂等**：连调几次安全，第二次起两格已经是空；
-      - **`torch` 在函数体内惰性 import**，没装 torch、没卡、`empty_cache()` 自己抛错
-        都只算「这一趟没能清缓存」，不影响引用已经丢掉。
-
-    返回 `True` = 这一次真的丢掉了引用；`False` = 本来就没有可丢的。
+    """**让出离线引擎占的显存**（会中 release_gpu() 的对应物，design-intent 第 21 条）：
+    丢掉模型引用再 `torch.cuda.empty_cache()`。引用计数之外还要这一步，是因为 PyTorch
+    缓存分配器不会自动把预留显存还给驱动，服务进程常驻就会一直白占。没加载过是 no-op、
+    幂等；torch 惰性 import，缺依赖只算「没能清缓存」。返回是否真的丢了引用。
     """
     dropped = False
     for attr in ("processor", "transcriber"):

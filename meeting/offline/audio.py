@@ -26,19 +26,10 @@ PCM_FORMAT = "s16le"
 def decode_audio(path: str | Path) -> "np.ndarray":
     """把任意容器（mp3/wav/…）解成 16k 单声道 float32 一维波形。
 
-    实现照 PyAV 手册的常规走法：`av.open` → 第一条音频流 →
-    `AudioResampler(format="s16", layout="mono", rate=SAMPLE_RATE)` → 逐帧
-    `to_ndarray().reshape(-1)` 拼接 → `/32768.0` 转 float32。
-
-    两处按 PyAV 的接口如实处理，都是解出完整波形必需的：
-
-      - `resample()` 在 PyAV 里返回**帧列表**（旧版本返回单帧），两种形态都收下；
-      - 收尾要再 `resample(None)` 把重采样器内部缓冲的尾巴冲出来，否则末尾会短一截。
-
-    本机实测：99 分 03.3 秒的那条 mp3 走这条路得到 `(95092800,)` float32。
-
-    归档 PCM（`meeting_audio_<source>_<段号>.pcm`，一段一个文件）是**无头的裸流**，开容器那一步按后缀分流
-    （见 `_open_container()`）：探测在它上面必然失败，只有显式给出格式才解得开。
+    照 PyAV 手册常规走法：`av.open` → 第一条音频流 → `AudioResampler(s16/mono/16k)`
+    → 逐帧拼接 → `/32768.0`。两处按 PyAV 接口如实处理：`resample()` 在新版返回**帧列表**
+    （`_as_frames()` 两种形态都收）；收尾要 `resample(None)` 冲出重采样器内部缓冲的尾巴，
+    否则末尾短一截。归档 PCM 是无头裸流，开容器按后缀分流（见 `_open_container()`）。
     """
     import numpy as np
     import av
@@ -66,15 +57,10 @@ def decode_audio(path: str | Path) -> "np.ndarray":
 def _open_container(av, path: str | Path):
     """按容器形态开 PyAV 输入：归档 PCM 走**显式格式**，别的容器照旧让 PyAV 探测。
 
-    归档 PCM（`meeting_audio_<source>_<段号>.pcm`，一段一个文件）是**无头的裸流**，`av.open()` 的探测在它上面
-    必然失败（实测 `InvalidDataError: Invalid data found when processing input`）——
-    这与文件好坏无关：同一个文件按下面的显式格式打开，整份样本都能解出来（`260928` 那份
-    900224 字节的归档 PCM 解出 450112 个样本，`450112 * 2 == 900224`）。形状是已知的
-    （`SAMPLE_RATE` / 单声道 / `PCM_FORMAT`），如实告诉 PyAV 就是正确的开法。
-
-    分流只认后缀，口径与 `meeting/offline/runner.py` 的静音门、切块**同一条**
-    （那条路已经在 `.pcm` 与非 `.pcm` 之间分流，这里不另立规矩）；其余容器一个字不动，
-    仍旧交给 PyAV 探测。
+    归档 PCM 是**无头裸流**，`av.open()` 的探测在它上面必然失败（实测
+    `InvalidDataError`）——这与文件好坏无关，同一个文件按显式格式打开整份样本都解得出来
+    （`260928` 的 900224 字节归档 PCM 解出 450112 样本，`450112 * 2 == 900224`）。
+    分流只认后缀，口径与 `meeting/offline/runner.py` 的静音门、切块同一条。
     """
     if Path(path).suffix.lower() == PCM_SUFFIX:
         return av.open(

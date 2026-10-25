@@ -22,19 +22,12 @@ from meeting.summary import (
 _log = logging.getLogger("meeting.service.runtime")
 
 #: 会中总结那一次模型调用专用的工作线程条数（`1987cb20` phase2 的复审裁定）。
-#:
-#: **为什么它会中总结要另起一台池**（复审 minor 6）：那次模型调用是一条同步的
-#: `urllib.request`，跑在事件循环上就把 `/api/state`、三个 SSE 通道、心跳与健康节拍
-#: 一起按住（复审实测：假客户端原地 sleep 3 秒，同一刻另一条 `GET /api/state` 等了 2.70 秒；
-#: 真端点预算默认 25 秒，按住的就是这么久）。设计章 4.5 对 `summary-running` 那一档写的是
-#: 「总结区 `正在总结刚才的 15 分钟…`；**其余照常**」—— 被按住的界面正好是那一档要避免的样子。
-#:
-#: **为什么是 2 而不是 1**：`summary.deadline_seconds`（默认 25 秒）到点时，
-#: `_summary_wait()` 放弃的是**等待**，已经交给工作线程的那次调用会照着它自己拿到的
-#: `timeout_seconds` 跑到底（契约与 `_drain_wait()` 同一口径）。弃等之后紧接着按下的第二次
-#: 总结因此需要另有一条线程可用，否则它要排在前一次调用的尾巴上、自己那 25 秒预算在队列里
-#: 白等。两条线程把「被放弃的那一次仍在飞 + 新按下的这一次要开跑」这一幕整个装下，
-#: 同时仍是一个小规模、daemon、不登记 `_threads_queues` 的池。
+#: 那次模型调用是一条同步的 `urllib.request`，跑在事件循环上会把 `/api/state`、三个 SSE
+#: 通道、心跳与健康节拍一起按住（复审实测：假客户端 sleep 3 秒，另一条 `GET /api/state`
+#: 等了 2.70 秒）——设计章 4.5 的「其余照常」要避免的正是这个。取 2 而不是 1：
+#: deadline 到点时 `_summary_wait()` 放弃的是等待、已在飞的那次照跑到底，弃等之后紧接着
+#: 按下的第二次总结需要另有一条线程可用，否则自己的预算全白等在队列里。
+
 SUMMARY_EXECUTOR_MAX_WORKERS = 2
 
 
@@ -242,7 +235,7 @@ class RuntimeSummaryMixin:
                 started_at=started_at,
             )
         except ActionError:
-            # 已经按契约分好档的那一条（`_summary_wait()` 判到墙钟预算到点）：**原样上抛**，
+            # 已按契约分好档的那一条（`_summary_wait()` 判到预算到点）：原样上抛，
             # `detail` 就是契约里那两格，不许在这里被重新包成 {error: ...}
             raise
         except Exception as exc:

@@ -1,29 +1,14 @@
 """会中总结的一次运行：切窗口 → 装配 → 调端点 → 解析 → 归三小段，带一条墙钟 deadline。
 
-## 预算：一条 deadline，换掉 V1 的「3 次 × 60 秒」
+预算是一条 deadline（默认 25 秒，`summary.deadline_seconds`），换掉 V1 的「3 次 × 60 秒」
+（最坏 180 秒）；尝试次数上限 3 只是上限——每次请求的超时取剩余预算，预算用尽就停，
+如实报出等了多久、试了几次（成功与失败两条路都填 `elapsed_seconds` / `attempts`）。
+重试只由解析失败触发（照 V1）；端点的四档错误（`timeout` / `bad_status` / `bad_json` /
+`no_content`）当场收工，不再重放同一个错误。
 
-V1 的失败重试是 3 次 × 硬编码 60 秒（最坏 180 秒），与「按一下，十到十五秒出结果」直接冲突。
-这里的口径是 spec 冻结的那一条：**一个墙钟 deadline（默认 25 秒，`summary.deadline_seconds`）**，
-尝试次数上限 3（`summary.max_attempts`）只是**上限**——每次请求的超时取「**剩余预算**」，
-预算用尽就停，并如实报出**等了多久、试了几次**（`elapsed_seconds` / `attempts` 两格
-在成功与失败两条路上都填）。
-
-重试只由**解析失败**触发（照 V1）：`parse_bullets()` 交回 `None`，或者三条固定标签一条都认不出，
-就再试一次，第 2 次起在消息末尾追加那句「上一次不是合法 JSON」的提示。端点的四档错误
-（`timeout` / `bad_status` / `bad_json` / `no_content`）**当场收工**，不再发下一次请求——
-V1 的 `_summarize()` 走的就是这一条（`_call_api()` 报错、解析那一步拿不到内容，
-再试一次只是把同一个错误重放一遍）。
-
-## 三种收场
-
-  - **成功**：`ok=True`，`bullets` / `what` / `where` / `lost` / `unlabeled` 都填上；
-  - **窗口里一行都没有**：同样 `ok=True`，三段都是空的（B15 的「空数组合法」，
-    界面给空态文案），**一个请求都不发**；
-  - **失败**：`ok=False`，`error` 是一句人话、`detail` 是 phase2 照着回 `summary_failed` 的
-    机器可读那一格（配置缺键 → `{"missing": [...]}`；其余 → `{"elapsed_seconds", "attempts"}`）。
-
-`monotonic` / `wall_clock` 都是注入点：用例塞假钟，因此 deadline 那几档不必真等十几秒，
-单条用例依旧压在 5 秒以内。
+三种收场：成功（`ok=True`，五格都填）；窗口里一行都没有（同样 `ok=True`、三段空、
+一个请求都不发，B15 的「空数组合法」）；失败（`ok=False`，`error` 人话、`detail` 机器可读）。
+`monotonic` / `wall_clock` 都是注入点，用例塞假钟，deadline 那几档不必真等。
 """
 
 from __future__ import annotations

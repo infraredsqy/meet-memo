@@ -1,46 +1,22 @@
-"""**dev 采集替身 —— 只给开发与测试用（非产品路径，默认关闭）**（phase2 §3.4 / 方案 §7.4）。
+"""**dev 采集替身 —— 只给开发与测试用（非产品路径，默认关闭）**。
 
-本模块**不是产品代码路径**：默认不启用，只有把 `capture.backend` 显式配成 `dev`
-（或 `MEETING_CAPTURE=dev`）才会被解析到。它提供两样东西：
+只有把 `capture.backend` 显式配成 `dev`（或 `MEETING_CAPTURE=dev`）才会解析到。两样东西：
 
-  1. **确定性合成电平**：种子唯一的来源 = 模块级常量 `DEV_LEVEL_SEED`（随源码一起定版）。
-     后端构造函数保持无参（phase1 的注入规则），`dev_inject` 也不引入配置键，
-     所以种子不来自调用方、不来自配置文件、不来自环境变量。
-     **同种子同电平序列**：任意两次 `DevCaptureBackend()` 实例，在相同 `DEV_LEVEL_SEED`
-     与相同帧序下产出的电平序列逐帧相同。
-  2. **故障注入**（`inject_fault()`，由 `POST /api/actions {"action": "dev_inject"}` 驱动，
-     非 dev 后端这个动作回 `action_unavailable`(404)）：三种故障 `silence` / `stall` / `lost`，
-     **到点生效、到点自动恢复**；`after_seconds` 到点故障开始、`duration_seconds` 到点故障结束，
-     `duration_seconds` 缺省取模块级常量 `DEV_FAULT_DEFAULT_SECONDS`。
-     - `silence` = 这一路电平落到 **−80 dBFS 以下并保持**（走 `alerts.py` 的静默累计）；
-     - `stall` = 两路的事实帧**整体停发**（HTTP 照常应答；开场窗口内 `recording_alive`
-        为 `null`、超窗才为 `false`，见 `docs/contract.md` 第 5 章）；
-     - `lost` = 直接来一条 `SourceLost`，并且**窗口内这一路整段断流**（一拍电平帧都不发）；
-       窗口到点后重新发帧，此后走既有的恢复路径（连着有信号达 `alert.recover_seconds` 回
-       `recording`）。这一档与 `stall` 的区别：`stall` 两路都停、一条 `SourceLost` 都不发。
-     对同一路再次注入（无论故障是否已恢复）**替换前一次注入并按新的 `after_seconds` /
-     `duration_seconds` 重新计时**。三档故障都**不动 `top_state` 的迁移路径**——能不能回
-     `recording` 由 `alerts.py` 的判定说了算。
+1. **确定性合成电平**：种子唯一来源 = `DEV_LEVEL_SEED`（随源码定版，不来自调用方、
+   配置、环境变量）；同种子同帧序逐帧相同。
+2. **故障注入**（`inject_fault()`，由 `dev_inject` 动作驱动，非 dev 后端该动作 404）：
+   `silence`（电平落 −80 dBFS 以下并保持）/ `stall`（两路事实帧**整体停发**，一条
+   `SourceLost` 都不发）/ `lost`（一条 `SourceLost` + 窗口内这一路整段断流，到点恢复走
+   既有恢复路径）。`after_seconds` 到点生效、`duration_seconds` 到点自动恢复
+   （缺省 `DEV_FAULT_DEFAULT_SECONDS`）；同一路再次注入**替换前一次**重新计时。
+   三档故障都不动 `top_state` 的迁移路径——能不能回 `recording` 由 `alerts.py` 判定。
 
-它**不写真实音频**，只在 `finalize()` / `transcode()` 里**登记**（音频字节是 `dca4539b` 的活），
-因此收尾第 1、2 步在它身上记 `skipped`（判据只看 `registry` 的解析结论与实现能力）。
+它**不写真实音频**，`finalize()` / `transcode()` 只登记（收尾第 1、2 步记 `skipped`）。
 
-## 本模块里的第二件替身：`DevTranscriberBackend`（`9e5db89c` phase2 §3.8）
-
-`transcriber.backend = dev` 按 **key 分流**解析到它（采集那一档照旧是 `DevCaptureBackend`，
-两档互不影响 —— 见 `meeting/backends/registry.py` 的 `_target_for()`）。它是一条
-**会中能出合成行**的开发替身：起一条线程，每隔 `DEV_TRANSCRIPT_INTERVAL_SECONDS` 秒经
-`line_sink` 产一行两路轮换的合成转写，不读盘、不加载模型。
-
-它同时是测试用的稳定替身：节奏由 `interval_seconds` / `initial_delay_seconds` 两个构造参数
-给定，`stop()` 之后线程收队、**一行都不再产**；发出去的每一行都是
-`meeting.backends.base.TranscriptLine`（`kind="line"`），形状与真后端逐字段同形。
-
-**首发延迟为什么不是 0**（`DEV_TRANSCRIPT_INITIAL_DELAY_SECONDS = 2.0`）：采集侧开场之后
-服务要先把两路电平喂满一屏（`ENVELOPE_BAR_COUNT` = 15 根 × dev 的 100ms 帧间隔 ≈ 1.5 秒），
-`start` 之后紧接着抓的那一版快照里 `transcript.last_line_at` 因此仍是 `null`；若首行在
-开场几十毫秒内就落地，`contract/fixtures/snapshot/recording.json` 那一格会随抓取时机抖动。
-延迟取 2.0 秒，这一格就是确定的。
+`DevTranscriberBackend`（`transcriber.backend = dev` 按 **key 分流**解析到它，两档互不影响）
+是会中能出合成行的替身：不读盘、不加载模型，`stop()` 后一行不再产。**首发延迟取 2.0 秒**：
+开场后服务先喂满两路电平（15 根 × 100ms ≈ 1.5 秒）才抓快照，首行若几十毫秒内落地，
+`contract/fixtures/snapshot/recording.json` 的 `transcript.last_line_at` 会随抓取时机抖动。
 """
 
 from __future__ import annotations

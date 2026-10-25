@@ -1,40 +1,19 @@
-"""转码独立工序 —— 逐段「PCM → MP3」的补齐与**完成判据**（全仓唯一一份）。
+"""转码独立工序——逐段「PCM → MP3」的补齐与完成判据（全仓唯一一份）。
 
-## 它是什么
+收尾落盘（flush）之后各路各段的裸 PCM 逐段转成 64k MP3。这道工序不是收尾序列里的一步：
+flush 落定自动在后台起、也可由补跑动作或命令行随时拉起；可暂停、可继续、可补跑。同一段
+判据服务三处入口（服务后台工序 / 界面补跑 / `meeting post` 的归档补齐），判据只住这一处。
 
-一场会收尾落盘（flush）之后，各路各段的裸 PCM 归档要逐段转成 64k MP3。这道工序**不再
-是收尾序列里的一步**：它由 flush 落定自动在后台起、也可由「补跑」动作或命令行随时拉起；
-可暂停、可继续、可补跑，进度与凭据都落在这一个模块管的几张盘上文件里。同一段判据服务
-三处入口（服务后台工序 / 界面补跑动作 / `meeting post` 的归档补齐），**判据只住这一处**
-——「这一段写没写完」谁说了算，别处不许抄第二份。
+完成判据是**凭据**，不是产物文件：`meeting_transcode_<source>_<NNN>.json`（临时文件 +
+`os.replace` 原子写）记下源 PCM 字节数与时长、产物 MP3 字节数；补跑 / 重启核对时凭据
+缺失或对不上账 → 那段重做。「产物文件在那儿」永远不构成完成——强杀留下的半截 MP3 没有
+凭据，一定被认出来重做。转码实现仍只有 `capture.archive` 那一份（转完保留 PCM）；MP3
+先写临时名字再原子替换，半截产物永远不坐最终路径。
 
-## 完成判据：凭据，不是产物文件
-
-「这段写完了」的**唯一凭据**是场次目录里的那份逐段凭据文件
-（`meeting_transcode_<source>_<NNN>.json`，临时文件 + `os.replace` 原子写）。凭据记下
-这一段的源 PCM 字节数与时长、产物 MP3 的字节数；补跑 / 重启核对时凭据**缺失或对不上
-账**（源 PCM 尺寸变了、产物缺了、凭据写的是空段而盘上有字节）→ 那一段**重做**。
-「产物文件在那儿」**永远不构成完成**：被强杀留下的半截 MP3 没有凭据，下一次一定被认出来
-重做，不会被当成成品跳过。
-
-逐段的转码实现仍然只有原来那一份（`meeting/capture/archive.py` 的 `convert_to_mp3` +
-`mp3_path_for`，转完保留 PCM）；本模块只管「该不该转、转完怎么记账」。MP3 先写到临时
-名字再原子替换：半截 MP3 永远不会坐在最终路径上，读方（离线链的解码、验收探针）要么
-看到旧成品、要么看到新成品，看不到半个。
-
-## 进度与状态（照离线层 `meeting_offline_status.json` / `meeting_offline_progress.jsonl`
-的先例设计，命名与格式同族）
-
-| 文件 | 内容 | 读者 |
-|---|---|---|
-| `meeting_transcode_status.json` | 工序状态：`running` / `paused` / `done` / `partial` / `failed`，外加逐路的 done / total / current_segment 与逐段行 | 下游程序 + `GET /api/sessions/{id}` 的 `transcode` 格 |
-| `meeting_transcode_progress.jsonl` | 逐段进度记录：每转完一段补一行（哪一路、第几段、几秒、耗时、结果档） | 人 + 读方 |
-| `meeting_transcode_<source>_<NNN>.json` | **逐段凭据**（完成判据本体，见上） | 本模块的核对 |
-
-**重启 / 补跑的存活**（判据读盘、不依赖进程内存）：凭据与状态文件都在场次目录里，服务
-重启后读数照旧；盘上停着一版 `running` 而本进程没有这道工序在飞，读方按 `in_process`
-分「真的在跑」与「上次被杀停在半路」——与离线层 `offline.state` / `in_process` 两格
-同一套读法。
+盘上三张文件（命名与格式照离线层先例）：`meeting_transcode_status.json`（工序状态 +
+逐路 done/total/current_segment 与逐段行）、`meeting_transcode_progress.jsonl`（逐段进度
+记录）、逐段凭据。判据读盘、不依赖进程内存：重启后读数照旧，盘上停着一版 `running` 而
+本进程没有工序在飞时读方按 `in_process` 分「真的在跑」与「上次被杀停在半路」。
 """
 
 from __future__ import annotations
@@ -213,13 +192,9 @@ def credential_matches(
 ) -> bool:
     """凭据认不认账：段身份对得上、源 PCM 尺寸没变、产物在（空段凭据则要求盘上仍空）。
 
-    这一把尺就是「这一段写完了」的**全部判据**（服务后台工序 / 界面补跑 / 命令行补齐
-    共用）：
-
-      - 凭据缺失、坏档、`source` / `segment` / `pcm` 名对不上 → 不认账（重做）；
-      - 凭据记的 `pcm_bytes` 与**当下**源 PCM 尺寸不相等 → 不认账（源变了，旧账作废）；
-      - 凭据记 `produced: true` 而产物 MP3 缺席或字节数对不上 → 不认账（半截产物重做）；
-      - 凭据记 `produced: false`（空段）而源 PCM 现在有了字节 → 不认账（重转）。
+    这一把尺就是「这一段写完了」的全部判据（三处入口共用）：凭据缺失 / 坏档 / 身份对不上
+    → 重做；`pcm_bytes` 与当下源尺寸不等 → 重做（源变了旧账作废）；`produced: true` 而产物
+    缺席或字节数对不上 → 重做（半截产物）；`produced: false` 而源现在有了字节 → 重转。
     """
     if not isinstance(credential, dict):
         return False
@@ -243,9 +218,7 @@ def segment_done(entry: TranscodeSegment) -> bool:
     return credential_matches(entry, read_credential(credential_path(entry.pcm.parent, entry.source, entry.segment)))
 
 
-# ---------------------------------------------------------------------------
 # 原子写（临时文件 + os.replace；凭据 / 状态 / 记录三层共用同一份写法）
-# ---------------------------------------------------------------------------
 
 
 def _write_atomic(path: Path | str, text: str) -> Path:
@@ -288,9 +261,7 @@ def write_credential(entry: TranscodeSegment, document: dict[str, Any]) -> Path:
     )
 
 
-# ---------------------------------------------------------------------------
 # 状态与进度记录（照离线层先例：状态整份原子替换；记录一行一段、整份重写原子替换）
-# ---------------------------------------------------------------------------
 
 
 def build_status(
@@ -382,24 +353,19 @@ def read_progress(session_dir: Path | str) -> tuple[dict[str, Any] | None, list[
     return header, rows
 
 
-# ---------------------------------------------------------------------------
 # 主流程：逐段「没凭据的转、有凭据的跳、空段记账、暂停让路」
-# ---------------------------------------------------------------------------
 
 
 def ensure_segment(
     entry: TranscodeSegment, apply_conversion: Callable[..., bool]
 ) -> dict[str, Any]:
-    """把一段归档补齐到「凭据认账」的状态，交回这一段的记账行（**唯一的逐段实现**）。
+    """把一段归档补齐到「凭据认账」的状态，交回这一段的记账行（唯一的逐段实现）。
 
-    四条路（判据全部落在凭据上，见模块头）：
-
-      - **凭据在且认账** → 跳过（不重转；`reused: true`，补跑的「接着做」落在这一条）；
-      - **空段**（PCM 装不下一个样本）→ 不产 MP3，落一份 `produced: false` 的凭据；
-      - **没凭据 / 不认账** → 转码（MP3 先写临时名字、`os.replace` 原子落位）+ 落凭据；
-      - **转码抛错** → `state: failed`，临时产物收走，**PCM 一个字节都不动**。
-
-    返回行字段：`{source, segment, state, mp3, seconds, reused, error}`。
+    四条路（判据全部落在凭据上，见模块头）：凭据在且认账 → 跳过（`reused: true`）；
+    空段（PCM 装不下一个样本）→ 不产 MP3，落一份 `produced: false` 的凭据；没凭据 /
+    不认账 → 转码（MP3 先写临时名字、原子落位）+ 落凭据；转码抛错 → `state: failed`，
+    临时产物收走，PCM 一个字节都不动。返回 `{source, segment, state, mp3, seconds,
+    reused, error}`。
     """
     row: dict[str, Any] = {
         "source": entry.source,
@@ -489,21 +455,12 @@ def run_transcode(
 ) -> dict[str, Any]:
     """把这一场没转完的段接着做完，交回摘要 dict。
 
-    逐段四条路（判据全部落在凭据上，见模块头）：
-
-      - **凭据在且认账** → 跳过（不重转；记一行 `reused` 的账）；
-      - **空段**（PCM 装不下一个样本）→ 不产 MP3，落一份 `produced: false` 的凭据；
-      - **没凭据 / 不认账** → 转码（MP3 先写临时名字、`os.replace` 原子落位）+ 落凭据；
-      - **转码抛错** → 该段记 `failed`，临时产物收走，**PCM 一个字节都不动**，别的段照转。
-
-    `pause` 是**可注入的暂停旗标**（callable，返回真 = 请求暂停）：在**每段开跑前**检查，
-    当前段照完、下一段不开 —— 命中后工序状态落 `paused`，已转完的段凭据都在；**旗标摘下
-    （callable 回假）之后同一条工序在段边界接着往下做**（继续就是摘旗），本函数只在全部
-    段做完（或失败）之后才交回执。`None` = 不暂停（命令行补齐那一档）。
-
-    工序状态与逐段记录随做随写：开跑落 `running`、进暂停落 `paused`、每段落一行账、收工
-    按终档落（`done` / `partial` / `failed`；盘上停着 `paused` = 工序还活着、在段边界等旗标，
-    进程死了那一版原地不动，重启后由补跑 / 继续接着做）。
+    逐段四条路同 `ensure_segment()`（判据全部落在凭据上）。`pause` 是可注入的暂停旗标
+    （callable，返回真 = 请求暂停）：在每段开跑前检查，当前段照完、下一段不开——命中后
+    状态落 `paused`，旗标摘下后同一条工序在段边界接着往下做，本函数只在全部段做完（或
+    失败）之后才交回执。`None` = 不暂停。工序状态与逐段记录随做随写：开跑落 `running`、
+    进暂停落 `paused`、每段落一行账、收工按终档落（盘上停着 `paused` = 工序还活着、在段
+    边界等旗标；进程死了那一版原地不动，重启后由补跑 / 继续接着做）。
     """
     apply_conversion = converter if converter is not None else default_converter()
     directory = Path(session_dir)

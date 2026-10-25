@@ -1,24 +1,12 @@
 """Starlette 应用组装、端口策略、三道防线（phase1 §3.5–§3.8；phase2 §3.12 的搬迁与接线）。
 
-本模块在 phase2 之后的落点（phase2 §3.5.1 的搬迁边界，写死）：
-
-  - `ServiceRuntime` **已经搬到 `meeting/service/runtime.py`**（类名、构造语义、
-    `startup()` / `shutdown()` / `to_dict()` 的名字与语义一字不改）；本模块只从那里导入。
-  - 工厂入口 `build_runtime()` **仍在本模块**（构造运行时对象），
-    形态与名字保持不变，`cli.py` 的调用点一个字不动。
-  - **常驻本模块的四样**（不搬走、不在别处复制一份）：
-    服务器子类 `ServiceServer`（重写 `capture_signals()`）、信号处理函数
-    `handle_shutdown_signal`、安装点 `install_shutdown_signal_handlers()`、
-    模块级 `_shutdown_target`（`ServiceRuntime.startup()` 在框架 startup 钩子里写它）。
-    phase3 只会在这个已有的处理函数**内部**加分支，并把写进 `_shutdown_target` 的对象换成
-    `trigger_shutdown`（安装点与处理函数体不变；换协程时必须自行包一层调度）。
-  - 端口策略（`bind_http_socket()` / `probe_meeting_service()`，**标准库 socket + 单调时钟
-    deadline**，运行时代码不许 import httpx）。
-  - 三道本地最低防线（Host 校验 / 写语义端点自定义头——动作信封与会议资料两条写端点 /
-    不开 CORS）与 `/api/*` 的 `no-store`。
-  - **六条路由全部只在 `meeting/service/routes.py` 注册一次**（五条 `/api/*` + `GET /debug`）：
-    本模块把路由模块挂上应用，自己不留 `/api/state` 与 `/api/heartbeat` 的最小版注册
-    （phase1 的那两条已随本次搬迁摘除）。
+`ServiceRuntime` 已搬到 `meeting/service/runtime.py`（名字与语义不改），本模块只导入；
+工厂入口 `build_runtime()` 仍在这里，`cli.py` 调用点不动。常驻本模块的四样（不搬、不在
+别处复制）：服务器子类 `ServiceServer`（重写 `capture_signals()`）、信号处理函数
+`handle_shutdown_signal`、安装点 `install_shutdown_signal_handlers()`、模块级
+`_shutdown_target`。端口策略（`bind_http_socket()` / `probe_meeting_service()`）定死
+标准库 socket + 单调钟 deadline，运行时代码不许 import httpx。三道本地防线（Host 校验 /
+写端点自定义头 / 不开 CORS）与 `/api/*` 的 `no-store`；六条路由只在 `routes.py` 注册一次。
 """
 
 from __future__ import annotations
@@ -70,9 +58,7 @@ DIST_MISSING_MESSAGE = "前端产物还没构建。跑 `npm run build`，或先�
 PROCESS_STARTED_AT = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
 
-# ---------------------------------------------------------------------------
 # 运行时错误
-# ---------------------------------------------------------------------------
 
 
 class PortUnavailableError(RuntimeError):
@@ -87,45 +73,26 @@ class PortUnavailableError(RuntimeError):
         super().__init__(message)
 
 
-# ---------------------------------------------------------------------------
-# 信号接管（常驻本模块：`handle_shutdown_signal` / `install_shutdown_signal_handlers()`
-# / `_shutdown_target` / `ServiceServer`）
-# ---------------------------------------------------------------------------
+# 信号接管（常驻本模块：handle_shutdown_signal / install_shutdown_signal_handlers /
+# _shutdown_target / ServiceServer）
 
-#: 关停目标：`(loop, trigger)`，形态由 phase1 冻结、本 Phase 不改成对形态。
-#: phase3 把 `trigger` 换成了 `make_trigger_shutdown()` 造出来的那个**同步 callable**
-#: （内部把 `ServiceRuntime.trigger_shutdown()` 排进事件循环：先跑收尾、再请求关停），
-#: **安装点（`ServiceRuntime.startup()` 里写 `_shutdown_target`）与处理函数体一律不变**。
-#:
-#: **`trigger` 仍然是可被 `call_soon_threadsafe` 直接调用的同步 callable**（本 Phase 定死的
-#: 一条）：处理函数体里那一句 `loop.call_soon_threadsafe(trigger, force)` 把 `trigger` 当
-#: **同步可调用对象**排进循环（并把它自己数出来的 `force` 当参数传过去），循环排到它就调一次、
-#: **不 await 它的返回值**。`trigger_shutdown` 本身是普通协程，**换进去时必须自行包一层调度**
-#: （`loop.create_task(trigger_shutdown(force=force))`）；直接把协程对象交给
-#: `call_soon_threadsafe` 的话，它只会被创建、**永远不被 await**，收尾步骤于是静默失效
-#: （不报错、不落 log）。
+#: 关停目标：`(loop, trigger)`，形态由 phase1 冻结。`trigger` 必须是可被
+#: `call_soon_threadsafe` 直接调用的**同步 callable**：处理函数体把它当同步对象排进循环、
+#: 不 await 返回值。`trigger_shutdown` 本身是协程，换进去前必须由 `make_trigger_shutdown()`
+#: 包一层 `loop.create_task(...)`——直接交协程对象的话它只被创建、永不被 await，
+#: 收尾步骤静默失效。
 _shutdown_target: tuple[asyncio.AbstractEventLoop, Callable[[bool], Any]] | None = None
 
 #: 服务器引用（由 `cli.py` 在运行入口之前写入；`trigger` / `request_server_shutdown()` 用它置
 #: `should_exit`）
 _runtime_server: Any = None
 
-#: 按下次数计数器（`SIGINT` 与 `SIGBREAK` **共用的那一个**处理函数内部维护；phase3 §3.5）。
-#:
-#: **自增落在 `handle_shutdown_signal` 内部**（契约 §3.5 / §4 点名「在它内部补第一次 / 第二次的
-#: 分支与按下次数计数器」）：处理函数进来就数一次，`force = 这不是第一次` 由它算出、随回调一起
-#: 排进事件循环。**这样不会制造并发缺陷**，理由写在这里：
-#:
-#:   - 计数是**信号送达这一侧**的事实（「用户按了几次」），它的唯一来源就是处理函数被调用几次；
-#:     把它放到事件循环那一侧（原来的形态）会让处理函数体与契约措辞对不上，且多出一个
-#:     只活在闭包里的第二份计数（模块级那份就成了摆设）。
-#:   - 自增在 `_shutdown_press_lock` 里做：`signal.signal` 的处理函数在**主线程**的字节码边界
-#:     被调用，Python 不可能让两个处理函数同时执行；但 `handle_shutdown_signal` 是公开名字，
-#:     测试与别的调用点可能从别的线程直接调它，加一把锁因此是**确定的**而不是碰运气
-#:     （计数只有 `+= 1` 与读取，锁里没有任何 IO、没有 join —— 处理函数仍然不阻塞、可重入）。
-#:   - 处理函数**依然只做「把 `trigger` 排进事件循环」这一件事**：不写状态、不碰盘上文件，
-#:     收尾状态 / `interrupted` / `session.json` 的写值仍全部发生在 `ServiceRuntime` 那一侧
-#:     （唯一写者不变，§8「状态别再散开」）。
+#: 按下次数计数器（SIGINT 与 SIGBREAK 共用的那一个处理函数内部维护）。
+#: 自增落在 `handle_shutdown_signal` 内部（契约点名）：计数是「信号送达这一侧」的事实，
+#: 唯一来源就是处理函数被调用几次。自增在 `_shutdown_press_lock` 里做——`signal.signal`
+#: 的处理函数在主线程字节码边界被调用、不可能并发，但它是公开名字、测试可能从别的线程调，
+#: 加锁是确定的而非碰运气（锁里没有 IO / join，处理函数仍然不阻塞、可重入）。
+#: 处理函数依然只做「把 `trigger` 排进事件循环」这一件事，状态写值全在 runtime 侧。
 _shutdown_press_count = 0
 
 #: `_shutdown_press_count` 的锁（见上面那段：计数要线程安全，但锁里不做事）
@@ -210,22 +177,15 @@ def set_server(server: Any) -> None:
 
 
 def handle_shutdown_signal(signum: int, frame: Any = None) -> None:
-    """SIGINT / SIGBREAK 共用的**那一个**处理函数：只做三件事。
+    """SIGINT / SIGBREAK 共用的那一个处理函数：只做三件事。
 
-    ① 用 `meeting` logger 往服务级主 log 落一行（模板 `收到 %s，进入关停`，信号名取
-       `signal.Signals(signum).name`，级别 `INFO`）；
-    ② 在**本函数内部**把按下次数计数器 `_shutdown_press_count` 加一，并据此算出
-       「这是不是第二次」（`force = 次数 > 1`）—— 第一次 / 第二次的分支判定入口在这里，
-       对应的收尾语义由事件循环那一侧的 `ServiceRuntime.trigger_shutdown(force=...)` 执行；
-    ③ `loop.call_soon_threadsafe(trigger)`，把 `force` 一并交给那个回调。
+    ① 用 `meeting` logger 落一行 `收到 %s，进入关停`（端到端断言绑的可观察副作用）；
+    ② 本函数内部把按下次数加一并算出 `force = 次数 > 1`（第一次 / 第二次的分支判定入口）；
+    ③ `loop.call_soon_threadsafe(trigger, force)`。
 
-    处理函数**可重入**（信号可能在收尾中再次到达）、**不阻塞**（不在里面做 IO 或 join），
-    并且**不写任何状态、不碰盘上文件**（强制打断的落盘与 `cancel()` 由 `trigger_shutdown()`
-    在事件循环里执行）。计数那一步在 `_shutdown_press_lock` 里做（只加一，没有 IO）。
-
-    `_shutdown_target` 为 `None`（服务尚未就绪）时只落上面那行 log 然后返回。
-    这一行 log 就是端到端断言所绑的可观察副作用 —— 服务器的处理函数不往 `meeting`
-    logger 写任何东西。
+    可重入（信号可能在收尾中再次到达）、不阻塞（不做 IO / join）、不写状态不碰盘上文件
+    （落盘与 `cancel()` 由 `trigger_shutdown()` 在事件循环里执行）。`_shutdown_target`
+    为 `None`（服务尚未就绪）时只落那行 log 然后返回。
     """
     try:
         signame = signal.Signals(signum).name
@@ -285,37 +245,28 @@ def check_signal_handlers() -> bool:
 
 
 class ServiceServer(uvicorn.Server):
-    """服务器子类：**屏蔽服务器自己的信号捕获**。
+    """服务器子类：屏蔽服务器自己的信号捕获。
 
     否则运行期内生效的会是服务器那个处理函数，本服务的处理函数与它那行 log 都不出现，
-    退出码也会落到服务器还原信号后的默认处置上。
-
-    phase3 只往 `handle_shutdown_signal` 里加语义，**不许恢复这里的服务器信号捕获**。
+    退出码落到服务器还原信号后的默认处置上。不许恢复这里的服务器信号捕获。
     """
 
     def capture_signals(self) -> contextlib.AbstractContextManager[None]:
         return contextlib.nullcontext()
 
 
-# ---------------------------------------------------------------------------
 # 端口策略（§3.6）
-# ---------------------------------------------------------------------------
 
 
 def probe_meeting_service(
     host: str, port: int, *, timeout: float = PROBE_TIMEOUT_SECONDS
 ) -> bool:
-    """探测 `host:port` 上是不是**本服务的另一个实例**。
+    """探测 `host:port` 上是不是本服务的另一个实例。
 
-    实现定死一种：标准库 `socket` + 单调时钟 deadline（**不用 `urllib.request`**，
-    它的 timeout 只覆盖单次 socket 操作，给不出「总超时」的保证）。
-
-    进探针时记 `deadline = monotonic() + timeout`，**先按 deadline 的剩余值把 socket
-    超时设好、再发起连接**（首次连接也必须落在 deadline 之内）；此后每次收发前都把
-    socket 超时设成剩余值，剩余值 ≤ 0 立即返回 `False`。
-
-    超时、连接被拒、状态码非 200、body 里没有 `"service": "meeting"`，**一律按「别的程序
-    占着」处理**（返回 `False`）。不猜、不重试、不换端口。
+    实现定死标准库 `socket` + 单调钟 deadline（不用 `urllib.request`——它的 timeout 只覆盖
+    单次 socket 操作，给不出「总超时」）。进探针时记 deadline，每次收发前把 socket 超时设成
+    剩余值、剩余 ≤ 0 立即返回。超时、连接被拒、非 200、body 里没有 `"service": "meeting"`，
+    一律按「别的程序占着」处理（返回 `False`）。不猜、不重试、不换端口。
     """
     deadline = time.monotonic() + float(timeout)
     request = (
@@ -419,11 +370,8 @@ def bind_http_socket(
     is_meeting = bool(probe_fn("127.0.0.1", port))
 
     if is_meeting:
-        # 这句文案的**形状**（`…（<状态>）`）是 phase1 冻结的，括号里的内容在本节点里是
-        # **字面写死的「当前空闲」**：端口探针这一处还没有取用「那一场已录多久」
-        # （`session.elapsed_seconds` 那一侧由 phase2 提供），也没有把探到的实例在录还是空着
-        # 区分开。README 第 1 块按这个事实写；**本节点不在这里承诺将来会填什么值**。
-        # 注：phase1 冻结的是这句话的形状与它在哪种占用情形下出现，取值由本节点照实现写实。
+        # 文案形状（`…（<状态>）`）是 phase1 冻结的，括号里是字面写死的「当前空闲」：
+        # 探针没有取用「那一场已录多久」，也不区分在录还是空着。
         raise PortUnavailableError(
             f"已经有一个 meeting 服务在跑：http://127.0.0.1:{port}（当前空闲）",
             occupied_by_meeting=True,
@@ -434,9 +382,7 @@ def bind_http_socket(
         occupied_by_meeting=False,
     )
 
-# ---------------------------------------------------------------------------
 # 应用组装（注册次序是硬约束：六条路由先注册，静态 / 说明页最后挂）
-# ---------------------------------------------------------------------------
 
 
 def build_runtime(config: Any = None) -> ServiceRuntime:
@@ -466,10 +412,8 @@ async def _not_found(request: Any) -> Response:
 def build_app(runtime: ServiceRuntime, config: Any = None) -> Starlette:
     """组装 Starlette 应用（六条路由 + 三道防线 + `/` 的二选一分支）。
 
-    **六条路由（五条 `/api/*` + `GET /debug`）只在 `meeting/service/routes.py` 注册一次**：
-    phase1 在装配模块里注册的 `GET /api/state` / `GET /api/heartbeat` 两条最小版已随本次
-    搬迁摘除（处理体与状态 JSON 产出函数随 `ServiceRuntime` 进了 `runtime.py`），
-    `static.py` 里那份 `/debug` 注册同样已摘除 —— 否则完整版会永远不生效。
+    六条路由只在 `meeting/service/routes.py` 注册一次；装配模块里的最小版注册与
+    `static.py` 里那份 `/debug` 注册都已摘除——否则完整版会永远不生效。
     """
     if config is None:
         config = runtime.config
@@ -513,18 +457,13 @@ def build_app(runtime: ServiceRuntime, config: Any = None) -> Starlette:
 class _LocalGuardsMiddleware:
     """三道本地最低防线 + `/api/*` 的 `Cache-Control: no-store`（纯 ASGI 中间件）。
 
-    1. **Host 校验**：非 `127.0.0.1[:port]` / `localhost[:port]` 的 `Host` 一律 **403**
+    1. Host 校验：非 `127.0.0.1[:port]` / `localhost[:port]` 的 `Host` 一律 403
        （挡 DNS rebinding）。
-    2. **写语义端点要自定义头**：带写语义的端点必须带 `X-Meeting-Service: 1`，否则
-       **403**（挡表单式简单请求——本机浏览器里的恶意页面发不出带自定义头的请求）。
-       守三处：`POST /api/actions`（还要求 `Content-Type: application/json`，
-       改状态的动作集中在这一个信封里）、**会议资料的两条写端点**（`POST
-       …/materials` 上传、`DELETE …/materials/{name}` 删除，资料节点 285bf58c）与
-       **`POST /api/dirs`**（选择器里新建目录，目录选择器节点）——正文装不进 JSON
-       动作信封或不走动作信封的写端点，头哨由中间件按端点扩到它们身上：
-       防线还是只守中间件这一处，写语义端点在 `_write_guard_path()` 一张核对表里。
-       **校验先于路由匹配生效**。
-    3. **不开 CORS**：**不发** `Access-Control-Allow-Origin`。
+    2. 写语义端点要自定义头 `X-Meeting-Service: 1`，否则 403（挡表单式简单请求——
+       本机浏览器里的恶意页面发不出带自定义头的请求）。守 `POST /api/actions`
+       （还要求 `Content-Type: application/json`）与不走动作信封的三条写端点
+       （`_write_guard_path()` 核对表）。校验先于路由匹配生效。
+    3. 不开 CORS：不发 `Access-Control-Allow-Origin`。
     """
 
     def __init__(self, app: Any) -> None:
@@ -638,14 +577,10 @@ def build_server_config(app: Any = None) -> uvicorn.Config:
 
 
 def launch_browser(url: str) -> bool:
-    """打开浏览器；失败**只警告、不阻塞**。`MEETING_NO_BROWSER=1` 关掉。
+    """打开浏览器；失败只警告、不阻塞。`MEETING_NO_BROWSER=1` 关掉。
 
-    **调用点在 `ServiceRuntime.startup()` 的尾部**（契约 §1.1 / §3.5 第 5 条）：此刻运行时
-    对象已就绪、`service.url` 已有值、监听 socket 已在 `listen()` 上，第 4 步那个 socket 的
-    backlog 会接住这个连接。这一步排在服务器运行入口之后，**不进 `cli.py` 的同步序列**。
-    `url` 由 `ServiceRuntime.url` 从监听 socket 的 `getsockname()` 读回值产生。
-
-    返回值只作观测用（`True` = 真的开上了）；**调用方一律不看返回值决定是否继续**。
+    调用点在 `ServiceRuntime.startup()` 尾部：此刻监听 socket 已在 `listen()` 上，
+    backlog 会接住这个连接。返回值只作观测用，调用方不看它决定是否继续。
     """
     if os.environ.get(config_module.ENV_NO_BROWSER, "").strip() == "1":
         _log.info("MEETING_NO_BROWSER=1，跳过打开浏览器")

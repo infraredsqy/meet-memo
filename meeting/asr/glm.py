@@ -1,39 +1,12 @@
 """GLM-ASR 的加载与**单段识别** —— 四层防护的挂载点。
 
-搬自 V1 `mnotes_core/recorder.py`（原件见 V1 仓库
-`C:/Users/<user>/tools/meeting-notes/mnotes_core/recorder.py`；照 `docs/v1-lineage.md`
-第 11 章「原 1.0 第 5 条」，搬完那份工作副本就删掉了）：
+只交付「一串 int16 样本进去，一段文本或一个失败原因出来」：不碰线程、不碰队列、不碰服务
+（V1 的 `MeetingRecorder` 把采集与识别挤在一个类里，V2 只搬识别那一半——采集在
+`meeting/capture/`；搬移出处与改动清单见 `docs/v1-lineage.md` 第 11 章「原 1.0 第 5 条」）。
 
-  - `_NO_REPEAT_NGRAM_SUPPORTED` `:27-29`      → 降级记忆（四层防护的第 1 层）
-  - `TranscribeResult` `:32-44`                → `TranscribeResult`
-  - `MODEL_ID` `:175`                          → `MODEL_ID`
-  - `_is_noise_segment` `:252-273`             → `_is_noise_segment`（ASR 前置噪声预筛）
-  - `_load_from_hub` `:276-295`                → `_load_from_hub`（离线优先，只捕 `OSError`）
-  - `_load_transcriber` `:321-341`             → `_load_models`（两层 `_load_from_hub`）
-  - `transcribe_segment` `:495-598`（核心 `:512-597`） → `GlmAsrTranscriber.transcribe_segment`
-
-只交付「一串 int16 样本进去，一段文本或一个失败原因出来」：本模块**不碰线程、不碰队列、不碰服务**。
-V1 的 `MeetingRecorder` 把采集与识别挤在一个类里（`:298-342` 是识别那一半，`:343-493` 是设备与
-sounddevice / soundcard 那一半），V2 只搬识别那一半 —— 采集在 `meeting/capture/`，两件事不再同住
-一个对象（本单元不搬 `recorder.py:371-493`，见 `phase1/task.md` 的「边界」一节）。
-
-**模块顶层只有标准库与包内 import**（新包的硬约束，`phase1/task.md` 的「必须保住的形状」第 5 条）：
-`torch` / `transformers` / `numpy` / `webrtcvad` 一律在函数体内惰性 import，否则
-`transcriber.backend = auto` 在没装模型依赖的机器上会解析失败，`meeting web` 的启动链也会被拖慢。
-
-搬过来时动了这几处，其余逐字照搬（出处注释逐段标出）：
-
-  1. logger 名：V1 的 `logging.getLogger("meeting")` → `"meeting.asr.glm"`；
-  2. `tune = load_asr_tunables()`（V1 `:516-518`、`:591-592`）→ `meeting.config` 的
-     `asr.timeout_seconds` / `asr.max_new_tokens` / `asr.repeat_max_unit` /
-     `asr.repeat_min_coverage` —— 同一批热读键、默认值逐字相同（20 / 400 / 40 / 0.5）；
-  3. `SAMPLE_RATE`（V1 从 `mnotes_core/config.py` import）→ 本模块的模块级常量（值同为 16000），
-     好让 `_is_noise_segment` 的函数体逐字照搬；
-  4. `_load_from_hub` 去掉 V1 的 `console=None` 形参与那两行 Rich 进度打印（`:293-294`）——
-     V2 没有终端界面（`docs/v1-lineage.md` 的 F6：Rich 终端配色不搬）；
-  5. 重依赖改为函数体内惰性 import（V1 是模块顶层 `import numpy as np` / `import torch`）；
-  6. `transcribe_segment` 的形参注解去掉了 V1 的 `np.ndarray`：注解在
-     `from __future__ import annotations` 下虽然不求值，留着它等于把一个未定义的名字写进签名。
+**模块顶层只有标准库与包内 import**（硬约束）：`torch` / `transformers` / `numpy` /
+`webrtcvad` 一律在函数体内惰性 import，否则 `transcriber.backend = auto` 在没装模型依赖的
+机器上会解析失败，`meeting web` 的启动链也会被拖慢。
 """
 
 from __future__ import annotations
@@ -135,19 +108,15 @@ def _load_from_hub(loader, **kwargs):
 def _load_models():
     """加载 Processor 与模型权重，返回 `(processor, transcriber)`。
 
-    重依赖全在函数体内惰性 import，且整段 import 包进 `heavy_imports()`（进程级锁，
-    `meeting/importlock.py`）：本模块（会中链）与 `meeting/offline/engine.py`（会后链）
-    在各自的后台线程里首次 import transformers，两线程同时首导同一模块时其一可能见到
-    半初始化的模块对象（260928-2 实测），进程级锁把两条首导串行化。进程正在退出时
-    （`sys.is_finalizing()`）当场抛 `RuntimeError`（本模块加载失败本就以裸异常上抛，
-    由调用链登记），不触任何 import。
+    重依赖全在函数体内惰性 import，整段 import 包进 `heavy_imports()`（进程级锁）：
+    会中链与 `meeting/offline/engine.py`（会后链）在各自后台线程首次 import transformers，
+    两线程同时首导同一模块时其一可能见到半初始化的模块对象（260928-2 实测）。
+    进程退出期（`sys.is_finalizing()`）当场抛 `RuntimeError`，不触任何 import。
 
-    **这是本模块唯一的模型入口**，也是测试的接缝：
-    用例用 `monkeypatch.setattr(meeting.asr.glm, "_load_models", fake)` 打在**同一份模块对象**上
-    —— 别在别处写 `from meeting.asr.glm import _load_models` 那种绑到另一个模块对象的引用，
-    那正是 V1 那个「测试一边通过一边什么都没验」的坑（`docs/v1-lineage.md` 的 C9 / E9）。
-
-    处理器无额外 kwargs；模型 `dtype=torch.bfloat16, device_map="auto"`。
+    测试的接缝：`monkeypatch.setattr(meeting.asr.glm, "_load_models", fake)` 打在
+    **同一份模块对象**上——别写 `from meeting.asr.glm import _load_models` 那种绑到
+    另一个模块对象的引用，那正是 V1 那个「测试一边通过一边什么都没验」的坑
+    （`docs/v1-lineage.md` 的 C9 / E9）。
     """
     if sys.is_finalizing():
         raise RuntimeError("进程正在退出，会中 ASR 模型加载中断；重新开会话时会再次加载")
@@ -158,8 +127,7 @@ def _load_models():
     log.debug("会中 ASR：torch/transformers import 完成（thread=%s）", threading.current_thread().name)
 
     log.info("loading GLM-ASR model...")
-    # 加载耗时：第二场会（或 `release_gpu()` 之后重载）到底要等多久，今天只有这一条读数。
-    # 形状与 `meeting/backends/transcribe.py` 的释放日志同源（两处都写秒）。
+    # 加载耗时读数：第二场会（或 release_gpu() 之后重载）要等多久只有这一条读数。
     started = time.monotonic()
     processor = _load_from_hub(AutoProcessor)
     transcriber = _load_from_hub(
@@ -204,9 +172,7 @@ class GlmAsrTranscriber:
         """
         import numpy as np
 
-        # `torch` 首导也进进程级锁（`meeting/importlock.py`，与 `_load_models()`、会后链
-        # 同一把）：冷进程两条链并发首启时，这里的 `import torch` 与某条加载链的首导
-        # 可能同时进行。只包 import 这一行，`_load_models()` 同线程二次进入（RLock 可重入）。
+        # torch 首导也进进程级锁（与 _load_models()、会后链同一把；RLock 同线程可重入）。
         with heavy_imports():
             import torch
 
@@ -217,8 +183,7 @@ class GlmAsrTranscriber:
             log.info("dropped noise segment")
             return TranscribeResult(text="", ok=True, reason="noise")
 
-        # 改自 V1 `:516-518` 的 `tune = load_asr_tunables()`：V1 每段重读 `config.json` 的
-        # `asr` 段；V2 走 `meeting.config` 的同一批 `asr.*` 热读键（默认值逐字相同）。
+        # 改自 V1 `:516-518`：V1 每段重读 config.json；V2 走 meeting.config 同一批 asr.* 热读键。
         timeout_s = float(config_module.get("asr.timeout_seconds"))
         max_new = int(config_module.get("asr.max_new_tokens"))
 
@@ -232,9 +197,8 @@ class GlmAsrTranscriber:
 
         from transformers import StoppingCriteriaList
         deadline = _DeadlineStop(timeout_s)
-        # 超时同时挂两处（StoppingCriteria + logits_processor）：实测本模型
-        # （无自定义 generate，走 GenerationMixin）两个钩子都是每 token 调用一次，
-        # 双保险可防任一钩子在别的 transformers 版本里失效；再加总耗时兜底判定。
+        # 超时同时挂两处（StoppingCriteria + logits_processor）：实测本模型两个钩子都是
+        # 每 token 调用一次，双保险防任一钩子在别的 transformers 版本里失效。
         guard = _LoopGuard(eos_token_id=pad_id, timeout_seconds=timeout_s)
 
         kwargs = dict(
@@ -255,7 +219,7 @@ class GlmAsrTranscriber:
                 outputs = self.transcriber.generate(**inputs, **kwargs)
         except (TypeError, ValueError) as e:
             # 变体模型的自定义 generate 可能不认 no_repeat_ngram_size：只回退这一次，
-            # 之后不再尝试（否则每段都白跑一遍生成）
+            # 之后不再尝试（否则每段都白跑一遍生成）。
             if "no_repeat_ngram_size" in kwargs:
                 log.warning("no_repeat_ngram_size 不被支持(%s)，本次会议不再使用", e)
                 _NO_REPEAT_NGRAM_SUPPORTED = False
@@ -276,9 +240,9 @@ class GlmAsrTranscriber:
             skip_special_tokens=True,
         )[0].strip()
 
-        # 硬超时优先判定：掐掉的段一律判失败，绝不落盘半截垃圾。
-        # 两道判据：StoppingCriteria 标记，或实际耗时已越过预算（兜底——即便
-        # 某个版本的 generate 两个钩子都没生效，也不会把超时段当成成功）。
+        # 硬超时优先判定：掐掉的段一律判失败，绝不落盘半截垃圾。两道判据：
+        # StoppingCriteria 标记，或实际耗时已越过预算（兜底——即便某版本的 generate
+        # 两个钩子都没生效，也不会把超时段当成成功）。
         over_budget = duration > timeout_s + 1.0
         if deadline.timed_out or guard.timed_out or over_budget:
             log.warning(
@@ -293,8 +257,7 @@ class GlmAsrTranscriber:
             return TranscribeResult(text="", ok=False, reason="loop",
                                     duration=duration, tokens=n_new)
 
-        # 改自 V1 `:591-592` 的 `tune["repeat_max_unit"]` / `tune["repeat_min_coverage"]`，
-        # 理由同上（同一批热读键）。
+        # 改自 V1 `:591-592`（同一批 asr.* 热读键）。
         stripped = _strip_repeat_loops(
             text,
             max_unit=config_module.get("asr.repeat_max_unit"),

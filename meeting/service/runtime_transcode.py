@@ -41,7 +41,7 @@ _log = logging.getLogger("meeting.service.runtime")
 class RuntimeTranscodeMixin:
     """转码独立工序 mixin。"""
 
-    # -- (kind, dir) 槽位的公共读法（post 与 transcode 两个 mixin 共用）------
+    # (kind, dir) 槽位的公共读法（post 与 transcode 两个 mixin 共用）
 
     def _post_job_slot(self, kind: str, target: str) -> PostJob | None:
         """`(kind, dir)` 那一格**还活着**的登记（死了 / 没有 → `None`）。"""
@@ -81,7 +81,7 @@ class RuntimeTranscodeMixin:
             )
         return flying
 
-    # -- flush 落定之后的自动起 ---------------------------------------------
+    # flush 落定之后的自动起
 
     def _start_transcode_after_flush(self) -> None:
         """收尾 `flush` 落定：这一场的转码在后台自动起（不占收尾预算、不挡任何人）。
@@ -107,7 +107,7 @@ class RuntimeTranscodeMixin:
         except Exception:  # pragma: no cover - 起不来不拖收尾
             _log.exception("转码工序自动起失败（不影响收尾；可随时补跑）：%s", target)
 
-    # -- 线程体 -------------------------------------------------------------
+    # 线程体
 
     def _run_transcode_job(self, target: str, pause: threading.Event | None = None) -> None:
         """转码工序的线程体：`run_transcode()` 跑完即收工（判据与读数都在盘上）。
@@ -130,7 +130,7 @@ class RuntimeTranscodeMixin:
             summary.get("segments_total"),
         )
 
-    # -- 三只动作 -------------------------------------------------------------
+    # 三只动作
 
     def _transcode_target(self, args: dict[str, Any] | None) -> str:
         """三只动作跑哪一场：给了 `dir` 按它（过注册表 / 目录判读）；省略时收尾刚落定那一场。
@@ -206,7 +206,7 @@ class RuntimeTranscodeMixin:
         # `running` 都从这里续）
         return self.transcode_run({"dir": wanted} if wanted is not None else None)
 
-    # -- 指向解析与读数 -------------------------------------------------------
+    # 指向解析与读数
 
     def _resolve_transcode_job(self, args: dict[str, Any] | None, *, what: str) -> PostJob:
         """暂停 / 继续指向的工序：`dir` 点名或恰一道在跑时省略；指不到就如实拒。"""

@@ -1,32 +1,15 @@
-"""转写后端 —— 把 `meeting/asr/pipeline.py` 那条流水线包成协议实现（`9e5db89c` phase2 §7）。
+"""转写后端 —— 把 `meeting/asr/pipeline.py` 那条流水线包成协议实现。
 
-约定导入路径就是这个模块的 `TranscriberBackend`（`meeting/backends/registry.py` 的
-`DEFAULT_PATHS["transcriber.backend"]`）：`transcriber.backend` 取默认值 `auto` 时解析到的就是它。
-构造函数**不许有必填参数**（registry 无参实例化），运行期依赖一律走 `bind()`。
+本模块即 `transcriber.backend` 默认值 `auto` 解析到的实现；构造函数**不许有必填参数**
+（registry 无参实例化），运行期依赖走 `bind()`。**没装模型依赖的机器上必须 import 成功**：
+顶层只有标准库与轻模块，重依赖全在函数体内惰性 import。
 
-**这个模块在没装模型依赖的机器上必须 import 成功**（`phase2/task.md` §7 的最后一条）：
-模块顶层只有标准库、包内模块与 `meeting.*` 的**轻**模块；`numpy` / `webrtcvad` /
-`torch` / `transformers` 全在函数体内惰性 import（`meeting/asr/pipeline.py` 与本模块
-各自的函数体），因此 `meeting web` 的启动链一行重依赖都不碰。
-
-协议成员的落点：
-
-  - `bind(line_sink, *, config)`：记下出口与只读配置视图（runtime 在 `start()` 之前调）；
-  - `start(mode, session_dir)`：起流水线（**起步失败不阻塞录音** —— 转写坏了可以重跑，R1 的立场）；
-  - `stop()`：停转写（关读线程 + 在收尾预算内把队列里剩下的段尽量做完）；
-  - `release_gpu()`：把会中模型占的显存让出去（收尾第 4 步与暂停动作调；**不在协议里**，
-    只是这个具体后端多出来的一个方法，调用点用 `getattr` 防御式取它）；
-  - `acquire_gpu()`：把会中模型**重新拉起来**（暂停之后继续时调；同样**不在协议里**，
-    同样走防御式取法）。它与 `release_gpu()` 是同一件事的两半 —— 「要用的时候才拉起来，
-    用完立刻关掉」（`docs/design-intent.md` 第 21 条：暂停、打断、终止、跑完都当场结束）；
-  - `health()`：`normal` / `behind` / `stopped` 三态（判定依据逐条写在下面对应的分支上）；
-  - `backlog_depth()`：队列里还没处理的段数；
-  - `segment_timeout()`：配置里的 `asr.timeout_seconds`（默认 20.0）。
-
-**模型加载那一环**走 phase1 的私有测试接缝 `meeting.asr.glm._load_models`（`glm.py:130-151`）：
-本节通过**模块对象**取用它（`glm_module.GlmAsrTranscriber()` / `_is_noise_segment`），
-别在别处写 `from meeting.asr.glm import _load_models` 那种绑到另一个模块对象的引用 ——
-那正是 V1 那个「测试一边通过一边什么都没验」的坑（`docs/v1-lineage.md` 的 C9 / E9）。
+协议成员：`bind` / `start`（起步失败不阻塞录音，R1）/ `stop` / `health`（三态）/
+`backlog_depth` / `segment_timeout`；`release_gpu` / `acquire_gpu` 不在协议里，是这个后端
+多出来的方法，调用点用 `getattr` 防御式取它——「要用才拉起来，用完立刻关掉」
+（design-intent 第 21 条）。模型加载走 `meeting.asr.glm._load_models` 私有接缝：经**模块对象**
+取用，别写 `from meeting.asr.glm import _load_models` 那种绑到另一个模块对象的引用
+（V1 的「测试一边通过一边什么都没验」坑，`docs/v1-lineage.md` 的 C9 / E9）。
 """
 
 from __future__ import annotations
@@ -47,38 +30,18 @@ _log = logging.getLogger("meeting.backends.transcribe")
 #: `asr.timeout_seconds` 读不出来时的缺省（与 `meeting/config.py` 的默认值、与 phase1 的口径一致）
 DEFAULT_SEGMENT_TIMEOUT_SECONDS = 20.0
 
-#: `stop()` 那条收尾线程 join 的额外余量（秒），加在收尾预算之上。
-#:
-#: 余量要盖住**内层最坏耗时**，不是只留 1 秒（复审 m5 修的就是这一格）。内层
-#: `TranscriptionPipeline.stop()` 的最坏耗时是：
-#:
-#:   ``读线程收尾上界 × 路数（_join_readers 逐路等 READER_JOIN_TIMEOUT_SECONDS）
-#:     + VAD 尾段送出 + worker.join(budget + DRAIN_JOIN_SLACK_SECONDS)``
-#:
-#: 后半截与外层同源（同一个 `budget`），前半截**完全是外层的额外开销**：`_join_readers()`
-#: 每路最多 2.0 秒，两路就是 4 秒。外层若只留 1 秒，最坏档（worker 在预算内没做完）会
-#: 先超时 —— 打出一条**假的**「收尾线程没跑完」warning，并且在流水线还在收尾时就返回
-#: （与 `stop()` docstring 的「返回即收队完成」不符）。
-#: 1 秒那一份照旧留着：它是「预算耗完那一刻 worker 手上还没做完的那一段」（与流水线里
-#: `worker.join(timeout=budget + DRAIN_JOIN_SLACK_SECONDS)` 同一条口径），
-#: 让「预算内该做完的都做完了」这件事落到 log 上，而不是让本方法先一步返回、
-#: 把 `pipeline.stop()` 那句「还有 N 段没做完」的如实登记打断在进程退出里。
+#: `stop()` 那条收尾线程 join 的额外余量（秒），加在收尾预算之上。余量要盖住**内层最坏耗时**：
+#: 内层 `pipeline.stop()` 在 worker join 之前还要逐路 join 读线程（每路最多
+#: `READER_JOIN_TIMEOUT_SECONDS`，两路 4 秒）——外层只留 1 秒的话最坏档会先超时，打出一条
+#: **假的**「收尾线程没跑完」并在流水线还在收尾时就返回（复审 m5）。那 1 秒照旧留着：
+#: 它是「预算耗完那一刻 worker 手上还没做完的那一段」（复审 m2 同口径）。
 DRAIN_STOP_SLACK_SECONDS = 1.0
 
-#: `release_gpu()` 等在飞推理收干净的上界（秒）。
-#:
-#: **为什么是这个量级**：会中模型由进程级单例长期持有，一场录完就该让出显存 —— 收尾第 4 步
-#: （`meeting/service/runtime.py` 的 `_drain_post()`）做的正是这件事（R26 之后这一步不再
-#: 拉起任何会后动作，释放是它仅剩的活），依据是 `docs/design-intent.md` 第 21 条
-#: 「用完即关」：暂停、打断、终止、跑完都当场结束，显存不占到场次之外。
-#:
-#: 丢掉引用之前要等在飞的推理收干净（否则 worker 那一帧还握着旧模型，而下一段会经
-#: `_transcriber_or_create()` 再造一份 —— 两份 GLM 同时在卡上，每份约 4.3 GiB 权重）。
-#: **等的上界只能是个小值**：第 4 步那一次调用受收尾那一条 deadline 约束，吃掉它的预算会让
-#: `post` 从 `done` 翻成 `failed`、`has_failed_step` 再把整场落 `failed`（`meeting/state.py`）。
-#: `20` 秒（单段超时缺省）与自适应收尾预算（`drain_join_budget()`：下限 35 秒、最坏 305 秒）
-#: 都会顶穿那条 deadline，因此都不用。取 `5.0` 秒：一份**已经加载好**的模型的单段推理在正常
-#: 盘面上是 1–3 秒量级，5 秒盖得住；真卡住时到点就丢引用 + 记一条 log（不抛、不静默）。
+#: `release_gpu()` 等在飞推理收干净的上界（秒）。会中模型由进程级单例长期持有，录完就该让出
+#: 显存（收尾第 4 步，design-intent 第 21 条「用完即关」）。丢引用前要等在飞的推理收干净，
+#: 否则下一段会再造一份模型——两份 GLM 同时在卡上（每份约 4.3 GiB 权重）。**上界只能是小值**：
+#: 收尾那一步受 deadline 约束，20 秒（单段超时）与自适应收尾预算都会顶穿它、把 `post` 翻成
+#: `failed`。已加载模型的单段推理正常 1–3 秒，5 秒盖得住；真卡住就到点丢引用 + 记 log。
 RELEASE_GPU_WAIT_SECONDS = 5.0
 
 #: 完成判定点名的那条实现路径（只在文档与用例里引用，不在运行时使用）
@@ -196,27 +159,15 @@ class TranscriberBackend:
         )
 
     def _retire_previous(self) -> None:
-        """把上一场的流水线**同步**收干净（幂等；没有上一场时什么都不做）。
+        """把上一场的流水线**同步**收干净（幂等；没有上一场什么都不做）。
 
-        收尾走的是 `pipeline.stop()` 本身（关读线程 + 在收尾预算内做完队列里剩下的段），
-        它是同步的：返回即收队完成，不会留下跨着下一场继续轮询的读线程。
-
-        **这是同步收尾的第二个调用点，触发时机与上界都与 `stop()` 不同**（复审 m3）：
-
-          - **触发时机**：`start()` 的第一句。服务里「开始录音」那一场起来时，上一场若还没被
-            收走（`stop` 动作只收采集、不碰转写；生产路径上 `stop()` 只有 `shutdown()` 一个
-            调用点），这里就会**在调用方线程上**把上一场收掉 —— 而调用方正是事件循环上的
-            `ServiceRuntime.start_session()`（`meeting/service/runtime.py`）。于是「再开一场」
-            这个动作在上一场收尾跑完之前不应答（`/api/heartbeat`、SSE、动作端点同样被占住）；
-          - **上界**：这里**没有外层上界**，等的就是 `pipeline.stop()` 自己那笔预算
-            （`compute_drain_budget(积压 + 每路最多一段尾段, 单段超时)`，下限 30 秒、封顶
-            300 秒）+ 读线程收尾上界 × 路数（每路 `READER_JOIN_TIMEOUT_SECONDS`，最坏
-            300 + 4 = 304 秒）。因此这一档与 `stop()` 同一量级、同一取舍，差的只是 `stop()`
-            额外那两项余量（`DRAIN_STOP_SLACK_SECONDS` 与按积压量预留的收尾余量）。
-
-        为什么不异步化：换场必须**先**把上一场收干净（否则上一场的读线程会继续轮询上一场的
-        归档路径，同一进程里连开两场时那是实打实的资源泄漏），与 `stop()` 同源的取舍。
-        完整口径写在 `docs/service.md` 第 2 章。
+        复审 m3：这是同步收尾的第二个调用点（`start()` 第一句）。上一场若没被收走
+        （`stop` 动作只收采集、生产路径上 `stop()` 只有 `shutdown()` 一个调用点），
+        这里就在**调用方线程**（事件循环上的 `start_session()`）上把上一场收掉——
+        「再开一场」在收尾跑完之前不应答。上界 = `pipeline.stop()` 自己那笔预算
+        （下限 30、封顶 300 秒）+ 读线程收尾上界 × 路数（最坏约 304 秒），与 `stop()`
+        同一量级同一取舍。不异步化：换场必须**先**收干净，否则上一场读线程继续轮询
+        上一场的归档路径，连开两场是实打实的资源泄漏。完整口径见 `docs/service.md` 第 2 章。
         """
         previous, self._pipeline = self._pipeline, None
         self._thread = None
@@ -236,29 +187,18 @@ class TranscriberBackend:
     def stop(self, *, drain_join_seconds: float | None = None) -> None:
         """停转写：关读线程 + 在收尾预算内把队列里剩下的段尽量做完（**幂等**）。
 
-        **`stop()` 是同步等待**（复审 m4 定的口径）：流水线的收尾是同步 IO + `join()`，
-        本方法把它放进一条 daemon 线程（`asr-stop`）之后就**在调用方线程里 `join` 它**。
-        调用方正是事件循环上的 `ServiceRuntime.shutdown()`，因此**关停期间事件循环确实
-        被占住**：这一段里 `/api/heartbeat`、SSE、动作端点都不应答，进程也退不出去。
-        这是有意的取舍 —— 此刻服务正在离场、录音已经收尾，等的就是「把队列里剩下的段
-        尽量做完」（短一点会丢临时稿的尾巴，异步化则要改整个关停编排）。
-        `Ctrl+C` 之后可能要等一会儿才退出的完整口径（含那个上界的算法）写在
+        **同步等待**（复审 m4 定的口径）：收尾放一条 daemon 线程（`asr-stop`），本方法
+        在调用方线程里 `join` 它——关停期间事件循环确实被占住（心跳、SSE、动作端点都不
+        应答）。这是有意的取舍：此刻服务正在离场，短一点会丢临时稿尾巴。完整口径见
         `docs/service.md` 第 2 章。
 
-        **本方法等的上界** = 流水线的收尾预算
-        （默认 `compute_drain_budget(backlog_depth() + 每路最多一段尾段, segment_timeout())`，
-        下限 30 秒、封顶 300 秒）+ `DRAIN_STOP_SLACK_SECONDS` + 读线程收尾上界 × 路数，
-        由 `drain_join_budget()` 算。空闲态的下限因此是 `30 + 1 + 4 = 35` 秒
-        （积压 0 时那笔预算就是下限 30 秒；**尾段那一项已经含在预算里**：它按「积压 + 每路
-        一段」算，复审 m2）、最坏档是 301 + 4 = **305 秒**（两路都在读；`mode=mic` 时读线程
-        那一项是一路）。这一条是必须的：本方法是 `transcriber_backend.stop()` 在**生产路径
-        上的唯一调用点**（`runtime.shutdown()` 那一条），写死一个小常量（曾经是 5 秒）就等于
-        把流水线里「在 30–300 秒的预算内尽量做完」与那句「还有 N 段没做完」的如实登记
-        **在真关停里打成空头支票** —— 预算还没花完，进程就退了。
+        本方法等的上界由 `drain_join_budget()` 算：流水线收尾预算（下限 30、封顶 300，
+        **尾段那一项已含在预算里**，复审 m2）+ `DRAIN_STOP_SLACK_SECONDS` + 读线程收尾上界
+        × 路数。空闲态下限 35 秒、最坏 305 秒。这一条必须存在：本方法是生产路径上
+        `transcriber_backend.stop()` 的唯一调用点，写死小常量等于把「预算内尽量做完」
+        打成空头支票——预算没花完进程就退了。
 
-        `drain_join_seconds` 是**显式的更小上界**（给「必须马上退」的调用方用，例如测试里
-        要钉「上界确实来自这儿、不是写死的常量」的那一幕）：给了就以它为准，
-        不给就走上面那条自适应预算 —— **默认值必须让积压能排空**。
+        `drain_join_seconds` 是显式的更小上界（给「必须马上退」的调用方用）。
         """
         if self._stopped:
             return
@@ -304,41 +244,19 @@ class TranscriberBackend:
     def release_gpu(self) -> bool:
         """**让出会中模型占的显存**：等干净在飞的推理，丢掉模型引用，然后清一次缓存。
 
-        生产调用点有两处：**收尾第 4 步**（`meeting/service/runtime.py` 的 `_drain_post()`）——
-        R26 之后这一步不再拉起任何会后动作，把会中模型让出显存是它仅剩的活
-        （`docs/design-intent.md` 第 21 条「用完即关」：录完了模型就当场退出显卡，
-        与之后跑不跑会后无关），这一步受收尾那一条 deadline 约束（见下面「等的上界」）；
-        以及**暂停那个动作**（同一文件的 `pause_session()`，`10770b41` 起：暂停让模型当场退出
-        显存，`resume` 由配对的 `acquire_gpu()` 把它拉回来）。暂停那一处经
-        `_submit_model_lifecycle()` 提交到后台的单线程执行器，不等它做完才回应答。
+        生产调用点：收尾第 4 步（R26 之后它仅剩的活）与暂停动作（`10770b41` 起，
+        `resume` 由配对的 `acquire_gpu()` 拉回；那一处经后台单线程执行器提交，不等做完）。
 
-        逐条语义：
+        - **没加载过就 no-op**（连 torch 都不 import）：`meeting post` 那个独立入口的进程里
+          根本没有会中模型，释放必须安静地什么都不做；
+        - **幂等**：第二次起返回 `False`；不碰 `_stopped`、不改 `health()`——那是「转写这一档
+          现在产不产出」的域，与「模型占不占显存」无关，混着会把收尾期间健康度推成 `stopped`；
+        - **释放顺序**：先丢三格引用、**之后**才 `empty_cache()`（`torch` 惰性 import；
+          `_transcriber` 是唯一持有链，丢引用就够了）；
+        - **有界等待**：上界 `RELEASE_GPU_WAIT_SECONDS`，**不许**等自适应收尾预算（调用方
+          那一步受收尾 deadline 约束）；到点照旧丢引用并记 warning，不抛、不静默。
 
-          - **没加载过就 no-op**：`_transcriber is None`（或它内部那两格本来就空）时当场返回
-            `False`，不报错、不 import `torch`、不写日志 —— `meeting post` 那个独立入口
-            （`meeting/cli.py`，归 `65dd3e4c`）的进程里根本没有会中模型，释放必须安静地什么都不做；
-          - **幂等**：连调几次都安全，第二次起是上面那一格；`shutdown()` 之后再来一次也一样
-            （本方法不碰 `_stopped`，也不改 `health()`：那两个是「转写这一档现在产不产出」的域，
-            与「模型占不占显存」无关，混在一起会把收尾期间的健康度节拍推成 `stopped`）；
-          - **有界等待**：见下面「等的上界」那一节；
-          - **释放顺序**：**先**丢掉后端这一格与模型内部那两格（`GlmAsrTranscriber.processor` /
-            `.transcriber`），**之后**才尝试 `torch.cuda.empty_cache()`。`torch` 在函数体内
-            惰性 import（模块顶层只许标准库与包内模块，`tests/test_transcriber_backend.py` 的
-            AST 判据盯着这一条）；`empty_cache()` 用 `try/except` 包住 —— 没装 `torch`、没卡、
-            `empty_cache()` 自己抛错都只是「这一趟没能清缓存」，不影响上面的引用已经丢掉。
-            **`_transcriber` 是唯一那条持有链**（`.processor` / `.transcriber` 是它内部的两格；
-            没有 `lru_cache`、没有模块级模型缓存、worker 每段现取不缓存），丢掉引用就够了。
-
-        **等的上界** = `RELEASE_GPU_WAIT_SECONDS`（那个常量上逐条写了为什么取 5 秒、为什么
-        不用单段超时与 `drain_join_budget()`）—— 本方法**不许**等自适应收尾预算：调用它的那
-        一步受收尾 deadline 约束，吃掉预算会把 `post` 从 `done` 翻成 `failed`。到点就**照旧
-        丢引用**并记一条 warning，不抛、不静默。
-
-        **为什么必须等**：worker 那一帧还在跑推理时旧模型事实上还活着，而下一段会经
-        `_transcriber_or_create()` 再**造一份**（每份约 4.3 GiB 权重）—— 等着是为了不让两份
-        GLM 同时在卡上，叠加 MOSSTD 的峰值才是真的越界。
-
-        返回 `True` = 这一次真的丢掉了模型引用；`False` = 本来就没有可丢的（no-op 那一格）。
+        返回 `True` = 真的丢掉了模型引用。
         """
         with self._model_lock:
             if not self._has_model_reference_locked():
@@ -369,32 +287,18 @@ class TranscriberBackend:
     def acquire_gpu(self) -> bool:
         """**把会中模型重新拉起来**：与 `release_gpu()` 成对的另一半（第 21 条）。
 
-        调用点只有一处：`meeting/service/runtime.py` 的 `resume_session()` —— 暂停期间模型已经
-        退出显存（`pause_session()` 那一半调的 `release_gpu()`），继续就是「又要用它了」，
-        当场把它拉起来。与释放同一条落地口径：**不在协议里**，只是这个具体后端多出来的一个
-        方法，调用点用 `getattr` 防御式取它（替身后端没有这一格照样跑得通）。
+        调用点只有 `resume_session()`（暂停期间模型已退出显存）。不在协议里，调用点
+        `getattr` 防御式取它（替身后端没有这一格照样跑得通）。
 
-        逐条语义：
+        - **已经在手就 no-op**：反复按继续不会造出第二份识别器（每份约 4.3 GiB）；
+        - **经 `_transcriber_or_create()` 造**：与释放同一把 `_model_lock` 互斥，
+          「继续那一刻造的」与「下一段真要转写时造的」同源同形；
+        - **造不出来不抛**：继续这个动作不许因为模型拉不起来而失败（R1）；下一出段照旧
+          经同一条路再试，失败由 `_transcribe_segment()` 记进 `_model_error`；
+        - 不碰 `_stopped`、不动 `health()`（与释放同一条边界）。
 
-          - **已经在手就 no-op**：后端那一格还握着识别器时当场返回 `False`，不重复造一份、
-            不写日志 —— 反复按继续不会造出第二份识别器（每份权重约 4.3 GiB）；
-          - **经既有的那条拉起路径造**：`_transcriber_or_create()` —— 与「释放之后下一段
-            音频要转写时」走的是同一个 factory、同一把 `_model_lock`（释放半路进来的这一段
-            与它互斥），于是「继续那一刻造出来的」与「下一段真要转写时造出来的」同源同形；
-          - **造不出来不抛**：factory 抛错（依赖没装 / 权重不在本地缓存 / 显存不够）时如实记
-            一条 warning 并返回 `False` —— **继续这个动作不许因为模型拉不起来而失败**
-            （R1 的立场：转写坏了可以重跑，录音照跑）。下一次真出段时照旧经同一条路再试，
-            那一档的失败由 `_transcribe_segment()` 记进 `_model_error`（`health()` 落 `stopped`）；
-          - **不碰 `_stopped`，也不动 `health()` 的读数**：与释放同一条边界 —— 那两个是
-            「转写这一档现在产不产出」的域，与「模型在不在手上」无关。
-
-        **权重的真实加载仍在第一次转写时**（`GlmAsrTranscriber` 是惰性加载：它的私有入口
-        `meeting/asr/glm.py` 的 `_load_transcriber()` 只在 `transcribe_segment()` 里被调）：
-        本方法把识别器交回手上，权重的加载沿既有那条惰性路径发生。本节点做到的是
-        「暂停期间不占显存」与「继续之后模型回到手上、下一次转写照旧经它」，没有在这里
-        越过模块边界去调那个私有加载入口。
-
-        返回 `True` = 这一次真的重造了一份识别器；`False` = 本来就在手（no-op 那一格）。
+        权重的真实加载仍在第一次转写时（`GlmAsrTranscriber` 惰性加载）；本方法只把识别器
+        交回手上，不越模块边界去调那个私有加载入口。
         """
         with self._model_lock:
             if self._transcriber is not None:
@@ -423,15 +327,10 @@ class TranscriberBackend:
     def _wait_for_inflight_inference(self) -> bool:
         """等在飞的推理收干净（事件驱动，上界 `RELEASE_GPU_WAIT_SECONDS`）。
 
-        判据取**在飞推理的计数回到 0**：「现在没有任何一帧还握着旧模型」这件事，正面证据只有
-        它。worker 是「先 `get()` 再处理」的长驻线程（`meeting/asr/pipeline.py` 的
-        `_worker_loop()`），它活着的时候大多正等在 `get()` 上、手里空空；而
-        `TranscriberBackend.stop()` 在生产路径上是**早退空转**（`self._thread` 从没被赋过线程
-        对象），拿它当释放手段既等错了对象、又会走那笔自适应收尾预算。
-
-        等待经 `Condition.wait(timeout=…)` 唤醒 —— `_transcribe_segment()` 每段结束都会通知，
-        因此没有轮询、没有固定 `sleep`。等不到（上界到点）时返回 `False`，由调用方如实记一条
-        warning 并照旧丢引用。
+        判据取**在飞计数回到 0**：「没有任何一帧还握着旧模型」的正面证据只有它。worker
+        大多正等在 `get()` 上、手里空空；`stop()` 在生产路径上是早退空转（`_thread` 从没
+        被赋过线程对象），拿它当释放手段既等错对象又走那笔收尾预算。等待经
+        `Condition.wait()` 唤醒（每段结束都通知），没有轮询。等不到返回 `False`。
         """
         remaining = max(0.0, float(RELEASE_GPU_WAIT_SECONDS))
         with self._inflight_cv:
@@ -484,36 +383,21 @@ class TranscriberBackend:
     def drain_join_budget(self, *, explicit: float | None = None) -> float:
         """`stop()` 等流水线收尾的上界（秒）：**与那笔收尾预算同源，且盖得住内层最坏档**。
 
-        默认 = `compute_drain_budget(backlog_depth() + flush_tail_segments(), segment_timeout())`
-        （公式只此一份，住在 `meeting/asr/pipeline.py`，`meeting/service/runtime.py` 的那一个
-        同名函数转交给它）+ `DRAIN_STOP_SLACK_SECONDS` + `drain_inner_slack()`。
-        积压越多、单段超时越长，这个上界就越大（封顶 300 + 余量）—— 「上界随积压增长」这条判据
-        由用例 `test_stop_join_budget_follows_the_pipeline_drain_budget` 钉住
-        （受控破坏：把它换回写死的 5.0 → 那条用例红）。
+        默认 = `compute_drain_budget(backlog + 尾段上界, 单段超时)`（公式只此一份）
+        + `DRAIN_STOP_SLACK_SECONDS` + `drain_inner_slack()`。三条用例钉住它
+        （受控破坏即红）：
 
-        **为什么积压量要自己加上 `flush_tail_segments()`**（复审 m2）：外层在原处读
-        `backlog_depth()`，而内层 `pipeline.stop()` 是**先 `vad.flush()` 把每路手上那一段
-        入队、之后**才读 `qsize()` 算自己的预算 —— 两次读的是不同时刻的积压量，尾段只进内层。
-        最坏档（模型卡住 + 关停时两路都还压着尾巴）于是内层预算比外层大
-        `每多一段 × (单段超时 + 5)`（默认 25 秒/段），外层先超时 → 打出一条**假的**
-        「收尾线程没跑完」warning，并且在流水线还在收尾时就返回（与 `stop()` docstring 的
-        「返回即收队完成」相反，末尾那句「还有 N 段没做完」也没机会落 log）。
-        外层按「积压 + 每路最多一段尾段」预留之后，这一档的上界必然盖得住内层。
-        这一条由用例 `test_stop_join_budget_covers_the_vad_flush_tail` 钉住
-        （受控破坏：把这一项去掉 → 那条用例按「读数差」当场红）。
+        - **尾段那一份**（复审 m2）：内层 `pipeline.stop()` 是先 `vad.flush()` 把每路手上
+          那一段入队**之后**才读 `qsize()` 算自己的预算——两次读的是不同时刻的积压量。
+          不预留的话最坏档外层先超时，打出假的「收尾线程没跑完」
+          （`test_stop_join_budget_covers_the_vad_flush_tail`）；
+        - **读线程收尾那一份**（复审 m5）：内层在 worker join 之前逐路 join 读线程，
+          不算进来的话外层同样先超时
+          （`test_stop_join_budget_covers_a_reader_tail_that_uses_its_whole_budget`）；
+        - **上界随积压增长**（`test_stop_join_budget_follows_the_pipeline_drain_budget`）。
 
-        读 **`backlog_depth() + flush_tail_segments()`** 而不是只读积压量：两者在同一个方法里
-        一起算出来，中间不留「读完之后内层又长了」的缝。
-
-        `pipeline` 还没起来（或已经被上一场收走）时按下限那一档算：那一刻没有积压要做。
-
-        **为什么还要加 `drain_inner_slack()`**（复审 m5）：预算那 1 秒余量是给 worker 的，
-        而内层 `pipeline.stop()` 在 worker join **之前**还要逐路 join 读线程（每路最多
-        `READER_JOIN_TIMEOUT_SECONDS`）再送出 VAD 尾段。不把这一段算进来的话，最坏档外层
-        会先超时：打出一条假的「收尾线程没跑完」，并且在流水线还在收尾时就返回。
-        「内层用满预算时外层不许误报」这条关系由用例
-        `test_stop_join_budget_covers_a_reader_tail_that_uses_its_whole_budget` 钉住
-        （受控破坏：把 `drain_inner_slack()` 改回 0.0 → 那条用例红）。
+        两条余量读 **`backlog_depth() + flush_tail_segments()`** 一起算，中间不留
+        「读完之后内层又长了」的缝。`pipeline` 没起来时按下限档算。
         """
         if explicit is not None:
             return max(0.0, float(explicit))
@@ -640,13 +524,10 @@ class TranscriberBackend:
     def _transcribe_segment(self, audio: Any) -> Any:
         """调 phase1 的单段识别（**模型加载失败在这里如实留痕**）。
 
-        `GlmAsrTranscriber` 的惰性加载在第一次 `transcribe_segment` 时发生：模型依赖没装、
-        权重不在本地缓存、显存不足都会在这里抛。这一支把原因记进 `_model_error`
-        （`health()` 因此落 `stopped`），再把异常原样上抛给流水线 —— 那一段落占位符，
-        **绝不静默丢段、也绝不落半截文本**。
-
-        整段包在**在飞计数**里（`release_gpu()` 等的就是它回到 0）：这一个是 worker 唯一
-        握着模型的那一帧，计数在飞期间释放会造出第二份模型（每份约 4.3 GiB 权重）。
+        惰性加载的失败（依赖没装、权重不在缓存、显存不足）在这里抛：原因记进 `_model_error`
+        （`health()` 落 `stopped`），异常原样上抛给流水线——那段落占位符，不静默丢段、
+        不落半截文本。整段包在**在飞计数**里（`release_gpu()` 等它回到 0）：这是 worker
+        唯一握着模型的那一帧，在飞期间释放会造出第二份模型。
         """
         with self._inflight_cv:
             self._inflight += 1

@@ -32,7 +32,7 @@ _log = logging.getLogger("meeting.service.runtime")
 class RuntimeBackendsMixin:
     """「后端接线与探测」：``revision`` 等只读小接口、绑定地址、startup/shutdown、后端解析与设备探测。"""
 
-    # -- 只读小接口 -------------------------------------------------------
+    # 只读小接口
 
     @property
     def revision(self) -> int:
@@ -65,25 +65,15 @@ class RuntimeBackendsMixin:
         return self.config.get(key)
 
     def _settings_view(self) -> SettingsView:
-        """快照 `settings` 的**生效值**视图。
+        """快照 `settings` 的生效值视图。
 
-        口径（§3.5.5 + §7.1 高危点 7）：这里读的是**运行期生效值**。归 `pending_restart` 的那些键
-        （`web.*` / `log.*` / `alert.*` 与三个后端选择键、会中总结端点与预算那几键）由
-        `settings_update` 写盘成功之后，快照里的 `settings` **不会**立刻反映写进去的新值，
-        要重启才可见；热读键才在写盘后立刻换成新值（那一处在 `settings_update()` 里按
-        `applied` 重取一次本函数）—— `asr.*` 五个之外，`alarm.sound` 与设置抽屉那四项
-        （`devices.mic` / `devices.loopback` / `heartbeat.interval_seconds` /
-        `summary.default_window`）也走这一条：出声开关勾选即改运行期行为，设备改完
-        紧接着的 `reprobe` 就按新值挑（会中仍不换设备，`docs/contract.md` 第 7 章），
-        心跳周期与总结缺省档的快照格当场换新值。
-
-        `settings.devices` 的两个子键逐一取 `devices.mic` / `devices.loopback` 的生效值
-        （`dca4539b` 定名；没配时为 `null`，与配置层 `NULLABLE_KEYS` 的空值形状一致）。
-
-        会中切模型的两格（本节点）：`summary_preset_names` 是预设的**名字清单**（只给名字，
-        预设内容与密钥不进快照）；`summary_active_preset` 是当前用哪一套的**生效值** ——
-        指针指向的名字不在清单里（没配、解析失败、名字已删）时，实际生效的是老四键
-        平铺那一档，这里照实报空串。
+        口径（§3.5.5 + §7.1 高危点 7）：这里读的是运行期生效值。归 `pending_restart` 的键
+        在 `settings_update` 写盘成功后快照不会立刻反映，要重启才可见；热读键写盘后立刻换新值
+        （`settings_update()` 按 `applied` 重取一次本函数）——`alarm.sound`、设置抽屉四项、
+        会中切模型两键都走这一条（设备改完紧接着的 `reprobe` 按新值挑；会中仍不换设备，
+        `docs/contract.md` 第 7 章）。`settings.devices` 两子键取设备键位生效值（没配即
+        `null`）；`summary_preset_names` 只给名字（预设内容与密钥不进快照），
+        `summary_active_preset` 指针不在清单里时实际生效的是平铺档，照实报空串。
         """
         preset_names = [
             item["name"]
@@ -112,7 +102,7 @@ class RuntimeBackendsMixin:
             name: self._value(f"devices.{name}") for name in config_module.DEVICE_SETTING_KEYS
         }
 
-    # -- 绑定地址 ---------------------------------------------------------
+    # 绑定地址
 
     def set_binding(self, host: str, port: int) -> None:
         """从监听 socket 的 `getsockname()` 读回值写入（`port` 不许另外猜）。
@@ -138,7 +128,7 @@ class RuntimeBackendsMixin:
             port = 0
         self.set_binding(host or "127.0.0.1", port or 0)
 
-    # -- 生命周期（由框架 lifespan 的 startup 钩子触发） -------------------
+    # 生命周期（由框架 lifespan 的 startup 钩子触发）
 
     async def startup(self) -> None:
         """启动序列：取事件循环 → 写关停目标 → 信号自检 → 解析后端 → 探测设备 →
@@ -175,27 +165,14 @@ class RuntimeBackendsMixin:
         # ⑤ 组装初始快照（`top_state: idle`、`session: null`、`sources` 取 probe() 的三态）
         self._probe_devices()
 
-        # ⑤b `transcript` 三格的初值**取自后端**，不留给 dataclass 默认值
-        #
-        # **为什么要有这一步**（复审 m3）：`_refresh_transcript_snapshot()`
-        # 只挂在节拍与「一行到来」上时，快照初值就只能是 `TranscriptState` 的 dataclass 默认
-        # `health = "normal"`；而真实现的空闲态报的是 `stopped`（没起过场次 —— 见
-        # `meeting/backends/transcribe.py` 的 `health()`），于是健康度节拍**第一拍**
-        # （0.5 秒后）才把它刷成 `stopped` 并 `commit()`（`revision 1 -> 2`）。后果有两条：
-        # ① `contract/fixtures/snapshot/idle*.json` 描述的只是「服务起来前半秒」那一瞬的取值，
-        # ② 空闲场次的用例被迫抢在那一拍之前读快照 —— 一条**纯粹的时序依赖**
-        # （机器被压住 >0.5 秒就红）。
-        #
-        # 初值在 `startup()` 里就地取一次之后：空闲档稳定成 `health = "stopped"`、
-        # `revision` 停在 `REVISION_START`（初值不 `commit()`：`startup()` 里没有任何状态迁移），
-        # 上面那两条一起消失。位置放在 ⑤ 之后是必须的 —— `_probe_devices()` 才把转写后端
-        # `bind()` 上（`_config` 也在那里给），早于它调这一步会读到一份没接上配置的后端。
-        # 返回值（= `health` 有没有迁移）在这里**有意丢掉**：`startup()` 不做提交。
+        # ⑤b `transcript` 三格的初值取自后端，不留给 dataclass 默认值（复审 m3）：
+        # 默认 `health = "normal"` 要等健康度节拍第一拍（0.5 秒后）才被刷成真实现空闲态的
+        # `stopped`——idle 契约样本只描述前半秒、空闲用例被迫抢拍，一条纯粹的时序依赖。
+        # 就地取一次之后 `revision` 停在 `REVISION_START`（`startup()` 不做提交，返回值有意
+        # 丢掉）。位置必须在 ⑤ 之后：`_probe_devices()` 才把转写后端 `bind()` 上。
         self._refresh_transcript_snapshot()
-        # 空闲态不发提示级（`docs/ui-design.md` 章 2.5：空闲态告警区不出现）：快照这一格与
-        # 判定器那份登记一起从零开始。`_refresh_transcript_snapshot()` 的收口判据是
-        # `top_state ∈ {recording, alert}`，开机这一刻是 `idle`，所以它自己不会写进任何提示；
-        # 这里再显式清一次，是为了让「快照 = 登记」这条不变量从第一帧就成立。
+        # 空闲态不发提示级（`docs/ui-design.md` 章 2.5）：显式清一次，让「快照 = 登记」
+        # 这条不变量从第一帧就成立。
         self._clear_hints()
 
         # ⑥ 打开浏览器（尾部；`MEETING_NO_BROWSER=1` 时跳过并落一行日志）
@@ -206,23 +183,12 @@ class RuntimeBackendsMixin:
         这里逐条走）：记录里点名的、盘上仍 `running` 的那一场 offline 会后，补成
         `interrupted`，然后清记录。
 
-        三档，逐档口径：
-
-          - **offline 档 + 盘上 `running`** → 走 `runner.write_interrupted_status()`（与
-            `run_session` 的打断终态同一形状：十二格、`state = "interrupted"`、缺口注记
-            拼进 `error`，缺口从逐块记录读出）。这一格写完，读方（4.9 的 `offline.state`、
-            界面进度区、幂等闸）看到的都是「人停的、可以重按」，而「杀了服务就永远停在
-            在跑」从此只剩不到一次服务生命周期的窗口。
-          - **minutes 档** → 只清记录 + log：纪要那一层的 `running` 由它自己的钩子兜底
-            （`docs/state.md`「进程被杀时钩子把它补成 failed」），这里再补一份就把两层
-            的记录搅在一起了。
-          - **盘上不是 `running`**（那趟其实跑完了、或状态文件读不出）→ 只清记录 + log，
-            一个字节都不写 —— 核对不许把已经落定的终态翻掉。
-
-        范围**只有记录里点名的那几场**：记录按 `(种类, 场次)` 一格一条（多槽世界：
-        offline 与 minutes 可同时在飞），这里逐条读、逐条处置，然后整份清掉
-        （`clear_all`），不扫任何目录。CLI（`meeting post`）那一趟既不落记录也不被
-        这一步碰 —— 它活在另一个进程，服务分不清「另一进程还在跑」与「都死了」，
+        三档：offline 档 + 盘上 `running` → 走 `runner.write_interrupted_status()`（与
+        `run_session` 的打断终态同形状，缺口从逐块记录读出）——读方看到「人停的、可以重
+        按」；minutes 档 → 只清记录 + log（纪要层的 `running` 由它自己的钩子兜底，再补一份
+        会把两层记录搅在一起）；盘上不是 `running` → 只清记录，一个字节不写（不许把已落定
+        的终态翻掉）。范围只有记录里点名的那几场（逐条读、逐条处置、整份清掉），不扫任何
+        目录；`meeting post` 那一趟活在另一个进程，服务分不清「另一进程还在跑」与「都死了」，
         如实不猜。
         """
         from meeting.service import postjobs
@@ -304,16 +270,11 @@ class RuntimeBackendsMixin:
                 self.transcriber_backend.stop()
         except Exception:
             _log.exception("关停时停转写失败（如实登记，不静默）")
-        # 收尾三步的执行器**不等**（工作线程是 daemon：第二次 `Ctrl+C` 之后进程不许被在飞的
-        # 同步步拖住）——`wait=False` 顺带把已排队的收尾步丢掉，这正是「立即中止」要的形态。
+        # 三台执行器关停一律不等待在飞线程（daemon：第二次 `Ctrl+C` 之后进程不许被拖住）。
         self._shutdown_drain_executor()
-        # 会中总结那台执行器照同一口径收场：到点被放弃的那次调用仍在飞，关停不等它
-        # （它同样是一条只读的模型调用，写不出半截现场）。
         self._shutdown_summary_executor()
-        # 会中模型「收 / 放」那台同样不等：在飞的那次释放 / 拉起是模型层自己的事
-        # （丢引用、清缓存、造识别器），进程退出时跟着一起消失。
         self._shutdown_model_executor()
-        # 会中总结那两样一并清掉（缓冲与记录表走同一个入口）：关停之后这两笔内存不该留着
+        # 会中总结那两样一并清掉（缓冲与记录表走同一个入口）。
         self._clear_session_summary(reason="服务关停")
         from meeting.service import app as service_app
 
@@ -352,7 +313,7 @@ class RuntimeBackendsMixin:
         except Exception:  # pragma: no cover - 收场路径不掩盖别的结论
             _log.exception("会中模型生命周期执行器收场失败（工作线程是 daemon，不影响进程退出）")
 
-    # -- 后端与探测 -------------------------------------------------------
+    # 后端与探测
 
     def _resolve_backends(self) -> None:
         """三个后端的解析入口（唯一入口是 `registry`；**判缺席只看解析结论**）。"""
@@ -529,8 +490,7 @@ class RuntimeBackendsMixin:
                 continue
             status = getattr(probe, "status", None)
             if status not in PROBE_STATUS:
-                # 后端违约（返回第四个探针状态这类）：记 warning、该路落 probe_failed、
-                # top_state 不动、服务照常起（采集侧的异常不结束会话）
+                # 后端违约：记 warning、该路落 probe_failed、top_state 不动、服务照常起。
                 _log.warning(
                     "设备探测：%s 返回了取值域外的状态 %r，按 probe_failed 处理", item.id, status
                 )
@@ -545,8 +505,7 @@ class RuntimeBackendsMixin:
                 "设备探测：%s -> status=%s device=%s（%s）",
                 item.id, status, item.device_name, getattr(probe, "detail", ""),
             )
-        # 探测结果落定即落一次「每一路健康迁移」（`unprobed` / `ready` / `probe_failed` 三档：
-        # `unprobed` / `ready` 无阈值，`probe_failed` 的阈值口径见 `PROBE_STATUS` 的三档）
+        # 探测结果落定即落一次「每一路健康迁移」。
         self._log_health_migrations(reason=reason, threshold=threshold)
 
     def _warn_frame_interval(self, raw: Any) -> None:

@@ -1,37 +1,21 @@
-"""`ServiceRuntime` —— 唯一状态权威（phase2 §3.5；从 `meeting/service/app.py` 整体搬来）。
+"""`ServiceRuntime`——唯一状态权威（phase2 §3.5；从 `app.py` 整体搬来）。
 
-搬迁边界（phase2 §3.5.1，写死）：
+搬迁边界（phase2 §3.5.1）：本模块承载 `ServiceRuntime`（类名、构造语义、方法名与语义
+一字不改）；工厂入口 `build_runtime()` 仍在 `app.py`；信号处理那四样常驻 `app.py`，
+本模块不复制；写进 `_shutdown_target` 的对象仍由 `startup()` 在这一侧写入。
 
-  - 本模块承载 `ServiceRuntime`（含 `to_dict()`、`startup()` / `shutdown()`、`bind_capture()` /
-    `bind_transcriber()`、状态迁移与收尾编排）——**类名、构造语义、方法名与语义一字不改**；
-  - 工厂入口 `build_runtime()` **仍在 `meeting/service/app.py`**（`cli.py` 的调用点一个字不动）；
-  - `handle_shutdown_signal` / `install_shutdown_signal_handlers()` / 模块级 `_shutdown_target` /
-    关掉框架信号捕获的服务器子类 `ServiceServer` **全部常驻 `app.py`**，本模块不复制一份；
-  - 写进 `_shutdown_target` 的对象仍由 `startup()` 在这一侧写入（安装点与调用形态不变）。
+并发模型（phase2 §3.5.3）：全部状态收在本对象一处、只在 asyncio 事件循环里改、不加锁；
+后端把事实送进来的唯一入口是 `loop.call_soon_threadsafe(...)`；`to_dict()` 与 `commit()`
+配合：状态变更后经 `commit()` 一次完成「`revision +1` + 广播一次全量 `state`」，别处一律
+不自己改 `revision`、不自己发 `state`。唯一例外是「等待一条同步调用」：收尾三步与会中
+总结的模型调用都提交到各自的 daemon 工作线程，事件循环只等结果，HTTP 面照旧转；上限
+分别是 `compute_drain_budget()` 与 `summary.deadline_seconds`。
 
-并发模型（phase2 §3.5.3）：**全部状态收在本对象一处、只在 asyncio 事件循环里改、不加锁**；
-下游后端跑在自己的线程里，把事实送进来的**唯一入口**是 `loop.call_soon_threadsafe(...)`
-（在 `bind_*()` 里包好交给后端，后端拿不到裸的状态对象）；
-**`to_dict()` 与 `commit()` 配合**：状态变更后经 `commit()` 一次完成「`revision +1` +
-广播一次全量 `state`」，别处一律不自己改 `revision`、不自己发 `state`。
-
-**唯一的例外是「等待一条同步调用」**：收尾三步（`_drain_wait()`）与会中总结那一次模型调用
-（`summarize()` → `_summary_wait()`，`1987cb20` phase2 的复审裁定）都**不**在事件循环上跑
-同步实现 —— 它们提交到各自的 daemon 工作线程，事件循环只等结果，`/api/state`、三个 SSE 通道、
-心跳与健康节拍照旧转。两条等待的上限都是自己那条 deadline（收尾是 `compute_drain_budget()`、
-总结是 `summary.deadline_seconds`）。
-
-拆分说明（聚合壳）：`ServiceRuntime` 的方法体按职责拆进了本目录的 mixin 模块 ——
-`runtime_shared.py`（模块级冻结名字 + daemon 线程池的叶子）、`runtime_backends.py`
-（接线 / 解析 / 探测 / 起停）、`runtime_facts.py`（心跳 / 电平 / 转写 / 告警）、
-`runtime_sessions.py`（场次生命周期）、`runtime_catalog.py`（工作台 / 目录 / 状态视图）、
-`runtime_post.py`（会后作业）、`runtime_summary.py`（会中总结）、`runtime_drain.py`
-（收尾 / 关停）、`runtime_summary.py`（会中总结）、`runtime_materials.py`
-（会议资料：场次目录里的 `meeting_materials/`，资料节点 285bf58c）。类名、构造语义、
-方法名与方法语义依旧一字不改 —— 本文件只保留
-构造（`__init__`）、状态权威核心（`to_dict()` / `commit()` 等）与 re-export，
-`__all__` 冻结名字的对外 import 路径不变；测试要 patch 的模块级名字，一律打在
-**读它的那个模块**（`runtime_drain` 等）上。
+拆分说明：方法体按职责拆进本目录的 mixin 模块（`runtime_shared` / `runtime_backends` /
+`runtime_facts` / `runtime_sessions` / `runtime_catalog` / `runtime_post` /
+`runtime_summary` / `runtime_materials` / `runtime_drain`）；本文件只保留构造、状态权威
+核心与 re-export，`__all__` 冻结名字的对外 import 路径不变；测试要 patch 的模块级名字
+一律打在读它的那个模块上。
 """
 
 from __future__ import annotations
@@ -222,44 +206,37 @@ class ServiceRuntime(
         self.session_start_mono: float | None = None
 
         # 帧空洞记录（gil-stall-hole）：发帧线程报来的 `FrameGap` 落在这里，只进心跳应答
-        #（`heartbeat_dict()` 的 `capture_gaps`），**不进快照、不涨 revision、不广播** ——
+        #（`heartbeat_dict()` 的 `capture_gaps`），不进快照、不涨 revision、不广播——
         # 空洞是历史事实，`recording_alive` 只回答「现在采不采得到」，两句话各管一头。
-        # `_capture_gaps` 的条目带区间（`_start` / `_end`，单调钟）供跨路合并，出读数时剥掉；
-        # 上限只留给「最近列表」，累计数（`_capture_gap_totals`）不设上限。本场起场清零。
+        # 条目带区间（`_start` / `_end`，单调钟）供跨路合并，出读数时剥掉；上限只留给
+        # 「最近列表」，累计数不设上限。本场起场清零。
         self._capture_gaps: list[dict[str, Any]] = []
         self._capture_gap_totals: dict[str, float] = {"count": 0, "seconds": 0.0}
 
-        #: 每一路**上一次落过 log 的** `health`（`_log_health_migrations()` 的比对基线）。
-        #: 契约（phase1 §3.13 / phase2 的日志事件清单）把「每一路健康迁移（含原因与阈值）」
-        #: 列为**必须落 log** 的事件；基线按路存一份，于是「从什么值到什么值」永远是实测的。
+        #: 每一路上一次落过 log 的 `health`（`_log_health_migrations()` 的比对基线）：
+        #: 契约把「每一路健康迁移（含原因与阈值）」列为必须落 log 的事件，基线按路存一份。
         self._health_logged: dict[str, str] = {item.id: item.health for item in self.snapshot.sources}
 
-        #: **快照 `alerts.hints` 里眼下摆着哪几条**（按 `(level, source, message)` 登记，有序）。
-        #: 它是「提示级的键集合有没有变」的判据：`_sync_transcript_hints()` 拿它跟判定器刚算出来的
-        #: 那几条比，只有键集合真的动了才返回「有变化」、才让调用点走一次 `commit()`。
-        #: 同一个键集合里 `duration_seconds` 的刷新因此不给 `revision` 投票（契约第 3.3 节：
-        #: 转写通道不参与状态迁移，0.5 秒的节拍不许把它抖起来）。
-        #: **清提示级时它与判定器那份登记一起清**（唯一入口 `_clear_hints()`）：只清一边的话，
-        #: 两者会有一刻对不上、旧登记还会影响下一场的键集合判据（复审 m3）。
+        #: 快照 `alerts.hints` 里眼下摆着哪几条（按 `(level, source, message)` 登记，有序）。
+        #: 它是「提示级的键集合有没有变」的判据：只有键集合真的动了才让调用点走一次
+        #: `commit()`，`duration_seconds` 的刷新因此不给 `revision` 投票（转写通道不参与
+        #: 状态迁移，0.5 秒的节拍不许把它抖起来）。清提示级时与判定器那份登记一起清
+        #: （唯一入口 `_clear_hints()`，复审 m3）。
         self._hint_keys: tuple[tuple[str, str, str], ...] = ()
 
-        #: 本场开场读到的**旧场次记录**（`None` = 新场；有值 = 续接，`start_session()` 写、
-        #: `_session_record()` 读）：旧段的段记录、各路旧段文件名表与场次身份三格从它合并，
-        #: 让续接那一场落盘的每一版 `session.json` 都带着前几段的完整记录（第 9 条）。
+        #: 本场开场读到的旧场次记录（`None` = 新场；有值 = 续接）：旧段的段记录、各路旧段
+        #: 文件名表与场次身份三格从它合并（第 9 条）。
         self._resumed_record: dict[str, Any] | None = None
 
         # 收尾 task 句柄（属性名冻结；启动时赋值、走完含被取消那趟后置空）
         self._drain_task: asyncio.Task | None = None
-        #: 收尾三步的**同步调用专用**执行器（工作线程是 daemon，见
-        #: `_DaemonThreadPoolExecutor` 的说明：第二次 `Ctrl+C` 的「立即中止」不许被在飞的
-        #: 同步步拖住）。**惰性创建**：不跑收尾的进程一个线程都不起。
+        #: 收尾三步的同步调用专用执行器（工作线程是 daemon：第二次 `Ctrl+C` 的「立即中止」
+        #: 不许被在飞的同步步拖住）。惰性创建：不跑收尾的进程一个线程都不起。
         self._drain_executor: _DaemonThreadPoolExecutor | None = None
         #: 这一趟收尾的共享 deadline（`drain()` 开头算出来、三步共用；不在收尾中时为 `None`）
         self._drain_deadline: float | None = None
-        #: 最近一趟收尾**自己算出来的**那笔预算（`compute_drain_budget()` 的输出，见
-        #: `_run_drain_steps()` 开头）。`_drain_deadline` 在收尾跑完时清空，这一笔留着：
-        #: 「等收尾落定」的上限与本次收尾**同源**（`_wait_drain_settled()` 直接沿用，
-        #: 于是 `_drain_inputs()` 一趟收尾只读一次）。
+        #: 最近一趟收尾自己算出来的那笔预算。`_drain_deadline` 收尾跑完时清空，这一笔留着：
+        #: 「等收尾落定」的上限与本次收尾同源（`_wait_drain_settled()` 直接沿用）。
         self._drain_budget: float | None = None
         #: 当前这一步进入的时刻（每一步的实测耗时从它算起）
         self._drain_step_started: float | None = None
@@ -278,52 +255,37 @@ class ServiceRuntime(
         #: 转写健康度节拍（低频、只写快照；见 `_transcriber_health_loop()`）
         self._transcriber_ticker: asyncio.Task | None = None
 
-        # -- 会中总结（`1987cb20` phase2 §3.6）--------------------------------
-        #
-        # 两样东西都是**内存里的、会话级的、不落文件**（设计章 2.3 / 5.1：会中总结做完就该消失）：
-        #
-        #   - `summary_buffer`：**内存里那条追加中的实时转写**。盘上的会中临时稿只有分钟级
-        #     `[HH:MM]`（秒被丢掉、同一分钟撞成一个戳），切不了窗口；内存这一份带完整的墙钟浮点
-        #     `ts` 与入队序。喂它的入口只有一个：`bind_transcriber()` 包出来的那个 sink；
-        #   - `summary_records`：**本场按过的、成功产出的那几次**（时刻 + 窗口 + 那几条）。
-        #     只记成功的那几次 —— 失败没有「那几条」可记。`GET /api/summaries` 读的就是它。
-        #
-        # `summary_client` 是**可注入的总结客户端**（`ModelClient` 或同形的假件）：不给就由
-        # `run_summary()` 按 `SummarySettings` 现造一个真客户端。用例从这里塞登记用的假件。
-        #
-        # `summary_client` 那一次 `complete()` 是一条**同步**调用：`summarize()` 经
-        # `_summary_wait()` 把它提交到下面这台池的工作线程，事件循环因此在总结期间照旧转
-        # （复审 minor 6：跑在事件循环上时，`/api/state` 与三个 SSE 通道会被一起按住）。
-        # **惰性创建**：没人按下总结的进程一个线程都不起。
+        # -- 会中总结（`1987cb20` phase2 §3.6）：两样都是内存里的、会话级的、不落文件
+        # （设计章 2.3 / 5.1：会中总结做完就该消失）。
+        # `summary_buffer`：内存里那条追加中的实时转写——盘上的会中临时稿只有分钟级
+        # `[HH:MM]`（秒被丢掉、同一分钟撞成一个戳），切不了窗口；这份带完整墙钟浮点 `ts`
+        # 与入队序，喂它的入口只有 `bind_transcriber()` 包出来的那个 sink。
+        # `summary_records`：本场按过的、成功产出的那几次（时刻 + 窗口 + 那几条），只记
+        # 成功的——失败没有「那几条」可记。`GET /api/summaries` 读的就是它。
+        # `summary_client` 可注入（用例塞假件）；那一次 `complete()` 是同步调用，经
+        # `_summary_wait()` 提交到下面这台池（跑在事件循环上会把 `/api/state` 与三个 SSE
+        # 通道按住）。惰性创建：没人按总结的进程一个线程都不起。
         self.summary_buffer = TranscriptBuffer()
         self.summary_records: list[dict[str, Any]] = []
         self.summary_client: Any = None
-        #: 会中总结那一次模型调用的**同步调用专用**执行器（工作线程是 daemon，
-        #: 与收尾三步那台分属两台池，见 `_DaemonThreadPoolExecutor` 的说明）
+        #: 会中总结那一次模型调用的同步调用专用执行器（与收尾三步那台分属两台池）
         self._summary_executor: _DaemonThreadPoolExecutor | None = None
 
-        #: 会中模型「收 / 放」两次调用（`release_gpu()` / `acquire_gpu()`）的**同步调用专用**
-        #: 执行器。**单线程**：这两次调用是同一格模型引用上的一进一出，必须按用户按下的顺序
-        #: 排队（暂停 → 释放，继续 → 拉起），单线程池给的正是这条 FIFO 顺序；**惰性创建**：
-        #: 没人按过暂停/继续的进程一个线程都不起。
+        #: 会中模型「收 / 放」两次调用的同步调用专用执行器。单线程：两次调用是同一格模型
+        #: 引用上的一进一出，必须按用户按下的顺序 FIFO 排队；惰性创建。
         self._model_executor: _DaemonThreadPoolExecutor | None = None
 
-        # -- 会后的多趟活与转码工序（人按才起；转码由 flush 落定自动起）----------
-        #
-        # `self.post_jobs` 按 `(kind, dir)` 记每一趟在飞的活（`None` 不存在——空 dict =
-        # 没有在跑的）：`{"offline"|"minutes"|"transcode", 场次目录}` 一格一趟。
-        #   - offline / minutes 是会后那两个按钮；transcode 是 flush 落定自动起的那道
-        #     独立工序（`transcode_run` / `transcode_pause` / `transcode_resume` 三个动作
-        #     也落在这张登记上）；
-        #   - **进程级一刀切已废**：不同场次、不同种类的活可以并排飞；唯一的槽判据是
-        #     `(kind, dir)` —— 同一种重活在同一场上只能有一趟（第二趟如实拒）；
-        #   - 唯一硬闸 = 本地大模型互斥：offline 会后精细稿与会中录音不并排（`start` 按
-        #     409 拒、录音中按「生成会后精细稿」按 409 拒），纪要与转码都免闸；
-        # 它**不写快照、不落盘**：这一格是服务进程自己的现场（界面问「有没有会后精细稿」
-        # 走 `GET /api/sessions` 的 `has_offline`，那一条读盘，与本字段无关）。
+        # -- 会后的多趟活与转码工序（人按才起；转码由 flush 落定自动起）
+        # `self.post_jobs` 按 `(kind, dir)` 记每一趟在飞的活：offline / minutes 是会后两个
+        # 按钮，transcode 是自动起的那道独立工序（三个 transcode_* 动作也落在同一张登记上）。
+        # 不同场次、不同种类的活可以并排飞，唯一槽判据是 `(kind, dir)`——同一种重活在
+        # 同一场上只能有一趟。唯一硬闸 = 本地大模型互斥：offline 与会中录音不并排（`start`
+        # 按 409 拒、录音中按「生成会后精细稿」按 409 拒），纪要与转码都免闸。
+        # 不写快照、不落盘：界面问「有没有会后精细稿」走 `GET /api/sessions` 的 `has_offline`
+        # （读盘），与本字段无关。
         self.post_jobs: dict[tuple[str, str], PostJob] = {}
 
-    # -- 状态 JSON 产出（唯一产出者） -------------------------------------
+    # 状态 JSON 产出（唯一产出者）
 
     def _session_elapsed_seconds(
         self, session: SessionInfo, *, moment: float | None = None
@@ -372,7 +334,7 @@ class ServiceRuntime(
             log_path=self.log_path,
         )
 
-    # -- 每一路健康迁移的日志事件（契约点名的必落 log 事件） ----------------
+    # 每一路健康迁移的日志事件（契约点名的必落 log 事件）
 
     def _log_health_migrations(
         self,
@@ -381,40 +343,23 @@ class ServiceRuntime(
         reason: str = "",
         threshold: str | None = None,
     ) -> None:
-        """把这一刻与**上一次落过 log 的那一版**之间的每一路 `health` 变化落成一条 log。
+        """把这一刻与上一次落过 log 的那一版之间的每一路 `health` 变化落成一条 log。
 
-        契约依据：phase1 §3.13 与 phase2 的「必须落 log 事件」清单把**每一路健康迁移
-        （含原因与阈值）**列为必须落 log 的事件；`phase3.md` §3.8 第 ⑫ 条与 `index.md`
-        §7 的 G6 据此要求场次 log 里、结束标记**之前**这一类逐类可查。
+        契约把「每一路健康迁移（含原因与阈值）」列为必须落 log 的事件（phase1 §3.13、
+        `index.md` §7 的 G6 要求场次 log 结束标记之前逐类可查）。本方法只加日志、不改任何
+        状态语义：`health` 的值仍由 `meeting/state.py` 的迁移函数写。
 
-        **本方法只加日志，不改任何状态语义**（`phase3.md` §3.2 明写「不改四态迁移与
-        `Snapshot` 形状」）：`health` 的值仍由 `meeting/state.py` 的迁移函数写，
-        `phase2.md` §3.5.2 的映射表（`alert → recording` 之后该路 `health = restored`）
-        一个字都不动。这里做的只是「变化之后如实记一行」。
+        行内容按契约四项写：哪一路、从什么值到什么值、原因、阈值。「阈值：」有三种形态，
+        读 log 的人按三档认（审查观察项 M4 点名的误读点）：
 
-        行内容按契约的四项写：**是哪一路、从什么值到什么值、原因、阈值**。
-        **「阈值：」这个字段有三种形态，读 log 的人照下面这三档认，别按同一种去取值**
-        （审查观察项 M4 点名的误读点：这三种形态下的取值方式是各自不同的）：
+          1. 实测阈值（`alert.*` 判定真用到阈值的两条迁移）：从 `self.judge.thresholds`
+             现读（不是配置默认值、不是字面量）；
+          2. 无阈值：判据里本来就没有阈值数，`threshold` 显式传说明或传空补「无阈值」——
+             这档冒号后面没有可取的数，按 `<键>=<数>` 解析会落空；
+          3. 不看阈值（收尾相关三处）：迁移由收尾流程驱动，阈值判定没参与——
+             与第 2 档长相接近，差别是原因。
 
-          1. **实测阈值**（`alert.*` 判定真的用到阈值的那两条迁移）——
-             `连续有信号达恢复阈值` 写 `恢复阈值 alert.recover_seconds=<生效值>s`、
-             `这一路起致命级告警` 写 `静默阈值 alert.silence_seconds=<生效值>s /
-             silence_dbfs=<生效值> dBFS`。这两个值是 `AlertJudge` 持有的、本次判定**真的用到**
-             的阈值，取值从 `self.judge.thresholds` 现读（不是配置默认值、不是字面量）；
-          2. **无阈值**——这一趟迁移的判据里本来就没有阈值数：`threshold` 参数显式传了那句
-             说明（例如 `探针三态（unprobed / ready / probe_failed），本档无阈值`、
-             `本场 mode=both（采到的路进 capturing）`），传空时这里补 `无阈值`。
-             这一档里**冒号后面没有可取的数**，任何按 `<键>=<数>` 去解析的读法都会落空；
-          3. **不看阈值（收尾相关的三处）**——场次进收尾、场次撤回空闲态、收尾终态这三条
-             迁移各自的说明里都写死「不看阈值」（例：`无阈值（收尾终态这一步不看阈值）`）。
-             这一档与第 2 档在 log 上长相接近，差别是**原因**：这里的迁移由收尾流程自己驱动，
-             阈值判定根本没参与，因此它既没有实测值、也不该被当成「判定过了但没设阈值」。
-
-        无论哪一档，**这里都不编造一个数**（例如 `alert → recording` 这一路只报「连续有信号达
-        恢复阈值」，运行时的阈值口径由 `AlertJudge` 掌握、这里按第 1 档从它现读，不去猜）。
-
-        `source` 给定时只比那一对（调用点最清楚的场合）；不给定时比全部路。
-        幂等：每次调用都把基线刷成当下值，同一格不会重复落 log。
+        无论哪一档都不编造一个数。`source` 给定时只比那一对；幂等（基线刷成当下值）。
         """
         for item in self.snapshot.sources:
             if source is not None and item.id != source:
@@ -433,19 +378,12 @@ class ServiceRuntime(
             )
 
     def commit(self) -> int:
-        """**唯一的状态提交 + 广播点**：`revision +1` 与一次全量 `state` 广播都在这里。
+        """唯一的状态提交 + 广播点：`revision +1` 与一次全量 `state` 广播都在这里。
 
-        别处（迁移函数、动作处理器、收尾三函数、hub）一律不自己改 `revision`、
-        不自己发 `state`。
-
-        `alerts.*.muted` 在这里按**当下**重算一遍（判定权收在 `AlertJudge.refresh_muted()`
-        一处）：本次提交要广播出去的那份快照，说的就是此刻会不会出声 —— 会话级静音复位、
-        抑制窗口到点、下一场 `start` 复位之后，同一条告警算出来就回到 `False`。
-
-        **兜底**：提交之前先比一遍两路 `health`。凡是会改 `health` 的迁移点都已在自己的
-        落点上落过一条带原因 / 阈值的记录（`_log_health_migrations()` 幂等），这里因此通常
-        一个都不命中；真有哪条路绕过了那些落点，这一遍也会如实留下痕迹（原因写「未注明」），
-        于是契约里「每一路健康迁移必须落 log」这件事不会因为少写一处调用点而整类消失。
+        别处一律不自己改 `revision`、不自己发 `state`。`alerts.*.muted` 在这里按当下重算
+        （判定权收在 `AlertJudge.refresh_muted()` 一处）。提交前先比一遍两路 `health` 作兜底：
+        正常时一个都不命中（各迁移点已落过记录），真有哪条路绕过了落点，这里也如实留痕
+        （原因写「未注明」）——「健康迁移必须落 log」不因少写一处调用点而整类消失。
         """
         self._log_health_migrations()
         self.snapshot.alerts.refresh_muted(judge=self.judge)

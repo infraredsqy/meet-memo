@@ -106,7 +106,7 @@ def _sequence_name(stored: str, counter: int) -> str:
 class RuntimeMaterialsMixin:
     """会议资料层：目标目录校验、清单、落盘位次与单文件寻址（上传/删除的盘上动作在路由侧）。"""
 
-    # -- 目标目录（两种：当前活跃场次 / 注册表登记过的场次） ------------------
+    # 目标目录（两种：当前活跃场次 / 注册表登记过的场次）
 
     def materials_target(self, raw_dir: Any) -> str:
         """资料要进哪一场的目录：先认**当前活跃场次**，再认**注册表登记过的场次**。
@@ -142,7 +142,7 @@ class RuntimeMaterialsMixin:
             )
         return directory
 
-    # -- 清单（目录就是清单，没有 JSON 记录） --------------------------------
+    # 清单（目录就是清单，没有 JSON 记录）
 
     def materials_listing(self, raw_dir: Any) -> dict[str, Any]:
         """`GET …/materials` 的应答体：`{dir, materials_dir, items}`。
@@ -187,7 +187,7 @@ class RuntimeMaterialsMixin:
             "items": items,
         }
 
-    # -- 落盘位次（上传的前半段：清洗 + 建目录 + 重名让位） -------------------
+    # 落盘位次（上传的前半段：清洗 + 建目录 + 重名让位）
 
     def materials_reserve(self, raw_dir: Any, raw_name: Any) -> Path:
         """给一次上传定下**落盘路径**：目标校验 → 名字清洗 → 建目录 → 重名让位。
@@ -248,7 +248,7 @@ class RuntimeMaterialsMixin:
                 return candidate
             counter += 1
 
-    # -- 单文件寻址（取原文件 / 删除） ---------------------------------------
+    # 单文件寻址（取原文件 / 删除）
 
     def materials_item_path(self, raw_dir: Any, raw_name: Any) -> tuple[str, Path]:
         """取原文件 / 删除那一条的盘上位置：目标校验 + 同一套名字清洗。

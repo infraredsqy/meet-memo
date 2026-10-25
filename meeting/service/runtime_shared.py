@@ -12,13 +12,10 @@ from concurrent.futures import ThreadPoolExecutor as _ThreadPoolExecutor
 from concurrent.futures.thread import _worker as _threadpool_worker
 from typing import Any, TypedDict
 from typing import TypeGuard
-#: 收尾三步的同步调用池里的工作线程条数（审查问题 m7）。
-#:
-#: 三步在**编排**上严格串行，而线程占用上会叠：某一步被按剩余预算判超时之后，它的等待被
-#: 放弃、已提交的那次同步调用照跑到底，后续步的调用因此需要另有一条线程可用（说明与判据见
-#: `_DaemonThreadPoolExecutor` 与 `tests/test_drain.py` 的 ⑤k）。取 4 的来路：收尾三步各有同步
-#: 调用，最坏情形是「前面几步被放弃后仍在飞 + 当前步要开跑」，4 条线程把这一幕整个装下，
-#: 同时仍是一个小规模、daemon、不登记 `_threads_queues` 的池。
+#: 收尾三步的同步调用池里的工作线程条数（审查问题 m7）。三步在编排上严格串行，但线程
+#: 占用上会叠：某一步被预算判超时后，等待被放弃、已提交的同步调用照跑到底，后续步需要
+#: 另有一条线程可用（判据见 `_DaemonThreadPoolExecutor` 与 `tests/test_drain.py` 的 ⑤k）。
+#: 取 4：最坏情形「前面几步被放弃后仍在飞 + 当前步要开跑」装得下，且仍是个小 daemon 池。
 DRAIN_EXECUTOR_MAX_WORKERS = 4
 
 
@@ -114,9 +111,7 @@ class _DaemonThreadPoolExecutor(_ThreadPoolExecutor):
             # 本类**故意不写**（见类说明：那一张表是解释器退出时无条件 join 的来源）。
 
 
-# ---------------------------------------------------------------------------
 # 动作层的错误（`code` 取值只用 `ACTION_CODES` 里已冻结的那九个串，不自造）
-# ---------------------------------------------------------------------------
 
 #: 动作失败的 `code` 全集（phase2 §3.6.2；`1987cb20` phase2 补上会中总结那两档）
 ACTION_CODES: tuple[str, ...] = (
@@ -193,9 +188,7 @@ class ActionError(Exception):
         super().__init__(message)
 
 
-# ---------------------------------------------------------------------------
 # 会后一趟的现场读数（`ServiceRuntime.post_job` 这一格的形状）
-# ---------------------------------------------------------------------------
 
 
 class PostJob(TypedDict):

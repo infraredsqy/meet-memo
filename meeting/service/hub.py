@@ -118,7 +118,7 @@ class EventHub:
             return {"revision": 0}
         return self._snapshot_provider()
 
-    # -- 订阅管理 ---------------------------------------------------------
+    # 订阅管理
 
     @property
     def subscriber_count(self) -> int:
@@ -138,7 +138,7 @@ class EventHub:
             self._subscribers.remove(subscriber)
         _log.debug("SSE 订阅者断开（当前 %s 个）", len(self._subscribers))
 
-    # -- 广播入口（四个名字，同步、不阻塞） -------------------------------
+    # 广播入口（四个名字，同步、不阻塞）
 
     def broadcast_state(self, snapshot_json: dict[str, Any]) -> None:
         """状态变更：发一份**全量**快照，带 `id: <revision>`。"""
@@ -196,7 +196,7 @@ class EventHub:
             except queue.Empty:
                 break
 
-    # -- SSE 流 -----------------------------------------------------------
+    # SSE 流
 
     async def stream(
         self,

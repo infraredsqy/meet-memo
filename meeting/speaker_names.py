@@ -1,43 +1,21 @@
 """人名表：一场会目录里的「编号 → 人名」记录（节点 `91b6752e`，R10 第四条 / R30）。
 
-一场会落**一份**文件，住**场次目录根**：
+一场会落一份 `meeting_speaker_names.json` 在场次目录根，只收用户确认过的 `(编号, 名字)` 对
+（跳过 = 不起名，不落任何状态）。纯记录：不做注册制声纹（R10 首句）、不做「应该有谁」的
+校验（`docs/design-intent.md` 第 6 条）；唯一用途是喂给下一次出纪要的提示词
+（`meeting/minutes/prompt.py` 的 `{{SPEAKER_NAMES}}`）。改这张表不改任何已生成的
+`meeting_final.md`（R13）、不拉起任何离线/纪要流程（R26）。
 
-    meeting_speaker_names.json
+编号沿用既有字面量（`meeting/offline/artifacts.py` 的对照表）：离线编号 = `${source}:${local}`
+（如 `mic:S01`，两路不撞是结构保证）；没跑过离线聚类时身份 = 路本身（`mic` / `loopback`）。
+写入侧当场拦形状不对的键。
 
-里面只有用户在界面上**确认过的** `(编号, 名字)` 对——没起过名的编号不进文件
-（跳过 = 不起名，不落任何状态）。它是一本**纯记录**：不做注册制声纹（R10 首句）、
-不做「应该有谁」的校验（`docs/design-intent.md` 第 6 条：元信息除音频时长一律不校验）；
-程序拿它只做一件事——**喂给下一次出纪要的提示词**（`meeting/minutes/prompt.py` 的
-`{{SPEAKER_NAMES}}`），让模型把附录里那一格照抄成机主确认过的名字。改这张表
-**不改**任何已生成的 `meeting_final.md`（R13：名字是一份附录），也**不拉起**任何
-离线/纪要流程（R26：结束录音什么都不自动跑）。
+字段契约：顶层必填 `schema_version` 与 `names`（每项 `key` / `name` 非空字符串）；
+版本不认识 → 读方拒收。读侧只做结构解析：读不出时记一行、如实当作「没有确认过的名字」
+继续走，不报错、不挡纪要；写侧谨慎：文件在盘上但读不出时改名**拒写**（`set_speaker_name()`）——
+读不出还整份覆盖会把用户逐条确认过的名字无声抹掉。
 
-## 编号的形状（两路不撞是结构保证）
-
-编号沿用既有字面量（`meeting/offline/artifacts.py` 的对照表）：
-
-  - 离线编号 = `${source}:${local}`，如 `mic:S01`——限定名里始终带着路，
-    「这条路的 1 号」与「那条路的 1 号」在形状上就写不出同一个键；
-  - 没跑过离线聚类时，身份 = 路本身（`mic` / `loopback`），照样能起名。
-
-写入侧当场拦形状不对的键（与 `build_speakers_document()` 拦空 `source` 同一套姿态）：
-键必须是两路之一（`mic` / `loopback`），或带这两路之一作前缀的限定名。
-
-## 字段契约（写入方是本模块，读方是提示词与单场状态端点）
-
-  - 顶层必填 `schema_version` 与 `names`；`names` 每项必填 `key` / `name` 两个非空字符串；
-  - `schema_version` 缺失、不是整数、或主版本号读方不认识 → 读方拒收
-    （`parse_names_document()` 抛 `SpeakerNamesError`，与对照表那一套同一范式）；
-  - **读侧只做结构解析**：读不出（缺席另算）时调用方记一行、如实当作「没有确认过的
-    名字」继续走——提示词不带这张表、单场状态的名字一格如实 `null`，
-    **不报错、不挡纪要、不改结论**；
-  - **写侧谨慎**（与读侧宽容并存，各管各的方向）：文件**在盘上但读不出**（坏 JSON /
-    未来主版本）时，改名动作**拒写**（`set_speaker_name()` 抛 `SpeakerNamesError`，
-    动作侧按既有 `invalid_setting` 登记回执）——读不出还整份覆盖，会把用户逐条确认过
-    的名字无声抹掉，抢救的机会就没了。
-
-纯标准库（`json` / `logging` / `pathlib`）；原子写复用两包共用的
-`meeting.atomicio.write_text_atomic()`（先写本调用独占的临时文件，再 `os.replace` 换上去）。
+纯标准库；原子写复用 `meeting.atomicio.write_text_atomic()`。
 """
 
 from __future__ import annotations
@@ -75,9 +53,7 @@ KNOWN_SCHEMA_MAJOR = 1
 class SpeakerNamesError(ValueError):
     """人名表的读/写不满足字段契约（版本不认识、键的形状不对、条目缺必填键）。
 
-    继承 `ValueError`，与 `meeting` 里别的「值不对」错误同档。**读方**（提示词与
-    单场状态端点）拿它当「这一份读不出来」的记号，如实降级、不往外抛；
-    **写方**（改名动作）把它原样交给调用方登记。
+    继承 `ValueError`：读方拿它当「这一份读不出来」的记号如实降级；写方原样交给调用方登记。
     """
 
 
@@ -86,16 +62,11 @@ def names_path(session_dir: str | Path) -> Path:
     return Path(session_dir) / NAMES_FILE_NAME
 
 
-# ---------------------------------------------------------------------------
-# 两个纯函数：JSON 形状 ↔ 内存形状
-# ---------------------------------------------------------------------------
-
-
 def qualified_key_shape(key: Any) -> str:
     """键的形状校验（两路不撞是结构保证，写侧当场拦）：返回去掉首尾空白后的键。
 
-    合法形状只有两种：路本身（`mic` / `loopback`），或以两路之一作前缀的限定名
-    （`mic:S01`）。别的形状一律拒——裸 `S01` 这种键会把两路的「1 号」写成同一个人。
+    合法形状只有两种：路本身（`mic` / `loopback`），或带路前缀的限定名（`mic:S01`）。
+    裸 `S01` 这种键会把两路的「1 号」写成同一个人。
     """
     text = str(key or "").strip()
     prefix, sep, local = text.partition(":")
@@ -136,13 +107,9 @@ def build_names_document(entries: Iterable[tuple[str, str] | Mapping[str, Any]])
 def parse_names_document(document: Any) -> dict[str, Any]:
     """读一份人名表（dict 或 JSON 文本）：契约不满足即抛 `SpeakerNamesError`。
 
-    三条拒绝面，与对照表那一套同一范式：
-
-      1. 顶层不是对象（或 JSON 解不开）→ 拒；
-      2. `schema_version` 缺失、不是整数、或主版本号不认识 → 拒；
-      3. `names` 缺失或不是列表、某项缺 `key` / `name` 非空字符串 → 拒。
-
-    通过之后原样交回整份 dict（不裁剪、不补默认值）：读方拿到的就是写入方落盘的那份。
+    三条拒绝面（与对照表那一套同一范式）：顶层不是对象（或 JSON 解不开）、
+    `schema_version` 缺失 / 非整数 / 主版本号不认识、`names` 缺失或某项缺
+    `key` / `name` 非空字符串。通过之后原样交回整份 dict（不裁剪、不补默认值）。
     """
     if isinstance(document, (str, bytes, bytearray)):
         try:
@@ -177,21 +144,15 @@ def parse_names_document(document: Any) -> dict[str, Any]:
     return document
 
 
-# ---------------------------------------------------------------------------
 # 读（只做结构解析；读不出就如实当作「没有」，不挡任何下游）
-# ---------------------------------------------------------------------------
 
 
 def read_names_entries(session_dir: str | Path) -> dict[str, str] | None:
-    """读回这一场的 `{编号: 名字}`（**只读、不抛**）。
+    """读回这一场的 `{编号: 名字}`（只读、不抛）。
 
-    三档：
-
-      - 文件缺席 → `None`（这一场还没有确认过任何名字）；
-      - 文件在、契约过 → 按落盘次序交回映射（同一个键以**最后落笔**的那次为准）；
-      - 文件在但读不出（坏 JSON / 版本不认识 / 缺键）→ 记一行 log、交回 `None`——
-        提示词如实不带这张表，单场状态的名字一格如实 `null`，**不报错、不挡纪要**。
-        （**写方**对这一档反着来：拒写，见 `set_speaker_name()`。）
+    文件缺席 → `None`；契约过 → 按落盘次序交回映射（同一个键以最后落笔的那次为准）；
+    在但读不出 → 记一行 log、交回 `None`（提示词如实不带这张表，不报错、不挡纪要）。
+    写方对这一档反着来：拒写，见 `set_speaker_name()`。
     """
     path = names_path(session_dir)
     try:
@@ -213,19 +174,14 @@ def read_names_entries(session_dir: str | Path) -> dict[str, str] | None:
 
 
 def set_speaker_name(session_dir: str | Path, key: str, name: str) -> dict[str, str]:
-    """把一个编号的名字写进人名表（**唯一写方**，改名动作走这一条）。
+    """把一个编号的名字写进人名表（唯一写方，改名动作走这一条）。
 
-    已有同键条目就**覆盖**（改名 = 再起一次名），没有就**追加**；落盘前把整份文档
-    过一遍读方契约（写出去的必须读得回来，与 `write_speakers()` 同一套姿态）。
-    原子写（先临时文件再 `os.replace`），界面与提示词随时来读都不会读到半份。
+    同键覆盖（改名 = 再起一次名），没有就追加；落盘前把整份文档过一遍读方契约
+    （写出去的必须读得回来）。原子写，界面与提示词随时来读都不会读到半份。
 
-    表**在盘上但读不出**（坏 JSON / 未来主版本）时**拒写**：旧表里用户逐条确认过的
-    名字还在文件里，读不出还整份覆盖就把它们无声抹掉——读侧宽容只管渲染（缺表不挡
-    出纪要，d7），写侧不拿这份宽容去覆盖待抢救的数据。拒写抛 `SpeakerNamesError`，
-    改名动作按既有 `invalid_setting` 登记并给回执（review-1 m2）。
-
-    交回落盘的那一条 `{"key": …, "name": …}`；键的形状不对、名字是空串、或表在盘上
-    读不出，抛 `SpeakerNamesError`，由调用方登记。
+    表在盘上但读不出（坏 JSON / 未来主版本）时拒写：读不出还整份覆盖会把旧表里
+    用户逐条确认过的名字无声抹掉——读侧宽容只管渲染（缺表不挡纪要，d7），
+    写侧不拿这份宽容去覆盖待抢救的数据。抛 `SpeakerNamesError`，由调用方登记。
     """
     clean_key = qualified_key_shape(key)
     clean_name = str(name or "").strip()
@@ -245,9 +201,7 @@ def set_speaker_name(session_dir: str | Path, key: str, name: str) -> dict[str, 
     return {"key": clean_key, "name": clean_name}
 
 
-# ---------------------------------------------------------------------------
 # 盘上身份集（单场状态端点与提示词共用的那一份读数）
-# ---------------------------------------------------------------------------
 
 
 def _read_speaker_summary(artifact: Path) -> list[dict[str, Any]] | None:
@@ -286,19 +240,15 @@ def _road_is_on_disk(session: Path, source: str) -> bool:
 
 
 def identity_rows(session_dir: str | Path) -> list[dict[str, Any]]:
-    """这一场盘上的**身份集**（单场状态端点的 `speakers` 一格、提示词的人名段共用）。
+    """这一场盘上的身份集（单场状态端点的 `speakers` 一格、提示词的人名段共用）。
 
-    逐路各答一遍（照 `SOURCE_IDS` 的序）：
+    逐路各答一遍（照 `SOURCE_IDS` 的序）：对照表在且读得出、里面有编号 → 每个编号一行
+    （键 `mic:S01` 这种限定名，`segments` 是出现段数）；对照表缺席 / 读不出 / 空表 →
+    这一路落成路本身一行（没跑过离线聚类时身份只有这两种，R10 第四条）。
 
-      - 对照表在且读得出、里面有编号 → **每个编号一行**（键 `mic:S01` 这种限定名，
-        `segments` 带它出现的段数——可得的次数读数）；
-      - 对照表缺席、读不出、或一张空表 → **这一路落成路本身一行**（键就是 `mic` /
-        `loopback`；没跑过离线聚类时身份只有这两种，R10 第四条）。
-
-    每行五格：`key`（限定键）/ `source`（路）/ `label`（人话标签，`SOURCE_LABELS`）/
-    `name`（现名，没起过名或表读不出时 `null`）/ `segments`（次数读数，路级身份
-    如实 `null`）。这一格是**给人看的读数**：不校验、不核对、不改任何结论
-    （`docs/design-intent.md` 第 6 条）。
+    每行五格：`key` / `source` / `label`（人话标签）/ `name`（没起过名或表读不出时
+    `null`）/ `segments`（路级身份如实 `null`）。这一格是给人看的读数：不校验、不核对、
+    不改任何结论（`docs/design-intent.md` 第 6 条）。
     """
     session = Path(session_dir)
     names = read_names_entries(session) or {}

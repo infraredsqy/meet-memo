@@ -1,153 +1,14 @@
-"""会后产物的写入与字段契约（`7c6952e5` phase2）。
+"""会后产物的写入与字段契约。
 
-一场会的会后离线路径落下**四份文件**，都住场次目录：
+一场会落下四份文件（都住场次目录，每路各一份不合并）：转写 `meeting_offline_transcript_<source>.md`
+（行格式 `[HH:MM] **S01**: 正文`，分钟级）、对照表 `meeting_offline_speakers_<source>.json`
+（秒级浮点，机器读）、运行报告 `meeting_offline_report.md`、状态文件 `meeting_offline_status.json`。
 
-| 文件 | 作用 | 读者 |
-|---|---|---|
-| `meeting_offline_transcript_<source>.md` | 会后稿，每行 `[HH:MM] **S01**: 正文`（**分钟级**） | 人 + 下游核对 |
-| `meeting_offline_speakers_<source>.json` | 类编号 → 每段区间对照表（**秒级浮点**） | 下游程序 |
-| `meeting_offline_report.md` | 运行报告（段耗时分布 / 失败原因分布 / 实时率 + 本场基本事实） | 人 |
-| `meeting_offline_status.json` | 状态文件（`running` / `done` / `partial` / `failed`） | `phase3` 与将来的界面 |
+字段契约（键表、拒收判据、五档状态、`headcount` 口径、四档留痕）的**正本在 `docs/state.md`
+的会后产物一节**；逐块结论词词表见 `runner.REASON_*`，门尺子词表见 `runner.GATE_METHOD_*`。
+本模块是写入与读取的唯一实现。
 
-**每路各一份，两路不合并**：转写与对照表两张表都按 `source` 分别落盘，文件名里带
-`<source>`。混成一份就再也说不出「这一行出自哪一路」了。
-
-## 字段契约（写入方是本模块，读方是下游程序与核对节点）
-
-对照表是机器读的那一份，字段契约落在这里：
-
-  - 必填顶层键：`schema_version` / `source` / `speakers` / `segments`；
-    `segments` 每一项必填 `start` / `end` / `speaker` / `text`；
-  - `schema_version` **缺失**，或主版本号**读方不认识** → 读方拒绝该文件并如实报错
-    （`read_speakers_artifact()` 抛 `ArtifactContractError`），任何情况下都不许猜；
-  - `source` **缺失** → 读方拒绝：一份说不出自己出自哪一路的对照表**没法**与另一路
-    并排读，「两路当成一路」这件事必须在读的那一刻就被拦下；**写入侧的公开入口
-    `build_speakers_document()` 用同一条判据当场拦**（空 `source` 会让限定名退化成
-    `:S01`），写方与读方因此不会对「什么算合契约」有两种口径；
-  - `label_raw` 记引擎原始标签，`local` 记规范化后的 `S01`，两者都留着，改编号规则时可追溯；
-    **分块模式下 `label_raw` 带块内命名空间**（`c01:S01`），`local` 仍是本路规范化编号 ——
-    同一个人的两段落在两块里时故意拿到两个编号（spec：「宁可同一个人被算成两个编号，
-    也不要两个人被合并」），而 `cNN` 让下游想合并时自己算得出来；
-  - `id` 一律 `${source}:${local}`：**「这条路的一号等于那条路的一号」在数据结构上表达
-    不出来**，跨路不串靠形状（限定名里始终带着 `source`）而不是靠约定；
-  - `state` 记这一路跑完时的终态（`done` / `failed` / `interrupted`，最后一档是
-    「跑到块边界被人停」那一趟，b1c6a58e），`error` 记失败原因（成功时 `null`）。
-    读方**一律先看这一格**：一份空表配 `state = "failed"` 说的是「这一路一段都没转出来」，
-    与「这一路真的没人说话」是两件事；
-  - `headcount` 说清 `speakers` 数组长度**该怎么读**（见下面「类数与人数」那一节）。
-
-## 类数与人数（`headcount`）
-
-`speakers` 数组的长度在两种跑法下含义不同，机器读方靠 `headcount` 分辨：
-
-  | 跑法 | `headcount.meaningful` | `speakers` 长度的含义 |
-  |---|---|---|
-  | 整段一次跑（1 次引擎调用） | `true` | 模型在这段音频里分出的类数 |
-  | 分块跑（≥2 块） | `false` | **各块类数之和**：同一个人在两块里各拿一个编号 |
-
-分块模式下这个数在真实长度的会议上必然大于人数（`phase3` 实测：900 秒切两块，3 类变 6 类；
-5943 秒的素材切 14 块，类数是各块之和）。`headcount` 因此把「这个数从几次引擎调用、
-几块里来」一并落在产物上，下游不必回头读报告才知道这件事。
-
-`headcount.chunk_count` 记的是**本路跑了几块**：一块一次引擎调用，因此它平常也就是**引擎调用
-次数**。**没声跳过的那几块照样算在块数里**（一次调用都没发生），于是跳过发生时这两个数不同：
-块数读 `chunks` 数组的长度、调用次数读 `chunks` 里 `silent` 不为 `true` 的条数（运行报告里
-报的是后者、逐路表那一格报的是前者）。单趟跑没有 `chunks` 数组、记 `1`，因为那一次同样是一次
-引擎调用。它是**数出来的**，
-不是「总时长 ÷ 块长」算出来的——块长除不尽时这两个数不是一回事：5943.3 秒配 1200 秒块长，
-商是 4.95 而实际是 5 块（末块只有 1143.3 秒）。读方拿它对齐的是「这个类数从几块里来」，
-按实际块数读，别按商读。
-
-## 精度分工
-
-转写正文与它的 `[HH:MM]` 按 `ui-design.md` 门槛 10 走**分钟级**，秒级精度只进 JSON 的
-`start` / `end`（数据面）。同一个数在两个文件里因此有两种精度，两者各记各的层级。
-
-## 缺了一段的时候
-
-分块跑的时候某一块可能没成（OOM、单块抛错、一段都没交回）。那一块的音频因此没有转写，
-下游拿到的是一份**短了一段**的下游底本（两份稿平级、不叫「权威」，`docs/design-intent.md`
-第 11 条），所以这件事在三处都留痕：
-
-  - 转写文件**第一行**是一条注释行（`incomplete_note()` 造，`<!-- ... -->` 形状），
-    写明缺的是哪一段；`read_transcript_lines()` 认这条注释并跳过，它不占段号、不是正文；
-  - 对照表的 `audio` 那一格带 `partial` 与 `missing_spans`，`chunks` 数组逐块记成功与失败；
-  - 状态文件与运行报告写明整场 `partial` 与缺失区间。
-
-## 没声的那一段（与「缺了一段」分开记）
-
-`runner` 在调引擎**之前**过一道数字静音门（判据见 `runner.py` 的「数字静音门」一节）：
-一段音频的样本全是 0（实测那一档是 `volumedetect` 读 `-91.0 dB` 的全零样本）时，
-那一段**根本不送进引擎**。这一档什么都没出错，只是那里没有音频；它同样不等于
-「转写好了」——那一段本来就没有字。**四条线**因此必须分得开：
-
-| 档 | 读法 |
-|---|---|
-| 正常跑完 | `state = "done"`、`silent_spans` 为空、`missing_spans` 为空 |
-| 没声跳过 | `state = "done"`、`silent_spans` 非空（`partial` 仍是 `false`） |
-| 引擎失败 / 缺段 | `state = "failed"`（每一路都没交回），或 `state = "done"` 且 `partial = true`；一路整条没交回、另一路跑成的时候这一格落 `state = "partial"`（缺的是哪一路看 `artifacts.<source>`） |
-| 跑成而段全零时长 | `state = "done"`、`zero_span_segments > 0`（有字，但形状可疑） |
-
-留痕的四处与「缺了一段」一一对应，但用的是**另一批字段**：
-
-  - 转写文件第一行**另一条**注释行（`silent_note()` 造）：说明这一段没声、没有转写；
-  - 对照表的 `audio` 那一格带 `silent_spans`（与 `missing_spans` 并列，两者不相交）；
-  - 状态文件顶层 `silent` / `silent_spans`，逐路那一格在 `artifacts.<source>` 里；
-  - 运行报告单列一节。
-
-`audio.silent_spans` 的长度 = **跳过的块数**。分块跑时「块=区间」一一对应；单趟跑时整段
-是一次引擎调用、也是一块，因此这一档要么空、要么就是**整段音频**那一个区间
-（`[[0.0, 总时长]]`）——读方按「块」读它，别按「静音子区间」读。
-
-## 门判不了的时候（`audio.gate` / 状态文件的 `gate`）
-
-这道闸要看得见「**它自己没判成**」这件事：音频解不开、要的那一段读不全（文件比区间短）时，
-那一段照常送引擎（读不到就按可能有声处理），而这一趟必须在产物里与一次健康的运行**分得开**。
-少了这一格，一段被污染的输出与一次正常的运行在产物里长得一样，下游无从分辨。记法是三层：
-
-  - **逐块**那一行带 `gate`（`silent` / `not_silent` / `unjudged`）、`gate_method`
-    （门凭什么判的）、`gate_detail`（判不了的那一句为什么）与 `reason`（**结论词**，见下）；
-  - **逐路**的 `audio.gate`（对照表）与 `artifacts.<source>.gate`（状态文件）：
-    `applied` / `method` / `spans_total` / `spans_judged` / `spans_unjudged` /
-    `unjudged_spans` / `unjudged_reason` / `detail`；
-  - **整场**的 `gate`（状态文件顶层，按路列出判不了的那几段）+ 报告开头那一行
-    「数字静音门」与单列的一节。
-
-`gate_method`（逐块）与 `method`（逐路）是同一套词表，见 `runner.GATE_METHOD_*`：
-`pcm_bytes`（按字节扫归档 PCM）/ `waveform`（量长度那一步解好的波形上切片判 —— **单趟跑的
-MP3 落在这一格**）/ `decode_at_plan`（量长度那一步解过而没成，结论必然是「判不了」）/
-`decode_now`（门现解一次，产品路径上到不了）。读方按这一格核「这一段凭什么被判的」。
-
-## 逐块的结论词（`chunks[].reason`，机器可读）
-
-下游原先只能从整场的几个字段反推「这一段为什么没有字」。现在每一块自己带一个词：
-
-| `reason` | 这一段发生了什么 | 对应的整场字段 |
-|---|---|---|
-| `digital_silence` | 门判出样本全零，引擎调用都没发生 | `audio.silent_spans` |
-| `engine_error` | 引擎抛错，这一段没跑成 | `audio.missing_spans` + `error` |
-| `no_segments` | 引擎跑成了但一段都没交回 | `audio.missing_spans` + `error` |
-| `zero_span_segments` | 跑成了，交回的段**每一段都是零时长** | `audio.zero_span_segments` |
-| `transcribed` | 跑成了，交回的段有真实时长 | 无（正常那一档） |
-| `gate_unjudged` | 跑成了、段有真实时长，但这一段的静音与否没人判过 | `audio.gate.unjudged_spans` |
-
-`gate_unjudged` 与它的邻居分得开：门判不了那一段时，那一段照常送引擎，于是它可能跑成
-（`gate_unjudged`）、可能一段没交回（`no_segments`）、也可能抛错（`engine_error`）——
-三种情形下 `gate` 那一格都是 `unjudged`，`reason` 说的是**引擎那一边的结果**。
-
-报告逐块那一行把词与一句人话并排写（`_chunk_reason()`），读报告的人与读表格的程序各取所需。
-
-## 零时长的段（`zero_span_segments`）
-
-产物里的 `segments` 允许出现 `end == start` 的段：解析层（`engine.parse_transcript()`）
-对「模型漏写了 `[结束]`」的那一段故意留着正文、把 `end` 退回 `start`，于是零时长段是一个
-**真实存在的形状**，不能一律丢掉。但实测那台引擎在数字静音上编出来的那几段**每一段都是
-零时长**，它因此是有用的异常信号：逐块那一行数一份、整路汇一个总数记在对照表的
-`audio.zero_span_segments` 与报告里。**只记不改**：这一格是给人看的信号，正文一个字都不动。
-
-
-纯标准库，无重依赖（`json` / `re`）；原子写那份小工具与纪要那一包共用，住在
-`meeting/atomicio.py`（同样纯标准库）。
+纯标准库；原子写共用 `meeting/atomicio.py`。
 """
 
 from __future__ import annotations
@@ -158,8 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
-# 原子写是两包共用的小工具（与 `meeting/minutes/inputs.py` 同一份实现）：实现只住在
-# `meeting.atomicio` 一处，这里留一个同名转发别名，本包内外的调用方一个都不用改。
+# 原子写实现只住在 meeting.atomicio 一处，这里留同名转发别名，调用方照旧可用。
 from meeting.atomicio import write_text_atomic
 
 #: 三份按路落盘的产物的文件名模板
@@ -203,24 +63,13 @@ _SETTLED_STATES = ("failed", "partial", "interrupted")
 
 
 class ArtifactContractError(ValueError):
-    """读到的产物不满足字段契约（`schema_version` / `source` 缺失或版本不认识）。
-
-    这一档记的是**读方的拒绝**，与写到一半的意外分开：拿不准的文件一律拒收，读方不许猜。
-    继承 `ValueError`，与 `meeting` 里别的「值不对」错误同档。
+    """读到的产物不满足字段契约（`schema_version` / `source` 缺失或版本不认识）：
+    拿不准的文件一律拒收，读方不许猜。继承 `ValueError`，与项目里别的「值不对」同档。
     """
-
-
-# ---------------------------------------------------------------------------
-# 转写正文里的时间戳（分钟级）
-# ---------------------------------------------------------------------------
 
 
 def minute_stamp(seconds: float) -> str:
-    """秒 → `HH:MM`（分钟级，**向下取整**；负数收成 `00:00`）。
-
-    取整口径与 `ui-design.md` 门槛 10 一致：分钟级那一档只报「第几分钟」，
-    第 3 分 59 秒与第 3 分 0 秒落同一个 `00:03`。
-    """
+    """秒 → `HH:MM`（分钟级，向下取整；负数收成 `00:00`，口径同 `ui-design.md` 门槛 10）。"""
     total = int(max(0.0, float(seconds)) // 60)
     return f"{total // 60:02d}:{total % 60:02d}"
 
@@ -236,10 +85,8 @@ def format_transcript_line(start: float, speaker: str, text: str) -> str:
 
 
 def incomplete_note(spans: Sequence[Sequence[float]]) -> str:
-    """转写第一行那条注释：写明这段音频有哪几段没有转写（秒级，落在原录音时间轴上）。
-
-    只有分了块、且某一块没成的时候才会有这一行。**它是一行注释**：
-    `read_transcript_lines()` 认它并跳过，读方按行格式读正文时不会把它当成一段。
+    """转写第一行那条注释：写明哪几段没有转写（秒级）。是注释行不是正文，
+    `read_transcript_lines()` 认它并跳过、不占段号。
     """
     listed = "、".join(f"{float(item[0]):.1f}–{float(item[1]):.1f}s" for item in spans)
     return (
@@ -250,11 +97,8 @@ def incomplete_note(spans: Sequence[Sequence[float]]) -> str:
 
 
 def silent_note(spans: Sequence[Sequence[float]]) -> str:
-    """转写第一行那条注释：写明这段音频有哪几段**没声**、因此没有送进引擎。
-
-    与 `incomplete_note()` 是**两条**注释，各说一件事：那条说「这块没跑成、转写缺了」，
-    这条说「这块本来就没有音频、跳过是对的」。两者都由 `is_transcript_note()` 认出来，
-    因此读方按行格式读正文时两条都不会被当成一段。
+    """转写第一行那条注释：写明哪几段**没声**、因此没送进引擎。与 `incomplete_note()`
+    是两条注释各说一件事（那条 = 块没跑成，这条 = 本来就没有音频），读方两条都不会当正文。
     """
     listed = "、".join(f"{float(item[0]):.1f}–{float(item[1]):.1f}s" for item in spans)
     return (
@@ -269,13 +113,8 @@ def is_transcript_note(line: str) -> bool:
     return line.strip().startswith(TRANSCRIPT_NOTE_PREFIX)
 
 
-# ---------------------------------------------------------------------------
-# 两个纯函数：JSON 形状 ↔ 内存形状
-# ---------------------------------------------------------------------------
-
-
 def _round(value: Any) -> float:
-    """秒数落盘前统一收成 3 位小数（秒级浮点，读数稳定、核对可复算）。"""
+    """秒数落盘前统一收成 3 位小数（读数稳定、核对可复算）。"""
     return round(float(value), 3)
 
 
@@ -293,25 +132,12 @@ def build_speakers_document(
 ) -> dict[str, Any]:
     """组一份对照表（**纯函数**，不碰盘）：写出去与读回来都以它为准。
 
-    `segments` 每项收 `start` / `end` / `speaker` / `local` / `text` 五格，
-    `speakers` 每项收 `id` / `local` / `label_raw` / `segments` / `seconds` 五格，
-    `chunks` 每项收 `index` / `offset_seconds` / `seconds` / `segments` / `error` 五格
-    （单趟跑时是空数组：没有块这件事本身也要看得出来）。
-
-    `state` / `error` 记这一路的终态与失败原因：**每一块都没跑成的那一路**留下的是一份
-    空表，`state = "failed"` 与 `error` 是读方分辨「一段都没转出来」与「这段音频真的没人
-    说话」的唯一依据。有产物的那一档传 `done`，缺了区间的那些块由 `audio.partial` 与
-    `audio.missing_spans` 说话。
-
-    `headcount` 每一趟都现算（见模块头「类数与人数」）：块数多于一的时候 `speakers` 数组的
-    长度是**各块类数之和**，读它当人数会在真实长度的会议上错得离谱，因此这一格必须带上
-    「这个数从几次引擎调用里来」。`chunk_count` 记的是**实际块数 = 引擎调用次数**
-    （`chunks` 的条数；单趟跑记 `1`），不是「总时长 ÷ 块长」那个商——口径见模块头。
-
-    **`source` 与 `parse_speakers_document()` 用同一条判据**（非空字符串）：限定名
-    `${source}:${local}` 是这一层的形状保证，`source` 为空时它会长成 `:S01` —— 那种
-    形状正是字段契约要拒的东西。写入方在这里当场拦下，别让不合契约的形状先落盘、
-    再等读方拒收（`write_speakers()` 也会过一遍读方契约，这里是自己成一道）。
+    `state` / `error` 记这一路终态：每一块都没跑成的那一路留下空表，`state = "failed"`
+    是读方分辨「一段都没转出来」与「真的没人说话」的唯一依据。`headcount` 每趟现算：
+    分块跑时 `speakers` 长度是各块类数之和、读它当人数会错得离谱；`chunk_count` 记
+    **实际块数**（`chunks` 条数，单趟记 1），不是「总时长 ÷ 块长」那个商。
+    `source` 与读方 `parse_speakers_document()` 用同一条判据当场拦（空 source 会让
+    限定名退化成 `:S01`），别让不合契约的形状先落盘。
     """
     if not isinstance(source, str) or not source.strip():
         raise ArtifactContractError(
@@ -326,7 +152,7 @@ def build_speakers_document(
             {
                 "start": _round(item["start"]),
                 "end": _round(item["end"]),
-                # 限定名从 `source` 与 `local` 现算：绝不接受调用方递进来的裸 id
+                # 限定名从 source 与 local 现算，绝不接受调用方递进来的裸 id
                 "speaker": f"{source}:{local}",
                 "local": local,
                 "text": str(item["text"]),
@@ -353,8 +179,6 @@ def build_speakers_document(
                 "seconds": _round(item["seconds"]),
                 "segments": int(item["segments"]),
                 "error": None if item.get("error") is None else str(item["error"]),
-                # **结论词**与门在这一块上的结论（见模块头「逐块的结论词」）：这两格是
-                # 「这一段为什么没有字」的机器可读答案，缺了它们读方只能从整场那几格反推
                 "silent": bool(item.get("silent")),
                 "reason": str(item.get("reason") or ""),
                 "gate": str(item.get("gate") or ""),
@@ -391,15 +215,8 @@ def build_speakers_document(
 
 def parse_speakers_document(document: Any) -> dict[str, Any]:
     """读一份对照表（dict 或 JSON 文本）：契约不满足即抛 `ArtifactContractError`。
-
-    三条拒绝面，逐条来自字段契约：
-
-      1. 顶层不是对象 → 拒；
-      2. `schema_version` 缺失、不是整数、或**主版本号不认识** → 拒；
-      3. `source` 缺失或空白 → 拒（一份说不出出处的对照表没法与另一路并排读）；
-      4. `segments` / `speakers` 缺失或不是列表、`segments` 某项缺必填键 → 拒。
-
-    通过之后就原样交回整份 dict（不裁剪、不补默认值）：读方拿到的就是写入方落盘的那份。
+    拒收面：顶层不是对象 / `schema_version` 缺失或主版本不认识 / `source` 缺失或空白 /
+    `speakers` `segments` 缺失或段缺必填键。通过后原样交回整份 dict（不裁剪、不补默认值）。
     """
     if isinstance(document, (str, bytes, bytearray)):
         try:
@@ -442,20 +259,13 @@ def parse_speakers_document(document: Any) -> dict[str, Any]:
     return document
 
 
-# ---------------------------------------------------------------------------
-# 写盘（原子替换：半份文件不会被读方读到）
-# ---------------------------------------------------------------------------
-#
-# `write_text_atomic()` 连同它的两个帮手（`_tmp_path_for()` /
-# `_is_transient_replace_error()`）住在 `meeting/atomicio.py`：那里那份实现与本模块
-# 从前的一份逐行同构，现在只留一份（与 `meeting/minutes/inputs.py` 共用）。
-# 上面的 import 留了同名转发别名，`artifacts.write_text_atomic` 照旧可用。
+# write_text_atomic() 住在 meeting/atomicio.py（与 minutes/inputs.py 共用），
+# 上面留了同名转发别名，artifacts.write_text_atomic 照旧可用。
 
 
 def write_transcript(path: Path | str, lines: Iterable[str]) -> Path:
-    """落一份转写：**恰好 `行数` 行**，每行末尾一个换行（空转写就是 0 字节文件）。
-
-    行尾不做「末尾多一个空行」那种花样：读方按行读，空行会被当成一段空正文。
+    """落一份转写：**恰好行数行**，每行末尾一个换行（空转写就是 0 字节文件）。
+    不做「末尾多一个空行」的花样：空行会被读方当成一段空正文。
     """
     body = "".join(f"{line}\n" for line in lines)
     return write_text_atomic(path, body)
@@ -498,29 +308,14 @@ def read_transcript_lines(path: Path | str) -> list[dict[str, str]]:
     return rows
 
 
-# ---------------------------------------------------------------------------
-# 逐路的度量（报告与摘要都读它）
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class SourceMetrics:
-    """一路跑完之后留下的度量（报告的那一行与摘要的那一格都从这里取）。
+    """一路跑完的度量（报告那一行与摘要那一格都从这里取）。
 
-    `partial` 立起来表示这一路**缺了区间**（分块跑时某一块没成）：产物照落、`state` 仍是
-    `done`，但缺的那几段列在 `missing_spans` 里。整场因此不会把「少了 450 秒」当成
-    「整段都转好了」。
-
-    `silent_spans` 记**没声而跳过**的那几段（引擎调用都没发生）：它与 `missing_spans`
-    分开记，两者不相交。这一档 `state` 仍是 `done`、`partial` 仍是 `false` ——
-    「那里本来就没有音频」与「那一块没跑成」在产物里各有各的格子。
-
-    `unjudged_spans` 是第三条线：门**判不了**静音与否的那几段（音频解不开、要的那一段
-    读不全），那几段照常送引擎。它同时进 `gate`（`applied = false` 与 `unjudged_spans`），
-    于是「这一趟的门在哪几段上没做成判断」不必从整场那几个字段去猜。
-
-    `zero_span_segments` 由**逐块的登记**数出来（每一块交回的段里 `end <= start` 的条数之和），
-    与对照表 `audio.zero_span_segments` 同源：整路那一格与逐块那几行的数因此对得上。
+    三批区间分开记、互不相交：`missing_spans`（块没跑成，`partial` 立）、
+    `silent_spans`（没声跳过，state 仍 done / partial 仍 false）、
+    `unjudged_spans`（门判不了、照常送了引擎，同时进 `gate.applied = false`）。
+    `zero_span_segments` 由逐块登记数出来，与对照表 `audio.zero_span_segments` 同源。
     """
 
     source: str
@@ -561,12 +356,10 @@ class SourceMetrics:
 
     @property
     def silent(self) -> bool:
-        """这一路有没有跳过没声的区间。"""
         return bool(self.silent_spans)
 
     @property
     def gate_applied(self) -> bool:
-        """这一路的门有没有在**每一段**音频上给出结论。"""
         return bool(self.gate.get("applied"))
 
     def to_dict(self) -> dict[str, Any]:
@@ -596,15 +389,9 @@ class SourceMetrics:
 def speaker_rows(
     spans: Sequence[Any], *, raw_labels: Sequence[Any] | None = None
 ) -> list[dict[str, Any]]:
-    """类编号 → 段数与秒数，**并把引擎原始标签一并留下来**。
-
-    汇总那一半照 `meeting/offline/speakers.py` 的 `speaker_summary()`（段数按段数、
-    秒数按段区间加总，段间静默不计）。
-
-    `label_raw` 逐段记引擎原始标签，由调用方在**编号之前**从分段上取。两者按**编号**
-    对齐（某个 `Sxx` 第一次出现的那一段，它的引擎标签就是这一类的原始标签），
-    不按位置对齐 —— 汇总表的行序走「限定名首次出现的顺序」这条口径，分段序走时间顺序，
-    两种顺序各管各的。
+    """类编号 → 段数与秒数，并把引擎原始标签（`label_raw`，编号前从分段上取）一并留下。
+    原始标签按**编号**对齐（某个 `Sxx` 首次出现那段的标签），不按位置——汇总行序走
+    限定名首次出现顺序，与分段的时间顺序是两种序。
     """
     from meeting.offline.speakers import speaker_summary
 
@@ -618,11 +405,8 @@ def speaker_rows(
 
 
 def _engine_calls(metric: dict[str, Any]) -> int:
-    """这一路**真的调了几次引擎**（单趟记 1）。
-
-    没声跳过的块**不算**：那几块一次调用都没发生（`runner` 的数字静音门）。逐路的
-    `chunks` 数组里那几块的 `silent` 是 `true`，因此「块数」与「引擎调用次数」在跳过
-    发生时不是同一个数 —— 报告里报的是后者，块数另外报在逐路表那一行。
+    """这一路真的调了几次引擎（单趟记 1）：没声跳过的块不算（一次调用都没发生），
+    所以跳过发生时它与块数不是同一个数——报告报的是这个，块数另报在逐路表。
     """
     chunks = metric["chunks"]
     if not chunks:
@@ -631,14 +415,8 @@ def _engine_calls(metric: dict[str, Any]) -> int:
 
 
 def _gate_headline(rows: Sequence[dict[str, Any]]) -> str:
-    """报告开头那一行「数字静音门做成没做成判断」。
-
-    「这一趟有没有门」是读报告的人要先知道的一件事：门判不了那几段时（音频解不开、读不全），
-    产物与一次健康运行的形状**不再一样**，这一行让它在第一屏就看得出来。逐路那一格与
-    状态文件的 `gate` 记的是同一件事（见模块头「数字静音门」那一节）。
-
-    这一行按**这一趟实际发生的事**写：一段都没跳过时如实写出来（不许把「跳过」说成发生了），
-    真跳过时写出跳过几段 —— 与逐路那一格 `gate.detail` 同一套说法（`runner._chunk_gate()`）。
+    """报告开头那一行「数字静音门做成没做成判断」，按这一趟实际发生的事写：
+    一段都没跳过时如实写出来，真跳过时写出跳过几段（与 runner._chunk_gate 同一套说法）。
     """
     total = sum(int(item["gate"].get("spans_total", 0)) for item in rows)
     judged = sum(int(item["gate"].get("spans_judged", 0)) for item in rows)
@@ -682,12 +460,7 @@ def _unjudged_indexes(item: dict[str, Any]) -> list[int]:
 
 
 def _chunk_reason(run: dict[str, Any]) -> str:
-    """逐块那一行末尾的结论：**机器可读的词 + 一句人话**。
-
-    词是 `runner` 给的（`digital_silence` / `engine_error` / `no_segments` /
-    `zero_span_segments` / `transcribed` / `gate_unjudged`），人话照它翻。两个都写上，
-    因为读报告的是人、读对照表的是程序，两边都该看得出「这一段为什么没有字」。
-    """
+    """逐块那一行末尾的结论：机器可读的词 + 一句人话（读报告的是人、读表的是程序）。"""
     reason = str(run.get("reason") or "")
     return f"{reason}（{_CHUNK_REASON_TEXT.get(reason, '见逐块登记')}）"
 
@@ -714,20 +487,11 @@ def write_report(
 ) -> Path:
     """落运行报告：B16 的三项（段耗时分布 / 失败原因分布 / 实时率）+ 本场基本事实。
 
-    「实时率」那一节有两格、两种口径：逐路那一格是 `SourceMetrics.rtf`（**墙钟 ÷ 音频**，
-    与 V1 的 0.39× 基线同向，小于 1 表示比录音快）；「整场」那一格是**音频合计 ÷ 总耗时**，
-    括号里逐字写出这条算式，读的人当场能复核。两格互为倒数，方向各自写在括号里。
-    总耗时为 0 时整场那一格落「算不出」，不拿 0 当除数。
-
-    **段耗时分布这一项在会后离线路径上落在「每次引擎调用」那个粒度**：MOSSTD 的主场是
-    整段批处理，没有「一段一段的耗时」可以统计；分了块之后每次调用对应一块，逐块的
-    墙钟因此列得出来（块数 1 就是整段一次调用）。分块、缺段这两件事各有一节：
-    报告是人读这一场跑成什么样子的地方，缺一段却不写出来的话，读报告的人看不出来。
-
-    **没声跳过的那几段也单列一节**（与「缺了哪几段」分开）：那一档什么都没出错，
-    报告里若与失败混在一处写，读的人会以为这一场坏过。零时长的段同理单列一格
-    （条数从逐路度量的 `zero_span_segments` 取，与对照表 `audio.zero_span_segments` 同源，
-    见模块头）。
+    实时率两格两种口径：逐路是 `SourceMetrics.rtf`（墙钟 ÷ 音频，与 V1 的 0.39× 基线
+    同向）；整场是「音频合计 ÷ 总耗时」，算式逐字写在括号里。两格互为倒数，方向写在
+    括号里免得被当成矛盾；总耗时为 0 落「算不出」。段耗时分布落在「每次引擎调用」粒度
+    （MOSSTD 主场是整段批处理，逐段耗时在这一层不存在）。没声跳过、零时长段、缺段
+    各单列一节：报告是人读这一场跑成什么样的地方，混在一处会读成「这一场坏过」。
     """
     rows = [item.to_dict() for item in metrics]
     total_audio = sum(float(item["audio_seconds"]) for item in rows)
@@ -942,10 +706,6 @@ def write_report(
     if total_audio > 0:
         wall = float(total_wall_seconds)
         if wall > 0:
-            # **整场那一格是「音频合计 ÷ 总耗时」**：与括号里的算式同源，可当复核口径。
-            # 逐路那一格走的是另一条口径（`SourceMetrics.rtf` = 墙钟 ÷ 音频，与 V1 的
-            # 0.39× 基线同向），两者互为倒数，因此这里把关系写在括号里，
-            # 免得读的人把两个方向相反的「×」当成互相矛盾。
             lines.append(
                 f"- 整场：{total_audio / wall:.3f}×"
                 f"（音频合计 {total_audio:.1f}s / 总耗时 {wall:.3f}s；"
@@ -960,11 +720,6 @@ def write_report(
     )
     lines.append("")
     return write_text_atomic(path, "\n".join(lines))
-
-
-# ---------------------------------------------------------------------------
-# 状态文件
-# ---------------------------------------------------------------------------
 
 
 def write_status(
@@ -982,40 +737,14 @@ def write_status(
     silent_spans: Sequence[Sequence[float]] | None = None,
     gate: dict[str, Any] | None = None,
 ) -> Path:
-    """落状态文件（`running` / `done` / `partial` / `failed` / `interrupted` 五档，写盘原子替换）。
-
-    **五档各说一件事**，读方只看 `state` 这一格就分得开：
-
-      - `done`：这一场声明的每一路都跑成了；
-      - `partial`：**至少有一路跑成、也至少有一路整条没交回**（模型没起来、这一路抛错、
-        一段都没交回、归档缺了这一路）。这一档必须与「两路都成」分得开 —— 读方若只看
-        顶层 `state`，从前两种情形都落 `done`，「这一层没问题」就被读出来了；
-        缺的是哪一路由 `artifacts.<source>.state` / `reason` / `error` 那几格回答；
-      - `failed`：**每一路**都没交回（一份产物都出不来）；
-      - `running`：这一趟还在跑（或者崩在半路停在了那一版）；
-      - `interrupted`：**这一趟被人停了**（「打断会后」，b1c6a58e）：取消旗标在块边界
-        命中，当前块跑完、下一块开跑前收场。它也是**终态**（这一趟不会自己往下跑了），
-        与 `running` 分开写 —— 读方按它知道「盘上停着、但不会再有下文」，重按按钮
-        不用 `--force` 就能从头再跑（幂等闸只拦 `running`）。缺了什么写在 `error`
-        那一格（哪一路跑到第几块、哪些产物没有），那份缺口只供人读、不作判据。
-
-    这一档看的是「哪一路整条没有」，与紧跟着讲的那个 `partial` 字段**各说一件事**：那个
-    字段看的是「某一路缺了区间」（分块跑时某块没成，产物照落、这一路仍落 `done`）。一路
-    整条失败、另一路缺了区间的那一场因此是 `state = "partial"` 配 `partial = true`，
-    两件事各占一格。
-
-    `partial` 是这一场有没有**缺了区间**（分块跑时某块没成）：`state` 仍落 `done`
-    （产物可用、这一格是终态），而 `partial = true` 加上 `error` 里那句「缺了哪一段」
-    让读状态文件的人与程序都看得出这份转写短了一截。没有这个键的话，一份少了 450 秒的
-    转写与一份完整的转写在状态文件里长得一模一样。
-
-    `silent` / `silent_spans` 是**另一档**：这一段音频没声、跳过是对的，`state` 照样
-    `done`、`partial` 照样 `false`，但跳过的是哪几段写在 `silent_spans` 里（秒级，
-    原录音时间轴）。读方按这两格分得开「那里本来就没有音频」与「那一块没跑成」。
-
-    `gate` 是**这道闸自己做成没做成判断**：`applied` 为假时（音频解不开、要的那一段读不全）
-    逐路列出判不了的那几段。少了这一格，一次没门可用的运行在状态文件里与一次健康的运行
-    长得一样，而那正是「下游从产物里读不出污染」的那条路。
+    """落状态文件（原子替换，五档）。`state` 与 `partial` 是两个键各说一件事：
+    `state = "partial"` 看「哪一路整条没交回」（至少一路跑成、也至少一路整条没交回；
+    缺哪路看 `artifacts.<source>.state/reason/error`），`partial = true` 看「某一路缺了
+    区间」（某块没成，产物照落、该路仍 done——少了这个键，少 450 秒与完整转写同形）。
+    `interrupted` 也是终态（b1c6a58e）：取消旗标块边界命中收场，缺口注记进 `error`
+    只供人读；重按按钮不用 force 就能从头再跑（幂等闸只拦 running）。
+    `silent` / `silent_spans` 记没声跳过（state 照样 done、partial 照样 false）；
+    `gate` 记闸自己做成没做成判断，缺了它没门可用的运行与健康运行同形。
     """
     if state not in STATES:
         raise ValueError(f"状态只认 {STATES}，收到 {state!r}")
@@ -1062,30 +791,11 @@ def _now_iso() -> str:
 
 
 def mark_failed_if_unset(session_dir: Path | str, error: str) -> Path:
-    """把状态文件补成 `failed` + 原因；**盘上停着一版已落定的记录时沿用那一版的字段**。
-
-    「读回状态文件 → 盘上已是终态记录则沿用它的字段 → 否则补 `failed` + 原因」这一段，
-    从前在两个调用点逐字各抄一份（`meeting/backends/post.py` 的线程体兜底与
-    `meeting/cli.py::run_post()` 上抛前那次补记录），现在只有这一份 —— 幂等闸、启动核对
-    与读回侧都读这份文件，补记录口径因此只能有一处。
-
-    沿用判据（**以原有两处的口径为准，字段一个不变**）：
-
-      - `session_id` / `started_at` / `sources` / `artifacts` 照读回的那一版
-        （缺格按缺省补：编号退回目录名、开始时刻退回现在、路清单与产物表退回空）；
-      - 盘上那一版已落定（`failed` / `partial` / `interrupted` 三档）→ `state` / `error` /
-        `partial` / `silent` / `silent_spans` / `gate` 六格照它自己那一版留：
-        `engine_load_error` 这类词档只在 runner 现场写的那一版里，比调用方手里的通用串准；
-        `interrupted`（人停的）不许被后来逃出来的异常盖成 `failed`（引擎炸的），b1c6a58e；
-      - 否则（没有文件、读不动、或停着 `running` / `done`）→ `state = "failed"`、
-        `error` 用这次递进来的串、`partial` / `silent` 落假、`silent_spans` / `gate` 落空；
-      - `finished_at` 一律写现在（补记录这一刻就是收工时刻）。
-
-    读不动盘上那一版（不合契约）时按空记录补：兜底归写方这一段，读侧照旧走
-    「拿不准的文件拒收」那条闸，两边各管各的一段。写盘走 `write_status()`（原子替换）。
-    **整段尽力而为**：
-    写不下去时异常原样抛给调用方，由调用方记 log（不掩盖各自那条更早的异常）。
-    返回写下去的路径。
+    """把状态文件补成 `failed` + 原因；盘上停着一版已落定的记录（failed / partial /
+    interrupted，判据 `_SETTLED_STATES`）时沿用那一版字段——`engine_load_error` 这类词档
+    只在 runner 现场写的版本里、比调用方手里的通用串准，`interrupted`（人停的）不许被
+    后来逃出的异常盖成 `failed`（b1c6a58e）。补记录口径只能有这一处：幂等闸、启动核对
+    与读回侧都读这份文件。读不动盘上那一版按空记录补；写不下去异常原样抛给调用方记 log。
     """
     directory = Path(session_dir)
     path = directory / STATUS_NAME

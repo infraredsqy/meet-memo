@@ -1,18 +1,13 @@
-"""进程级的重型首导锁：串行化**跨线程**的 torch / transformers 等重依赖首次 import。
+"""进程级的重型首导锁：串行化跨线程的 torch / transformers 等重依赖首次 import。
 
-会中 ASR（`meeting/asr/glm.py`）与会后引擎（`meeting/offline/engine.py`）都要在各自的
-后台线程里**函数体内首次** import transformers：两条线程同时首导同一个模块时，其一可能
-见到半初始化的模块对象，`from transformers import AutoModelForCausalLM` 当场
-`ImportError`（260928-2 那一场实测：单独导入却是好的）；进程收尾还可能把仍在跑的
-daemon 线程拦腰打断，让 import 断在半路。两处因此共用这一把**进程级** `RLock`
-（`heavy_imports()`），把重型首导串行化；退出期不再发起新的加载则由各加载入口的
-`sys.is_finalizing()` 守卫负责（见 `meeting/offline/engine.py` 的
-`EngineShutdownInterrupted`）。
+会中 ASR 与会后引擎都要在各自的后台线程里函数体内首次 import transformers：两条线程
+同时首导同一模块时，其一可能见到半初始化的模块对象，`from transformers import
+AutoModelForCausalLM` 当场 `ImportError`（260928-2 那一场实测：单独导入却是好的）。
+两处共用这把进程级 `RLock`（`heavy_imports()`）串行化重型首导；退出期不再发起新加载
+由各加载入口的 `sys.is_finalizing()` 守卫负责（见 `meeting/offline/engine.py` 的
+`EngineShutdownInterrupted`）。选 `RLock` 是因为加载链内可能同线程嵌套进入。
 
-选 `RLock` 而不是 `Lock`：加载链内可能嵌套进入（引擎加载路径彼此调用时同一线程
-二次进入不该死锁）。
-
-纯标准库（`threading` / `contextlib`）：任何 import 图都能安全带上它。
+纯标准库：任何 import 图都能安全带上它。
 """
 
 from __future__ import annotations

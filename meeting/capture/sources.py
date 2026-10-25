@@ -1,27 +1,15 @@
-"""真实适配层 —— `sounddevice` / `soundcard`，**函数内惰性 import**（`dca4539b`）。
+"""真实适配层——`sounddevice` / `soundcard`，函数体内惰性 import（`dca4539b`）。
 
-本模块是**唯一**碰声卡库的地方，分工照 `meeting/capture/devices.py` 的模块说明：
+本模块是唯一碰声卡库的地方：`meeting/capture/devices.py` 拿这里的端点表与试开结果做挑选
+（纯逻辑，可单测）；这里负责问系统有哪些端点、以 16k 试开一次并量出样本，以及持续采集的
+两路源（`SounddeviceMicSource` / `SoundcardLoopbackSource`）。
 
-  - `meeting/capture/devices.py` 拿这里的端点表与试开结果做挑选（纯逻辑，可单测）；
-  - 这里负责「问系统有哪些端点」「以 16k 试开一次并把读回的样本量出来」，以及
-    **持续采集的两路源**（`SounddeviceMicSource` / `SoundcardLoopbackSource`）。
-
-**为什么惰性 import**：`import meeting.capture.devices` 必须能在没装声卡库的环境里过；
-`sounddevice` / `soundcard` 只在下面这些函数体内 import，模块级一行都没有。两个库同时用是
-有意的 —— `sounddevice 0.5.5` 没有 WASAPI loopback，loopback 那条路只能走 `soundcard`
-（spec 的「坑与注意」第 1 条）。
-
-**打开方式照 V1**（`C:/Users/<user>/tools/meeting-notes/mnotes_core/recorder.py`）：
-
-  - mic 走 `sd.InputStream`（`_open_mic`，`:415-426`）：16k / 1 声道 / int16；
-  - loopback 走 `sc.get_microphone(id=str(speaker.name), include_loopback=True)`
-    拿到的录音器（`_open_loopback`，`:428-442`）。
-  V1 在采集线程里那一手 `ctypes.windll.ole32.CoInitializeEx(None, 0)`
-  （`_loopback_pump`，`:467-474`）属于那条线程的事，现在跟着 loopback 源一起搬过来。
-
-    test_open_input() / test_open_loopback() —— 只做**试开一次并读回一小段样本**（试开判定的输入）
-    SounddeviceMicSource       —— mic 的持续采集（`sd.InputStream` 回调）
-    SoundcardLoopbackSource    —— loopback 的持续采集（专用线程 + `CoInitializeEx`）
+惰性 import 是有意的：`import meeting.capture.devices` 必须能在没装声卡库的环境里过。
+两个库同时用也有意——`sounddevice 0.5.5` 没有 WASAPI loopback，loopback 那条路只能走
+`soundcard`（spec「坑与注意」第 1 条）。打开方式照 V1（`mnotes_core/recorder.py`）：
+mic 走 `sd.InputStream`（16k / 1 声道 / int16）；loopback 走
+`sc.get_microphone(id=str(speaker.name), include_loopback=True)`；V1 采集线程里那手
+`ctypes.windll.ole32.CoInitializeEx(None, 0)` 跟着 loopback 源一起搬过来。
 """
 
 from __future__ import annotations
@@ -114,22 +102,16 @@ def _flatten(data: Any) -> list[Any]:
     return flat
 
 
-# ---------------------------------------------------------------------------
 # 端点枚举
-# ---------------------------------------------------------------------------
 
 
 def _default_input_index(sounddevice: Any) -> int | None:
-    """系统默认输入端点的序号（**只读**，不开流、不采集任何声音）。
+    """系统默认输入端点的序号（只读，不开流、不采集任何声音）。
 
-    先读 `sd.default.device`（`(输入, 输出)` 一对；`-1` 表示「按 PortAudio 的默认来」），
-    读不出来或拿到 `-1` 时退到 `sd.query_devices(kind="input")`，由库把默认值解析成一个真实
-    序号。两条都是只读枚举。本机实测两条都给 `1`（MME `Analogue 1 + 2 (2- Focusrite US`）。
-
-    这个序号就是 `mic_candidates()` 在没配 `devices.mic` 时的种子取值口。本机读数：
-    `#1` 是 Focusrite；序号最小的 `#0` 是 `Microsoft 声音映射器 - Input`（Windows 的
-    WAVE_MAPPER，跟随系统默认输入设备），把它当成种子报出来的是一个 mapper 别名，
-    并且会把「系统默认输入当下是什么」原样带进 mic 那一侧。
+    先读 `sd.default.device`（`(输入, 输出)` 一对；`-1` = 按 PortAudio 的默认来），
+    读不出或拿到 `-1` 时退到 `sd.query_devices(kind="input")`。本机实测两条都给 `1`
+    （MME Focusrite）。这个序号就是 `mic_candidates()` 没配 `devices.mic` 时的种子取值口；
+    序号最小的 `#0` 是 WAVE_MAPPER（跟随系统默认输入、报出的是跟着变的别名），不能当种子。
     """
     index: int | None = None
     try:
@@ -206,9 +188,7 @@ def list_render_endpoints() -> list[DeviceEndpoint]:
     ]
 
 
-# ---------------------------------------------------------------------------
 # 试开（读回样本）
-# ---------------------------------------------------------------------------
 
 
 def test_open_input(endpoint: DeviceEndpoint) -> OpenAttempt:
@@ -232,9 +212,9 @@ def test_open_input(endpoint: DeviceEndpoint) -> OpenAttempt:
         ) as stream:
             chunk, _overflowed = stream.read(PROBE_FRAME_COUNT)
     except Exception as exc:  # noqa: BLE001 - 任何开流失败都如实留痕（含 PortAudioError）
-        # **只收开流失败**（不从 `Exception` 继承的东西照原样往上抛）：测试里那道「一碰真声卡
+        # 只收开流失败（不从 `Exception` 继承的东西照原样往上抛）：测试里那道「一碰真声卡
         # 就炸」的看门抛的是 `tests/conftest.py` 的 `RealCaptureForbidden`（`BaseException`
-        # 直系子类），它必须炸到用例上，不许在这里被收成一条「设备开不了」的业务失败。
+        # 直系子类），必须炸到用例上，不许被收成「设备开不了」的业务失败。
         return OpenAttempt(opened=False, error=_error_text(exc))
 
     try:
@@ -290,18 +270,15 @@ def test_open_loopback(endpoint: DeviceEndpoint) -> OpenAttempt:
     return OpenAttempt(opened=True, sample=measure_samples(_to_int16(flat)))
 
 
-# ---------------------------------------------------------------------------
 # 持续采集：两路各自的读侧（这一侧的读法照 V1，交给写侧去落盘）
-# ---------------------------------------------------------------------------
 
 
 class _QueueReader:
     """读侧共用的取块口：一个队列 + 最近一块样本 + 收队标志。
 
-    队列的形状照 V1 的 `MeetingRecorder.audio_queue`（`:315`），只是**一路一个队列**
-    （V1 是两路共用一个队列、按 `(tag, bytes)` 打标签区分；V2 两路各自独立，见
-    `meeting/capture/engine.py` 的模块说明）。满的时候丢**最旧**的块并留一条 warning：
-    采集要跟上的是实时流，压着旧块只会让延迟越滚越大。
+    队列形状照 V1 的 `MeetingRecorder.audio_queue`（`:315`），只是一路一个（V1 两路共用、
+    按 `(tag, bytes)` 打标签）。满的时候丢最旧的块并留 warning：采集要跟上的是实时流，
+    压着旧块只会让延迟越滚越大。
     """
 
     def __init__(self, label: str) -> None:
@@ -358,17 +335,11 @@ class _QueueReader:
 class SounddeviceMicSource:
     """mic 的持续采集：`sd.InputStream` 的回调把块投进队列（`dca4539b` §3 的 `mic` 源）。
 
-    搬自 V1 `MeetingRecorder._open_mic`（`mnotes_core/recorder.py:415-426`）与
-    `_mic_callback`（`:488-493`）。接口层的三处替换都是照着本项目的形状走的：
-
-      - `self.mic_device` → 构造时收到的 `endpoint`（端点对象，只读配置视图在
-        `meeting/capture/devices.py` 里已经解成它了）；
-      - `self.recording` 布尔标志 → 协议要的 `stop()`（`_reading` 标志就是它）；
-      - `self.audio_queue.put(...)` → `_reader.put(...)`（同一句话，队列换成一路一个）。
-
-    回调里**不做电平计算**：电平刻度在 `meeting/capture/engine.py` 的刻度线程里按
-    `frame_interval` 走，与有没有新块无关（静音时也要发帧）。这里只把这一块样本交给读侧
-    当素材（V2 新增的那一步）。
+    搬自 V1 `_open_mic`（`recorder.py:415-426`）与 `_mic_callback`（`:488-493`）；
+    接口层替换：`self.mic_device` → 构造时收到的 `endpoint`；`self.recording` → `stop()`；
+    `self.audio_queue.put(...)` → `_reader.put(...)`。回调里不做电平计算——电平刻度在
+    `engine.py` 的刻度线程里按 `frame_interval` 走，与有没有新块无关；这里只把样本交给
+    读侧当素材（V2 新增）。
     """
 
     #: 这一路的标识（引擎按 `source` 登记）
@@ -379,15 +350,8 @@ class SounddeviceMicSource:
         self._reader = _QueueReader("mic")
         self._stream: Any = None
 
-    # -- 起停 -------------------------------------------------------------
-
     def start(self) -> None:
-        """打开麦克风流（指定设备或默认输入，16k mono）。
-
-        搬自 V1 `_open_mic`（`mnotes_core/recorder.py:418-426`）：`sd.InputStream` 的关键字
-        与 `stream.start()` 逐字保留，末尾那句 `self._streams.append((tag, stream))` 落在
-        `self._stream` 上（V1 用列表装两路，V2 一路一个源）。
-        """
+        """打开麦克风流（指定设备或默认输入，16k mono）。"""
         sounddevice = _import_sounddevice()
         self._reader.stop_event.clear()
         stream = sounddevice.InputStream(
@@ -413,8 +377,6 @@ class SounddeviceMicSource:
         except Exception:  # noqa: BLE001 - 关流失败不掩盖收尾结论
             _log.warning("mic 的流停不下来（如实登记，不静默）", exc_info=True)
 
-    # -- 读侧 -------------------------------------------------------------
-
     def read(self, timeout: float) -> bytes | None:
         return self._reader.read(timeout)
 
@@ -426,14 +388,10 @@ class SounddeviceMicSource:
         """写侧跟不上时丢掉的块数（如实登记，`/debug` 与测试看它）。"""
         return self._reader.dropped
 
-    # -- 回调 -------------------------------------------------------------
-
     def _callback(self, indata: Any, frames: int, time_info: Any, status: Any) -> None:
-        """麦克风回调 —— 放入音频队列（搬自 V1 `_mic_callback`，`recorder.py:488-493`）。
+        """麦克风回调——放入音频队列（搬自 V1 `_mic_callback`，`recorder.py:488-493`）。
 
-        V1 的三行逐字保留（`status` 的 warning、`_recording` 那一判、入队那句话）；
-        末尾多一步「把这一块样本交给读侧当电平素材」——电平刻度是 V2 契约新增的，
-        V1 里没有对应物。
+        V1 的三行逐字保留；末尾多一步「把这块样本交给读侧当电平素材」。
         """
         import numpy as np
 
@@ -448,15 +406,9 @@ class SounddeviceMicSource:
 class SoundcardLoopbackSource:
     """loopback 的持续采集：专用线程 + `CoInitializeEx` + `soundcard` 的 recorder。
 
-    搬自 V1 `MeetingRecorder._open_loopback`（`mnotes_core/recorder.py:428-442`）与
-    `_loopback_pump`（`:467-486`）。接口层的三处替换与 mic 源同一档：
-
-      - `self.loopback_device` / `_resolve_loopback_speaker()` → 构造时收到的 `endpoint`
-        （挑设备是 `meeting/capture/devices.py` 的 `select_loopback()` 那段纯逻辑的活）；
-      - `self.recording` → `stop()`；
-      - `self.audio_queue.put((tag, audio16.tobytes()))` → `_reader.put(audio16.tobytes(), audio16)`。
-
-    线程体的第一件事仍是 `ctypes.windll.ole32.CoInitializeEx(None, 0)`：`soundcard` 依赖
+    搬自 V1 `_open_loopback`（`recorder.py:428-442`）与 `_loopback_pump`（`:467-486`）；
+    接口层替换与 mic 源同一档（`endpoint` / `stop()` / `_reader.put(...)`）。
+    线程体第一件事仍是 `ctypes.windll.ole32.CoInitializeEx(None, 0)`：`soundcard` 依赖
     COM（WASAPI），子线程不手动初始化 apartment 会报 `0x800401F0`，而那个失败会被
     `except: pass` 吞掉，只能从「采到的是全零」倒推出来（`docs/v1-lineage.md` 的坑 C2）。
     """
@@ -471,8 +423,6 @@ class SoundcardLoopbackSource:
         self._recorder: Any = None
         #: 采集线程死在运行期时留给读侧的那句话（读侧据此如实报一条 `SourceLost`）
         self._dead_note: str | None = None
-
-    # -- 起停 -------------------------------------------------------------
 
     def start(self) -> None:
         """取 recorder 并起采集线程（照 V1 `_open_loopback`，`recorder.py:436-442`）。"""
@@ -503,8 +453,6 @@ class SoundcardLoopbackSource:
         self._recorder = None
         self._reader.clear()
 
-    # -- 读侧 -------------------------------------------------------------
-
     def read(self, timeout: float) -> bytes | None:
         """取下一块；采集线程死在运行期时如实报错（引擎据此报一条 `SourceLost`）。"""
         if self._dead_note is not None:
@@ -520,18 +468,12 @@ class SoundcardLoopbackSource:
         """写侧跟不上时丢掉的块数（如实登记）。"""
         return self._reader.dropped
 
-    # -- 采集线程 ---------------------------------------------------------
-
     def _pump(self, recorder: Any) -> None:
         """捕获线程：持续读 loopback（16k float32 stereo）→ 转 mono int16 → 队列。
 
-        搬自 V1 `_loopback_pump`（`mnotes_core/recorder.py:467-486`），循环体内逐字保留：
-        `rec.record(numframes=1600)`、多通道 `mean(axis=1)` 降 mono、
-        `np.clip(np.rint(mono * 32767), -32768, 32767).astype(np.int16)`、布尔停止标志。
-        接口层的两处替换：`self._recording` → `self._reader.stop_event.is_set()`；
-        `self.audio_queue.put((tag, audio16.tobytes()))` → `self._reader.put(...)`（同一句话，
-        顺带把这一块样本留作电平素材）。退出时 recorder 由 `with` 释放（照 V1），日志的
-        那一判同样保留。
+        搬自 V1 `_loopback_pump`（`recorder.py:467-486`），循环体内逐字保留
+        （`record(numframes=1600)`、`mean(axis=1)` 降 mono、clip 到 int16、布尔停止标志）；
+        接口层两处替换同上，顺带把样本留作电平素材。退出时 recorder 由 `with` 释放。
         """
         import numpy as np
 

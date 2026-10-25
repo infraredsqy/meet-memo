@@ -1,22 +1,11 @@
 """纯状态机与状态字段（phase2 §3.1 / §3.5.6）。
 
-**本模块是「纯状态机、无 IO」那一层**：四态与全部迁移函数、`Snapshot` 与嵌套 dataclass、
-`to_dict()`（全应用唯一的状态 JSON 产出形态）、15 柱 × 2 秒包络的维护算法、收尾三函数
-都在这里；**本模块自己不开文件、不写 log、不发广播**。
-
-三条边界（phase2 冻结，phase3 只读引用）：
-
-  - **顶层就四个状态**：`idle` / `recording` / `alert` / `ended`（`TOP_STATE`），
-    不新增第五个顶层状态；
-  - **迁移只能经本模块的迁移函数**，出发态不匹配时**抛 `InvalidTransitionError`**
-    （不是静默 no-op），且被拒绝的迁移不改 `revision`、不写盘、不广播；
-  - **收尾三个函数**（`begin_drain_step()` / `finish_drain_step()` /
-    `finish_drain()`）**只改内存快照**：`session.json` 的落盘由 `ServiceRuntime` 一侧
-    调用会话落盘函数完成，`revision +1` 与广播由 `ServiceRuntime.commit()` 完成。
-    **终态判定只在 `finish_drain()` 一处**。
-
-`frame_clock_window()` 与它的两个配套常量、`DEFAULT_FRAME_INTERVAL_SECONDS` 也在本模块
-（`recording_alive` 的判据窗口，phase2 §3.5.4）。
+四态与迁移函数、`Snapshot` 与嵌套 dataclass、`to_dict()`（全应用唯一的状态 JSON 形态）、
+15 柱 × 2 秒包络的维护算法、收尾三函数都在这里；本模块无 IO（不开文件、不写 log、不广播）。
+三条边界（phase2 冻结）：顶层只有 `TOP_STATE` 四态，不新增第五个；迁移只能经本模块的
+迁移函数，出发态不匹配抛 `InvalidTransitionError`（被拒的迁移不改 `revision`、不写盘、
+不广播）；收尾三函数只改内存快照——落盘归 `ServiceRuntime`，`revision +1` 与广播归
+`ServiceRuntime.commit()`，终态判定只在 `finish_drain()` 一处。
 """
 
 from __future__ import annotations
@@ -30,11 +19,9 @@ from meeting.backends.base import SOURCE_IDS
 from meeting.backends.base import SOURCE_STATUS as PROBE_STATUS_BASE
 from meeting.backends.base import DEFAULT_FRAME_INTERVAL_SECONDS  # noqa: F401 - 转出口，见 __all__
 
-# ---------------------------------------------------------------------------
 # 取值域常量（连取值一起冻结：消费方只做成员关系判断，不重抄字面量）
-# ---------------------------------------------------------------------------
 
-#: 顶层四态（**不新增第五个**）
+#: 顶层四态（不新增第五个）
 TOP_STATE: tuple[str, ...] = ("idle", "recording", "alert", "ended")
 
 #: `session.json` 的 `state` 四取值（`failed` 不是 `ended.phase` 的取值）
@@ -46,18 +33,18 @@ ALERT_LEVEL: tuple[str, ...] = ("critical", "hint")
 #: `ended.phase` 两取值
 ENDED_PHASE: tuple[str, ...] = ("draining", "done")
 
-#: 收尾三步的顺序（转码已摘出收尾序列：它是这一场的独立后台工序，flush 落定即自动在
-#: 后台起，不占收尾预算、不挡 start 与会后动作 —— 见 `meeting/capture/transcode.py`）
+#: 收尾三步的顺序（转码已摘出收尾序列：flush 落定即自动在后台起，不占收尾预算、
+#: 不挡 start 与会后动作——见 `meeting/capture/transcode.py`）
 DRAIN_STEP_IDS: tuple[str, ...] = ("flush", "log", "post")
 
-#: 收尾那一步"留给用户按按钮"的格子（`post`）：它停在 `waiting` 也算收尾走完，
-#: 因为按「结束录音」之后会后一个动作都不自动跑（R26），这一格本来就该空着等人。
+#: 收尾里"留给用户按按钮"的格子（`post`）：它停在 `waiting` 也算收尾走完——
+#: 按「结束录音」之后会后一个动作都不自动跑（R26），这一格本来就该空着等人。
 POST_DRAIN_STEP_ID = "post"
 
 #: `DrainStep.status` 的五档取值域（与 `DRAIN_STEP_IDS` 同形）
 DRAIN_STEP_STATUS: tuple[str, ...] = ("waiting", "running", "done", "failed", "skipped")
 
-#: `probe()` 的全部合法返回（三档，与 `backends/base.py` 的 `SOURCE_STATUS` 同源）
+#: `probe()` 的全部合法返回（与 `backends/base.py` 的 `SOURCE_STATUS` 同源）
 PROBE_STATUS: tuple[str, ...] = tuple(PROBE_STATUS_BASE)
 
 #: 快照 `sources[*].health` 的全部合法取值（七档）
@@ -71,11 +58,8 @@ SOURCE_HEALTH: tuple[str, ...] = (
     "stopped",
 )
 
-# ---------------------------------------------------------------------------
-# （`notice` 槽位已随「默认输出根」整条退场，见 `docs/design-intent.md` 第 4 条；
-#   启动扫最近一场 / `notice.restart_unfinished` 的行为与形态不再保留，
-#   "最近一场"由工作台收编节点（e2f6166b）落在工作区注册表里：最近一场只从
-#   注册表读，不再扫任何场次目录。）
+# （`notice` 槽位已随「默认输出根」退场，见 `docs/design-intent.md` 第 4 条；
+#   "最近一场"由工作台收编节点（e2f6166b）落在工作区注册表里，不再扫场次目录。）
 
 #: 告警文案：某一路的流中断（`SourceLost` 事实）
 SOURCE_LOST_MESSAGE = "这一路的采集流中断了"
@@ -84,9 +68,8 @@ SOURCE_LOST_MESSAGE = "这一路的采集流中断了"
 ENVELOPE_BAR_SECONDS = 2.0
 ENVELOPE_BAR_COUNT = 15
 
-#: `revision` 的固定起点：每次服务启动从同一个值重新计（**断言不许把它钉成常数**…
-#: 换句话说，测试只断言「存在、是 int、单调 +1、同一次事实处理合并递增」，
-#: 这个具体取值只是本节点选的起点，不跨进程延续、不落盘）。
+#: `revision` 的固定起点：只为本节点选的起点，不跨进程延续、不落盘；测试只断言
+#: 「存在、是 int、单调 +1、同一次事实处理合并递增」，不许把取值钉成常数。
 REVISION_START = 1
 
 #: 帧时钟窗口的两个配套常量（`recording_alive` 的判据，phase2 §3.5.4）
@@ -100,19 +83,17 @@ SOURCE_LABELS: dict[str, str] = {"mic": "本地", "loopback": "远端"}
 def frame_clock_window(frame_interval: float) -> float:
     """`recording_alive` 的判据窗口（秒）：`max(2.0s, 3 × frame_interval)`。
 
-    协议默认 `0.5s` 与 dev 替身的 `0.1s` 两档都算成 **2.0 秒**；
-    **界面的 10 秒心跳周期绝不参与这个计算**（phase2 §3.5.4 / §6）。
+    协议默认 `0.5s` 与 dev 替身的 `0.1s` 都算成 2.0 秒；界面的 10 秒心跳周期
+    绝不参与这个计算（phase2 §3.5.4 / §6）。
     """
     return max(HEARTBEAT_MIN_WINDOW_SECONDS, HEARTBEAT_WINDOW_FACTOR * float(frame_interval))
 
 
-# ---------------------------------------------------------------------------
 # 错误
-# ---------------------------------------------------------------------------
 
 
 class InvalidTransitionError(RuntimeError):
-    """非法迁移：出发态不匹配 / 未知状态取值（**一律按错误处理，不许兜底成 `idle`**）。"""
+    """非法迁移：出发态不匹配 / 未知状态取值（一律按错误处理，不许兜底成 `idle`）。"""
 
     def __init__(self, message: str, *, top_state: str | None = None) -> None:
         self.top_state = top_state
@@ -123,14 +104,12 @@ class DrainStateError(RuntimeError):
     """收尾三函数的非法调用（未知步骤 / 取值域外的 `status` / 不在收尾中）。"""
 
 
-# ---------------------------------------------------------------------------
-# 嵌套 dataclass（`to_dict()` 的输入；字段名就是双端契约的输入）
-# ---------------------------------------------------------------------------
+# 嵌套 dataclass（字段名就是双端契约的输入）
 
 
 @dataclass
 class ServiceInfo:
-    """快照 `service` 五子键（启动时定一次，之后不变）。**没有 `out_root`**：落点由工作区给。"""
+    """快照 `service` 五子键（启动时定一次，之后不变）。没有 `out_root`：落点由工作区给。"""
 
     started_at: str
     version: str
@@ -143,9 +122,9 @@ class ServiceInfo:
 class SessionInfo:
     """快照 `session`（`id` 是场次目录名，`dir` 是场次目录路径）。
 
-    `paused` 是这一场此刻是不是暂停中（第 8 条的读法）；`paused_seconds` 与
-    `paused_at_monotonic` 是**算时长用的内部计数**（暂停的那几段不进 `elapsed_seconds`，
-    第 7 条：权威长度是实际录到的音频时长，不含暂停），它们不上快照。
+    `paused` 是这一场此刻是否暂停中（第 8 条的读法）；`paused_seconds` 与
+    `paused_at_monotonic` 是算时长用的内部计数（暂停的几段不进 `elapsed_seconds`，
+    第 7 条：权威长度是实际录到的音频时长），它们不上快照。
     """
 
     id: str
@@ -202,16 +181,13 @@ class SourceState:
             "envelope": list(self.envelope),
         }
 
-    # -- 电平与包络 -------------------------------------------------------
-
     def push_level(self, ts: float, dbfs: float, peak: float) -> None:
         """收一帧 `LevelFrame`：更新瞬时值 / 峰值保持，并维护 15 柱 × 2 秒的包络。
 
-        **一根柱的值 = 它那 2 秒窗口内所有 `LevelFrame.peak` 的最大值**（唯一口径；
-        `bar` 与 `envelope[-1]` 用的是同一个数）。15 根柱是**最近 30 秒的滚动窗口**：
-        时钟以**第一帧的时间戳**为基准向后切（第 i 根柱对应相对时刻 `[2i, 2i+2)`），
-        窗口一跨就把最旧那一根挤出去、右边补一根空的；一根柱在它的窗口里一个帧都没有时，
-        编码时沿用左边那根的值。于是录到第 1 秒、第 10 秒、第 30 秒，数组长度都恰好 15。
+        一根柱的值 = 它那 2 秒窗口内所有 `LevelFrame.peak` 的最大值（`bar` 与
+        `envelope[-1]` 用同一个数）。15 根柱是最近 30 秒的滚动窗口，时钟以第一帧的
+        时间戳为基准向后切；窗口一跨就把最旧那根挤出去、右边补空，没有帧的柱编码时
+        沿用左边那根的值——数组长度任何时刻都恰好 15。
         """
         self.level_dbfs = float(dbfs)
         current = self.peak_dbfs
@@ -245,7 +221,7 @@ class SourceState:
 
 
 def _encode_envelope(bars: list[float | None], default: float = -100.0) -> list[float]:
-    """把 15 根柱编码成对外数组：某一根没有值就沿用左边那根；最左边那几根都没有值时给 `default`。"""
+    """把 15 根柱编码成对外数组：没有值就沿用左边那根；最左边都没有值时给 `default`。"""
     out: list[float] = []
     previous = float(default)
     for value in bars:
@@ -285,10 +261,10 @@ class AlertState:
     hints: list[Alert] = field(default_factory=list)
 
     def refresh_muted(self, *, judge: Any) -> None:
-        """按当下重算这一批告警的 `muted`（**判定权在 `AlertJudge` 一处**）。
+        """按当下重算这批告警的 `muted`（判定权在 `AlertJudge` 一处，这里只转交）。
 
-        调用点只有 `ServiceRuntime.commit()`：每次提交快照之前重算一遍，于是快照里
-        `muted` 说的永远是「此刻会不会出声」。这里只做转交，不自己判窗口。
+        调用点只有 `ServiceRuntime.commit()`：每次提交快照前重算，快照里 `muted`
+        说的永远是「此刻会不会出声」。
         """
         if judge is None:
             return
@@ -308,15 +284,13 @@ class AlertState:
 class TranscriptState:
     """快照 `transcript` 的四格（`9e5db89c` phase2 §7 起由转写后端供数）。
 
-    - `health`：`normal` / `behind` / `stopped`，读的是 `TranscriberBackend.health()`。
-      真实现没起过场次时报 `stopped`，所以这里的字段初值 `normal` 会被 `startup()` 那一次
-      就地读取覆盖掉（缺省替身那一档才恒报 `normal`）。
-    - `last_line_at`：服务侧收到最近那一行转写的墙钟（ISO）。
-    - `buffered_lines`：后端报的积压段数。
-    - `failed_segments`：累计识别失败段数（正文以 `[[识别失败` 开头的那一行加一）。
+    - `health`：`normal` / `behind` / `stopped`，读 `TranscriberBackend.health()`；
+      真实现没起过场次时报 `stopped`，初值 `normal` 会被 `startup()` 就地覆盖（缺省替身恒报 `normal`）。
+    - `last_line_at`：服务侧收到最近一行转写的墙钟（ISO）；`buffered_lines`：后端报的积压段数；
+      `failed_segments`：累计识别失败段数（正文以 `[[识别失败` 开头的那一行加一）。
 
-    四格里**只有 `health` 的迁移参与状态变更**（`revision` 由它投票）；两个计数照样写进
-    快照、不涨 `revision`。刷新与提交的判定权收在 `meeting/service/runtime.py` 的
+    四格里只有 `health` 的迁移参与状态变更（`revision` 由它投票）；两个计数写进快照、
+    不涨 `revision`。刷新与提交的判定权收在 `meeting/service/runtime.py` 的
     `_refresh_transcript_snapshot()` 一处。
     """
 
@@ -372,13 +346,11 @@ class EndedState:
 class SettingsView:
     """快照 `settings`（顶层七键；`asr` 五子键；`devices` 两子键 `mic` / `loopback`）。
 
-    `summary_default_window`（`311f84f5`）是快速总结的缺省档（四档取值），
-    界面的默认预选随它走 —— 服务是唯一来源，前端不自造第二份。
-
-    `summary_preset_names` / `summary_active_preset`（会中切模型，本节点）是预设的
-    **名字清单**与**当前用哪一套的生效值**：只给名字 —— 预设里的 `base_url` / `api_key` /
-    `model` 是配置，密钥更是**不进快照、不在界面回显**；指针指向的名字不在清单里时
-    报空串（那一档实际生效的是老四键平铺，快照说的就是真会用哪套）。
+    `summary_default_window`（`311f84f5`）是快速总结的缺省档（四档取值）——
+    服务是唯一来源，前端不自造第二份。`summary_preset_names` / `summary_active_preset`
+    只给名字清单与当前指针：预设里的 `base_url` / `api_key` / `model` 是配置，
+    密钥不进快照、不在界面回显；指针指向的名字不在清单里时报空串（那一档实际生效的
+    是老四键平铺，快照说的就是真会用哪套）。
     """
 
     alarm_sound: bool = True
@@ -403,7 +375,7 @@ class SettingsView:
 
 @dataclass
 class Snapshot:
-    """内存里的那一份状态（**唯一状态权威由 `ServiceRuntime` 持有它**）。"""
+    """内存里的那一份状态（唯一状态权威由 `ServiceRuntime` 持有它）。"""
 
     revision: int = REVISION_START
     top_state: str = "idle"
@@ -413,8 +385,6 @@ class Snapshot:
     transcript: TranscriptState = field(default_factory=TranscriptState)
     ended: EndedState | None = None
     settings: SettingsView = field(default_factory=SettingsView)
-
-    # -- 读 ---------------------------------------------------------------
 
     def source(self, source_id: str) -> SourceState:
         for item in self.sources:
@@ -446,7 +416,7 @@ class Snapshot:
         return out
 
     def to_dict(self, service: ServiceInfo) -> dict[str, Any]:
-        """产出状态 JSON 的**唯一形态**（`GET /api/state` 与 SSE 的 `snapshot` 帧共用）。"""
+        """产出状态 JSON 的唯一形态（`GET /api/state` 与 SSE 的 `snapshot` 帧共用）。"""
         return {
             "revision": int(self.revision),
             "service": {
@@ -490,9 +460,7 @@ def new_snapshot(*, settings: SettingsView | None = None) -> Snapshot:
     )
 
 
-# ---------------------------------------------------------------------------
 # 迁移函数（非法迁移抛错，不许静默 no-op、不许兜底）
-# ---------------------------------------------------------------------------
 
 
 def start_recording(
@@ -504,8 +472,8 @@ def start_recording(
 ) -> SessionInfo:
     """`idle → recording` 与 `ended → recording`（下一场）两条迁移。
 
-    副作用（一次性做完，调用方随后调一次 `commit()`）：`ended` 置 `None`（上一场的摘要
-    由此清空）、`session` 换成新一场、两路 `health → capturing`、告警与峰值保持清空。
+    副作用（一次性做完，调用方随后调一次 `commit()`）：`ended` 置 `None`、
+    `session` 换成新一场、两路 `health → capturing`、告警与峰值保持清空。
     """
     if snapshot.top_state not in ("idle", "ended"):
         raise InvalidTransitionError(
@@ -543,8 +511,8 @@ def begin_alert(
 ) -> bool:
     """`recording → alert`：该路 `health → lost`、记 `lost_since`、`alerts.critical` 置一条。
 
-    已经是 `alert` 时**只在同一态内更新**（返回 `False` 表示没有发生顶层迁移，
-    调用方据此决定日志措辞；`snapshot.ended` 与其他路一概不受影响）。
+    已经是 `alert` 时只在同态内更新（返回 `False` 表示没有顶层迁移，调用方据此措辞；
+    `snapshot.ended` 与其他路一概不受影响）。
     """
     if snapshot.top_state not in ("recording", "alert"):
         raise InvalidTransitionError(
@@ -562,7 +530,7 @@ def begin_alert(
 def recover_source(snapshot: Snapshot, *, source: str) -> bool:
     """一路从 `lost` 恢复：该路 `health → restored`、清 `lost_since`。
 
-    返回 `True` 表示**顶层从 `alert` 回到 `recording`**（两路都恢复了）；还有路是 `lost`
+    返回 `True` 表示顶层从 `alert` 回到 `recording`（两路都恢复了）；还有路是 `lost`
     时返回 `False`（`top_state` 保持 `alert`，`alerts.critical` 由调用方按判定结果维护）。
     """
     if snapshot.top_state not in ("recording", "alert"):
@@ -624,20 +592,10 @@ def end_session(snapshot: Snapshot) -> None:
         item.lost_since = None
 
 
-# ---------------------------------------------------------------------------
-# 收尾三函数（签名由 phase2 冻结；**只改内存快照、自己不碰 IO**）
-#
-# 调用形态说明（phase2 §3.5.6 的三条文字与 phase3 §3.2 的「phase3 照签名调用」一起读）：
-#   * 名字与语义逐字照契约：`begin_drain_step(step_id)` 把该步置 `running`；
-#     `finish_drain_step(step_id, status, detail=None, error=None)` 落该步终态；
-#     `finish_drain()`（**无参**）读当前三步结果判终态、是收尾的唯一出口；
-#   * 这三个函数作用在**哪一份内存快照**上由调用方指定：`ServiceRuntime` 在收尾编排里
-#     把自己的快照交给它们（`envelope=` 关键字），phase3 照同一分工调用；
-#     省略时用本模块的当前快照（由 `ServiceRuntime` 在启动时经 `bind_snapshot()` 写入），
-#     于是 phase3 的 `drain()` 可以逐字写 `begin_drain_step(step_id)` 这种无参调用。
-#   * 落盘与提交不在这里：`session.json` 由 `ServiceRuntime` 一侧写，`revision +1` 与广播
-#     由 `ServiceRuntime.commit()` 做（phase3 不自己 `+1`、不自己发 `state`）。
-# ---------------------------------------------------------------------------
+# 收尾三函数（签名由 phase2 冻结；只改内存快照、自己不碰 IO）。
+# 作用在哪一份内存快照上由调用方指定（`ServiceRuntime` 在收尾编排里经 `snapshot=`
+# 关键字交进来），省略时用 `bind_snapshot()` 写入的当前快照。落盘与提交不在这里：
+# `session.json` 由 `ServiceRuntime` 一侧写，`revision +1` 与广播由 `commit()` 做。
 
 #: 当前快照（`ServiceRuntime` 启动时写入；只为「无参调用」这一读法服务）
 _CURRENT_SNAPSHOT: Snapshot | None = None
@@ -683,18 +641,14 @@ def finish_drain_step(
 ) -> DrainStep:
     """落该步的登记（`status` 取 `done` / `failed` / `skipped`，外加 `post` 那一格的 `waiting`）。
 
-    `frozen_*` 两个关键字是**取消路径的登记约束**（phase2 §3.5.6 的「三条不覆盖约束」，
-    第三个 Phase 的强制打断路径依赖它们），普通调用点一律不传：
+    `frozen_*` 是取消路径的登记约束（phase2 §3.5.6「三条不覆盖约束」，phase3 的强制打断
+    依赖它们），普通调用点一律不传：`frozen_ended=True` 不许改 `ended` 的 `phase` / `error`
+    （先落盘写下的「收尾中 + 已打断」由此保住）；`frozen_interrupted=True` 已落定的步骤保持原样。
 
-      - `frozen_ended=True`：**不许**把 `ended` 的 `phase` / `error` 改掉（先落盘那一步
-        已经写下的「收尾中 + 已打断」由此保住）；
-      - `frozen_interrupted=True`：步骤表里已落定的步骤保持原样（取消时的登记只补状态）。
-
-    **`waiting` 是 `post` 那一格的专有终态**（R26 / `docs/design-intent.md` 第 10 条）：
-    按「结束录音」之后会后一个动作都不自动跑，那一步做完它该做的（释放会中模型）就如实
-    空着等人按按钮 —— 它没有别的词可用（`running` 是"正在跑"、`done` 是"跑完了"、
-    `skipped` 是"这一格不存在"、`failed` 是"搞砸了"）。别的步骤仍不许落回 `waiting`：
-    那会把"收尾协程被取消、三步都还没轮到"与"这一步不归我管"混成同一副面孔。
+    `waiting` 是 `post` 那一格的专有终态（R26 / `docs/design-intent.md` 第 10 条）：
+    按「结束录音」之后会后一个动作都不自动跑，那一步做完该做的就如实空着等人按按钮。
+    别的步骤不许落回 `waiting`——那会把「收尾协程被取消、三步都还没轮到」与
+    「这一步不归我管」混成同一副面孔。
     """
     if status not in DRAIN_STEP_STATUS:
         raise DrainStateError(f"未知的收尾状态：{status!r}（取值域 {DRAIN_STEP_STATUS}）")
@@ -717,28 +671,15 @@ def finish_drain_step(
 
 
 def finish_drain(snapshot: Snapshot | None = None, *, cancelled: bool = False) -> str:
-    """**收尾的唯一出口**：按当前三步结果判终态，只有两种结果。
+    """收尾的唯一出口：按当前三步结果判终态，返回最终 `ended.phase`（写盘与提交不在这里）。
 
-      - 三步都落定（`status` 全部落在 `{done, skipped, waiting}`，
-        或者**只差 `post` 那一格还停在 `running`**）且没有任何一步 `failed`
-        → `ended.phase = "done"`（`top_state` **停在 `ended`**、`session` 保留）；
-      - 有任一步 `failed`，或**取消**那一趟进来的（`cancelled=True`，三步没跑完）
-        → `ended.phase` **保持 `draining`**（`top_state` 停在 `ended`、`session` 保留）。
+    三步都落定（`{done, skipped, waiting}`，或只差 `post` 停在 `running`）且无 `failed`
+    → `done`；任一步 `failed` 或取消那一趟（`cancelled=True`，三步没跑完）→ 保持 `draining`。
+    两种结果下 `top_state` 都停在 `ended`、`session` 保留。
 
-    返回最终 `ended.phase`（`"done"` / `"draining"`），**写盘与提交都不在这里**。
-
-    `cancelled` 是**取消路径**那一趟的读数（`ServiceRuntime._finish_drain(cancelled=True)`
-    传进来）：被取消的收尾没有跑完，终态该是 `draining`。它在取消那一刻能把在飞那一步
-    记成 `running`（照实登记，不伪造终态），因此下面那一条"只差 `post` 停在 `running`"
-    必须让开这一趟 —— 否则取消会被误判成"收尾走完了"。
-
-    ## 为什么 `post` 空着也算收尾走完
-
-    按「结束录音」之后会后一个动作都不自动跑（R26 / `docs/design-intent.md` 第 10 条）：
-    `post` 步做完它该做的（释放会中模型）之后，如实停在"还没做、等你按按钮"那一格，
-    于是收尾三步跑完时那一格正是 `waiting`（在飞时被取消的那一趟记 `running`，
-    而那一趟走的是上面第二条、终态是 `draining`）。`drain_has_settled()` 一直把 `waiting`
-    算作"已落定"，本函数跟着认下 `post` 这一格的两种读数，收尾才走得进 `done`。
+    `cancelled` 由取消路径传入：被取消的收尾没有跑完，终态该是 `draining`。取消那趟能把
+    在飞那一步照实记成 `running`，所以「只差 post 停在 running」那条必须让开这一趟，
+    否则取消会被误判成「收尾走完了」。
     """
     target = _resolve(snapshot)
     if target.ended is None:
@@ -756,9 +697,7 @@ def finish_drain(snapshot: Snapshot | None = None, *, cancelled: bool = False) -
     return "draining"
 
 
-# ---------------------------------------------------------------------------
 # 小工具
-# ---------------------------------------------------------------------------
 
 
 def now_iso() -> str:
@@ -776,10 +715,9 @@ def elapsed_seconds(session: SessionInfo, *, monotonic_now: float) -> float:
 def sample_levels(snapshot: Snapshot) -> dict[str, Any]:
     """`levels` 帧的 `frames` 部分（4Hz 抽帧的载荷，两路合在一帧里）。
 
-    场次在录（`recording` / `alert`）而某一路还没收到过电平帧（开场第一帧未到、
-    单路模式下没在录的那一路）时，该路按「左边没有柱时沿用 `bar_default`」的同一条
-    编码口径补成 15 根静音柱 —— 形状契约（包络长度恰满、`bar == envelope[-1]`）
-    在任何时刻都成立，补齐只发生在产出这一侧；空闲态的空包络照旧原样推出。
+    场次在录而某一路还没收到过电平帧时，该路按「左边没有柱时沿用 `bar_default`」的
+    同一条编码口径补成 15 根静音柱——形状契约（包络长度恰满、`bar == envelope[-1]`）
+    任何时刻都成立，补齐只发生在产出这一侧；空闲态的空包络照原样推出。
     """
     active = snapshot.top_state in ("recording", "alert")
     frames: dict[str, Any] = {}

@@ -70,17 +70,13 @@ class MinutesHook:
     """
 
     def claim(self, session_dir: str) -> None:
-        """**同步**地把「这一层在飞」落到盘上；盘上已经停着一版 `running` 就当场抛
-        `AlreadyRunningError`（`force=True` 那一档请走 `launch()`）。
+        """**同步**地把「这一层在飞」落到盘上；盘上已停着一版 `running` 就当场抛
+        `AlreadyRunningError`（`force=True` 那一档走 `launch()`）。它就是
+        `minutes/status.py::mark_running()` 既有 claim 锁的一次同步调用。
 
-        它调的是 `meeting/minutes/status.py::mark_running()` 那一把**既有**的 claim 锁
-        （`mark_running` 的全部语义一字不改，本方法只是它的一次同步调用）：调用返回时
-        `meeting_minutes_status.json` 已经读得出 `state = "running"`，于是「同一场挂不上
-        两个子会话」这件事**在动作本体里就答得出来**，不必等线程体那条路。
-
-        为什么要它（`post_minutes` 的重复按下那一档）：`launch()` 起完线程就返回，
-        运行时的在飞读数毫秒级回到空，光靠那一格判不出「另一趟还在飞」。动作本体先调本
-        方法，拒跑档因此如实答得出来（409），而不是回一个「已起」的假回执。
+        为什么要它（`post_minutes` 重复按下那一档）：`launch()` 起完线程就返回，运行时的
+        在飞读数毫秒级回到空，光靠那一格判不出「另一趟还在飞」。动作本体先调本方法，
+        拒跑档因此如实答得出来（409），而不是回一个「已起」的假回执。
         """
         target = str(session_dir or "")
         if not target:
@@ -98,35 +94,18 @@ class MinutesHook:
         """`meeting post` 的离线尾巴与「直接出纪要」按钮调它，**返回即算启动成功**（不等它跑完）。
 
         `deliver` 是**人工放行标记**（缺省 `False`）：不放行就在 `mark_running()` **之前**
-        当场返回一份 `skipped` 结果 —— 不写任何状态文件（绝不留卡在 `running` 的记录）、不起线程、
-        不碰 DSH 一步，只在主 log 留一行「纪要层隔离：本次非人工发起，跳过」。整个项目与 DSH
-        隔离：只有 `meeting post`（离线尾巴 / 只补纪要）与工作台「直接出纪要」按钮这两条
-        **人工**入口显式传 `deliver=True`；测试、脚本与库调用缺省全部跳过。放行之后本函数
-        把 `deliver=True` 一路下传给 `minutes.runner.run()`，DSH 触达点（探针 / 交付 /
-        headless 拉起）各自的默认拒绝闸因此逐层放行。
+        当场返回 `skipped`——不写任何状态文件（绝不留卡在 `running` 的记录）、不起线程、
+        不碰 DSH 一步。只有 `meeting post` 与「直接出纪要」按钮两条**人工**入口显式传
+        `deliver=True`；放行后 `deliver=True` 一路下传给 `minutes.runner.run()`，
+        DSH 触达点各自的默认拒绝闸逐层放行。
 
-        `session_dir` 是这一场的场次目录。**起线程之前先把「这一层在飞」同步写到盘上**
-        （`meeting/minutes/status.py::mark_running()`：那一版 `state = "running"` 在本方法
-        返回之前就已经落定），随后起一条 daemon 线程跑
-        `meeting.minutes.runner.run(session_dir)`，随即返回。
-
-        那一版落盘是**跨进程**看得见的：按钮那一趟住在服务进程里，用户随后手敲的
-        `meeting post` 是另一个进程 —— 后者读到这一版就按现成的 `running` 拒跑档收场
-        （`meeting/cli.py` 的 `_layer_is_running()` 与 `meeting/offline/runner.py` 的
-        `_minutes_gate()` 判据原样在场），同一场因此挂不上两个子会话。
-
-        盘上已经停着一版 `running`（另一趟正在飞：它自己那一版就是在这里落的）时，
-        这一趟**当场抛 `AlreadyRunningError`**：没有线程、没有子会话被拉起来。`mark_running()`
-        里的 claim 锁把「读现状 + 写 running」裹成一段原子操作，两趟几乎同时进来时只有一个
-        拿得到锁，另一趟读到在飞的那一版。
-
-        `force = True`（`meeting post <目录> --force` 那一趟）**跳过那条在飞判据**：
-        `--force` 的既有语义就是无视现状重跑，它是 `running` 那一档给出的出路，这一格
-        因此照常放行（不是堵死它）。
-
-        `claimed = True` 表示**调用方已经同步调过 `claim()`**（`post_minutes` 那一趟就是
-        这么接的）：盘上那一版 `running` 已经落稳，这里不再重复 claim —— 重复一次会读到
-        自己刚写下的那一版、把这一趟自己拒掉。
+        **起线程之前先把「这一层在飞」同步写到盘上**（`mark_running()`，claim 锁把
+        「读现状 + 写 running」裹成跨进程原子段）：那一版 `running` 是**跨进程**看得见的——
+        按钮那趟在服务进程里，用户随后手敲的 `meeting post` 是另一个进程，读到它就按现成的
+        拒跑档收场，同一场挂不上两个子会话。盘上已停着一版 `running` 时当场抛
+        `AlreadyRunningError`；`force = True` 跳过那条在飞判据（`--force` 的既有语义，
+        `running` 档给出的出路）。`claimed = True` 表示调用方已同步 `claim()` 过，
+        这里不再重复——重复一次会读到自己的那一版、把自己拒掉。
         """
         target = str(session_dir or "")
         if not target:

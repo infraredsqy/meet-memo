@@ -1,33 +1,8 @@
 """token 级判环 / 墙钟超时 / 文本级重复剥离 —— 四层防护里**零重依赖**的三层。
 
-搬自 V1 `mnotes_core/recorder.py`（原件见 V1 仓库
-`C:/Users/<user>/tools/meeting-notes/mnotes_core/recorder.py`；照 `docs/v1-lineage.md`
-第 11 章「原 1.0 第 5 条」，搬完那份工作副本就删掉了）：
-
-  - token 级常量 `:20-25`             → 本文件「一、token 级判环」一节
-  - `_LoopGuard` `:47-146`            → `_LoopGuard`（第 2 层：`logits_processor` 钩子）
-  - `_DeadlineStop` `:149-172`        → `_DeadlineStop`（第 3 层：`StoppingCriteria` 钩子）
-  - 文本层常量 `:183-187`             → 本文件「二、文本级剥离」一节
-  - `_loop_coverage` `:190-226`       → `_loop_coverage`
-  - `_strip_repeat_loops` `:229-249`  → `_strip_repeat_loops`（第 4 层：文本兜底）
-
-职责分工（`docs/v1-lineage.md` 的 A1 / A2 两条）：
-
-    本模块     —— 判定内核：纯标准库 + duck-typed 张量，**零 numpy / torch / transformers import**
-    glm.py     —— 把上面两个钩子挂进 `generate()`，并在函数体内惰性 import 重依赖
-
-`_LoopGuard` / `_DeadlineStop` 不需要 torch 就能用：前者只碰 `scores.clone()` / `scores.fill_()` /
-`scores[:, eos]` 这几个鸭子类型方法，后者只是个接受 `StoppingCriteriaList` 调用的普通可调用对象。
-
-**搬过来时只动了三处**，其余逐字照搬（出处注释逐段标出）：
-
-  1. logger 名：V1 的 `logging.getLogger("meeting")` → `"meeting.asr.guards"`
-     （本项目每个模块一个子 logger，`meeting/logging_setup.py` 的 `get_logger()` 同一口径）；
-  2. 两个默认值不再取 V1 `mnotes_core/config.py` 的模块级常量 `REPEAT_MAX_UNIT` /
-     `REPEAT_MIN_COVERAGE`，改取 `meeting.config` 的 `asr.repeat_max_unit` /
-     `asr.repeat_min_coverage` —— 默认值同为 **40 / 0.5**，且这两个键是本项目**每段热读**的
-     `asr.*` 键（`meeting/config.py` 的 `HOT_KEYS`），改了立刻生效；
-  3. V1 模块顶层的 `import numpy as np` / `import torch` 一行都没有（本模块一行都用不到）。
+职责分工（`docs/v1-lineage.md` 的 A1 / A2）：本模块是判定内核，纯标准库 + duck-typed 张量，
+**零 numpy / torch / transformers import**；把钩子挂进 `generate()` 与重依赖惰性 import
+都在 `glm.py`。搬移出处见 `docs/v1-lineage.md` 第 11 章「原 1.0 第 5 条」。
 """
 
 from __future__ import annotations
@@ -41,12 +16,8 @@ from meeting import config as config_module
 log = logging.getLogger("meeting.asr.guards")
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# 一、token 级判环（第 2 层）与墙钟硬超时（第 3 层）
-# ═══════════════════════════════════════════════════════════════════════════
-
 # 搬自 V1 mnotes_core/recorder.py:20-25
-# GLM-ASR tokenizer 是字符级的（1 汉字 ≈ 1 token），故 token 窗口可直接按"字数"理解
+# GLM-ASR tokenizer 是字符级的（1 汉字 ≈ 1 token），token 窗口可直接按"字数"理解
 _LOOP_TOKEN_WINDOW = 96     # 参与循环检测的尾部窗口（token）
 _LOOP_TOKEN_MIN_UNIT = 2    # 最短重复单位（token）
 _LOOP_TOKEN_MAX_UNIT = 16   # 最长重复单位（token）
@@ -184,17 +155,11 @@ class _DeadlineStop:
         return max(0.0, self._deadline - time.monotonic())
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# 二、文本级重复剥离（第 4 层，兜底）
-# ═══════════════════════════════════════════════════════════════════════════
-
 # 搬自 V1 mnotes_core/recorder.py:177-187
-# ── 重复循环剥离 ────────────────────────────────────────────────
-# 旧实现只扫"周期 2~4 字的单位连续重复 ≥7 次"，对被截断的短单位循环很细，
-# 但**真实故障的循环周期是 5~7 字**（2026-09-17 实测两条：周期 7 的
-# 「写啊哈，你可以」×399、周期 5 的「是错的，那」×663），完全落在搜索空间之外，
-# 2799/3333 字符一个字都没删掉。现在改为"周期上限 40 + 覆盖率判据"：
-# 找出覆盖该行比例最高的重复单位，覆盖率 ≥ 阈值即判为循环，只保留一组。
+# 旧实现只扫"周期 2~4 字的单位连续重复 ≥7 次"，但真实故障的循环周期是 5~7 字
+# （2026-09-17 实测两条：周期 7 的「写啊哈，你可以」×399、周期 5 的「是错的，那」×663），
+# 旧搜索空间一个字都没删掉。现改为"周期上限 40 + 覆盖率判据"：找出覆盖率最高的重复
+# 单位，覆盖率 ≥ 阈值即判循环，只保留一组。
 _REPEAT_LOOP_MIN_UNIT = 2      # 重复单位最短长度（2 字起步，避免误删"哈哈哈哈哈"）
 _REPEAT_LOOP_MAX_UNIT_FLOOR = 4  # 周期上限至少扫到这里（兼容旧行为）
 _REPEAT_LOOP_MIN_COUNT = 4     # 单位出现次数下限（非重叠计数）
@@ -213,8 +178,7 @@ def _loop_coverage(text: str, max_unit: int | None = None):
     if n <= 0:
         return None, 0, 0.0
     if max_unit is None:
-        # 改自 V1 `:200` 的 `max_unit = REPEAT_MAX_UNIT`（`mnotes_core/config.py` 的模块级
-        # 常量，import 时求值一次）：V2 的参数一律从配置读出，这两个键都是热读键。
+        # V2 的参数一律从配置读（V1 是 import 时求值一次的模块常量）；这两个键都是热读键。
         max_unit = int(config_module.get("asr.repeat_max_unit"))
     max_unit = max(_REPEAT_LOOP_MAX_UNIT_FLOOR, int(max_unit))
     max_unit = min(max_unit, n // _REPEAT_LOOP_MIN_COUNT)
@@ -258,8 +222,7 @@ def _strip_repeat_loops(text: str, max_unit: int | None = None,
     if len(text) <= _REPEAT_LOOP_MIN_TEXT:
         return text
     if min_coverage is None:
-        # 改自 V1 `:242` 的 `min_coverage = REPEAT_MIN_COVERAGE`，理由同 `_loop_coverage`
-        # （默认值同为 0.5，改从 `meeting.config` 的 `asr.repeat_min_coverage` 读）。
+        # 改自 V1 `:242`：默认值同为 0.5，改从 meeting.config 的 asr.repeat_min_coverage 读。
         min_coverage = float(config_module.get("asr.repeat_min_coverage"))
     unit, count, cov = _loop_coverage(text, max_unit=max_unit)
     if unit is None or cov < min_coverage:

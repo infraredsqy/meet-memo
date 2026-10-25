@@ -32,9 +32,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal, Protocol, runtime_checkable
 
-# ---------------------------------------------------------------------------
 # 取值域（逐字冻结）
-# ---------------------------------------------------------------------------
 
 #: 设备就绪三态（空闲态直接发给界面）
 SOURCE_STATUS = ("ready", "probe_failed", "unprobed")
@@ -58,9 +56,7 @@ TRANSCRIPT_HEALTH = ("normal", "behind", "stopped")
 DEFAULT_FRAME_INTERVAL_SECONDS = 0.5
 
 
-# ---------------------------------------------------------------------------
 # 事实（后端 → 服务，单向）
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -215,9 +211,7 @@ class PostProcessHook(Protocol):
         """
 
 
-# ---------------------------------------------------------------------------
 # 只读配置视图（`bind()` 的 `config` 参数）
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)

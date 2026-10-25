@@ -1,29 +1,17 @@
-"""会话采集引擎 —— 每路一套「读侧 + 写侧 + 0.5 秒电平刻度」（`dca4539b` phase2 §3）。
+"""会话采集引擎——每路一套「读侧 + 写侧 + 0.5 秒电平刻度」（`dca4539b` phase2 §3）。
 
-**这一段的骨架来自 V1 的双录**（`C:/Users/<user>/tools/meeting-notes`）：V1 那套在真机上跑通过
-整场整场的会，所以这里不另起一套，只把它按 V2 的契约重排：
+骨架来自 V1 的双录（真机跑通过整场整场的会，不另起一套，只按 V2 契约重排）：
+`_mic_callback` 入队那句 → `sources.py` 的 mic 读侧；`_loopback_pump` 循环 → loopback 源
+（专用线程 + `CoInitializeEx`）；`pipeline._audio_loop` 按块写 → `archive.PcmArchiveWriter`。
 
-  | V1 的东西 | 本模块的去处 |
-  |---|---|
-  | `MeetingRecorder._mic_callback`（`recorder.py:488-493`）里入队那一句 | 读侧的落点（入队那一句在 `sources.py` 的 mic 源里） |
-  | `MeetingRecorder._loopback_pump`（`recorder.py:467-486`）的循环 | `sources.py` 的 loopback 源（专用线程 + `CoInitializeEx`） |
-  | `pipeline._audio_loop` 里按 tag 取块再写（`pipeline.py:89-95`） | `archive.PcmArchiveWriter`（取一块、写一块） |
+与 V1 的结构差别只有三条，每条都有契约上的理由（§3 的取舍，别扩大成重构）：
+两路各自一条写线程（契约要求「一路出事另一路照跑」）；单路失败报 `SourceLost`、不影响
+另一路、`start()` 不因此抛错（R2：不能静默出事）；每路一条电平刻度线程，每
+`frame_interval` 秒**无条件**发一帧 `LevelFrame`（静下来发 `-120 dBFS`）——服务侧的心跳
+窗口是 `max(2.0s, 3 × frame_interval)`，停发会把「静音」误判成「采集停了」。
 
-**与 V1 的结构差别只有三条，每条都有契约上的理由**（§3 的取舍，别把它扩大成重构）：
-
-  1. **两路各自一条写线程**（V1 是两路共用一条队列 + 一条写线程）：契约要求「一路出事另一路
-     照跑」，分开写更直接；
-  2. **单路失败报 `SourceLost`**（V1 里 loopback 死在运行期只有一行日志）：R2 要的是「不能静默
-     出事」；一路死掉**不影响另一路**，`start()` 也不因此抛错；
-  3. **每路一条电平刻度线程**：每 `frame_interval` 秒**无条件**发一帧 `LevelFrame`
-     （一路真的静下来时发的是 `-120 dBFS` 的帧）。V1 没有电平事实，这一块是 V2 契约新增的；
-     帧必须按节奏持续发，不能「有声音才发」——服务侧的心跳窗口是
-     `max(2.0s, 3 × frame_interval)`，停发会把「静音」误判成「采集停了」。
-
-**假源注入是这一段的验收手段**：`CaptureSession` 的 `sources` 参数收任何满足
-`CaptureSource` 协议的对象（`read()` 逐块给字节、`latest_samples()` 给这一路的电平素材），
-测试因此走的是**生产代码这条路径**：读线程、写线程、电平刻度、收尾落盘全部是真的，
-换掉的只有最外面那一层声卡库。
+假源注入是验收手段：`CaptureSession` 的 `sources` 收任何满足 `CaptureSource` 协议的对象，
+测试走生产代码这条路径（读线程、写线程、电平刻度、收尾落盘全是真的），换掉的只有声卡库。
 """
 
 from __future__ import annotations
@@ -146,8 +134,6 @@ class _SourceWorker:
         self._threads: list[threading.Thread] = []
         self._lock = threading.Lock()
 
-    # -- 起停 -------------------------------------------------------------
-
     def start(self) -> None:
         if self.active:
             self._threads = [
@@ -183,7 +169,7 @@ class _SourceWorker:
                     )
         self._threads = []
 
-    # -- 关一路（用户的主动选择，不是故障） ---------------------------------
+    # 关一路（用户的主动选择，不是故障）
 
     def deactivate(self) -> None:
         """用户主动关掉这一路：停读真源、改写静音；**不报 `SourceLost`、不进告警**。
@@ -226,7 +212,7 @@ class _SourceWorker:
             self.alive = True
         _log.info("用户重新打开 %s 这一路：读线程回到读源", self.source)
 
-    # -- 读侧 -------------------------------------------------------------
+    # 读侧
 
     def _feed(self, data: bytes) -> None:
         """把拿到的块交给写侧；本场暂停中就**等长替换成静音**（内容到不了写侧队列）。"""
@@ -298,7 +284,7 @@ class _SourceWorker:
         _log.error("%s 这一路的流断了：%s", self.source, reason)
         self._emit_fact(SourceLost(source=self.source, reason=reason))
 
-    # -- 电平刻度 ---------------------------------------------------------
+    # 电平刻度
 
     def _tick_loop(self) -> None:
         """每 `frame_interval` 秒**无条件**发一帧电平事实（外加一条流存活事实）。
@@ -351,29 +337,17 @@ class _SourceWorker:
 class CaptureSession:
     """一场会话的采集引擎：两路读侧 / 写侧 / 0.5 秒电平刻度，收尾 `finalize()`；`transcode()` 是采集后端的协议成员。
 
-    生命周期（`meeting/service/runtime.py` 的调用顺序）：
-
-      - 构造：**先定本段段号、再把两路的段归档文件都建出来**并起两路写线程；此刻
-        还没有读侧。段号 = `meeting/session.py` 的 `next_segment_number()`（盘上实有
-        段号最大值 + 1，空目录从 1 起）——**次序不能反**：`open_pcm()` 是截断写，
-        段号解析晚于打开就会把上一段的 PCM 清成零字节；开场（空目录）建段 1，
-        续接（同一工作区再录）建下一个序号的新段文件，旧段一个字节不碰；
-      - `start()`：按 `mode` 起该采的几路读侧与电平刻度（未选中的那一路起静音节拍器），
-        同时落下**本段**的起点戳——一段 = 一次录制（start→finalize，`docs/design-intent.md`
-        第 9 条）；
-      - `pause()` / `resume()`：暂停与继续。暂停期间所有路写数字静音、不录内容
-        （第 8 条），段**不**切段，暂停区间进段记录；
-      - `deactivate_source()`：用户主动关掉某一路——那一路改写静音，不报 `SourceLost`；
-      - `activate_source()`：用户重新打开某一路——把新开起来的源接回读线程；
-      - `finalize()`：停流 + join + 关文件 + `fsync`（收尾第 1 步），落下本段终点戳
-        并结出**在录时长**（实际录到的音频时长，不含暂停；权威数只从写侧的字节计数来）；
-      - `transcode()`：把各段 PCM 转成 MP3（采集后端的协议成员；转码独立工序走的是
-        `meeting/capture/transcode.py` 那一条带凭据判据的路，本方法不再被收尾序列调用）；
-        转不动**原样上抛**，PCM 留着；
-      - `stop()`：幂等收场（进程关停时调；已经收过尾就什么都不做）。
+    生命周期（`meeting/service/runtime.py` 的调用顺序）：构造时**先定本段段号、再把两路的
+    段归档文件建出来**并起写线程（此刻还没有读侧）——次序不能反：`open_pcm()` 是截断写，
+    段号解析晚于打开会把上一段的 PCM 清成零字节；`start()` 按模式起读侧与电平刻度并落下
+    本段起点戳；`pause()` / `resume()` 暂停与继续（暂停期间写静音不录内容，段不切段）；
+    `deactivate_source()` / `activate_source()` 用户关 / 重开某一路（关掉那路改写静音、
+    不报 `SourceLost`）；`finalize()` 停流 + join + 关文件 + `fsync`，结出在录时长（权威数
+    只从写侧的字节计数来）；`transcode()` 各段 PCM → MP3（转不动原样上抛，PCM 留着）；
+    `stop()` 幂等收场。
 
     段记录（`segment_records()` / `audio_duration_seconds()`）由服务侧落进 `session.json`；
-    本类只管把它记对，不做任何墙钟核对（第 6 条：元信息除权威时长外一律不当判据）。
+    本类只管记对，不做任何墙钟核对（第 6 条：元信息除权威时长外一律不当判据）。
     """
 
     def __init__(
@@ -411,11 +385,9 @@ class CaptureSession:
         self._segment_duration_seconds: float | None = None
         self.writers: dict[str, PcmArchiveWriter] = {}
         self.workers: dict[str, _SourceWorker] = {}
-        # **抛错之前自己拉起来的东西自己收干净**（与 `start()` 同一条纪律，见 `start()`）：
-        # 两路逐个 `open()`（建段文件 + 起写线程），第二路抛错时构造原样上抛，已 `open()`
-        # 的第一路写线程与句柄不能没人收 —— 上抛之前先把已登记的 writer 逐个 `close()`
-        # （`close()` 幂等、容忍半开状态：句柄开了线程没起的那一档也收得干净）。
-        # 收尾自己再抛只记 warning：上抛的主因仍是构造失败的那个原异常。
+        # 抛错之前自己拉起来的东西自己收干净（与 `start()` 同一条纪律）：两路逐个 `open()`，
+        # 第二路抛错时先把已登记的 writer 逐个 `close()`（幂等、容忍半开状态）再上抛；
+        # 收尾自己再抛只记 warning，主因仍是构造失败的原异常。
         try:
             for source in SOURCE_IDS:
                 writer = PcmArchiveWriter(
@@ -444,8 +416,6 @@ class CaptureSession:
                         exc_info=True,
                     )
             raise
-
-    # -- 起 ---------------------------------------------------------------
 
     def begin_source(self, source: str, source_impl: CaptureSource) -> None:
         """把某一路的采集源接进来（`start()` 之前由后端调；接进来的这一路随即成为要采的路）。
@@ -477,7 +447,7 @@ class CaptureSession:
             self.stop()
             raise
 
-    # -- 暂停 / 关一路（引擎的服务层出口；动作面入口在 `services/routes.py`） ----
+    # 暂停 / 关一路（引擎的服务层出口；动作面入口在 `services/routes.py`）
 
     def pause(self) -> None:
         """暂停本场采集：所有路从这一刻起写数字静音，**不录内容**（第 8 条的隐私线）。
@@ -528,7 +498,7 @@ class CaptureSession:
             return
         worker.reactivate(source_impl)
 
-    # -- 段记录 ---------------------------------------------------------------
+    # 段记录
 
     def segment_records(self) -> list[dict[str, Any]]:
         """本段那一条段记录（`session.json` 的 `segments` 那一格的**新增项**）。
@@ -567,7 +537,7 @@ class CaptureSession:
         """这一路**本段**写下的段文件名（`session.json` 的 `sources[*].archives` 的新增项）。"""
         return [archive_name(source, self.segment_number)]
 
-    # -- 收尾 -------------------------------------------------------------
+    # 收尾
 
     def finalize(self) -> None:
         """停流 + join + 关文件 + `fsync`（**幂等**），并结出本段的在录时长。"""
@@ -636,8 +606,6 @@ class CaptureSession:
                 return
             self._stopped = True
         self.finalize()
-
-    # -- 读数（测试与 /debug 用） -----------------------------------------
 
     def bytes_written(self, source: str) -> int:
         """这一路真正写下去的字节数（时间轴口径：32000 字节/秒 × 秒数，含静音）。"""
