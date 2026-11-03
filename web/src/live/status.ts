@@ -14,7 +14,7 @@
  * 某一路到底丢没丢，是服务说了算。
  */
 
-import type { Source, SourceHealth, TopState } from '../contract';
+import type { Source, TopState } from '../contract';
 import { formatLostMinutes, formatWallClock } from './format';
 import { lostSeconds, type LossWindow } from './loss';
 
@@ -29,28 +29,30 @@ export type StateGlyph =
 export interface StatusView {
   /** 状态名，四态固定文案。 */
   name: string;
-  /** 状态说明，随状态变。 */
-  note: string;
   glyph: StateGlyph;
-  /** 胶囊实心块的配色档：`alert` 红、`on` 青、`off` 深墨。 */
+  /** 胶囊实心块的配色档：`alert` 红、`on` 橙、`off` 深墨。 */
   tone: 'off' | 'on' | 'alert';
 }
 
-/** 顶层状态 → 胶囊。收尾中 / 已完成按 `ended.phase` 分成两副面孔（设计章 4.2 二）。
- *  五句固定文案照 `docs/ui-design.md` 2.3 的口径逐字对齐（d61829f1 改的旧稿话）。 */
+/**
+ * 顶层状态 → 胶囊。收尾中 / 已完成按 `ended.phase` 分成两副面孔（设计章 4.2 二）。
+ * 五句固定文案照 `docs/ui-design.md` 2.3 的口径逐字对齐。
+ *
+ * 顶栏只说状态名：哪一路在采、哪一路没了由通道卡头行的健康徽标逐路说
+ * （一次事实只在它的那一路说一遍），顶栏不再另起一句汇总。
+ */
 export function statusView(
   topState: TopState,
   endedPhase: 'draining' | 'done' | null,
 ): StatusView {
   switch (topState) {
     case 'idle':
-      return { name: '空闲', note: '尚未开始', glyph: 'glyph--idle', tone: 'off' };
+      return { name: '空闲', glyph: 'glyph--idle', tone: 'off' };
     case 'recording':
-      return { name: '录音中', note: '两路都在采', glyph: 'glyph--rec', tone: 'on' };
+      return { name: '录音中', glyph: 'glyph--rec', tone: 'on' };
     case 'alert':
       return {
         name: '告警',
-        note: '一路仍在采，另一路采不到了',
         glyph: 'glyph--alert',
         tone: 'alert',
       };
@@ -58,13 +60,11 @@ export function statusView(
       return endedPhase === 'done'
         ? {
             name: '已结束 · 已完成',
-            note: '录音已落盘',
             glyph: 'glyph--done',
             tone: 'off',
           }
         : {
             name: '已结束 · 收尾中',
-            note: '还差最后一块没进盘',
             glyph: 'glyph--draining',
             tone: 'off',
           };
@@ -182,9 +182,4 @@ function chip(
     restored: flags.restored ?? false,
     idle: flags.idle ?? false,
   };
-}
-
-/** 一路在不在采 —— 给「两路都在采 / 一路仍在采」这类说明与汇总用。 */
-export function isCapturing(health: SourceHealth): boolean {
-  return health === 'capturing' || health === 'restored';
 }

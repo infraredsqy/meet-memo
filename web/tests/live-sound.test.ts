@@ -436,7 +436,6 @@ describe('liveView：一份快照摊成主视图', () => {
     });
     const view = liveView(snapshot, initialHeartbeatState(), null, null, T('22:19:00'));
     expect(view.status.name).toBe('已结束 · 收尾中');
-    expect(view.status.note).toBe('还差最后一块没进盘');
     expect(view.clock).toEqual({ label: '本场时长', value: '02:19:23', faint: false });
   });
 

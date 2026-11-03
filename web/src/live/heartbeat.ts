@@ -315,7 +315,3 @@ export function transcriptGap(frozenAt: string | null, recoveredAtIso: string): 
     text: '采集中断',
   };
 }
-
-/** 心跳失联时那一档的整句说明（判据本身：为什么不看「HTTP 通不通」）。 */
-export const HEARTBEAT_GUIDANCE =
-  '失联这一条看的是应答里的录音存活字段：服务进程还活着、网页也打得开，但录音线程已经卡死，所以不能只看「HTTP 通不通」。';

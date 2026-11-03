@@ -1,22 +1,23 @@
 /* ============================================================================
-   meeting · 会中视图样式（暗面一稿）
+   meeting · 会中视图样式（纸面仪表一稿）
    ----------------------------------------------------------------------------
-   上一版是从 `docs/ui/ui.css`（亮面设计稿）里抽出来的抽取物，已被这一稿整份取代 ——
-   抽取物与抽取脚本都不在仓库里了。这一稿的来路是 `src/App.tsx` 的组件树：照着这棵树
-   重画，**类名照旧**（设计章 7.10 的类名契约），换掉的是配色、字体、层级与排版。
-   三份样式怎么分工，写在 `web/README.md` 的「样式的来源」那一节。
+   上一版是从 `docs/ui/ui.css`（亮面设计稿）里抽出来的抽取物，已被后来的稿件整份
+   取代 —— 抽取物与抽取脚本都不在仓库里了。这一稿的来路是 `src/App.tsx` 的组件树：
+   照着这棵树重画，**类名照旧**（设计章 7.10 的类名契约），换掉的是配色、字体、
+   层级与排版。三份样式怎么分工，写在 `web/README.md` 的「样式的来源」那一节。
 
    题材本来就是调音台：两路输入、dBFS 刻度、峰值保持、2 秒一格的历史包络。
+   这一稿把绿荧光换成了纸面仪表的取材——纸白面板、墨黑刻度、一条暖橙信号色。
    三条贯穿全篇的口径：
 
-   1. **三层底靠明度差说话** —— 暗室（整页）／台面（面板）／井底（凹槽）依次是
-      `#070A09` → `#111614` → `#040606`，每一层之间差一档，一眼分得开；
-   2. **余晖青只落在读数上** —— 包络柱、电平填充的安静段、录音指示灯。
-      装饰、边框、标题一律走灰阶，于是一屏里只有「还在动的东西」在发光；
+   1. **层级靠明度差说话** —— 纸面（整页）／面板（卡）／亮槽（凹进去的床与井）
+      依次亮上去，侧栏单独沉一档；凹凸感由底的明度给，阴影只留给浮层；
+   2. **信号橙只落在活着的证据上** —— 包络柱、电平填充、录音指示灯、选中沿、
+      主按钮。边框、标题、说明一律走纸墨灰阶，一屏里发橙的只有活的东西；
    3. **等宽字管数据、标牌字管标题、正文字只给需要读长句的两处**（转写与告警说明）。
 
-   取色与字体全部 `var()` 自 `console.css`（暗面 token 层）与 `tokens.css`
-   （原设计 token：间距、字号、时长、尺寸）。
+   取色与字体全部 `var()` 自 `console.css`（主题 token 层）与 `tokens.css`
+   （设计 token：间距、字号、时长、尺寸）。
    ========================================================================= */
 
 /* ============================================================================
@@ -232,13 +233,6 @@ body {
   color: var(--t-ink-mid);
 }
 
-.band__note {
-  grid-column: 2;
-  justify-self: end;
-  color: var(--t-ink-quiet);
-  font-size: var(--size-caption);
-}
-
 .band__body {
   padding-top: var(--space-1);
 }
@@ -333,14 +327,6 @@ body {
   letter-spacing: var(--track-label);
 }
 
-.statusline__note {
-  color: var(--t-ink-quiet);
-  font-size: var(--size-small);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 /* 状态胶囊里那个 11px 的灯 */
 .glyph {
   position: relative;
@@ -376,8 +362,8 @@ body {
 
 /* 半实心方框 = 正在落盘 */
 .glyph--draining {
-  background: linear-gradient(to top, var(--t-amber) 50%, transparent 50%);
-  border: 2px solid var(--t-amber);
+  background: linear-gradient(to top, var(--t-signal) 50%, transparent 50%);
+  border: 2px solid var(--t-signal);
 }
 
 .glyph--done {
@@ -853,11 +839,12 @@ input[type="checkbox"] {
   box-shadow: var(--t-glow-bar);
 }
 
+/* 走纸右下角那枚时刻戳：最后一份数据落在几点 */
 .m-env-note {
   grid-area: note;
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: var(--space-4);
   color: var(--t-ink-quiet);
   font-size: var(--size-micro);
@@ -1038,7 +1025,7 @@ input[type="checkbox"] {
   );
 }
 
-/* 填充：dBFS 越高越暖 —— 安静段余晖青，中段灯丝黄，过顶硫红。
+/* 填充：dBFS 越高越暖 —— 安静段深橙，中段信号橙，过顶转故障红。
    background-size 钉到井的高度上，这样渐变跟着刻度走，不跟着当前电平走 */
 .m-meter__fill {
   position: absolute;
@@ -1049,8 +1036,7 @@ input[type="checkbox"] {
   background: linear-gradient(
     to top,
     var(--t-signal-deep) 0%,
-    var(--t-signal) 46%,
-    var(--t-amber) 78%,
+    var(--t-signal) 62%,
     var(--t-alert) 100%
   );
   background-size: 100% var(--meter-h);
@@ -1058,18 +1044,19 @@ input[type="checkbox"] {
   background-repeat: no-repeat;
 }
 
-/* 峰值保持：一根 2px 的灯丝黄，带一点光晕 */
+/* 峰值保持：一根 2px 的墨针（橙柱上的指针用墨，读数不混淆） */
 .m-meter__peak {
   position: absolute;
   left: 0;
   right: 0;
   bottom: var(--hold);
   height: 2px;
-  background: var(--t-amber-bright);
-  box-shadow: var(--t-amber-glow);
+  background: var(--t-peak);
+  box-shadow: var(--t-peak-glow);
 }
 
-/* 采集停 / 失联时读数上那个叉 */
+/* 采集停 / 失联时读数上那个叉。平时不摆：健康的井里没有它（设计稿
+   `docs/ui/ui.css` 的口径 —— 缺省 `display: none`，死了 / 冻了才现出来） */
 .m-meter__mark {
   position: absolute;
   inset: 50% 0 auto;
@@ -1077,6 +1064,12 @@ input[type="checkbox"] {
   font-size: 15px;
   line-height: 1;
   text-align: center;
+  display: none;
+}
+
+.m-ch--dead .m-meter__mark,
+.m-ch--frozen .m-meter__mark {
+  display: block;
 }
 
 .m-ch__readout {
@@ -1105,25 +1098,8 @@ input[type="checkbox"] {
 }
 
 /* ============================================================================
-   7. 每路健康：两条不折叠的文字保证
-   ========================================================================= */
-
-.m-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-3);
-}
-
-.m-chip {
-  padding: var(--space-2) var(--space-4);
-  border: var(--size-divider) solid var(--t-rule-hair);
-  border-left: 2px solid var(--t-rule);
-  background: var(--t-sunk);
-  color: var(--t-ink-mid);
-  font-family: var(--t-font-mono);
-  font-size: var(--size-small);
-  white-space: nowrap;
-}
+   7. （每路健康徽标长在通道卡头行里，见第 5 节 `.m-health`）
+   ============================================================================ */
 
 /* ============================================================================
    8. 告警
@@ -1220,14 +1196,14 @@ input[type="checkbox"] {
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
   border-color: var(--t-rule-hair);
-  border-left: 2px solid var(--t-amber);
+  border-left: 2px solid var(--t-signal);
   background: var(--t-sunk);
   color: var(--t-ink-mid);
   font-size: var(--size-small);
 }
 
 .alert--hint .alert__glyph {
-  color: var(--t-amber);
+  color: var(--t-signal);
 }
 
 .alert--hint .alert__since {
@@ -1288,20 +1264,16 @@ input[type="checkbox"] {
   color: var(--t-ink);
 }
 
-/* 心跳迟到那一行弱提示（不是横幅那一档） */
+/* 心跳迟到那一行弱提示（横幅之下的那一档） */
 .heartbeat--inline {
   position: static;
   padding: var(--space-3) var(--space-4);
   border: var(--size-divider) solid var(--t-rule-hair);
-  border-left: 2px solid var(--t-amber);
+  border-left: 2px solid var(--t-signal);
   background: var(--t-sunk);
   box-shadow: none;
   color: var(--t-ink-mid);
   font-size: var(--size-small);
-}
-
-.hb-guidance {
-  max-width: 68ch;
 }
 
 /* ============================================================================
@@ -1508,7 +1480,7 @@ input[type="checkbox"] {
 }
 
 .transcript__route {
-  color: var(--t-signal-ink);
+  color: var(--t-ink-mid);
   font-family: var(--t-font-mono);
   font-size: var(--size-caption);
   white-space: nowrap;
@@ -1556,30 +1528,9 @@ input[type="checkbox"] {
 }
 
 /* ============================================================================
-   13. 采集带页头那条图例
-   ========================================================================= */
-
-.meter-legend {
-  grid-column: 2;
-  justify-self: end;
-  display: flex;
-  align-items: center;
-  gap: var(--space-5);
-  color: var(--t-ink-quiet);
-  font-size: var(--size-caption);
-}
-
-.meter-legend__item {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  white-space: nowrap;
-}
-
-.meter-legend .m-ch__mark {
-  width: 8px;
-  height: 8px;
-}
+   13. （采集带页头的图例已收掉：本地 / 远端的名字与图形长在通道卡头行里，
+        包络的格子刻度就在床面上，没有第二条要重复的话）
+   ============================================================================ */
 
 /* ============================================================================
    14. 宽度断点
@@ -1635,17 +1586,6 @@ input[type="checkbox"] {
 
   .band__head {
     grid-template-columns: 1fr;
-  }
-
-  .band__note,
-  .meter-legend {
-    grid-column: 1;
-    justify-self: start;
-  }
-
-  .meter-legend {
-    flex-wrap: wrap;
-    gap: var(--space-3) var(--space-4);
   }
 
   .m-meter--v .m-meter__track,
@@ -1746,9 +1686,8 @@ input[type="checkbox"] {
 
 /* 1.1 左栏顶上那块铭牌：这一台是「会议工作台」。
    和右栏那一场的场名同档字号（`--size-title`）——两栏各有一个头，读起来对得上；
-   底下压一条 2px 信号青短线，宽度只跟字走，像机箱面板上那道刻度。 */
+   底下压一条 2px 信号橙短线，宽度只跟字走，像机箱面板上那道刻度。 */
 .title-sm {
-  align-self: flex-start;
   padding-bottom: var(--space-2);
   border-bottom: 2px solid var(--t-signal);
   font-family: var(--t-font-sign);
@@ -1775,8 +1714,16 @@ input[type="checkbox"] {
   min-height: 0;
   padding: var(--space-5) var(--space-4);
   border-right: var(--size-divider) solid var(--t-rule-hair);
-  background: var(--t-sunk);
+  background: var(--t-rail);
   overflow-y: auto;
+}
+
+/* 左栏头顶那一行：铭牌在左、日夜间切换在右 */
+.home__listhead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
 }
 
 .home__aside {
@@ -1854,10 +1801,11 @@ input[type="checkbox"] {
 }
 
 .wslist__row {
+  position: relative; /* 悬停时那颗删除钮以行为定位，盖在状态字上 */
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
   grid-template-areas:
-    'name state acts'
+    'name state len'
     'path path len';
   align-items: center;
   gap: var(--space-1) var(--space-3);
@@ -1927,13 +1875,38 @@ input[type="checkbox"] {
   white-space: nowrap;
 }
 
+/* 录音结束：历史事实，压成灰档（字与图形一起退）——这一列的显眼留给还在动的那几行 */
+.wslist__state--ended {
+  color: var(--t-ink-faint);
+}
+
+.wslist__state--ended .glyph {
+  background: var(--t-ink-faint);
+  box-shadow: none;
+}
+
 .wslist__state--dim {
   color: var(--t-ink-faint);
 }
 
+/* 删除：悬停 / 键盘落到这一行才现身，位置就在状态字那里把它盖掉 ——
+   平时这一行只说状态，不给一颗常驻的破坏性按钮 */
 .wslist__remove {
-  grid-area: acts;
-  justify-self: end;
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  visibility: hidden;
+  opacity: 0;
+  background: inherit; /* 行底是哪一档，钮底就是哪一档：盖住状态字不露馅 */
+  transition:
+    opacity var(--duration-quick) var(--ease-standard),
+    visibility var(--duration-quick) var(--ease-standard);
+}
+
+.wslist__row:hover .wslist__remove,
+.wslist__row:focus-within .wslist__remove {
+  visibility: visible;
+  opacity: 1;
 }
 
 /* 4. 空态：logo + 那两句。整块落在右栏正中（左栏照旧留着「添加工作区」） */
@@ -2398,13 +2371,10 @@ input[type="checkbox"] {
   color: var(--t-signal-ink);
 }
 
-/* 行四档的字色（d61829f1）：列表行只说录音的四档（空白工作区 / 尚未开始 / 录音中 /
-   录音结束，另有「目录不存在」灰档），字与 glyph 已承载语义 —— 旧的「会后跑着 /
-   等着动手」两个冗余色档随「会后任务运行中」一档一并退场。正在录的实心红灯由
-   `glyph--rec` 自带；「目录不存在」走 `--dim` 灰；「录音结束」收半档墨，不抢眼。 */
-.wslist__state--ended {
-  color: var(--t-ink-mid);
-}
+/* 行四档的字色：列表行只说录音的四档（空白工作区 / 尚未开始 / 录音中 / 录音结束，
+   另有「目录不存在」灰档），字与 glyph 已承载语义。正在录的实心红灯由 `glyph--rec`
+   自带；「目录不存在」走 `--dim` 灰；「录音结束」整档压灰（见 `.wslist__state--ended`
+   那两条）——清单的显眼留给还在动的那几行。 */
 
 /* 6.6 会中屏的常驻工作区栏（d61829f1）：与工作台同一条左栏（`home__list`），grid
    两栏摆法 —— 左边那条栏、右边整格留给会中自己的内容（居中的 1440 单列，`.shell`
@@ -2435,13 +2405,6 @@ input[type="checkbox"] {
   padding: var(--space-3);
   border: var(--size-divider) solid var(--t-rule-hair);
   background: var(--t-surface);
-}
-
-.wsbar__detailtitle {
-  font-size: var(--size-micro);
-  letter-spacing: var(--track-caps);
-  text-transform: uppercase;
-  color: var(--t-ink-faint);
 }
 
 .wsbar__detailname {
@@ -2555,11 +2518,6 @@ input[type="checkbox"] {
 .mat__count {
   color: var(--t-ink-quiet);
   font-size: var(--size-micro);
-}
-
-.mat__hint {
-  color: var(--t-ink-quiet);
-  font-size: var(--size-caption);
 }
 
 .mat__acts {

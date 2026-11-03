@@ -128,7 +128,7 @@ function SpeakerNamesDialog({
       <div className="dlg" role="dialog" aria-modal="true" aria-label="说话人名字">
         <div className="dlg__title">说话人名字</div>
         <p className="hint">
-          名字随该工作区目录保存，生成纪要时附录按这里确认的名字填写；编号按路区分，两路的「1 号」相互独立。
+          名字随该工作区目录保存，生成纪要时按这里确认的名字填写；编号按路区分。
         </p>
         {rows.length === 0 && (
           <p className="empty">该工作区暂无待命名的身份（录音过的工作区才有本地、远端或编号）。</p>

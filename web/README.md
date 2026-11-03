@@ -49,8 +49,10 @@ npm test           # vitest run
 
 - **`tokens.css`** —— `docs/ui/tokens.css` 的逐字节拷贝（出处与拷贝日期见文件头注释）。那份文件是设计
   token 的唯一定义处，改它等于改设计稿；本文件正文一个字符都不改。
-- **`console.css`** —— 暗面 token 层 + 主题开关：`:root` 给每个具名色一份暗面取值（`--t-*`），
-  `[data-theme="light"]` 给亮面覆盖。默认暗面；`?theme=light` 翻亮面、`?theme=dark` 钉回（不落本地存储）。
+- **`console.css`** —— 主题 token 层：具名色的两套实现取值都在这里。`:root` 是日面（纸白底、墨字、
+  信号橙），`[data-theme="dark"]` 翻夜面（暖黑底）。日面是默认；左栏铭牌旁那颗「夜间 / 日间」随时翻，
+  选择存在 localStorage 的 `meeting.theme`（键名归 `src/home/theme.ts`）——主题只管配色，
+  与快照那些会中读数各存各的。
 - **`live.css`** —— 会中视图样式，类名照旧（与 `docs/ui/ui.css` 同一套）；取色与字体全部 `var()` 自前两份。
   数据进 style 变量的分层口径见 `docs/ui-design.md`：`--level` / `--hold` / `--h` 由组件写到元素上，高度怎么画在 `live.css`；没有一处内联宽高，也没有一处"让电平看起来在动"的动画。
 

@@ -4,6 +4,7 @@ import { postAction } from '../api';
 import { ConfirmDialog } from '../dialogs';
 import { confirmWorkspaceOpen } from './confirmWorkspaceOpen';
 import { DirPicker, useDirBrowse, type PickerPick } from './DirPicker';
+import { ThemeToggle } from './ThemeToggle';
 import { rowDurationLabel } from './model';
 import { rowStatusView } from './progress';
 import { failureFrom, type ActionFailureView } from '../failure';
@@ -94,7 +95,10 @@ export function WorkspaceRail({
   return (
     <>
       <aside className="home__list" aria-label="工作区">
-        <div className="title-sm">会议工作台</div>
+        <div className="home__listhead">
+          <div className="title-sm">会议工作台</div>
+          <ThemeToggle />
+        </div>
         <button
           className="btn btn--ghost home__new"
           type="button"

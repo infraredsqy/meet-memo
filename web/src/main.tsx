@@ -1,6 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
+import { storedTheme, applyTheme } from './home/theme';
 import './styles/tokens.css';
 import './styles/console.css';
 import './styles/live.css';
@@ -10,19 +11,25 @@ import './styles/live.css';
  *
  * - `class="ui page--live"`：`.ui` 是页面字体与盒模型的底座，`.page--live` 是
  *   会中视图的修饰（`live.css` 里 `.page--live` 那一族规则就挂它）。
- * - `data-theme`：暗面 / 亮面这一档。**默认暗面**（`console.css` 的 `:root` 就是暗的），
- *   地址栏加 `?theme=light` 翻到亮面那一套，`?theme=dark` 显式钉回暗面。
- *   这一档只决定配色，与任何会中状态无关，所以照铁律 2 不落本地存储 ——
- *   刷新之后回到默认的暗面。
+ * - `data-theme`：日间 / 夜间这一档。**日间是默认**（`console.css` 的 `:root`
+ *   就是日面），左栏铭牌旁那颗「夜间 / 日间」随时翻；存档在 localStorage 的
+ *   `meeting.theme` 一格（键名归 `home/theme.ts`），翻过之后刷新照旧。
+ *   主题只管配色，与快照那些会中读数各存各的。
  *
  * 版面是**方向 A**（两路左右并列、告警横幅插在采集带之外，见 `docs/ui-design.md` 章 7.8）：
- * 设计稿当初在 `<html>` 上挂 `data-layout="a"`、靠一对方向开关切两套版面；暗面一稿把
- * 布局直接写成了 A，那对开关随之取消，这个属性也就不再挂、样式里也不再有它的位置。
+ * 设计稿当初在 `<html>` 上挂 `data-layout="a"`、靠一对方向开关切两套版面；后来布局
+ * 直接写成了 A，那对开关随之取消，这个属性也就不再挂、样式里也不再有它的位置。
  */
 const html = document.documentElement;
 html.classList.add('ui', 'page--live');
-const wanted = new URLSearchParams(window.location.search).get('theme');
-if (wanted === 'light' || wanted === 'dark') html.dataset.theme = wanted;
+const stored = storedTheme((key) => {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+});
+if (stored !== null) applyTheme(stored, html);
 
 const container = document.getElementById('root');
 if (container === null) {

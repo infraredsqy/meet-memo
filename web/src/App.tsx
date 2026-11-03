@@ -7,12 +7,11 @@ import {
   fetchSummaries,
   postAction,
   type ActionResult,
-  type ConnectionState,
   type HeartbeatTick,
 } from './api';
 import { failureFrom, type ActionFailureView } from './failure';
 import { FailureBlock } from './failure-ui';
-import type { Heartbeat, LevelsData, PostJobCell, SessionRow, SessionsResponse, Snapshot, SummaryWindowChoice } from './contract';
+import type { Heartbeat, LevelsData, SessionRow, SessionsResponse, Snapshot, SummaryWindowChoice } from './contract';
 import { HEARTBEAT_INTERVAL_DEFAULT_SECONDS } from './contract';
 import { decideAlarmSound, initialAlarmSound } from './live/alarm';
 import {
@@ -25,13 +24,11 @@ import {
   lostPredicate,
   recoveredNoteText,
   recoveredNoteVisible,
-  HEARTBEAT_GUIDANCE,
   type HeartbeatState,
 } from './live/heartbeat';
 import { emptyLossRecord, observeLosses, type LossRecord } from './live/loss';
 import { drainFailedSteps as drainFailedStepsOf } from './live/drain';
 import { holdFrameWhileDataStopped, releaseHeldFrame, type StoredLevels } from './live/levels';
-import { healthView } from './live/status';
 import { createAlarmSound, browserAudioContextFactory } from './live/sound';
 import {
   COMBO_LABELS,
@@ -71,7 +68,7 @@ import type { ChannelView } from './live/view';
 import { normalizeDefaultWindow } from './live/settings';
 import { clampHeartbeatInterval } from './api/heartbeat';
 import { fetchSessions } from './api/sessions';
-import { gpuBusyView, rowStatusView } from './home/progress';
+import { gpuBusyView } from './home/progress';
 import { initialSelection, startButtonLabel } from './home/model';
 import { WorkspaceRail } from './home/WorkspaceRail';
 import { MaterialsPanel } from './materials/MaterialsPanel';
@@ -116,9 +113,7 @@ class ShellErrorBoundary extends Component<{ children: ReactNode }, { error: Err
         <div className="shell">
           <h1 className="title-md">会中界面崩了</h1>
           <pre className="fail__why">{this.state.error.message}</pre>
-          <p className="hint">
-            刷新页面即可重连 —— 界面不缓存任何会中状态，重连后服务会先推一份快照。
-          </p>
+          <p className="hint">刷新页面重连。</p>
         </div>
       );
     }
@@ -197,7 +192,7 @@ function Channel({ channel }: { channel: ChannelView }): ReactNode {
           ))}
         </div>
         <div className="m-env-note">
-          <span>历史包络 30 秒 · 2 秒一格</span>          <span className="m-env__stamp">{channel.stamp}</span>
+          <span className="m-env__stamp">{channel.stamp}</span>
         </div>
       </div>
     </section>
@@ -296,14 +291,12 @@ function SummaryFailureCard({
  */
 function WsBarDetail({
   row,
-  postJobs,
   recording,
   busy,
   onStart,
   onOpenSession,
 }: {
   row: SessionRow;
-  postJobs: readonly PostJobCell[];
   /** 在录的那一场（快照 `session`；会中屏恒有 —— 闸只放 recording / alert 进来）。 */
   recording: Snapshot['session'];
   busy: boolean;
@@ -312,7 +305,6 @@ function WsBarDetail({
   onOpenSession: () => void;
 }): ReactNode {
   const [rejected, setRejected] = useState(false);
-  const cell = rowStatusView(row, postJobs);
   const elapsed = recording?.elapsed_seconds ?? null;
   /** 「已录 41 分钟」这一格：分钟级的人话；不满一分钟如实说秒（数字来自服务）。 */
   const elapsedLabel =
@@ -323,25 +315,14 @@ function WsBarDetail({
         : `已录 ${Math.round(elapsed / 60)} 分钟`;
   return (
     <div className="wsbar__detail" aria-label="选中工作区详情">
-      <div className="wsbar__detailtitle">选中的工作区</div>
       <div className="wsbar__detailname">{row.session_id ?? row.dir}</div>
-      <p className="wsbar__detailrow">
-        <span className={`wslist__state wslist__state--${cell.tone} ${cell.dim ? 'wslist__state--dim' : ''}`}>
-          <span className={`glyph ${cell.mark}`} aria-hidden="true" />
-          {cell.label}
-        </span>
-      </p>
       <p className="wsbar__detailrow num">{row.dir}</p>
       <div className="wsbar__detailacts">
         <button
           className="btn btn--small btn--primary"
           type="button"
           disabled={busy}
-          title={
-            rejected
-              ? undefined
-              : '在这一场工作区里开始一段新录音；同一时刻只录一场，在录时按下会被如实拒'
-          }
+          title={rejected ? undefined : '在这一场开始一段新录音；同一时刻只录一场'}
           onClick={() => {
             if (recording !== null) {
               // 单场硬限制（R17）：在录时按下即如实拒，不发起 —— 话只从快照上读。
@@ -389,7 +370,6 @@ export function LiveView({
   /** 服务推过来的那一份。界面手上这份是**副本**，分歧以服务为准。 */
   const [snapshot, setSnapshot] = useState<Snapshot>(snapshotProp);
   const [observedAt, setObservedAt] = useState<string>(() => new Date().toISOString());
-  const [connection, setConnection] = useState<ConnectionState>('closed');
   const [levels, setLevels] = useState<{ revision: number; data: LevelsData } | null>(null);
   /** 「数据已停」期间按住的那一份帧：电平与包络冻在被冻那一刻，后面来的帧不进画面。 */
   const [heldLevels, setHeldLevels] = useState<StoredLevels | null>(null);
@@ -465,12 +445,12 @@ export function LiveView({
     );
   }, []);
 
-  // SSE 那条唯一连接的接线：挂载即往源侧注册五路回调 —— 晚于首帧的积压帧在
+  // SSE 那条唯一连接的接线：挂载即往源侧注册四路回调 —— 晚于首帧的积压帧在
   // 注册这一刻补递上来（快照以源侧的最后一份为准），卸载即清空（转手结构见
-  // `home/events-source.ts`）。连接本体的 connect/close 归 `App` 顶层。
+  // `home/events-source.ts`）。连接本体的 connect/close 归 `App` 顶层；
+  // 连接掉线的「出事了」由心跳失联横幅说，界面不另摆一格连接读数。
   useEffect(() => {
     return events.use({
-      onConnectionState: setConnection,
       onSnapshot: applySnapshot,
       onLevels: (data) => setLevels({ revision: data.revision, data }),
       onTranscript: (data) => {
@@ -752,7 +732,6 @@ export function LiveView({
   const lost = lostPredicate(heartbeat);
   const stalled = view?.stalled ?? null;
   const logPath = snapshot?.service.log_path ?? null;
-  const alarmSoundOn = snapshot?.settings.alarm_sound ?? false;
   // 全局「显卡忙不忙」（R31）：忙 = 有模型开着 —— 快照说录着（含告警）是会中那一半，
   // `GET /api/sessions` 顶层的 `post_jobs` 是会后那一半（上面的 effect 按心跳节奏取；
   // 转码那趟不吃显卡，gpuBusyView 不把它数进来）。收尾窗口那一档（ended + 收尾未落定）
@@ -764,13 +743,6 @@ export function LiveView({
   /** 左栏小详情说的是选中的那一场（清单点哪行说哪场）；选区没落座时这一块不给。 */
   const wsRow: SessionRow | null =
     (wsSessions?.sessions ?? []).find((row) => row.dir === wsSelection) ?? null;
-  const chips = useMemo(() => {
-    if (snapshot === null) return [];
-    return snapshot.sources.map((source) => {
-      const key: 'mic' | 'loopback' = source.id === 'mic' ? 'mic' : 'loopback';
-      return healthView(source, losses.windows[key]).chip;
-    });
-  }, [snapshot, losses]);
 
   // 转写：贴底就跟着滚动，用户翻上去了就不动他（设计章 2.3）。
   useLayoutEffect(() => {
@@ -810,7 +782,7 @@ export function LiveView({
   if (view === null) {
     return (
       <main className="shell page--live">
-        <p className="hint">正在等待服务的首份快照…（连接：{connection}）</p>
+        <p className="hint">正在接服务…</p>
       </main>
     );
   }
@@ -830,7 +802,6 @@ export function LiveView({
         ? 'statusline__caps--on'
         : '';
   const recoveredVisible = recoveredNoteVisible(heartbeat, nowMs);
-  const captureNote = stalled === null ? null : `采集已停止 · ${stalled.seconds.toFixed(1)} 秒未收到音频帧`;
   /** 失联横幅的正文两处：周期与「最后一次应答 HH:MM:SS」。 */
   const lostView = lostBanner(heartbeat, heartbeatSeconds ?? 10);
 
@@ -865,7 +836,6 @@ export function LiveView({
         <div className="heartbeat" role="alert">
           <div className="heartbeat__title">录音已中断</div>
           <div className="heartbeat__body">{lostView.body}</div>
-          <div className="heartbeat__why">{HEARTBEAT_GUIDANCE}</div>
           <div className="heartbeat__do">
             先不要关机，也不要关闭本页。到服务那边确认一下：
             <span className="num">Ctrl+C</span> 停掉再敲一次 <span className="num">meeting web</span>
@@ -892,7 +862,6 @@ export function LiveView({
             <WsBarDetail
               key={wsRow.dir}
               row={wsRow}
-              postJobs={postJobs}
               recording={snapshot.session}
               busy={busy}
               onStart={() => runActionQuietly('start', { dir: wsRow.dir, mode: 'both' })}
@@ -922,7 +891,6 @@ export function LiveView({
               <span className={`glyph ${view.status.glyph}`} aria-hidden="true" />
               <span className="statusline__name">{view.status.name}</span>
             </span>
-            <span className="statusline__note">{view.status.note}</span>
           </div>
           {recoveredVisible && heartbeat.gapSeconds !== null && (
             <span className="recovered-note">{recoveredNoteText(heartbeat.gapSeconds)}</span>
@@ -995,20 +963,6 @@ export function LiveView({
             <span className={`glyph ${gpu.mark}`} aria-hidden="true" />
             {gpu.label}
           </span>
-          <span className="kv">
-            <input
-              type="checkbox"
-              id="alarm-switch-main"
-              checked={alarmSoundOn}
-              disabled={busy}
-              onChange={(event) =>
-                runActionQuietly('settings_update', { 'alarm.sound': event.target.checked })
-              }
-            />
-            <label className="kv__k" htmlFor="alarm-switch-main">
-              告警提示音
-            </label>
-          </span>
           {/* 设置按钮（R32：一个设置按钮 → 网页内小窗；类名契约把「齿轮」这一档
               预留在 topbar__right，docs/ui-design.md §7.10） */}
           <button
@@ -1035,21 +989,11 @@ export function LiveView({
         />
       )}
 
-      {/* 采集带：两路左右并列，右侧三分之一给总结入口（方向 A） */}
+      {/* 采集带：两路左右并列，右侧三分之一给总结入口（方向 A）。
+          本地 / 远端的名字与图形长在通道卡头行里，这里不再摆第二条图例 */}
       <section className="band">
         <div className="band__head">
           <h2 className="band__title">音频采集</h2>
-          <div className="meter-legend">
-            <span className="meter-legend__item">
-              <span className="m-ch__mark m-ch__mark--local" aria-hidden="true" />
-              本地
-            </span>
-            <span className="meter-legend__item">
-              <span className="m-ch__mark m-ch__mark--remote" aria-hidden="true" />
-              远端
-            </span>
-            <span className="meter-legend__item">历史包络 2 秒一格</span>
-          </div>
         </div>
         <div className="band__body">
           <div className="m-band m-band--split m-band--tools">
@@ -1115,23 +1059,7 @@ export function LiveView({
         </div>
       </section>
 
-      {/* 每路健康：两条文字保证，任何宽度下都不折叠 */}
-      <section className="band band--quiet">
-        <div className="band__head">
-          <h2 className="band__title">各通道状态</h2>
-        </div>
-        <div className="band__body">
-          <div className="m-chips">
-            {chips.map((text) => (
-              <span className="m-chip" key={text}>
-                {text}
-              </span>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* 总结结果面板（设计章 2.3 的主位第 5 项）：**位置在每路健康之后、告警带之前**。
+      {/* 总结结果面板（设计章 2.3 的主位第 5 项）：**位置在通道卡之后、告警带之前**。
           只有几条，关掉即消失、不落文件；记录仍在底部的本场总结记录里。
           结果与失败共用一块面板：一次总结只会落在其中一档 */}
       {summaryState.phase === 'done' && summaryState.result !== null && (
@@ -1330,9 +1258,6 @@ export function LiveView({
         </section>
       )}
 
-      {/* 心跳失联那条判据的说明（章 4.5）：只在失联时出现 */}
-      {lost && <div className="hint hb-guidance">{HEARTBEAT_GUIDANCE}</div>}
-
       {/* 会议资料（160d1a78）：会中把图片 / 文件放进这一场的 meeting_materials/。
           目标目录 = 当前场次（资料跟着场次走，哪怕录制中照收）；还没有场次时这一块
           不摆 —— 没有目标就没有入口。页面级粘贴由面板自己挂在 document 上。 */}
@@ -1342,29 +1267,18 @@ export function LiveView({
       <section className="band transcript-block">
         <div className="band__head">
           <h2 className="band__title">实时转写</h2>
-          <span className="band__note">
-            {started ? '最近 200 行' : '尚未开始 · 开录后逐行显示'}
-          </span>
         </div>
         <div className="band__body">
-          {/* 类名契约（ui-design.md 章 7.10；设计稿 `docs/ui/live.html` 的会中稿里是
-              同一条用法）：这一行标签用 `.sumbar` 内放两个 `.tag`，不另造类名 */}
+          {/* 草稿标注照章 2.3 固定在区头；健康只在不正常时说话（延迟 / 停了才值得一行字） */}
           <div className="sumbar">
             <span className="tag">草稿 · 会后重建</span>
-            <span className="tag">
-              {snapshot.transcript.health === 'normal'
-                ? '正常'
-                : snapshot.transcript.health === 'behind'
-                  ? '延迟'
-                  : '已停止'}
-            </span>
+            {(snapshot.transcript.health === 'behind' || snapshot.transcript.health === 'stopped') && (
+              <span className="tag">
+                {snapshot.transcript.health === 'behind' ? '延迟' : '已停止'}
+              </span>
+            )}
           </div>
-          {!started && (
-            <p className="empty">
-              尚未开始录音。按下「开始录音」后，两路的转写会逐行显示在这里，
-              每行带分钟级时间戳，并标明来源（本地或远端）。
-            </p>
-          )}
+          {!started && <p className="empty">开录后，两路的转写逐行显示在这里。</p>}
           {started && (
             <>
               <div
@@ -1420,11 +1334,6 @@ export function LiveView({
           )}
         </div>
       </section>
-
-      <p className="hint">
-        页面上的状态全部来自服务推送；不在浏览器本地存储中保存任何会中状态。
-        {captureNote === null ? '' : ` ${captureNote}。`}
-      </p>
       </main>
       </div>
       </div>

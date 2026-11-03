@@ -371,7 +371,6 @@ export function MaterialsPanel({
       <div className="mat__head">
         <span className="mat__title">资料</span>
         {items !== null && <span className="mat__count num">{items.length}</span>}
-        <span className="mat__hint">图片可直接粘贴或拖进这一块</span>
         <div className="mat__acts">
           {checked.size > 0 && (
             <button
@@ -416,7 +415,7 @@ export function MaterialsPanel({
       {deleteNote !== null && <p className="mat__note">{deleteNote}</p>}
 
       {items !== null && items.length === 0 && listError === null && (
-        <p className="empty">这一场还没有资料。粘贴图片、拖入文件，或用上面两个入口放东西进来。</p>
+        <p className="empty">这一场还没有资料。图片可直接粘贴，或拖进这一块。</p>
       )}
 
       {items !== null && items.length > 0 && (

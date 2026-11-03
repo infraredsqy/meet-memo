@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { healthView, isCapturing, restoredText, statusView } from '../src/live/status';
+import { healthView, restoredText, statusView } from '../src/live/status';
 import { emptyLossRecord, lostSeconds, observeLosses } from '../src/live/loss';
 import { makeSnapshot, makeSource, T } from './live-fixtures';
 
@@ -15,7 +15,6 @@ describe('statusView：四态各自的字 + 图形', () => {
   it('空闲', () => {
     expect(statusView('idle', null)).toEqual({
       name: '空闲',
-      note: '尚未开始',
       glyph: 'glyph--idle',
       tone: 'off',
     });
@@ -24,30 +23,26 @@ describe('statusView：四态各自的字 + 图形', () => {
   it('录音中', () => {
     expect(statusView('recording', null)).toEqual({
       name: '录音中',
-      note: '两路都在采',
       glyph: 'glyph--rec',
       tone: 'on',
     });
   });
 
-  it('告警：说明里两路的关系说全（哪一路还在、哪一路没了）', () => {
+  it('告警', () => {
     const view = statusView('alert', null);
     expect(view.name).toBe('告警');
-    expect(view.note).toBe('一路仍在采，另一路采不到了');
     expect(view.glyph).toBe('glyph--alert');
     expect(view.tone).toBe('alert');
   });
 
-  it('已结束有两副面孔：收尾中与已完成（ui-design 4.2 二的两句话）', () => {
+  it('已结束有两副面孔：收尾中与已完成（ui-design 4.2 二的两档）', () => {
     expect(statusView('ended', 'draining')).toEqual({
       name: '已结束 · 收尾中',
-      note: '还差最后一块没进盘',
       glyph: 'glyph--draining',
       tone: 'off',
     });
     expect(statusView('ended', 'done')).toEqual({
       name: '已结束 · 已完成',
-      note: '录音已落盘',
       glyph: 'glyph--done',
       tone: 'off',
     });
@@ -212,15 +207,5 @@ describe('observeLosses：界面记下的那一份丢过的窗口', () => {
     const next = observeLosses(lost, idle, T('23:00:00'));
     expect(next.sessionId).toBeNull();
     expect(next.windows.loopback.everLost).toBe(false);
-  });
-});
-
-describe('isCapturing', () => {
-  it('capturing 与 restored 都算在采', () => {
-    expect(isCapturing('capturing')).toBe(true);
-    expect(isCapturing('restored')).toBe(true);
-    expect(isCapturing('lost')).toBe(false);
-    expect(isCapturing('stopped')).toBe(false);
-    expect(isCapturing('unprobed')).toBe(false);
   });
 });

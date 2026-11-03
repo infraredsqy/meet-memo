@@ -226,8 +226,8 @@ export function SettingsDrawer({
           <p className="field__error">{devices.text}</p>
         )}
 
-        {/* 二、告警提示音：与主视图顶栏同一个设置 */}
-        <Field label="告警提示音" hint="采不到的时候这台机器的音箱里响一声（跨场次记住）。">
+        {/* 二、告警提示音：与主视图同一个设置 */}
+        <Field label="告警提示音" hint="采不到的时候响一声（跨场次记住）。">
           <span className="kv">
             <input
               type="checkbox"
@@ -246,7 +246,7 @@ export function SettingsDrawer({
         <Field
           label="心跳频率（秒）"
           htmlFor="settings-heartbeat"
-          hint="界面每隔这么多秒问一次服务还在不在。"
+          hint="每隔这么多秒问一次服务还在不在。"
           error={heartbeatError}
         >
           <input
@@ -274,7 +274,7 @@ export function SettingsDrawer({
         </Field>
 
         {/* 四、快速总结默认窗口：四档预选随快照走（`settings.summary_default_window`） */}
-        <Field label="快速总结默认窗口" hint="总结区预选落在哪一档；跟着这里的设置走。">
+        <Field label="快速总结默认窗口" hint="总结区预选落在哪一档。">
           <div className="seg" role="group" aria-label="快速总结默认窗口">
             {SUMMARY_DEFAULT_WINDOW_OPTIONS.map((item) => (
               <button
@@ -301,7 +301,7 @@ export function SettingsDrawer({
         <Field
           label="快速总结模型"
           htmlFor="settings-summary-preset"
-          hint="预设清单在配置文件里配（summary.presets_json）；这里换当场用哪一套，选完即生效。"
+          hint="换当场用哪一套，选完即生效；预设清单在配置文件 summary.presets_json 里配。"
         >
           <select
             id="settings-summary-preset"

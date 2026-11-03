@@ -3,12 +3,20 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- 暗面是第一版：先把 color-scheme 报给浏览器，免得首屏闪一下白底，
-         表单控件与滚动条也不必等样式到了才翻过来 -->
-    <meta name="color-scheme" content="dark light" />
+    <!-- 日间是默认；先把 color-scheme 报给浏览器，表单控件与滚动条不必等样式到了才翻 -->
+    <meta name="color-scheme" content="light dark" />
     <style>
-      html { background: #070a09; }
+      html { background: #f3f1ec; }
+      html[data-theme="dark"] { background: #141310; }
     </style>
+    <script>
+      // 存档里是夜间就在样式到达前挂上属性，免得首屏闪一下纸白（键名归 home/theme.ts）
+      try {
+        if (localStorage.getItem("meeting.theme") === "dark") {
+          document.documentElement.dataset.theme = "dark";
+        }
+      } catch (e) {}
+    </script>
     <title>meeting · 会中视图</title>
   </head>
   <body>
