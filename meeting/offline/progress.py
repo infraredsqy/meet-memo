@@ -56,8 +56,10 @@ def _round(value: Any) -> float:
     return round(float(value), 3)
 
 
-def _counts_by_state(rows: Iterable[Mapping[str, Any]]) -> dict[str, int]:
-    """按结果档数一遍（**四档都列出来**，读方不必自己补零）。"""
+def counts_by_state(rows: Iterable[Mapping[str, Any]]) -> dict[str, int]:
+    """按结果档数一遍（**四档都列出来**，读方不必自己补零）。数块数的唯一实现：
+    现场读数与重放工具（`meeting/offline/replay.py`）都从这里数，别另写同构循环。
+    """
     counts = {name: 0 for name in CHUNK_STATES}
     for row in rows:
         state = str(row.get("state") or "")
@@ -170,8 +172,42 @@ def _source_progress(
             None if total is not None and done >= int(total)
             else (done + 1 if running else None)
         ),
-        "counts": _counts_by_state(rows),
+        "counts": counts_by_state(rows),
     }
+
+
+def _per_source_readings(
+    names: Sequence[str],
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    totals: Mapping[str, int] | None = None,
+    current: str | None = None,
+    running: bool = False,
+) -> list[dict[str, Any]]:
+    """逐路读数拼装的**唯一出处**（offline-progress-snapshot-duplicated；形状挂
+    `docs/contract.md` 4.9 的 `sources` 数组）：路名收集（记录里多出来的路补在声明的
+    后面）、按路过滤、分母逐行回退取 `chunks_total` 都只写这一遍——现场版
+    （`snapshot()`）与盘上版（`snapshot_of()`）共用，改一处两处同步。
+    """
+    collected = [str(name) for name in names]
+    for row in rows:
+        name = str(row.get("source") or "")
+        if name and name not in collected:
+            collected.append(name)
+    per_source: list[dict[str, Any]] = []
+    for source in collected:
+        mine = [row for row in rows if str(row.get("source") or "") == source]
+        total = None if totals is None else totals.get(source)
+        if total is None:
+            for row in mine:
+                if row.get("chunks_total") is not None:
+                    total = int(row["chunks_total"])
+                    break
+        # 「正在跑第几块」只有本路在跑时才有值：没轮到的路如实 None，
+        # "第 1 块 / 共 None 块"读起来像已经开跑了。
+        running_here = running and source == current
+        per_source.append(_source_progress(source, mine, total, running=running_here))
+    return per_source
 
 
 class OfflineProgressLedger:
@@ -290,24 +326,6 @@ class OfflineProgressLedger:
             totals = dict(self._totals)
             rows = list(self._rows)
         running = bool(started_at) and not finished_at
-        per_source: list[dict[str, Any]] = []
-        names = list(self.sources)
-        for row in rows:
-            name = str(row.get("source") or "")
-            if name and name not in names:
-                names.append(name)
-        for source in names:
-            mine = [row for row in rows if str(row.get("source") or "") == source]
-            total = totals.get(source)
-            if total is None:
-                for row in mine:
-                    if row.get("chunks_total") is not None:
-                        total = int(row["chunks_total"])
-                        break
-            # 「正在跑第几块」只有本路在跑时才有值：没轮到的路如实 None，
-            # "第 1 块 / 共 None 块"读起来像已经开跑了。
-            running_here = running and source == current
-            per_source.append(_source_progress(source, mine, total, running=running_here))
         return {
             "ledger": PROGRESS_NAME,
             "state": "done" if finished_at else ("running" if started_at else "idle"),
@@ -315,7 +333,9 @@ class OfflineProgressLedger:
             "finished_at": finished_at,
             "elapsed_seconds": self.elapsed_seconds(),
             "current_source": current,
-            "sources": per_source,
+            "sources": _per_source_readings(
+                self.sources, rows, totals=totals, current=current, running=running
+            ),
         }
 
 
@@ -327,20 +347,6 @@ def snapshot_of(
     `current_source` 不在记录里，同理 `None`，跑没跑完由状态文件回答（`state = "ledger"`）。
     """
     header, rows = read_progress(ledger_path(session_dir))
-    names = list(sources)
-    for row in rows:
-        name = str(row.get("source") or "")
-        if name and name not in names:
-            names.append(name)
-    per_source: list[dict[str, Any]] = []
-    for source in names:
-        mine = [row for row in rows if str(row.get("source") or "") == source]
-        total = None
-        for row in mine:
-            if row.get("chunks_total") is not None:
-                total = int(row["chunks_total"])
-                break
-        per_source.append(_source_progress(source, mine, total, running=False))
     return {
         "ledger": PROGRESS_NAME,
         "state": "ledger" if header is not None else "idle",
@@ -348,7 +354,7 @@ def snapshot_of(
         "finished_at": None,
         "elapsed_seconds": None,
         "current_source": None,
-        "sources": per_source,
+        "sources": _per_source_readings(sources, rows),
     }
 
 
@@ -359,6 +365,7 @@ __all__ = [
     "PROGRESS_SCHEMA_VERSION",
     "ChunkProgress",
     "OfflineProgressLedger",
+    "counts_by_state",
     "ledger_path",
     "read_progress",
     "snapshot_of",

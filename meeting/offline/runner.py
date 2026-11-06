@@ -32,6 +32,7 @@ from typing import Any, Sequence, TYPE_CHECKING
 
 from meeting import config as config_module
 from meeting.offline import artifacts
+from meeting.offline.audio import PCM_SUFFIX, PCM_SAMPLE_WIDTH, SAMPLE_RATE as PCM_SAMPLE_RATE
 from meeting.offline.engine import OfflineEngine, OfflineSegment, release_engine
 # minutes_tail 的名字 re-export 进本模块命名空间：cli/tests 经
 # offline_runner._announce_minutes 等的属性访问与打桩面照旧。
@@ -59,9 +60,9 @@ _log = logging.getLogger("meeting.offline.runner")
 #: 免得 `meeting.backends` 这条链被包进会后路径）
 SOURCE_IDS: tuple[str, ...] = ("mic", "loopback")
 
-#: 归档 PCM 的形状（`meeting/capture/archive.py` 的同一档）
-PCM_SAMPLE_RATE = 16000
-PCM_SAMPLE_WIDTH = 2
+#: 归档 PCM 的形状（16k 采样率 / 样本宽 / 后缀）：唯一出处住 `meeting/offline/audio.py`
+#: （`meeting/capture/archive.py` 的同一档），这里按本模块惯用名接进来。
+# PCM_SAMPLE_RATE / PCM_SAMPLE_WIDTH / PCM_SUFFIX 由上面的 import 提供
 
 #: 空 PCM 的判据：一个 int16 样本都装不下（与 `capture.archive.EMPTY_PCM_BYTES` 同档）
 EMPTY_PCM_BYTES = PCM_SAMPLE_WIDTH
@@ -305,12 +306,28 @@ def plan_chunks(total_seconds: float, chunk_seconds: float) -> ChunkPlan:
     )
 
 
+def full_scale_counts(samples: Any) -> Any:
+    """归一化波形（`[-1, 1]`）→ **满量程格数**（clip ±1 × 32767，浮点、不截断）。
+
+    满量程换算的唯一出处（offline-float-scale-duplicated）：写 wav（`write_chunk_wav()`）、
+    判据（`samples_to_count_floats()`）与重放写盘（`meeting/offline/replay.py`）都从
+    这一条换算，32767 与 32768 的分歧在别处长不出来。乘 32767 而不是 32768：±1 满量程
+    对称映回 ±32767，不过冲 int16 的范围（用例 `test_write_chunk_wav_keeps_the_signal`
+    盯着）。
+    """
+    import numpy as np
+
+    data = np.asarray(samples)
+    return np.clip(data, -1.0, 1.0) * np.float32(32767.0)
+
+
 def write_chunk_wav(path: Path | str, samples: "np.ndarray") -> Path:
     """把一段 16k 单声道波形写成 wav（引擎的 `decode_audio()` 吃它）。
 
     ⚠ **float32 必须先乘 32767 再转 int16**：直接 `.astype("<i2")` 会把 `[-1, 1]`
     波形截成全 0，写出一份数字静音的 wav——模型对静音照样吐 `[0.5][S01]…`
-    （phase3 实测坑，用例 `test_write_chunk_wav_keeps_the_signal` 盯着）。
+    （phase3 实测坑，用例 `test_write_chunk_wav_keeps_the_signal` 盯着）。换算走
+    `full_scale_counts()`（满量程换算的唯一出处）。
     「写出来全零」不作产品代码错误判据：真正安静的会议写出来本来就是零，
     自检只在**调引擎之前**的静音门上做。`wave` / `numpy` 函数体内 import（惰性纪律）。
     """
@@ -321,7 +338,7 @@ def write_chunk_wav(path: Path | str, samples: "np.ndarray") -> Path:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     wave_data = np.asarray(samples, dtype=np.float32)
-    pcm = (np.clip(wave_data, -1.0, 1.0).astype(np.float32) * np.float32(32767.0)).astype("<i2")
+    pcm = full_scale_counts(wave_data).astype("<i2")
     with wave.open(str(target), "wb") as handle:
         handle.setnchannels(1)
         handle.setsampwidth(2)
@@ -378,24 +395,6 @@ def _pcm_sample_count(paths: "Path | str | Sequence[Path | str]") -> int:
     return sum(
         os.path.getsize(path) // PCM_SAMPLE_WIDTH for path in _audio_paths(paths)
     )
-
-
-def samples_to_counts(samples: Any) -> Any:
-    """归一化波形 → **int16 计数**（满量程格数），换算与 `write_chunk_wav()` 同一条
-    （float × 32767 后截断）。归档 PCM 读出来已是计数、`decode_audio()` 是 `[-1, 1]`
-    float32，切块与判据共用这一把整数尺子。float 直接 `int()` 会把整段波形截成 0——
-    真有声看着像全零（`250906` 复跑踩过，用例
-    `test_a_float_waveform_with_a_real_signal_never_looks_silent` 盯着）。
-    """
-    import numpy as np
-
-    data = np.asarray(samples)
-    if data.dtype.kind == "f":
-        return (np.clip(data, -1.0, 1.0) * np.float32(32767.0)).astype(np.int32)
-    if data.dtype.kind in "iu":
-        # 只升位到 int32（后续 abs 不溢出）；绝对值与取峰在 `_peak_counts()`
-        return data.astype(np.int32)
-    raise TypeError(f"波形的 dtype 该是 float 或 int，收到 {data.dtype}")
 
 
 def pcm_sample_chunk_counts(
@@ -478,13 +477,14 @@ def _pcm_span_scan(
 
 def samples_to_count_floats(samples: Any) -> Any:
     """归一化波形 → **满量程格数**（浮点，**不截断**）：判据要把 int16 与 float32 放上
-    同一条「半格」分界，截断会把半格上下的样本一起抹成 0（见模块头）。
+    同一条「半格」分界，截断会把半格上下的样本一起抹成 0（见模块头）。换算走
+    `full_scale_counts()`（满量程换算的唯一出处）。
     """
     import numpy as np
 
     data = np.asarray(samples)
     if data.dtype.kind == "f":
-        return np.clip(data, -1.0, 1.0) * np.float32(32767.0)
+        return full_scale_counts(data)
     if data.dtype.kind in "iu":
         # 只升位到 int32（后续 abs 不溢出）；绝对值与取峰在 `_peak_counts()`
         return data.astype(np.int32)
@@ -516,18 +516,6 @@ def is_digital_silence(samples: Any) -> bool:
     if int(scaled.size) < MIN_GATE_SAMPLES:
         return False
     return _peak_counts(scaled) < float(SILENT_PEAK_FLOOR)
-
-
-def pcm_span_is_silent(
-    path: "str | Path | Sequence[str | Path]", *, offset: float, seconds: float
-) -> bool:
-    """段列表拼的时间轴上 `[offset, offset + seconds)` 是不是数字静音（**不解析成波形**）。
-
-    只有「整段都读到、且一个非零字节都没有」才 `True`：文件比区间短或读不动都 `False`
-    （照常送引擎）——「读不到」不许与「读到全零」撞成同一个答案。要连「判没判得了」
-    一起带出来请走 `measure_span()`。
-    """
-    return measure_span(path, offset=offset, seconds=seconds).silent is True
 
 
 @dataclass(slots=True)
@@ -581,7 +569,7 @@ def measure_span(
     """
     audio_paths = _audio_paths(path)
     audio_path = audio_paths[0]
-    if audio_path.suffix.lower() == ".pcm":
+    if audio_path.suffix.lower() == PCM_SUFFIX:
         count = max(0, int(round(float(seconds) * PCM_SAMPLE_RATE)))
         if count < MIN_GATE_SAMPLES:
             return MeasureResult(
@@ -646,21 +634,6 @@ def measure_span(
         method=GATE_METHOD_DECODE_NOW,
         silent=is_digital_silence(decoded[start:start + count]),
     )
-
-
-def span_is_silent(
-    path: "str | Path | Sequence[str | Path]",
-    *,
-    offset: float,
-    seconds: float,
-    waveform: Any = None,
-) -> bool:
-    """一段音频是不是数字静音。交回值只有是/否——「判不了」与「放行」在这里撞成同一个
-    `False`（判断要不要跳过引擎够用）；要留「判没判得了」的痕用 `measure_span()`。
-    """
-    return measure_span(
-        path, offset=offset, seconds=seconds, waveform=waveform
-    ).silent is True
 
 
 def session_id_of(session_dir: Path | str) -> str:
@@ -1322,7 +1295,7 @@ def _plan_for_source(
     del directory, source  # 切法只认路径与块长，两路之间没有别的差别
     audio_paths = _audio_paths(paths)
     chunk_seconds = read_chunk_seconds(config)
-    if audio_paths[0].suffix.lower() == ".pcm":
+    if audio_paths[0].suffix.lower() == PCM_SUFFIX:
         # 归档 PCM 不解波形：门按字节扫（比解一遍便宜），切块按字节定位读
         try:
             total = _pcm_sample_count(audio_paths) / PCM_SAMPLE_RATE
@@ -1380,7 +1353,7 @@ def _execute_chunks(
         clear_chunk_dir(directory)
     # 非 PCM 音频现解一次（分块切片、单趟过门共用）；解不开不算这一路失败，
     # 门记「判不了」后照常送原文件，由引擎给出权威说法。
-    if waveform is None and not decode_attempted and audio_paths[0].suffix.lower() != ".pcm":
+    if waveform is None and not decode_attempted and audio_paths[0].suffix.lower() != PCM_SUFFIX:
         try:
             waveform = _decode_samples(audio_paths)
         except Exception:
@@ -1414,7 +1387,7 @@ def _execute_chunks(
                     else (
                         str(audio_paths[0])
                         if len(audio_paths) == 1
-                        else _materialize_series(directory, audio_paths)
+                        else _materialize_series(directory, audio_paths, waveform)
                     )
                 )
                 # 单趟与分块走同一个门（C1）
@@ -1586,6 +1559,13 @@ def _materialize_chunk(
         piece = np.asarray(waveform)[start:end]
         return str(write_chunk_wav(target, piece))
 
+    if audio_paths[0].suffix.lower() != PCM_SUFFIX:
+        # 非 PCM 又没有波形（量长度那一步没解出来）：按字节读会把容器字节当 int16 计数
+        # 误读成噪声写进 wav——如实抛，调用方按块失败登记，坏容器不出手。
+        raise ValueError(
+            f"{audio_paths[0].name} 解不出波形，切不出可用的块"
+            "（非 PCM 的块只认已解好的波形）"
+        )
     samples = pcm_sample_chunk_counts(
         audio_paths, offset=step.offset, seconds=step.seconds
     ).astype("<i2")
@@ -1594,15 +1574,26 @@ def _materialize_chunk(
     return str(write_chunk_wav(target, samples.astype("float32") / 32768.0))
 
 
-def _materialize_series(directory: Path, audio_paths: "Sequence[Path]") -> str:
+def _materialize_series(directory: Path, audio_paths: "Sequence[Path]", waveform: Any) -> str:
     """单趟跑且**多于一段**时，把各段按序拼成一份临时 wav（引擎的入参必须是一条轴）。
 
-    流式写：逐块跨段读、读多少写多少，内存里永远只有一个块（两小时的 PCM 也不整段进内存）。
+    有已解好的波形就按波形写（与 `_materialize_chunk()` 的波形分支同一条）：MP3 等
+    容器的裸字节不是 int16 PCM，按字节拼会拼出「头说 PCM、数据区是容器字节」的坏容器
+    送进引擎。归档 PCM 不解波形，保持流式按字节拼：逐块跨段读、读多少写多少，内存里
+    永远只有一个块（两小时的 PCM 也不整段进内存）。非 PCM 又解不出波形时如实抛——
+    调用方按块失败登记，坏容器不出手（offline-mp3-fallback-series-corrupt-input）。
     临时文件落在分块目录里，跑完由 `_execute_chunks()` 的收尾一并扫掉。
     """
+    target = chunk_file(directory, 1)
+    if waveform is not None:
+        return str(write_chunk_wav(target, waveform))
+    if audio_paths[0].suffix.lower() != PCM_SUFFIX:
+        raise ValueError(
+            "多段非 PCM 音频解不出波形，拼不成一条可用的时间轴"
+            f"（{audio_paths[0].name} 等 {len(audio_paths)} 个段文件）"
+        )
     import wave
 
-    target = chunk_file(directory, 1)
     target.parent.mkdir(parents=True, exist_ok=True)
     with wave.open(str(target), "wb") as handle:
         handle.setnchannels(1)
@@ -1721,16 +1712,8 @@ def _chunk_gate(runs: Sequence[ChunkRun]) -> dict[str, Any]:
     unjudged = [run for run in runs if run.gate == GATE_UNJUDGED]
     skipped = [run for run in runs if run.silent]
     if not runs:
-        return {
-            "applied": False,
-            "method": None,
-            "spans_total": 0,
-            "spans_judged": 0,
-            "spans_unjudged": 0,
-            "unjudged_spans": [],
-            "unjudged_reason": None,
-            "detail": "这一路没有可判的音频（更早的一步已经落了失败）",
-        }
+        # 空 runs 的缺省形状唯一出处（artifacts.default_source_gate()），不在这里手写
+        return artifacts.default_source_gate()
     methods = sorted({run.gate_method for run in judged if run.gate_method})
     if unjudged and skipped:
         detail = (
@@ -2013,22 +1996,7 @@ def _write_source_artifacts(
             }
             for row in summary
         ],
-        chunks=[
-            {
-                "index": run["index"],
-                "offset_seconds": run["offset_seconds"],
-                "seconds": run["seconds"],
-                "segments": run["segments"],
-                "error": run["error"],
-                "silent": bool(run["silent"]),
-                "reason": run["reason"],
-                "gate": run["gate"],
-                "gate_method": run["gate_method"],
-                "gate_detail": run["gate_detail"],
-                "zero_span_segments": run["zero_span_segments"],
-            }
-            for run in metric.chunks
-        ],
+        chunks=[artifacts.chunk_row(run) for run in metric.chunks],
         state=metric.state,
         error=metric.error,
     )
@@ -2106,10 +2074,10 @@ __all__ = [
     "clear_chunk_dir",
     "declared_sources",
     "engine_descriptor",
+    "full_scale_counts",
     "is_digital_silence",
     "measure_span",
     "pcm_sample_chunk_counts",
-    "pcm_span_is_silent",
     "plan_chunks",
     "read_chunk_seconds",
     "resolve_audio",
@@ -2117,8 +2085,6 @@ __all__ = [
     "resolve_engine",
     "run_session",
     "samples_to_count_floats",
-    "samples_to_counts",
     "session_id_of",
-    "span_is_silent",
     "write_chunk_wav",
 ]

@@ -29,7 +29,7 @@ import sys
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, Sequence
+from typing import Any, Protocol, Sequence
 
 from meeting.importlock import heavy_imports
 
@@ -84,8 +84,33 @@ class OfflineSegment:
 
 class OfflineEngine(Protocol):
     """离线引擎的协议：换引擎时上层（钩子、产物落盘）不动。
-    实现只需给出 `transcribe`：吃音频文件路径，交回带 `Sxx` 原始标签的分段列表。
+
+    实现要给出的**真实依赖面**（offline-engine-protocol-undeclared-surface；上层
+    `meeting/offline/runner.py` 鸭子类型读的就是这些，缺了只会静默降级）：
+
+    - `transcribe(audio_path)`：吃音频文件路径，交回带 `Sxx` 原始标签的分段列表；
+    - `load_error` / `_load()`：加载探测（`_ensure_engine_loaded()`；实现可缺——
+      缺了当「没有加载档」，交给逐块既有路径）；
+    - `device`：实际解析出的设备（`resolve_device_of()`；实现可缺，缺了记 `None`）；
+    - `processor` / `transcriber`：模型引用（`release_engine()` 释放显存时抹成
+      `None`；实现可缺，缺了只算没得释放）。
     """
+
+    #: 模型引用：`release_engine()` 释放显存时抹成 None
+    processor: Any
+    transcriber: Any
+
+    #: 实际落在的设备（构造时把 `auto` 落成 `cuda:0` / `cpu`）
+    device: str
+
+    @property
+    def load_error(self) -> str | None:
+        """加载失手的原话（没失手 `None`）。"""
+        ...
+
+    def _load(self) -> None:
+        """惰性加载（加载探测走这一步）。"""
+        ...
 
     def transcribe(self, audio_path: str | Path) -> list[OfflineSegment]: ...
 

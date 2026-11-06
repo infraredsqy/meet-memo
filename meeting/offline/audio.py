@@ -22,6 +22,10 @@ PCM_SUFFIX = ".pcm"
 #: （`meeting/capture/archive.py` 写出来的就是 `SAMPLE_RATE` / `CHANNELS=1` / `SAMPLE_WIDTH=2`）
 PCM_FORMAT = "s16le"
 
+#: 归档 PCM 的样本宽度（字节）：同一档的 16 位 → 2 字节。runner / replay 的按字节
+#: 读数（样本数 = 字节数 ÷ 它）都从这里取，这一组形状事实只住这一处。
+PCM_SAMPLE_WIDTH = 2
+
 
 def decode_audio(path: str | Path) -> "np.ndarray":
     """把任意容器（mp3/wav/…）解成 16k 单声道 float32 一维波形。

@@ -21,8 +21,10 @@ V1 `replay.py:72-80` 的 `_percentiles` **没有搬**：那是隔壁的百分位
 
 from __future__ import annotations
 
-# 搬自 V1 mnotes_core/replay.py:23-25（V1 的 `SAMPLE_RATE` 来自 `mnotes_core/config.py:35`）
-SAMPLE_RATE = 16000
+from meeting.offline.audio import SAMPLE_RATE
+
+# 搬自 V1 mnotes_core/replay.py:23-25（V1 的 `SAMPLE_RATE` 来自 `mnotes_core/config.py:35`，
+# 同值 16000；离线路径这一组形状事实的唯一出处住 `meeting/offline/audio.py`）
 FRAME_MS = 30
 FRAME_BYTES = int(SAMPLE_RATE * FRAME_MS / 1000) * 2  # 960
 SILENCE_TIMEOUT = 2.0  # 与 VADProcessor 保持一致

@@ -1560,14 +1560,14 @@ def test_a_float_waveform_with_a_real_signal_never_looks_silent(tmp_path) -> Non
 
     这是复跑真素材第一版踩到的坑：判据拿「计数」比，而 mp3 那条路交上来的是 float32，
     `int()` 把每个小数截成 0，于是一串真有声的音频看着像全零 —— 19 块一条不漏地全被跳过，
-    整份转写一个字不剩。换算必须先过 `samples_to_counts()`（与 `write_chunk_wav()` 同一条）。
+    整份转写一个字不剩。换算必须先过 `samples_to_count_floats()`（满量程格数、不截断）。
 
     三档都验：有信号的 float32 波形不判静音；全零的 float32 波形判静音；
     int16 计数与等价的 float32 得同一个答案。
     """
     import numpy as np
 
-    from meeting.offline.runner import is_digital_silence, samples_to_counts
+    from meeting.offline.runner import is_digital_silence, samples_to_count_floats
 
     seconds = 3.0
     samples = int(seconds * SAMPLE_RATE)
@@ -1585,7 +1585,8 @@ def test_a_float_waveform_with_a_real_signal_never_looks_silent(tmp_path) -> Non
     counts[3] = -12345
     assert is_digital_silence(counts) is False
     assert is_digital_silence(counts.astype(np.float32) / np.float32(32768.0)) is False
-    assert int(np.max(np.abs(samples_to_counts(counts)))) == 12345
+    # int16 计数过判据那把尺子原样升位（不截断、不缩放）
+    assert int(np.max(np.abs(samples_to_count_floats(counts)))) == 12345
     # 满量程的**负**样本也不许因为 `abs(-32768)` 溢出而被读成 0
     full_scale = np.zeros(samples, dtype=np.int16)
     full_scale[5] = -32768
@@ -1668,9 +1669,11 @@ def test_the_silence_gate_is_off_for_containers_it_cannot_scan(tmp_path) -> None
     run_session(session, engine=engine, config=FakeConfig(**{"post.chunk_seconds": 0}))
 
     # 全零的 mp3 走的是「解出来看看」那一步：解不动就如实抛（这一档不在这里验真解码）；
-    # 关键是 `.pcm` 之外的后缀**不会**被门按字节判静音。
-    assert runner_module.span_is_silent(mp3, offset=0.0, seconds=30.0) is False
-    assert runner_module.span_is_silent(session / "meeting_audio_mic_001.pcm", offset=0.0, seconds=30.0) is False
+    # 关键是 `.pcm` 之外的后缀**不会**被门按字节判静音（「判不了」与「没读到的 PCM」都放行）。
+    assert runner_module.measure_span(mp3, offset=0.0, seconds=30.0).silent is None
+    assert runner_module.measure_span(
+        session / "meeting_audio_mic_001.pcm", offset=0.0, seconds=30.0
+    ).silent is None
 
 
 def test_pcm_span_scan_reads_the_span_it_was_asked_for(tmp_path) -> None:
@@ -1686,20 +1689,20 @@ def test_pcm_span_scan_reads_the_span_it_was_asked_for(tmp_path) -> None:
     payload[0:2] = b"\x00\x01"  # 只有第 0 秒有声
     path.write_bytes(bytes(payload))
 
-    assert runner_module.pcm_span_is_silent(path, offset=0.0, seconds=10.0) is False
-    assert runner_module.pcm_span_is_silent(path, offset=10.0, seconds=10.0) is True
-    assert runner_module.pcm_span_is_silent(path, offset=20.0, seconds=10.0) is True
+    assert runner_module.measure_span(path, offset=0.0, seconds=10.0).silent is False
+    assert runner_module.measure_span(path, offset=10.0, seconds=10.0).silent is True
+    assert runner_module.measure_span(path, offset=20.0, seconds=10.0).silent is True
     # 短于 0.1 秒的那一档不判静音（样本不足，交给引擎）
-    assert runner_module.pcm_span_is_silent(path, offset=25.0, seconds=0.05) is False
+    assert runner_module.measure_span(path, offset=25.0, seconds=0.05).silent is False
     # 要的那一段**没读全**（文件比它短）时也交给引擎：少了这一条，
     # 「读不到」与「读到全零」会撞成同一个答案，一段没读到的音频就被当成静音跳过
-    assert runner_module.pcm_span_is_silent(path, offset=25.0, seconds=10.0) is False
-    assert runner_module.pcm_span_is_silent(path, offset=100.0, seconds=5.0) is False
+    assert runner_module.measure_span(path, offset=25.0, seconds=10.0).silent is None
+    assert runner_module.measure_span(path, offset=100.0, seconds=5.0).silent is None
     # 整个文件都读不到非零 → 静音
     all_zero = tmp_path / "zero.pcm"
     all_zero.write_bytes(b"\x00" * (int(10.0 * SAMPLE_RATE) * 2))
-    assert runner_module.pcm_span_is_silent(all_zero, offset=0.0, seconds=10.0) is True
-    assert runner_module.pcm_span_is_silent(all_zero, offset=0.0, seconds=12.0) is False
+    assert runner_module.measure_span(all_zero, offset=0.0, seconds=10.0).silent is True
+    assert runner_module.measure_span(all_zero, offset=0.0, seconds=12.0).silent is None
 
 
 def test_zero_duration_segments_are_kept_and_counted(tmp_path) -> None:
@@ -1938,16 +1941,6 @@ def test_the_gate_answers_the_same_for_a_span_it_cannot_read_whole(tmp_path) -> 
         )
         assert pcm_verdict.silent is None, (offset, seconds, pcm_verdict)
         assert wave_verdict.silent is None, (offset, seconds, wave_verdict)
-        assert runner_module.span_is_silent(pcm, offset=offset, seconds=seconds) is False
-        assert (
-            runner_module.span_is_silent(
-                "meeting_audio_mic_001.mp3",
-                offset=offset,
-                seconds=seconds,
-                waveform=waveform,
-            )
-            is False
-        )
     # 短于 0.1 秒的那一档照旧不判静音（两条支路都放行）
     assert runner_module.measure_span(pcm, offset=0.0, seconds=0.05).silent is False
 
@@ -1964,7 +1957,7 @@ def test_the_float_side_of_the_gate_uses_the_documented_rule(tmp_path) -> None:
     """
     import numpy as np
 
-    from meeting.offline.runner import is_digital_silence, samples_to_counts
+    from meeting.offline.runner import is_digital_silence
 
     length = int(1.0 * SAMPLE_RATE)
     for peak in (3.06e-5, 1.0 / 32767.0, -3.06e-5):
@@ -1989,8 +1982,9 @@ def test_the_float_side_of_the_gate_uses_the_documented_rule(tmp_path) -> None:
         single[9] = count
         assert is_digital_silence(single) is False
         assert is_digital_silence(single.astype(np.float32) / np.float32(32767.0)) is False
-    # 切块与写 wav 那条路仍用**整数**换算（与 `write_chunk_wav()` 同形），判据这一层不碰它
-    assert int(np.max(np.abs(samples_to_counts(np.float32(0.2) * np.ones(4, np.float32))))) == 6553
+    # 切块与写 wav 那条路仍用**整数**换算（`write_chunk_wav()` 的满量程换算），判据这一层不碰它
+    scale_probe = write_chunk_wav(tmp_path / "scale.wav", np.float32(0.2) * np.ones(4, np.float32))
+    assert int(np.max(np.abs(np.frombuffer(read_chunk_wav(scale_probe), dtype="<i2")))) == 6553
 
 
 def test_the_gate_boundary_is_the_documented_half_step_rule(tmp_path) -> None:
@@ -2471,10 +2465,10 @@ def test_segments_concatenate_into_one_timeline(tmp_path) -> None:
     assert [step.offset for step in plan.chunks] == [0.0, 2.0, 4.0]
 
     # 门跨段判：静音区（段 1 的零窗）、有声区、以及**骑在段缝上**的区间
-    assert runner_module.pcm_span_is_silent(paths, offset=1.2, seconds=1.0) is True
-    assert runner_module.pcm_span_is_silent(paths, offset=0.2, seconds=0.5) is False
-    assert runner_module.pcm_span_is_silent(paths, offset=2.5, seconds=1.0) is False
-    assert runner_module.pcm_span_is_silent(paths, offset=4.5, seconds=0.4) is False
+    assert runner_module.measure_span(paths, offset=1.2, seconds=1.0).silent is True
+    assert runner_module.measure_span(paths, offset=0.2, seconds=0.5).silent is False
+    assert runner_module.measure_span(paths, offset=2.5, seconds=1.0).silent is False
+    assert runner_module.measure_span(paths, offset=4.5, seconds=0.4).silent is False
     # 跨段读一块：前半是段 1 的零、后半是段 2 的声
     counts = runner_module.pcm_sample_chunk_counts(paths, offset=2.5, seconds=1.0)
     assert int(counts.size) == SAMPLE_RATE
@@ -2509,6 +2503,89 @@ def test_single_pass_over_multiple_segments_feeds_one_concatenated_wav(tmp_path)
     # 跑完临时块照例扫干净
     assert not (session / CHUNK_DIR_NAME).exists()
     assert seg1.exists() and seg2.exists()  # 段文件一个字节都不动
+
+
+def test_multi_segment_mp3_series_feeds_the_decoded_waveform_not_raw_bytes(tmp_path) -> None:
+    """**P1（offline-mp3-fallback-series-corrupt-input）的回归**：单趟多段的 MP3，引擎
+    收到的是**已解波形写成的 wav**，不是把各段裸字节硬拼进 wav 容器的坏容器。
+
+    旧行为（改前用自证脚本实证过）：`_materialize_series()` 无条件把各段裸字节按
+    int16 PCM 流写进容器——文件头说 PCM、数据区却是 MP3 帧字节，
+    `_plan_for_source()` 已解好的波形在这条支路被无视。本条钉在 `_execute_chunks()`
+    层面（issue 的最小场景）：归档 PCM 缺席 + MP3 在场 + 多于一段，喂已解波形，
+    引擎收到的数据区必须与 `write_chunk_wav(波形)` 逐字节一致、与两段裸字节不同。
+    """
+    import numpy as np
+
+    from meeting.offline import runner as runner_module
+
+    session = tmp_path / "series-mp3"
+    session.mkdir()
+    seg1 = session / "meeting_audio_mic_001.mp3"
+    seg1.write_bytes(b"ID3" + bytes(range(253)))
+    seg2 = session / "meeting_audio_mic_002.mp3"
+    seg2.write_bytes(bytes(range(255, -1, -1)))
+    waveform = speech(2.0)
+    seen: list[bytes] = []
+
+    class ReadingEngine:
+        def transcribe(self, audio_path):
+            seen.append(Path(audio_path).read_bytes())
+            return [OfflineSegment(0.0, 2.0, "S01", "拼起来的一句话")]
+
+    plan = runner_module.plan_chunks(2.0, 0.0)
+    _merged, runs, load_failure, stopped = runner_module._execute_chunks(
+        session, "mic", [str(seg1), str(seg2)],
+        engine=ReadingEngine(), plan=plan, waveform=waveform, decode_attempted=True,
+    )
+
+    assert load_failure is None and stopped is False
+    assert len(seen) == 1
+    assert [run.reason for run in runs] == ["transcribed"]
+    assert seen[0][:4] == b"RIFF", "引擎的入参是一份正经的 wav 容器"
+    assert seen[0][44:] != seg1.read_bytes() + seg2.read_bytes(), "数据区不是裸 MP3 字节"
+    expected = write_chunk_wav(tmp_path / "expected.wav", waveform).read_bytes()
+    assert seen[0] == expected, "数据区 = 已解波形的 int16（write_chunk_wav 同一条）"
+    assert not (session / CHUNK_DIR_NAME).exists()
+
+
+def test_multi_segment_mp3_that_cannot_be_decoded_lands_failed_without_the_engine(
+    tmp_path, monkeypatch
+) -> None:
+    """**同一条 P1 的另一半**：多段 MP3 解不出波形时**整路如实记失败**，引擎一次都不调。
+
+    旧行为（改前用自证脚本实证过）：解不出波形的那一趟照样把裸字节拼成 wav 送引擎，
+    假引擎还在坏容器上「跑成」了一块。现在坏容器不出手：解不出 → 逐块登记失败 →
+    一块都没跑成 → `all_chunks_failed`，整路落 `failed`。
+    """
+    from meeting.offline import runner as runner_module
+
+    session = tmp_path / "series-mp3-broken"
+    session.mkdir()
+    (session / "meeting_audio_mic_001.mp3").write_bytes(b"ID3" + b"\x00" * 64)
+    (session / "meeting_audio_mic_002.mp3").write_bytes(b"ID3" + b"\x00" * 64)
+    (session / "session.json").write_text(
+        json.dumps(
+            {"session_id": "series-mp3-broken", "sources": [{"id": "mic"}]},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    def boom(path):
+        raise ValueError("这个容器解不出波形")
+
+    monkeypatch.setattr(runner_module, "_decode_samples", boom)
+    engine = FakeEngine()
+
+    summary = run_session(session, engine=engine, config=FakeConfig())
+
+    assert engine.calls == [], "解不出波形的多段 MP3 一次引擎调用都不该发生"
+    assert summary["state"] == "failed"
+    assert "all_chunks_failed" in (summary["error"] or "")
+    status = read_status(session)
+    assert status["artifacts"]["mic"]["state"] == "failed"
+    assert not (session / CHUNK_DIR_NAME).exists()
 
 
 def test_a_two_segment_session_feeds_both_segments_of_both_routes(tmp_path) -> None:

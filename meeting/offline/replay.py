@@ -26,10 +26,11 @@ from pathlib import Path
 from typing import Any
 
 from meeting.offline import runner as offline_runner
-from meeting.offline.audio import SAMPLE_RATE, decode_audio
+from meeting.offline.audio import PCM_SAMPLE_WIDTH, PCM_SUFFIX, SAMPLE_RATE, decode_audio
 from meeting.offline.progress import (
     CHUNK_STATES,
     OfflineProgressLedger,
+    counts_by_state,
     ledger_path,
     read_progress,
 )
@@ -37,9 +38,6 @@ from meeting.session import archive_segment_number
 
 #: 重放拷贝的默认落点前缀（系统临时目录下面；每个重放一个新目录）
 WORK_DIR_PREFIX = "meeting-replay-"
-
-#: 段 PCM 的样本宽度（字节）：16k 单声道 s16le，与 `runner.PCM_SAMPLE_WIDTH` 同一条口径
-_PCM_SAMPLE_WIDTH = 2
 
 #: 复制 PCM 时每次读写的块大小（1 MiB；截断复制不整读大文件）
 _COPY_BLOCK_BYTES = 1 << 20
@@ -133,7 +131,7 @@ def _copy_pcm_head(source_path: Path, target_path: Path, budget_bytes: int | Non
     size = source_path.stat().st_size
     if take is None or take > size:
         take = size
-    take -= take % _PCM_SAMPLE_WIDTH
+    take -= take % PCM_SAMPLE_WIDTH
     written = 0
     with open(source_path, "rb") as fin, open(target_path, "wb") as fout:
         while written < take:
@@ -148,17 +146,15 @@ def _copy_pcm_head(source_path: Path, target_path: Path, budget_bytes: int | Non
 def _write_waveform_head(source_path: Path, target_path: Path, budget_samples: int) -> int:
     """把一段非 PCM 容器（mp3 等）解开后切前 `budget_samples` 个样本写成段 PCM。
 
-    解码用链上现成的 `decode_audio()`（16k 单声道 float32），波形→int16 的换算与
-    `runner.write_chunk_wav()` 同一条（先乘 32767 再转 `<i2`，直接 astype 会截成静音）。
+    解码用链上现成的 `decode_audio()`（16k 单声道 float32），波形→int16 的换算走
+    `runner.full_scale_counts()`（满量程换算的唯一出处；直接 astype 会截成静音）。
     交回实写样本数。
     """
     waveform = decode_audio(source_path)
     head = waveform[:budget_samples]
     if head.size == 0:
         return 0
-    import numpy as np
-
-    pcm = (np.clip(head, -1.0, 1.0).astype(np.float32) * np.float32(32767.0)).astype("<i2")
+    pcm = offline_runner.full_scale_counts(head).astype("<i2")
     target_path.write_bytes(pcm.tobytes())
     return int(head.size)
 
@@ -180,7 +176,7 @@ def _legacy_audio_paths(source_dir: Path, source: str) -> list[Path]:
     临时落地时写成现行命名（段 001）**，链对那份拷贝照旧零改动地吃。
     """
     found: list[Path] = []
-    for suffix in (".pcm", ".mp3"):
+    for suffix in (PCM_SUFFIX, ".mp3"):
         candidate = source_dir / f"meeting_audio_{source}{suffix}"
         try:
             if candidate.is_file() and candidate.stat().st_size > 0:
@@ -219,10 +215,10 @@ def _stage_one_source(
         suffix = audio_path.suffix.lower()
         number = _segment_number(audio_path, source, suffix)
         target = work_dir / f"meeting_audio_{source}_{number:03d}.pcm"
-        if suffix == ".pcm":
-            budget_bytes = None if remaining is None else remaining * _PCM_SAMPLE_WIDTH
+        if suffix == PCM_SUFFIX:
+            budget_bytes = None if remaining is None else remaining * PCM_SAMPLE_WIDTH
             written_bytes = _copy_pcm_head(audio_path, target, budget_bytes)
-            written_samples = written_bytes // _PCM_SAMPLE_WIDTH
+            written_samples = written_bytes // PCM_SAMPLE_WIDTH
         else:
             if remaining is None:
                 written_samples = _write_waveform_head(
@@ -254,7 +250,7 @@ def _measure_source(work_dir: Path, source: str) -> float:
             total_bytes += path.stat().st_size
         except OSError:  # pragma: no cover - 拷贝刚写完就被读不到，不替链猜
             continue
-    return round(total_bytes // _PCM_SAMPLE_WIDTH / SAMPLE_RATE, 3)
+    return round(total_bytes // PCM_SAMPLE_WIDTH / SAMPLE_RATE, 3)
 
 
 def stage_material(
@@ -348,11 +344,8 @@ def _build_reading(
     """把一次重放的结果拼成读数 dict（打印交给 `format_reading()`）。"""
     total_wall = float(summary.get("total_wall_seconds") or 0.0)
     measured = staged.total_seconds
-    counts: dict[str, int] = {name: 0 for name in CHUNK_STATES}
-    for row in rows:
-        state = str(row.get("state") or "")
-        if state in counts:
-            counts[state] += 1
+    # 数块数与 progress 的现场读数同一条实现（offline-replay-counts-duplicated）
+    counts: dict[str, int] = counts_by_state(rows)
     failure_reasons: dict[str, int] = dict(
         Counter(
             str(row.get("error"))

@@ -17,7 +17,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 # 原子写实现只住在 meeting.atomicio 一处，这里留同名转发别名，调用方照旧可用。
 from meeting.atomicio import write_text_atomic
@@ -118,6 +118,50 @@ def _round(value: Any) -> float:
     return round(float(value), 3)
 
 
+def default_source_gate() -> dict[str, Any]:
+    """逐路 `gate` 格的**缺省形状**（唯一出处，offline-gate-default-duplicated）：一路还
+    没跑出门结论时（更早的一步已经落了失败）就落这一个值。`SourceMetrics.gate` 的
+    缺省值与 `runner._chunk_gate()` 的空 runs 分支都从这里取——两份手写各漂一份
+    （缺 `method` 键）的事从此长不出来。键表见 `docs/state.md` 的会后产物一节
+    （逐路 `gate` 格：`applied` / `method` / 各计数）。
+    """
+    return {
+        "applied": False,
+        "method": None,
+        "spans_total": 0,
+        "spans_judged": 0,
+        "spans_unjudged": 0,
+        "unjudged_spans": [],
+        "unjudged_reason": None,
+        "detail": "这一路没有可判的音频（更早的一步已经落了失败）",
+    }
+
+
+def chunk_row(run: Mapping[str, Any]) -> dict[str, Any]:
+    """对照表逐块行的 **11 键契约投影**（唯一出处，offline-chunk-row-projection-redundant）：
+    从逐块登记（`runner.ChunkRun.to_dict()` 的形状）挑对照表要带的键。
+    `build_speakers_document()` 与 runner 落对照表那一次投影都走这一条——
+    新增逐块字段只改这一处。
+    """
+    return {
+        "index": int(run["index"]),
+        "offset_seconds": _round(run["offset_seconds"]),
+        "seconds": _round(run["seconds"]),
+        "segments": int(run["segments"]),
+        "error": None if run.get("error") is None else str(run["error"]),
+        "silent": bool(run.get("silent")),
+        "reason": str(run.get("reason") or ""),
+        "gate": str(run.get("gate") or ""),
+        "gate_method": (
+            None if run.get("gate_method") is None else str(run["gate_method"])
+        ),
+        "gate_detail": (
+            None if run.get("gate_detail") is None else str(run["gate_detail"])
+        ),
+        "zero_span_segments": int(run.get("zero_span_segments") or 0),
+    }
+
+
 def build_speakers_document(
     *,
     session_id: str,
@@ -170,27 +214,9 @@ def build_speakers_document(
                 "seconds": _round(item["seconds"]),
             }
         )
-    chunk_rows: list[dict[str, Any]] = []
-    for item in chunks or []:
-        chunk_rows.append(
-            {
-                "index": int(item["index"]),
-                "offset_seconds": _round(item["offset_seconds"]),
-                "seconds": _round(item["seconds"]),
-                "segments": int(item["segments"]),
-                "error": None if item.get("error") is None else str(item["error"]),
-                "silent": bool(item.get("silent")),
-                "reason": str(item.get("reason") or ""),
-                "gate": str(item.get("gate") or ""),
-                "gate_method": (
-                    None if item.get("gate_method") is None else str(item["gate_method"])
-                ),
-                "gate_detail": (
-                    None if item.get("gate_detail") is None else str(item["gate_detail"])
-                ),
-                "zero_span_segments": int(item.get("zero_span_segments") or 0),
-            }
-        )
+    chunk_rows: list[dict[str, Any]] = [
+        chunk_row(item) for item in chunks or []
+    ]
     chunk_count = len(chunk_rows) or 1
     chunked = chunk_count > 1
     return {
@@ -339,18 +365,9 @@ class SourceMetrics:
     silent_spans: list[tuple[float, float]] = field(default_factory=list)
     #: 门判不了静音与否、照常送了引擎的区间（秒，原录音时间轴）
     unjudged_spans: list[tuple[float, float]] = field(default_factory=list)
-    #: 这一路的门做成没做成判断（`applied` / `spans_judged` / `unjudged_spans`…，见 `runner._chunk_gate()`）
-    gate: dict[str, Any] = field(
-        default_factory=lambda: {
-            "applied": False,
-            "spans_total": 0,
-            "spans_judged": 0,
-            "spans_unjudged": 0,
-            "unjudged_spans": [],
-            "unjudged_reason": None,
-            "detail": "这一路没有可判的音频（更早的一步已经落了失败）",
-        }
-    )
+    #: 这一路的门做成没做成判断（`applied` / `method` / `spans_judged` / `unjudged_spans`…，
+    #: 缺省形状唯一出处 `default_source_gate()`；跑完由 `runner._chunk_gate()` 落结论）
+    gate: dict[str, Any] = field(default_factory=default_source_gate)
     #: 这一路产物里 `end` 不晚于 `start` 的段数（零时长段，见模块头；逐块数出来再加总）
     zero_span_segments: int = 0
 
@@ -837,6 +854,8 @@ __all__ = [
     "TRANSCRIPT_NOTE_SUFFIX",
     "V1_RTF_BASELINE",
     "build_speakers_document",
+    "chunk_row",
+    "default_source_gate",
     "format_transcript_line",
     "incomplete_note",
     "is_transcript_note",
