@@ -65,7 +65,7 @@
 - **交付语义：投递 accepted 即算交付完成**。不等 DSH 写完纪要、**也不校验产物**（校验是 headless 那条路的事）；停不停 DSH 是用户的事。
 - **五个失败档**：`credentials` / `workspace_failed` / `session_failed` / `prompt_failed` / `timeout`。任何一步失败都**如实记 `failed`，不偷偷改走 headless**。
 - **权限不由这一层说了算**：走 `/api` 建的会话权限取 DSH 服务端自己的设置；DSH 若落在 `approval=ask`，无人值守的纪要会卡在等审批——这是走 web 分支要认下的一件事。
-- **鉴权**：`/api` 只认 HMAC 签名的 browser-session cookie，用 `~/.dsh/.credentials.yaml` 里那条记录的持久签名密钥自签（有效期 30 天，跨重启有效）。
+- **鉴权**：`/api` 只认 HMAC 签名的 browser-session cookie，用本地鉴权服务记录的持久签名密钥自签（详见该服务自身文档；有效期 30 天，跨重启有效）。
 - **三样协议细节按 DSH 0.1.5-rc.2 实测校准**（正本 `meeting/minutes/dsh_web.py`），缺任何一个只会看到 401 / 404：端点写斜杠形式（点号写法回 not found；`workspace.list` 不存在——存活探针用只读的 `session/modelCatalog`）；信封是 `{type, rpcId, method, payload: {args: {…}}}`（少一层 `args` 回 `arguments-invalid`）；没有 Cookie 一律 401。
 
 ### headless 分支：本进程自己起子进程

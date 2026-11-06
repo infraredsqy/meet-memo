@@ -490,7 +490,7 @@ def test_text_level_fallback_strips_the_real_loop_line(monkeypatch):
 
     这条把第 4 层接在 `transcribe_segment` 里验：断言盯住**长度与前导正文本身**
     （光断言「没抛错」等于没验）。fixture 是截断副本（2515 字符），精确的 3333 / 周期 5 / ×663
-    只在 V1 `meeting-notes\\.work\\handoff\\meeting_raw.md` 的 L283。
+    只在 V1 仓库（本机私有）对应素材的同一段坏行（原件 L283）。
     """
     transcriber, _processor, _model, _loaded = _wire(monkeypatch, text=LOOP_LINE_283)
 

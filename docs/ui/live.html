@@ -138,7 +138,7 @@
         <div class="fail__why">落盘失败：远端这条音频没写进盘（磁盘只剩 120 MB）</div>
         <div class="fail__next">下一步：先别关机。这个文件留在场次目录里，重跑在命令行——界面上没有重跑按钮，重跑在命令行那一条路上。这个时候绝不说「已落盘」。</div>
         <code class="codeblock">meeting post 250906</code>
-        <div class="fail__log">log：C:\Users\<user>\.config\meeting\logs\meeting.log</div>
+        <div class="fail__log">log：~/.config/meeting/logs/meeting.log</div>
       </div>
     </div>
 
@@ -154,7 +154,7 @@
     <div class="fail" id="fail-start" hidden>
       <div class="fail__why">远端这一路起不来：设备被别的程序占着</div>
       <div class="fail__next">下一步：关掉占用这个设备的程序，回设置里换一个设备，再按开始。</div>
-      <div class="fail__log">log：C:\Users\<user>\.config\meeting\logs\meeting.log</div>
+      <div class="fail__log">log：~/.config/meeting/logs/meeting.log</div>
     </div>
 
     <div class="fail" id="fail-rejected" hidden>
@@ -182,7 +182,7 @@
       <div class="fail__why">落盘失败：远端这条音频没写进盘（磁盘只剩 120 MB）</div>
       <div class="fail__next">下一步：先别关机。清出空间再补跑；界面不说「已落盘」。</div>
       <code class="codeblock">meeting post 250906</code>
-      <div class="fail__log">log：C:\Users\<user>\.config\meeting\logs\meeting.log</div>
+      <div class="fail__log">log：~/.config/meeting/logs/meeting.log</div>
     </div>
   </section>
 
@@ -282,7 +282,7 @@
   <div class="heartbeat__title">录音已中断</div>
   <div class="heartbeat__body">10 秒一次的应答，连续 2 次没收到（最后一次应答 20:57:31）。</div>
   <div class="heartbeat__why">判据看的是应答里的录音存活字段：服务进程还活着、网页也打得开，但录音线程已经卡死，所以不能只看「HTTP 通不通」。</div>
-  <div class="heartbeat__do">先别关这台机器，也别关这个页面。到服务那边看一眼：<span class="num">Ctrl+C</span> 停掉再敲一次 <span class="num">meeting web</span>；日志在 <span class="num">C:\Users\<user>\.config\meeting\logs\meeting.log</span>。</div>
+  <div class="heartbeat__do">先别关这台机器，也别关这个页面。到服务那边看一眼：<span class="num">Ctrl+C</span> 停掉再敲一次 <span class="num">meeting web</span>；日志在 <span class="num">~/.config/meeting/logs/meeting.log</span>。</div>
 </div>
 
 <!-- 设置抽屉：默认收起，不占主视图 -->

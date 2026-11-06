@@ -95,8 +95,8 @@ describe('掩码串 schema 咬得住（C1）', () => {
       ['', 'hello', 'lolwut', 'not-a-path', '<iso>', '<url>', '   ', '260921', '<session-id>'],
       [
         '<path>',
-        'C:\\Users\\<user>\\tools\\meeting\\out',
-        'C:/Users/<user>/tools/meeting/out',
+        'C:\\meeting\\out',
+        'C:/meeting/out',
         '\\\\server\\share\\session',
         '/var/log/meeting.log',
       ],

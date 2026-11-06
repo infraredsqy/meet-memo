@@ -46,7 +46,7 @@ meeting = "meeting.cli:main"
 # 这里再列一遍会让人以为它们是可选的。`asr` 等模型依赖由下游节点各自加（§3.2）。
 capture = []
 # `asr` = 转写（GLM-ASR）的模型依赖（`9e5db89c` phase1 定档）。三个版本号照 V1
-# `meeting-notes\requirements.txt` 的本机实测值**逐项按行**写（Python 3.13.7 / CUDA 12.8）：
+# 仓库（本机私有）requirements.txt 的本机实测值**逐项按行**写（Python 3.13.7 / CUDA 12.8）：
 #   torch 2.9.1+cu128（第 10 行；第 9 行是它要的 `--extra-index-url` 索引）·
 #   transformers 5.15.0（第 24 行，GLM-ASR 类由此版进稳定版）·
 #   webrtcvad-wheels 2.0.14（第 27 行，原版 webrtcvad 在 Windows/Py3.13 编译不过）。
