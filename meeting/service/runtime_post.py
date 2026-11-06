@@ -14,9 +14,9 @@ from pathlib import Path
 from typing import Any
 
 from meeting.backends.base import SOURCE_IDS
-from meeting.service.runtime_shared import ActionError, PostJob, _slot_alive, name_of_kind
+from meeting.service.runtime_shared import ActionError, PostJob, name_of_kind
 from meeting.state import now_iso
-from meeting.workspace import canonical_dir, classify_workspace_dir, has_offline_transcript
+from meeting.workspace import canonical_dir, has_offline_transcript
 
 _log = logging.getLogger("meeting.service.runtime")
 
@@ -63,16 +63,16 @@ class RuntimePostMixin:
         """
         raw = None if args is None else args.get("dir")
         if raw is not None and str(raw).strip():
-            target = canonical_dir(raw)
-            entry = self._registry_entry_for(target)
-            probe = classify_workspace_dir(target)
+            # 两档寻址判读（清单 / 原地）收在 `_session_dir_tier()` 一处（唯一出处）；
+            # 这一面按契约定的是两档都 `invalid_setting`(400)，失败句与 detail 组装留下。
+            target, tier, kind = self._session_dir_tier(raw)
             record = self.store.read_session_json(target)
             disk_state = None if record is None else str(record.get("state") or "")
             why: str | None = None
-            if entry is None:
+            if tier == "unregistered":
                 why = ("这一场不在工作台清单里（`GET /api/sessions` 读的就是那份注册表）："
                        "先在界面上把它打开，或把 `dir` 指到清单里的一行")
-            elif probe["kind"] == "missing":
+            elif tier == "missing":
                 why = "这一场的目录已不在原地"
             elif self._is_actively_recording(target):
                 why = "这一场还在录音中：结束录音之后才能按"
@@ -89,7 +89,7 @@ class RuntimePostMixin:
                             "省略时跑收尾刚落定的那一场",
                         ],
                         "dir": target,
-                        "kind": probe["kind"],
+                        "kind": kind,
                         "state": disk_state or None,
                     },
                 )
@@ -426,9 +426,16 @@ class RuntimePostMixin:
         `offline_only`（只有会后稿）/ `none`。**同一场的会后精细稿还在跑**时，这一趟
         注定拿不到它 —— 回执必须把这件事说破（`note` 一句），不许静默降级。
         """
+        # 会中稿文件名是冻结契约，判读指向权威点 `meeting/minutes/chunk.py` 的
+        # `LIVE_TRANSCRIPT_TEMPLATE`（读侧 `session_transcripts_dict()` 按它找稿）；
+        # `minutes/prompt.py` 的 `KIND_FILE_TEMPLATES` 是写进清单给人看的那串
+        # （`<source>` 占位、不可 format），不当路径用。
+        from meeting.minutes.chunk import LIVE_TRANSCRIPT_TEMPLATE
+
         directory = Path(target)
         live = any(
-            (directory / f"meeting_transcript_{source}.md").is_file() for source in SOURCE_IDS
+            (directory / LIVE_TRANSCRIPT_TEMPLATE.format(source=source)).is_file()
+            for source in SOURCE_IDS
         )
         offline = bool(has_offline_transcript(directory))
         if live and offline:
@@ -472,13 +479,13 @@ class RuntimePostMixin:
         args = dict(args or {})
         raw_dir = args.get("dir")
         wanted = None if raw_dir is None or not str(raw_dir).strip() else canonical_dir(raw_dir)
-        flying_offline: list[PostJob] = [
-            job
-            for (kind, _dir), job in sorted(self.post_jobs.items())
-            if kind == "offline" and _slot_alive(job)
-        ]
         if wanted is None:
-            if not flying_offline:
+            # 省略 dir 的指向解析收在 `_only_flying_job()` 一份（转码的暂停/继续同一份）：
+            # 恰一趟 offline 在飞才停它，多趟在飞按 400 让 dir 点名（不猜）。
+            job = self._only_flying_job(
+                "offline", what="停", flying_label="在飞的「生成会后精细稿」"
+            )
+            if job is None:
                 minutes = self._post_jobs_of_kind("minutes")
                 if minutes:
                     job = minutes[0]
@@ -499,18 +506,6 @@ class RuntimePostMixin:
                     status=409,
                     detail={},
                 )
-            if len(flying_offline) > 1:
-                raise ActionError(
-                    "invalid_setting",
-                    "在飞的「生成会后精细稿」不止一场：用 dir 点名要停哪一场",
-                    status=400,
-                    detail={
-                        "key": "dir",
-                        "value": None,
-                        "legal": [str(job.get("dir")) for job in flying_offline],
-                    },
-                )
-            job = flying_offline[0]
         else:
             job = self._post_job_slot("offline", wanted)
             if job is None:

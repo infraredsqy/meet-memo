@@ -27,8 +27,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from meeting.service.runtime_shared import ActionError
-from meeting.workspace import canonical_dir, classify_workspace_dir
+import anyio
+
+from meeting.service.runtime_shared import (
+    WINDOWS_RESERVED_DEVICE_NAMES,
+    ActionError,
+)
+from meeting.workspace import canonical_dir
 
 _log = logging.getLogger("meeting.service.runtime")
 
@@ -45,13 +50,6 @@ FALLBACK_MATERIAL_NAME = "未命名"
 
 #: Windows 文件名的非法字符（正斜杠与反斜杠另在「只留最后一段」那一步切掉）
 _ILLEGAL_NAME_CHARS = '<>:"|?*'
-
-#: Windows 保留设备名（大小写不敏感；判据是**扩展名之前的那一段**，`CON.pdf` 同样保留）
-_RESERVED_STEMS = frozenset(
-    {"CON", "PRN", "AUX", "NUL"}
-    | {f"COM{index}" for index in range(10)}
-    | {f"LPT{index}" for index in range(1, 10)}
-)
 
 
 def sanitize_material_name(raw: Any) -> str:
@@ -81,8 +79,8 @@ def sanitize_material_name(raw: Any) -> str:
     )
     # ③ 掐首尾空白与结尾的点/空格
     cleaned = cleaned.strip().rstrip(". ")
-    # ④ 保留设备名前置 `_`（判扩展名之前的那一段）
-    if cleaned.split(".", 1)[0].upper() in _RESERVED_STEMS:
+    # ④ 保留设备名前置 `_`（判扩展名之前的那一段；表是 runtime_shared 的单一权威表）
+    if cleaned.split(".", 1)[0].upper() in WINDOWS_RESERVED_DEVICE_NAMES:
         cleaned = "_" + cleaned
     # ⑤ 超长截断（保留扩展名）；清到空交兜底名
     if len(cleaned) > MATERIAL_NAME_MAX_CHARS:
@@ -104,7 +102,7 @@ def _sequence_name(stored: str, counter: int) -> str:
 
 
 class RuntimeMaterialsMixin:
-    """会议资料层：目标目录校验、清单、落盘位次与单文件寻址（上传/删除的盘上动作在路由侧）。"""
+    """会议资料层：目标目录校验、清单、落盘位次、上传的域编排与单文件寻址（删除的盘上动作在路由侧）。"""
 
     # 目标目录（两种：当前活跃场次 / 注册表登记过的场次）
 
@@ -124,23 +122,15 @@ class RuntimeMaterialsMixin:
             and os.path.normcase(str(session.dir)) == os.path.normcase(directory)
         ):
             return directory
-        probe = classify_workspace_dir(directory)
-        if probe["kind"] == "missing":
-            raise ActionError(
-                "session_dir_missing",
-                f"这一场的目录已不在原地：{directory}",
-                status=404,
-                detail={"dir": str(directory), "kind": "missing"},
-            )
-        if self._registry_entry_for(directory) is None:
-            raise ActionError(
-                "invalid_setting",
+        # 活跃场次之外的两档寻址判读收在 `_require_session_dir()` 一处（404 两档，
+        # 与单场状态/稿子正文同一份）；不在清单那一档的失败句是资料自己的话。
+        return self._require_session_dir(
+            directory,
+            unregistered_message=(
                 "资料只进两种目录：服务的当前活跃场次、工作台清单里登记过的场次；"
-                "这一场两样都不是",
-                status=404,
-                detail={"dir": str(directory), "kind": probe["kind"]},
-            )
-        return directory
+                "这一场两样都不是"
+            ),
+        )
 
     # 清单（目录就是清单，没有 JSON 记录）
 
@@ -247,6 +237,101 @@ class RuntimeMaterialsMixin:
             if not candidate.exists():
                 return candidate
             counter += 1
+
+    # 上传的域编排（路由层只留 HTTP 面；`routes._api_materials_upload` 是它的 HTTP 面）
+
+    #: `from` 档（选择器文件模式）拷贝源文件时的块大小：一块一兆，原样字节、不整段进内存
+    MATERIALS_COPY_CHUNK_BYTES = 1 << 20
+
+    async def materials_receive(
+        self,
+        raw_dir: Any,
+        raw_name: Any,
+        *,
+        body: Any = None,
+        from_param: str | None = None,
+    ) -> dict[str, Any]:
+        """一次上传的域编排：`from` 档源校验 → 占名 → 流式写盘 → 读数。
+
+        - `from` 档（选择器文件模式，160d1a78）：`from_param` 必须指到**已存在的普通
+          文件**（先验再占名），给到不存在的文件回 400 `invalid_setting`
+          （`detail = {key: "from", value, legal}`），此时盘上什么都不落；给了 `from`
+          时 `body`（请求正文那路字节流）被忽略，字节从盘上那个**已有文件流式拷入**；
+        - 正文档：`body` 是请求正文的字节流（`request.stream()`），收到多少写多少；
+        - 写盘走**独占创建**（`xb`）+ 异步文件（`anyio`，写在工作线程上、事件循环照转，
+          心跳与三个 SSE 通道不被一次大上传按住）；「查完重名到真正落盘」之间被人抢了
+          位的竞态由 `materials_next_free()` 让位重试，不截断别人正在写的文件；
+        - 中途失败（盘上出岔 / 客户端断开）把**半截文件收走**，不留残骸；盘上出岔按
+          500 `persist_failed` 如实上抛（失败信封由路由层套）。
+
+        成功交回一条读数（`materials_record()`：`{name, size_bytes, added_at}`，
+        贴上时刻 = 落盘那一刻的文件修改时间，不保留原文件的时间戳）。
+        """
+        source_path: Path | None = None
+        if from_param is not None and from_param.strip() != "":
+            source_path = Path(from_param)
+            if not source_path.is_file():
+                raise ActionError(
+                    "invalid_setting",
+                    f"要拷入的文件不存在：{from_param}",
+                    status=400,
+                    detail={
+                        "key": "from",
+                        "value": from_param,
+                        "legal": ["已存在的文件路径（目录选择器文件模式给的那一个）"],
+                    },
+                )
+
+        path = self.materials_reserve(raw_dir, raw_name)
+
+        def _discard_partial() -> None:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:  # pragma: no cover - 残骸清理失败只留痕
+                _log.warning("上传失败后的半截文件收不走：%s", path)
+
+        try:
+            while True:
+                try:
+                    handle = await anyio.open_file(path, "xb")
+                    break
+                except FileExistsError:
+                    # 查完重名到真正落盘之间被人抢了位：让到下一个序号名再试
+                    path = self.materials_next_free(path)
+            try:
+                if source_path is None:
+                    async for chunk in body:
+                        await handle.write(chunk)
+                else:
+                    # from 档：流式拷贝盘上那份源文件（原样字节，一块一兆，不整段进内存）
+                    source = await anyio.open_file(source_path, "rb")
+                    try:
+                        while True:
+                            chunk = await source.read(self.MATERIALS_COPY_CHUNK_BYTES)
+                            if not chunk:
+                                break
+                            await handle.write(chunk)
+                    finally:
+                        await source.aclose()
+            finally:
+                await handle.aclose()
+        except ActionError:
+            _discard_partial()
+            raise
+        except OSError as exc:
+            _discard_partial()
+            raise ActionError(
+                "persist_failed",
+                f"资料写盘失败（{type(exc).__name__}: {exc}）",
+                status=500,
+                detail={"error": f"{type(exc).__name__}: {exc}"},
+            ) from exc
+        except BaseException:
+            _discard_partial()
+            raise
+        material = self.materials_record(path)
+        _log.info("会议资料落盘：%s（%d 字节）", path, material["size_bytes"])
+        return material
 
     # 单文件寻址（取原文件 / 删除）
 

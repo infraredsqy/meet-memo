@@ -26,13 +26,7 @@ import threading
 import time
 from typing import Any
 
-from meeting.service.runtime_shared import (
-    ActionError,
-    PostJob,
-    _slot_alive,
-    name_of_kind,
-)
-from meeting.state import now_iso
+from meeting.service.runtime_shared import ActionError, PostJob
 from meeting.workspace import canonical_dir
 
 _log = logging.getLogger("meeting.service.runtime")
@@ -41,45 +35,8 @@ _log = logging.getLogger("meeting.service.runtime")
 class RuntimeTranscodeMixin:
     """转码独立工序 mixin。"""
 
-    # (kind, dir) 槽位的公共读法（post 与 transcode 两个 mixin 共用）
-
-    def _post_job_slot(self, kind: str, target: str) -> PostJob | None:
-        """`(kind, dir)` 那一格**还活着**的登记（死了 / 没有 → `None`）。"""
-        job = self.post_jobs.get((str(kind), canonical_dir(target)))
-        return job if _slot_alive(job) else None
-
-    def _post_jobs_of_kind(self, kind: str) -> list[PostJob]:
-        """某一种活全部**活着**的登记（按目录名排序，读数与拒跑句的次序因此稳定）。"""
-        return [
-            job
-            for (job_kind, _dir), job in sorted(self.post_jobs.items())
-            if job_kind == str(kind) and _slot_alive(job)
-        ]
-
-    def post_jobs_state(self) -> list[dict[str, Any]]:
-        """全部在飞的活（`GET /api/sessions` 顶层 `post_jobs` 那一格的原文）。
-
-        每趟三格 `{kind, dir, started_at}`；线程死透的那一格顺手记下 `finished_at`
-        （「上一趟是哪一趟、什么时候收的」还要给 `GET /api/sessions/{id}` 的 `post`
-        那一格用），但不再出现在这张清单里。
-        """
-        flying: list[dict[str, Any]] = []
-        for (_kind, _dir), job in sorted(self.post_jobs.items()):
-            if not isinstance(job, dict):
-                continue
-            thread = job.get("thread")
-            if thread is not None and not thread.is_alive():
-                if job.get("finished_at") is None:
-                    job["finished_at"] = now_iso()
-                continue
-            flying.append(
-                {
-                    "kind": job["kind"],
-                    "dir": job["dir"],
-                    "started_at": job["started_at"],
-                }
-            )
-        return flying
+    # (kind, dir) 槽位的公共读法在 runtime_shared.PostJobSlotReadsMixin（本 mixin 与
+    # post / catalog 共用那一份）
 
     # flush 落定之后的自动起
 
@@ -230,20 +187,12 @@ class RuntimeTranscodeMixin:
         return job
 
     def _only_transcode_job(self, what: str) -> PostJob | None:
-        """省略 `dir` 时的指向：恰一道在跑才给它；多道在跑让 `dir` 点名（400，不猜）。"""
-        flying = self._post_jobs_of_kind("transcode")
-        if len(flying) > 1:
-            raise ActionError(
-                "invalid_setting",
-                f"在跑的转码工序不止一场：用 dir 点名要{what}哪一场",
-                status=400,
-                detail={
-                    "key": "dir",
-                    "value": None,
-                    "legal": [str(job.get("dir")) for job in flying],
-                },
-            )
-        return flying[0] if flying else None
+        """省略 `dir` 时的指向：恰一道在跑才给它；多道在跑让 `dir` 点名（400，不猜）。
+
+        判据与拒跑句的拼装收在 `runtime_shared.PostJobSlotReadsMixin._only_flying_job()`
+        一份（`post_stop` 那一面同一份）。
+        """
+        return self._only_flying_job("transcode", what=what, flying_label="在跑的转码工序")
 
     def _transcode_progress_for(self, directory: str) -> dict[str, Any]:
         """这一场的转码工序读数（`GET /api/sessions/{id}` 的 `transcode` 那一格）。

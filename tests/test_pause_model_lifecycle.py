@@ -465,7 +465,7 @@ def live_runtime(tmp_path: Path, monkeypatch, *, extra: dict | None = None):
         yield runtime
     finally:
         config_module.set_current(previous)
-        runtime._shutdown_model_executor()
+        runtime._shutdown_executor_slot("_model_executor", label="会中模型生命周期")
 
 
 def _settle_model_calls(runtime) -> None:

@@ -7,7 +7,12 @@ from pathlib import Path
 from typing import Any
 
 from meeting import config as config_module
-from meeting.service.runtime_shared import ActionError, PostJob, _job_matches
+from meeting.service.runtime_shared import (
+    WINDOWS_RESERVED_DEVICE_NAMES,
+    ActionError,
+    PostJob,
+    _job_matches,
+)
 from meeting.speaker_names import (
     SpeakerNamesError,
     identity_rows as speaker_identity_rows,
@@ -20,11 +25,6 @@ _log = logging.getLogger("meeting.service.runtime")
 
 #: 新建目录名字的长度上限（Windows 单段路径成分的实用上限）
 _DIR_NAME_MAX_CHARS = 255
-#: Windows 保留设备名（大小写不敏感、带扩展名同样保留）：`CON.txt` 也开不出文件
-_RESERVED_DEVICE_NAMES = frozenset(
-    {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)),
-     *(f"LPT{i}" for i in range(1, 10))}
-)
 
 
 def checked_new_dir_name(name: Any) -> str:
@@ -57,7 +57,7 @@ def checked_new_dir_name(name: Any) -> str:
     if name.endswith("."):
         raise ValueError("目录名不能以点号结尾（Windows 落盘时会把它悄悄掐掉）")
     stem = name.split(".", 1)[0].upper()
-    if stem in _RESERVED_DEVICE_NAMES:
+    if stem in WINDOWS_RESERVED_DEVICE_NAMES:
         raise ValueError(f"「{stem}」是 Windows 的保留设备名，不能当目录名")
     if len(name) > _DIR_NAME_MAX_CHARS:
         raise ValueError(f"目录名太长（{len(name)} 字符，上限 {_DIR_NAME_MAX_CHARS}）")
@@ -120,11 +120,6 @@ def _offline_status_document(directory: str | Path) -> dict[str, Any] | None:
         return offline_artifacts.read_status(path)
     except Exception:
         return None
-
-
-def _session_status_error(code: str, message: str, *, detail: dict[str, Any]) -> ActionError:
-    """`GET /api/sessions/{id}` 的失败体（与动作失败同一副信封，HTTP 404）。"""
-    return ActionError(code, message, status=404, detail=detail)
 
 
 def _transcript_declared_sources(record: dict[str, Any] | None) -> tuple[str, ...]:
@@ -505,7 +500,8 @@ class RuntimeCatalogMixin:
         `{id}` 是**这一场的目录路径**（URL 编码的绝对路径）：目录名就是这一场会的名字
         （`docs/design-intent.md` 第 3 条），`GET /api/sessions` 每一行也以 `dir` 为主键。
         路径要过与那只清单端点同一套判据（规范化后的绝对路径比对）：目录已不在原地、
-        或不在工作台清单里，都按 404 如实回一句（见 `_session_status_error()`）。
+        或不在工作台清单里，都按 404 如实回一句（`_require_session_dir()`，
+        两档判读的唯一出处）。
 
         `segments` 那一格与清单端点同一来源（`_disk_segment_cells()`，盘上段记录原文），
         界面在详情区摆「各段的时长与时间」。
@@ -538,24 +534,17 @@ class RuntimeCatalogMixin:
         `offline` 是**给人看的读数**：不提交、不涨 `revision`、不广播。这只端点是纯读，
         快照九键一个字不动。
         """
-        directory = canonical_dir(target)
-        probe = classify_workspace_dir(directory)
-        if probe["kind"] == "missing":
-            raise _session_status_error(
-                "session_dir_missing",
-                f"这一场的目录已不在原地：{directory}",
-                detail={"dir": str(directory), "kind": "missing"},
-            )
-        if self._registry_entry_for(directory) is None:
-            raise _session_status_error(
-                "invalid_setting",
+        directory = self._require_session_dir(
+            target,
+            unregistered_message=(
                 "这一场不在工作台清单里（`GET /api/sessions` 读的就是那份注册表）："
-                "先在界面上把它打开，再把会话 id 指过来",
-                detail={"dir": str(directory), "kind": probe["kind"]},
-            )
+                "先在界面上把它打开，再把会话 id 指过来"
+            ),
+        )
         record = self.store.read_session_json(directory)
         state, date, mode = self._disk_record_cells(record, directory)
         wanted = canonical_dir(directory)
+        probe = classify_workspace_dir(directory)
         # 契约 4.9：这张清单只收 `post_offline` / `post_minutes` 两趟；转码那一趟不进
         # （它的读数在下面的 `transcode` 格）——收工后留在 `post_jobs` 里的那一格不外泄。
         post = [
@@ -689,21 +678,13 @@ class RuntimeCatalogMixin:
             SOURCE_IDS,
         )
 
-        directory = canonical_dir(target)
-        probe = classify_workspace_dir(directory)
-        if probe["kind"] == "missing":
-            raise _session_status_error(
-                "session_dir_missing",
-                f"这一场的目录已不在原地：{directory}",
-                detail={"dir": str(directory), "kind": "missing"},
-            )
-        if self._registry_entry_for(directory) is None:
-            raise _session_status_error(
-                "invalid_setting",
+        directory = self._require_session_dir(
+            target,
+            unregistered_message=(
                 "这一场不在工作台清单里（`GET /api/sessions` 读的就是那份注册表）："
-                "先在界面上把它打开，再把会话 id 指过来",
-                detail={"dir": str(directory), "kind": probe["kind"]},
-            )
+                "先在界面上把它打开，再把会话 id 指过来"
+            ),
+        )
         record = self.store.read_session_json(directory)
         declared = _transcript_declared_sources(record)
         base = Path(directory)

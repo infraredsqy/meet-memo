@@ -11,7 +11,10 @@ from typing import Any, Callable
 from meeting import logging_setup
 from meeting.asr import pipeline as asr_pipeline
 from meeting.backends.registry import BackendResolution
-from meeting.service.runtime_shared import ActionError, _DaemonThreadPoolExecutor
+from meeting.service.runtime_shared import (
+    DRAIN_EXECUTOR_MAX_WORKERS,
+    ActionError,
+)
 from meeting.session import steps_from_ended
 from meeting.state import (
     SessionInfo,
@@ -292,17 +295,6 @@ class RuntimeDrainMixin:
         remaining = budget if deadline is None else self._remaining_budget(deadline)
         return remaining + float(DRAIN_LOG_MIN_BUDGET_SECONDS)
 
-    def _drain_executor_or_create(self) -> _DaemonThreadPoolExecutor:
-        """取（必要时建）收尾各步的同步执行器：工作线程是 daemon。
-
-        用 `loop.run_in_executor(<这个执行器>, ...)` 而不是 `asyncio.to_thread()`：后者走
-        事件循环的默认执行器（非 daemon），第二次 `Ctrl+C` 之后解释器会 join 它，进程被
-        在飞的同步步拖住（§3.5 行为表第二行的「立即中止」）。
-        """
-        if self._drain_executor is None:
-            self._drain_executor = _DaemonThreadPoolExecutor()
-        return self._drain_executor
-
     async def _drain_wait(
         self,
         step_id: str,
@@ -341,7 +333,14 @@ class RuntimeDrainMixin:
             if invoke:
                 loop = asyncio.get_running_loop()
                 pending: Any = asyncio.wrap_future(
-                    loop.run_in_executor(self._drain_executor_or_create(), call)
+                    loop.run_in_executor(
+                        self._executor_slot_or_create(
+                            "_drain_executor",
+                            max_workers=DRAIN_EXECUTOR_MAX_WORKERS,
+                            thread_name_prefix="drain-step",
+                        ),
+                        call,
+                    )
                 )
             else:
                 pending = call()

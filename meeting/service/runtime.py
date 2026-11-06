@@ -21,89 +21,25 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import logging
-import math
-import os
-import threading
 import time
-import weakref
-from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor as _ThreadPoolExecutor
-from concurrent.futures.thread import _worker as _threadpool_worker
-from typing import Any, Callable
+from typing import Any
 
-from meeting import __version__, config as config_module, logging_setup
+from meeting import __version__, logging_setup  # logging_setup：本模块不再直调，但它是
+# tests 以 `runtime_module.logging_setup` 为 patch 路径的那一格（5 处），名字留在这里。
 from meeting.alerts import AlertJudge, AlertThresholds
-from meeting.asr import pipeline as asr_pipeline
-from meeting.backends.base import (
-    SOURCE_IDS,
-    FrameGap,
-    LevelFrame,
-    ReadOnlyConfig,
-    SourceFacts,
-    SourceLost,
-    TranscriptLine,
-)
-from meeting.backends.registry import (
-    BackendResolution,
-    capabilities_of,
-    resolve_capture_backend,
-    resolve_post_hook,
-    resolve_transcriber_backend,
-)
+from meeting.backends.registry import BackendResolution
 from meeting.config import ConfigValueError
-from meeting.session import (
-    SESSION_FILE_NAME,
-    SessionStore,
-    archive_name,
-    build_session_record,
-    next_segment_number,
-    resolve_workspace_dir,
-    state_for,
-    steps_from_ended,
-)
-from meeting.summary import (
-    WINDOW_CHOICES,
-    ModelClient,
-    SummaryOutcome,
-    SummarySettings,
-    TranscriptBuffer,
-    run_summary,
-    sections_for,
-)
+from meeting.session import SessionStore
 from meeting.state import (
-    DRAIN_STEP_IDS,
-    PROBE_STATUS,
-    Alert,
-    InvalidTransitionError,
     ServiceInfo,
     SessionInfo,
-    SettingsView,
     Snapshot,
-    begin_alert,
-    begin_drain,
-    begin_drain_step,
-    finish_drain,
-    finish_drain_step,
     new_snapshot,
     now_iso,
-    recover_source,
-    sample_levels,
-    start_recording,
-    validate_health,
 )
-from meeting.speaker_names import (
-    SpeakerNamesError,
-    identity_rows as speaker_identity_rows,
-    set_speaker_name,
-)
-from meeting.workspace import (
-    WorkspaceRegistry,
-    canonical_dir,
-    classify_workspace_dir,
-    has_offline_transcript,
-)
+from meeting.summary import TranscriptBuffer
+from meeting.workspace import WorkspaceRegistry
 from meeting.service.runtime_backends import RuntimeBackendsMixin
 from meeting.service.runtime_catalog import RuntimeCatalogMixin
 from meeting.service.runtime_drain import (
@@ -138,11 +74,11 @@ from meeting.service.runtime_shared import (
     ACTION_NAMES,
     DEFAULT_SESSION_MODE,
     SESSION_MODES,
-    DRAIN_EXECUTOR_MAX_WORKERS,
     ActionError,
     PostJob,
+    PostJobSlotReadsMixin,
+    SessionDirAddressingMixin,
     _DaemonThreadPoolExecutor,
-    _job_matches,
 )
 from meeting.service.runtime_summary import (
     SUMMARY_EXECUTOR_MAX_WORKERS,
@@ -162,6 +98,8 @@ class ServiceRuntime(
     RuntimeSummaryMixin,
     RuntimeMaterialsMixin,
     RuntimeDrainMixin,
+    PostJobSlotReadsMixin,
+    SessionDirAddressingMixin,
 ):
     """唯一状态权威：持有 `Snapshot` 与唯一一份状态字段，只在事件循环里改，不加锁。"""
 

@@ -30,7 +30,7 @@ import logging
 import os
 import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from meeting import config as config_module
 from meeting.state import now_iso
@@ -60,31 +60,22 @@ def _tmp_path(parent: str) -> str:
     )
 
 
-def record(kind: str, directory: str, *, now: str | None = None) -> str:
-    """按 `(种类, 场次)` 落 / 改一条「在飞」记录：同槽覆盖、异槽互不挤占。
+def _replace_document(
+    build: Callable[[list[dict[str, Any]]], list[dict[str, Any]]],
+) -> str:
+    """三个写入口共用的原子替换脚手架：建目录 → 独占临时名 → 锁内读-改-写 → 收残骸。
 
-    多槽世界（offline 与 minutes 可同时在飞、跨场次也互不挤占）里记录**一格一条**，
-    落新记录只覆盖 `(kind, dir)` 相同的那一格，别的槽原样保留 —— 先起的那趟在飞记录
-    不许被后起的顶掉。读-并-写整串在这把锁后面完成。写盘失败抛 `OSError`。
+    `build` 拿到**锁内**读出的现有记录、给出要落盘的下一版——读-并-写整串在这把
+    进程内的锁后面完成（Windows 上两趟同时 `os.replace` 同一目标会互相踩）。临时名
+    每次调用唯一（`_tmp_path()`），finally 把没用上的残骸收走。写盘失败抛 `OSError`。
     """
     target = path()
     parent = os.path.dirname(os.path.abspath(target))
     os.makedirs(parent, exist_ok=True)
-    entry = {
-        "kind": str(kind),
-        "dir": str(directory),
-        "started_at": now or now_iso(),
-    }
     tmp = _tmp_path(parent)
     try:
         with _LOCK:
-            document = [
-                item
-                for item in load()
-                if not (item.get("kind") == entry["kind"] and item.get("dir") == entry["dir"])
-            ]
-            document.append(entry)
-            _write_document(document, tmp, target)
+            _write_document(build(load()), tmp, target)
     finally:
         if os.path.exists(tmp):
             try:
@@ -92,6 +83,28 @@ def record(kind: str, directory: str, *, now: str | None = None) -> str:
             except OSError:  # pragma: no cover - 清理失败不影响结果
                 pass
     return target
+
+
+def record(kind: str, directory: str, *, now: str | None = None) -> str:
+    """按 `(种类, 场次)` 落 / 改一条「在飞」记录：同槽覆盖、异槽互不挤占。
+
+    多槽世界（offline 与 minutes 可同时在飞、跨场次也互不挤占）里记录**一格一条**，
+    落新记录只覆盖 `(kind, dir)` 相同的那一格，别的槽原样保留 —— 先起的那趟在飞记录
+    不许被后起的顶掉。
+    """
+    entry = {
+        "kind": str(kind),
+        "dir": str(directory),
+        "started_at": now or now_iso(),
+    }
+    return _replace_document(
+        lambda items: [
+            item
+            for item in items
+            if not (item.get("kind") == entry["kind"] and item.get("dir") == entry["dir"])
+        ]
+        + [entry]
+    )
 
 
 def load() -> list[dict[str, Any]]:
@@ -139,49 +152,20 @@ def clear(kind: str, directory: str) -> str:
     """只摘 `(种类, 场次)` 这一格的记录（异槽原样保留），写盘原子替换。
 
     一趟收工只清自己的那一条：另一趟还在飞时把整份清空，等于把别人的安全网拆了
-    （进程此刻被杀，那一趟的盘上 `running` 就没人补 `interrupted`）。写盘失败抛
-    `OSError`。
+    （进程此刻被杀，那一趟的盘上 `running` 就没人补 `interrupted`）。
     """
-    target = path()
-    parent = os.path.dirname(os.path.abspath(target))
-    os.makedirs(parent, exist_ok=True)
-    tmp = _tmp_path(parent)
-    try:
-        with _LOCK:
-            document = [
-                item
-                for item in load()
-                if not (item.get("kind") == str(kind) and item.get("dir") == str(directory))
-            ]
-            _write_document(document, tmp, target)
-    finally:
-        if os.path.exists(tmp):
-            try:
-                os.unlink(tmp)
-            except OSError:  # pragma: no cover - 清理失败不影响结果
-                pass
-    return target
+    return _replace_document(
+        lambda items: [
+            item
+            for item in items
+            if not (item.get("kind") == str(kind) and item.get("dir") == str(directory))
+        ]
+    )
 
 
 def clear_all() -> str:
     """清空整份记录（启动核对专用：它已把每一条处置过一遍才清）。写盘失败抛 `OSError`。"""
-    target = path()
-    parent = os.path.dirname(os.path.abspath(target))
-    os.makedirs(parent, exist_ok=True)
-    tmp = _tmp_path(parent)
-    try:
-        with _LOCK, open(tmp, "w", encoding="utf-8") as handle:
-            json.dump([], handle, ensure_ascii=False)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp, target)
-    finally:
-        if os.path.exists(tmp):
-            try:
-                os.unlink(tmp)
-            except OSError:  # pragma: no cover - 清理失败不影响结果
-                pass
-    return target
+    return _replace_document(lambda _items: [])
 
 
 __all__ = ["POST_JOBS_FILE_NAME", "clear", "clear_all", "load", "path", "record"]

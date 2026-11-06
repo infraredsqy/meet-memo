@@ -19,6 +19,7 @@ from meeting.backends.registry import (
     resolve_transcriber_backend,
 )
 from meeting.config import ConfigValueError
+from meeting.service.runtime_shared import _DaemonThreadPoolExecutor
 from meeting.state import (
     PROBE_STATUS,
     SettingsView,
@@ -271,47 +272,49 @@ class RuntimeBackendsMixin:
         except Exception:
             _log.exception("关停时停转写失败（如实登记，不静默）")
         # 三台执行器关停一律不等待在飞线程（daemon：第二次 `Ctrl+C` 之后进程不许被拖住）。
-        self._shutdown_drain_executor()
-        self._shutdown_summary_executor()
-        self._shutdown_model_executor()
+        for attr, label in (
+            ("_drain_executor", "收尾"),
+            ("_summary_executor", "会中总结"),
+            ("_model_executor", "会中模型生命周期"),
+        ):
+            self._shutdown_executor_slot(attr, label=label)
         # 会中总结那两样一并清掉（缓冲与记录表走同一个入口）。
         self._clear_session_summary(reason="服务关停")
         from meeting.service import app as service_app
 
         service_app.clear_shutdown_target()
 
-    def _shutdown_drain_executor(self) -> None:
-        """收尾执行器收场（幂等）：**不等待**在飞的工作线程（daemon）。"""
-        executor = self._drain_executor
-        if executor is None:
-            return
-        self._drain_executor = None
-        try:
-            executor.shutdown(wait=False, cancel_futures=True)
-        except Exception:  # pragma: no cover - 收场路径不掩盖别的结论
-            _log.exception("收尾执行器收场失败（工作线程是 daemon，不影响进程退出）")
+    def _executor_slot_or_create(
+        self, attr: str, *, max_workers: int, thread_name_prefix: str
+    ) -> _DaemonThreadPoolExecutor:
+        """取（必要时建）一台**惰性创建**的 daemon 执行器（三台池参数化后的那一份）。
 
-    def _shutdown_summary_executor(self) -> None:
-        """会中总结执行器收场（幂等）：与收尾那台同一口径，**不等待**在飞的工作线程。"""
-        executor = self._summary_executor
+        三台的线程数与线程名前缀见 `runtime_shared._DaemonThreadPoolExecutor` 的说明
+        （收尾 `drain-step` × 4、会中总结 `summary-call` × 2、会中模型收/放
+        `model-lifecycle` × 1）；没人用那台池的进程一个线程都不起。
+        """
+        executor = getattr(self, attr)
         if executor is None:
-            return
-        self._summary_executor = None
-        try:
-            executor.shutdown(wait=False, cancel_futures=True)
-        except Exception:  # pragma: no cover - 收场路径不掩盖别的结论
-            _log.exception("会中总结执行器收场失败（工作线程是 daemon，不影响进程退出）")
+            executor = _DaemonThreadPoolExecutor(
+                max_workers=max_workers, thread_name_prefix=thread_name_prefix
+            )
+            setattr(self, attr, executor)
+        return executor
 
-    def _shutdown_model_executor(self) -> None:
-        """会中模型「收 / 放」执行器收场（幂等）：与上面两台同一口径，**不等待**在飞的工作线程。"""
-        executor = self._model_executor
+    def _shutdown_executor_slot(self, attr: str, *, label: str) -> None:
+        """一台 daemon 执行器收场（幂等）：**不等待**在飞的工作线程（三台参数化后的那一份）。
+
+        `attr` 是 `ServiceRuntime.__init__` 里声明的那格属性名；`label` 进收场失败的
+        log 行（收尾 / 会中总结 / 会中模型生命周期）。
+        """
+        executor = getattr(self, attr)
         if executor is None:
             return
-        self._model_executor = None
+        setattr(self, attr, None)
         try:
             executor.shutdown(wait=False, cancel_futures=True)
         except Exception:  # pragma: no cover - 收场路径不掩盖别的结论
-            _log.exception("会中模型生命周期执行器收场失败（工作线程是 daemon，不影响进程退出）")
+            _log.exception("%s执行器收场失败（工作线程是 daemon，不影响进程退出）", label)
 
     # 后端与探测
 
@@ -341,28 +344,49 @@ class RuntimeBackendsMixin:
         values = self.config.as_dict() if self.config is not None else config_module.as_dict()
         return ReadOnlyConfig(values)
 
+    def _threadsafe_sink(
+        self,
+        apply_name: str,
+        *,
+        before: Callable[[Any], None] | None = None,
+        what: str,
+    ) -> Callable[[Any], None]:
+        """两个线程安全 sink 闭包的同一副骨架（`bind_capture` / `bind_transcriber` 收敛）。
+
+        骨架：`before` 一步（转写侧顺路的缓冲收行，没有就跳过）→ loop 判空 →
+        `loop is None` 时同步处理（其余未 running 的一档丢弃）→
+        `call_soon_threadsafe` → `RuntimeError` 兜底落 debug。`apply_name` 按**调用时**
+        `getattr` 解析（与收敛前「sink 里现查 `self.<名字>`」同一副迟绑定，替身/测试
+        替换实例方法照旧生效）；`what` 是 debug 兜底那一句里的宾语。
+        """
+
+        def sink(item: Any) -> None:
+            if before is not None:
+                before(item)
+            apply = getattr(self, apply_name)
+            loop = self._loop
+            if loop is None or not loop.is_running():
+                # 事件循环还没起来 / 已经关掉：同步处理（后端线程不要因为这里抛错而死）
+                if loop is None:
+                    apply(item)
+                return
+            try:
+                loop.call_soon_threadsafe(apply, item)
+            except RuntimeError:  # pragma: no cover - 循环正在关闭
+                _log.debug("事件循环已在关闭，丢弃%s：%r", what, item)
+
+        return sink
+
     def bind_capture(self, backend: Any) -> Callable[[Any], None]:
         """给采集后端包一层线程安全的事实出口（`loop.call_soon_threadsafe`）。
 
         后端**不必知道事件循环在哪**，也不许自己碰状态 —— 它拿到的永远是包好的回调
         （`bind()` 里交给后端的正是这个 `sink`；本方法因此不读 `backend`，形参只为调用点可读）。
+        骨架见 `_threadsafe_sink()`。
         """
         del backend  # 只用于调用点的可读性：出口属于 runtime，不属于某个后端实例
 
-        def sink(fact: Any) -> None:
-            """可从**任何线程**调的事实出口。"""
-            loop = self._loop
-            if loop is None or not loop.is_running():
-                # 事件循环还没起来 / 已经关掉：同步处理（后端线程不要因为这里抛错而死）
-                if loop is None:
-                    self.apply_fact(fact)
-                return
-            try:
-                loop.call_soon_threadsafe(self.apply_fact, fact)
-            except RuntimeError:  # pragma: no cover - 循环正在关闭
-                _log.debug("事件循环已在关闭，丢弃一条事实：%r", fact)
-
-        return sink
+        return self._threadsafe_sink("apply_fact", what="一条事实")
 
     def bind_transcriber(self, backend: Any) -> Callable[[Any], None]:
         """转写后端的 `line_sink` 同样只经 `call_soon_threadsafe` 进循环。
@@ -372,26 +396,19 @@ class RuntimeBackendsMixin:
         sink 内部、与装了几层无关，于是同一行不会进缓冲两遍）。收行**先于**
         `_call_soon_threadsafe`：缓冲自己是线程安全的，事件循环没起来 / 已经关掉时那一支
         （`loop is None` 时同步处理、其余丢弃）也照旧把这行收下 —— 「谁收行」与「谁推状态」
-        是两件事。
+        是两件事。骨架见 `_threadsafe_sink()`。
         """
         del backend  # 同 `bind_capture()`：出口属于 runtime
 
-        def sink(line: Any) -> None:
+        def _buffer_line(line: Any) -> None:
             try:
                 self.summary_buffer.append(line)
             except Exception:  # noqa: BLE001 - 缓冲出意外不许把一行转写挡在门外
                 _log.warning("转写行进会中总结缓冲失败（这一行照旧往下走）", exc_info=True)
-            loop = self._loop
-            if loop is None or not loop.is_running():
-                if loop is None:
-                    self._apply_transcript_line(line)
-                return
-            try:
-                loop.call_soon_threadsafe(self._apply_transcript_line, line)
-            except RuntimeError:  # pragma: no cover - 循环正在关闭
-                _log.debug("事件循环已在关闭，丢弃一行转写：%r", line)
 
-        return sink
+        return self._threadsafe_sink(
+            "_apply_transcript_line", before=_buffer_line, what="一行转写"
+        )
 
     def _probe_devices(self) -> None:
         """调 capture 后端的 `probe()`，**在它之前先 `bind()`**，结果直取进初始快照。"""

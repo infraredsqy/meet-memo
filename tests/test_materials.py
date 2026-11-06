@@ -92,6 +92,35 @@ def test_the_four_routes_are_registered_before_the_session_catch_all() -> None:
     )
 
 
+def test_summaries_dirs_and_upload_keep_the_runtime_missing_envelope() -> None:
+    """未装配 runtime 时三只端点回 500 JSON 信封（与 `/api/state` 等 12 只同形）。
+
+    只挂路由与头哨中间件、`app.state` 不放 runtime：`GET /api/summaries`、
+    `GET /api/dirs`、`POST …/materials` 三只由 `_needs_runtime` 的未装配档兜住，
+    回 `{"error": "runtime 未装配"}`，不漏成 Starlette 裸 500。上传那条带头哨
+    放行的自定义头——请求真走到装饰器才被兜底接住。
+    """
+    from starlette.applications import Starlette
+    from starlette.testclient import TestClient
+
+    from meeting.service.app import _LocalGuardsMiddleware
+
+    app = Starlette(routes=api_routes())
+    app.add_middleware(_LocalGuardsMiddleware)
+    client = TestClient(app, base_url="http://127.0.0.1")
+    for method, path in (
+        ("get", "/api/summaries"),
+        ("get", "/api/dirs"),
+        ("post", "/api/sessions/x/materials"),
+    ):
+        headers = {"X-Meeting-Service": "1"} if method == "post" else {}
+        response = getattr(client, method)(path, headers=headers)
+        assert response.status_code == 500, f"{method.upper()} {path}: {response.text}"
+        assert response.json() == {"error": "runtime 未装配"}, (
+            f"{method.upper()} {path}: {response.text}"
+        )
+
+
 def test_an_unregistered_dir_is_rejected_without_touching_the_disk(
     materials_client,
 ) -> None:

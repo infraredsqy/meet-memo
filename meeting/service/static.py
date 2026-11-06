@@ -54,11 +54,6 @@ def read_debug_page() -> str:
         return _DEBUG_MISSING_PAGE
 
 
-async def _debug_page(request) -> HTMLResponse:
-    """（旧注册点的处理体，保留给 `routes.py` 之外的直接调用；路由注册已搬走。）"""
-    return HTMLResponse(read_debug_page())
-
-
 def debug_routes() -> list:
     """**已摘除**：`/debug` 的唯一注册点搬到了 `meeting/service/routes.py`（phase2 §3.12）。
 

@@ -8,7 +8,7 @@ import time
 from typing import Any
 
 from meeting.asr import pipeline as asr_pipeline
-from meeting.service.runtime_shared import ActionError, _DaemonThreadPoolExecutor
+from meeting.service.runtime_shared import ActionError
 from meeting.state import now_iso
 from meeting.summary import (
     WINDOW_CHOICES,
@@ -68,15 +68,6 @@ class RuntimeSummaryMixin:
             "entries": [dict(entry) for entry in self.summary_records],
         }
 
-    def _summary_executor_or_create(self) -> _DaemonThreadPoolExecutor:
-        """会中总结那台执行器（**惰性创建**：不按下总结的进程一个线程都不起）。"""
-        if self._summary_executor is None:
-            self._summary_executor = _DaemonThreadPoolExecutor(
-                max_workers=SUMMARY_EXECUTOR_MAX_WORKERS,
-                thread_name_prefix="summary-call",
-            )
-        return self._summary_executor
-
     async def _summary_wait(
         self,
         *,
@@ -89,8 +80,10 @@ class RuntimeSummaryMixin:
 
         形状照收尾那套先例（`_drain_wait()` + `_DaemonThreadPoolExecutor`）：
 
-          - `run_summary(...)` 经 `loop.run_in_executor(self._summary_executor_or_create(), …)`
-            提交，返回的线程 Future 由 `asyncio.wrap_future()` 包成可等待对象 —— 事件循环在
+          - `run_summary(...)` 经 `loop.run_in_executor(self._executor_slot_or_create(
+            "_summary_executor", max_workers=SUMMARY_EXECUTOR_MAX_WORKERS,
+            thread_name_prefix="summary-call"), …)` 提交，返回的线程 Future 由
+            `asyncio.wrap_future()` 包成可等待对象 —— 事件循环在
             这一段只负责等，`/api/state`、三个 SSE 通道、心跳与健康节拍照旧转；
           - 等待上限 = `settings.deadline_seconds`（配置里那条 `summary.deadline_seconds`，
             默认 25 秒）。它与内核 `run_summary()` 现算剩余量用的是同一条线，**一秒都不多给**；
@@ -111,7 +104,11 @@ class RuntimeSummaryMixin:
         lines = self.summary_buffer.lines()
         pending = asyncio.wrap_future(
             loop.run_in_executor(
-                self._summary_executor_or_create(),
+                self._executor_slot_or_create(
+                    "_summary_executor",
+                    max_workers=SUMMARY_EXECUTOR_MAX_WORKERS,
+                    thread_name_prefix="summary-call",
+                ),
                 lambda: run_summary(
                     lines,
                     window=window,

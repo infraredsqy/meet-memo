@@ -21,13 +21,13 @@
 
 from __future__ import annotations
 
+import functools
+import inspect
 import json
 import logging
 import mimetypes
-from pathlib import Path
 from typing import Any, Callable
 
-import anyio
 from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
@@ -39,9 +39,6 @@ _log = logging.getLogger("meeting.service.routes")
 #: SSE 的响应类型
 SSE_MEDIA_TYPE = "text/event-stream"
 
-#: `from` 档（选择器文件模式）拷贝源文件时的块大小：一块一兆，原样字节、不整段进内存
-_MATERIALS_COPY_CHUNK_BYTES = 1 << 20
-
 
 def _runtime_of(request: Request) -> ServiceRuntime | None:
     """从应用状态里取运行时（路由处理器只读、不写状态）。
@@ -52,6 +49,77 @@ def _runtime_of(request: Request) -> ServiceRuntime | None:
     if app is None:
         return None
     return getattr(app.state, "runtime", None)
+
+
+def _runtime_missing_response() -> Response:
+    """runtime 未装配时的兜底应答（应用未装配那一档，500）。"""
+    return JSONResponse({"error": "runtime 未装配"}, status_code=500)
+
+
+def _heartbeat_missing_response() -> Response:
+    """`GET /api/heartbeat` 未装配时的兜底应答（形状照 `heartbeat_dict()` 的键面）。
+
+    端口探针靠 `service` 字面量认亲，未装配也要按心跳自己的形状如实答「什么都还没跑」
+    ——不是通用错误体。
+    """
+    from meeting.service.app import SERVICE_ID
+
+    return JSONResponse(
+        {
+            "service": SERVICE_ID,
+            "server_time": "",
+            "revision": 0,
+            "top_state": "idle",
+            "recording_alive": None,
+            "seconds_since_last_tick": None,
+            "capture_gaps": {"total_count": 0, "total_seconds": 0.0, "recent": []},
+        }
+    )
+
+
+def _needs_runtime(
+    handler: Callable[[Request], Any] | None = None,
+    *,
+    fallback: Callable[[], Response] | None = None,
+    bind: bool = True,
+) -> Any:
+    """给路由处理器装上公共序言（15 只处理器逐字同一段的收敛）：
+    取 runtime → 未装配回兜底应答 → `bind_from_scope` → 放行。
+
+    HTTP 行为逐字不变：`fallback` 换掉未装配那一档的应答（`_api_heartbeat` 的兜底是
+    心跳自己的形状）；`bind=False` 关掉 `bind_from_scope`（`_api_actions` 原本就不
+    bind）。同步处理器仍包成同步——Starlette 按处理器是不是协程决定丢不丢线程池，
+    盘上读数照旧不在事件循环上跑。
+    """
+
+    def install(fn: Callable[[Request], Any]) -> Callable[[Request], Any]:
+        def missing() -> Response:
+            return fallback() if fallback is not None else _runtime_missing_response()
+
+        if inspect.iscoroutinefunction(fn):
+            @functools.wraps(fn)
+            async def wrapper(request: Request) -> Response:
+                runtime = _runtime_of(request)
+                if runtime is None:  # pragma: no cover - 应用未装配
+                    return missing()
+                if bind:
+                    runtime.bind_from_scope(request.scope)
+                return await fn(request)
+        else:
+            @functools.wraps(fn)
+            def wrapper(request: Request) -> Response:
+                runtime = _runtime_of(request)
+                if runtime is None:  # pragma: no cover - 应用未装配
+                    return missing()
+                if bind:
+                    runtime.bind_from_scope(request.scope)
+                return fn(request)
+
+        return wrapper
+
+    if handler is None:
+        return install
+    return install(handler)
 
 
 def _error_response(exc: ActionError) -> JSONResponse:
@@ -75,38 +143,23 @@ def _action_error(code: str, message: str, *, status: int = 400,
 # GET /api/state · GET /api/heartbeat
 
 
+@_needs_runtime
 async def _api_state(request: Request) -> Response:
     runtime = _runtime_of(request)
-    if runtime is None:  # pragma: no cover - 应用未装配
-        return JSONResponse({"error": "runtime 未装配"}, status_code=500)
-    runtime.bind_from_scope(request.scope)
     return JSONResponse(runtime.to_dict())
 
 
+@_needs_runtime(fallback=_heartbeat_missing_response)
 async def _api_heartbeat(request: Request) -> Response:
     """`service` 字面量恒为 `"meeting"`（端口策略的探针靠它认亲）。"""
-    from meeting.service.app import SERVICE_ID
-
     runtime = _runtime_of(request)
-    if runtime is None:  # pragma: no cover - 应用未装配
-        return JSONResponse(
-            {
-                "service": SERVICE_ID,
-                "server_time": "",
-                "revision": 0,
-                "top_state": "idle",
-                "recording_alive": None,
-                "seconds_since_last_tick": None,
-                "capture_gaps": {"total_count": 0, "total_seconds": 0.0, "recent": []},
-            }
-        )
-    runtime.bind_from_scope(request.scope)
     return JSONResponse(runtime.heartbeat_dict())
 
 
 # GET /api/summaries（`1987cb20` phase2：本场按过的那些次会中总结）
 
 
+@_needs_runtime
 async def _api_summaries(request: Request) -> Response:
     """本场总结记录：`{session_id, entries}`（**200**，任何状态下都给）。
 
@@ -115,20 +168,15 @@ async def _api_summaries(request: Request) -> Response:
     读它是**纯读**：不提交、不涨 `revision`、不广播。
     """
     runtime = _runtime_of(request)
-    if runtime is None:  # pragma: no cover - 应用未装配
-        return JSONResponse({"error": "runtime 未装配"}, status_code=500)
-    runtime.bind_from_scope(request.scope)
     return JSONResponse(runtime.summaries_dict())
 
 
 # GET /api/events（SSE）
 
 
+@_needs_runtime
 async def _api_events(request: Request) -> Response:
     runtime = _runtime_of(request)
-    if runtime is None:  # pragma: no cover - 应用未装配
-        return JSONResponse({"error": "runtime 未装配"}, status_code=500)
-    runtime.bind_from_scope(request.scope)
     return StreamingResponse(
         runtime.hub.stream(runtime.to_dict),
         media_type=SSE_MEDIA_TYPE,
@@ -146,6 +194,7 @@ async def _api_events(request: Request) -> Response:
 # 这几个处理器是同步 def（不走协程）：它们只是调 runtime 的纯读读取器（盘上 stat 与
 # 读 session.json，都不是异步的）；写成 async 会让盘上读数在事件循环线程上跑。
 # Starlette 对同步处理器自动丢线程池执行。
+@_needs_runtime
 def _api_sessions(request: Request) -> Response:
     """工作区注册表：`{sessions, recent}`（**200**，任何状态下都给）。
 
@@ -154,12 +203,10 @@ def _api_sessions(request: Request) -> Response:
     `docs/design-intent.md` 第 4 条）。
     """
     runtime = _runtime_of(request)
-    if runtime is None:  # pragma: no cover - 应用未装配
-        return JSONResponse({"error": "runtime 未装配"}, status_code=500)
-    runtime.bind_from_scope(request.scope)
     return JSONResponse(runtime.sessions_dict())
 
 
+@_needs_runtime
 def _api_session_status(request: Request) -> Response:
     """单场状态：`GET /api/sessions/{id}`，`{id}` 是**这一场的目录路径**（URL 编码的绝对路径）。
 
@@ -171,15 +218,13 @@ def _api_session_status(request: Request) -> Response:
     `{ok, code, message, detail}`）。
     """
     runtime = _runtime_of(request)
-    if runtime is None:  # pragma: no cover - 应用未装配
-        return JSONResponse({"error": "runtime 未装配"}, status_code=500)
-    runtime.bind_from_scope(request.scope)
     try:
         return JSONResponse(runtime.session_status_dict(request.path_params.get("dir")))
     except ActionError as exc:
         return _error_response(exc)
 
 
+@_needs_runtime
 def _api_session_transcripts(request: Request) -> Response:
     """这一场的稿子正文：`GET /api/sessions/{id}/transcripts`（会后区的两份稿）。
 
@@ -190,15 +235,13 @@ def _api_session_transcripts(request: Request) -> Response:
     不广播。
     """
     runtime = _runtime_of(request)
-    if runtime is None:  # pragma: no cover - 应用未装配
-        return JSONResponse({"error": "runtime 未装配"}, status_code=500)
-    runtime.bind_from_scope(request.scope)
     try:
         return JSONResponse(runtime.session_transcripts_dict(request.path_params.get("dir")))
     except ActionError as exc:
         return _error_response(exc)
 
 
+@_needs_runtime
 def _api_dirs(request: Request) -> Response:
     """目录选择器的现场：`{home, cwd, up, here, dirs}`（**200**；`?dir=` 省略时从主目录起步）。
 
@@ -211,9 +254,6 @@ def _api_dirs(request: Request) -> Response:
     参数时没有这个键。
     """
     runtime = _runtime_of(request)
-    if runtime is None:  # pragma: no cover - 应用未装配
-        return JSONResponse({"error": "runtime 未装配"}, status_code=500)
-    runtime.bind_from_scope(request.scope)
     with_files = (request.query_params.get("files") or "").strip().lower() in ("1", "true")
     try:
         return JSONResponse(
@@ -223,6 +263,7 @@ def _api_dirs(request: Request) -> Response:
         return _error_response(exc)
 
 
+@_needs_runtime
 def _api_dirs_create(request: Request) -> Response:
     """新建目录：`POST /api/dirs?dir=<父层>&name=<名字>`（写端点，头哨在中间件）。
 
@@ -237,9 +278,6 @@ def _api_dirs_create(request: Request) -> Response:
     不广播**（选择器的现场独立于四态快照，先例同上）。
     """
     runtime = _runtime_of(request)
-    if runtime is None:  # pragma: no cover - 应用未装配
-        return JSONResponse({"error": "runtime 未装配"}, status_code=500)
-    runtime.bind_from_scope(request.scope)
     try:
         row = runtime.dirs_create(
             request.query_params.get("dir"), request.query_params.get("name")
@@ -249,6 +287,7 @@ def _api_dirs_create(request: Request) -> Response:
     return JSONResponse({"ok": True, "revision": runtime.revision, "directory": row})
 
 
+@_needs_runtime
 async def _api_devices(request: Request) -> Response:
     """两路各自的候选设备端点表：`{mic: [...], loopback: [...]}`（**200**，任何状态下都给）。
 
@@ -257,9 +296,6 @@ async def _api_devices(request: Request) -> Response:
     不提交、不涨 `revision`、不广播。
     """
     runtime = _runtime_of(request)
-    if runtime is None:  # pragma: no cover - 应用未装配
-        return JSONResponse({"error": "runtime 未装配"}, status_code=500)
-    runtime.bind_from_scope(request.scope)
     try:
         return JSONResponse(runtime.devices_listing())
     except ActionError as exc:
@@ -279,6 +315,7 @@ def _materials_missing_error(name: str) -> ActionError:
     )
 
 
+@_needs_runtime
 def _api_materials_listing(request: Request) -> Response:
     """清单：`{dir, materials_dir, items:[{name, size_bytes, added_at}]}`（**200**）。
 
@@ -288,15 +325,13 @@ def _api_materials_listing(request: Request) -> Response:
     不广播。寻址失败（目录不在原地 / 两样都不是）按 4.12 的失败口径回 404。
     """
     runtime = _runtime_of(request)
-    if runtime is None:  # pragma: no cover - 应用未装配
-        return JSONResponse({"error": "runtime 未装配"}, status_code=500)
-    runtime.bind_from_scope(request.scope)
     try:
         return JSONResponse(runtime.materials_listing(request.path_params.get("dir")))
     except ActionError as exc:
         return _error_response(exc)
 
 
+@_needs_runtime
 async def _api_materials_upload(request: Request) -> Response:
     """上传：请求体就是文件的原样字节，**流式写盘**（收到多少写多少，不整段进内存）。
 
@@ -316,92 +351,27 @@ async def _api_materials_upload(request: Request) -> Response:
     - 成功体 = 通用信封 + `material: {name, size_bytes, added_at}`（贴上时刻 = 落盘
       那一刻的文件修改时间，不保留原文件的时间戳）。**不涨 `revision`**——资料层
       独立于四态快照，信封里的 `revision` 只是当前版本号（先例是 `summarize`）。
+
+    域编排（`from` 档源校验、占名、流式写盘、半截清理）收在
+    `runtime_materials.RuntimeMaterialsMixin.materials_receive()` 一处；路由层只留
+    HTTP 面：参数与字节流的来路、失败信封与成功信封。
     """
     runtime = _runtime_of(request)
-    if runtime is None:  # pragma: no cover - 应用未装配
-        return JSONResponse({"error": "runtime 未装配"}, status_code=500)
-    runtime.bind_from_scope(request.scope)
-
-    #: `from` 档（选择器文件模式）：拷贝源头必须是**已存在的普通文件**，先验再占名
-    from_param = request.query_params.get("from")
-    source_path: Path | None = None
-    if from_param is not None and from_param.strip() != "":
-        source_path = Path(from_param)
-        if not source_path.is_file():
-            return _error_response(
-                _action_error(
-                    "invalid_setting",
-                    f"要拷入的文件不存在：{from_param}",
-                    status=400,
-                    detail={
-                        "key": "from",
-                        "value": from_param,
-                        "legal": ["已存在的文件路径（目录选择器文件模式给的那一个）"],
-                    },
-                )
-            )
-
     try:
-        path = runtime.materials_reserve(
-            request.path_params.get("dir"), request.query_params.get("name")
+        material = await runtime.materials_receive(
+            request.path_params.get("dir"),
+            request.query_params.get("name"),
+            body=request.stream(),
+            from_param=request.query_params.get("from"),
         )
     except ActionError as exc:
         return _error_response(exc)
-
-    def _discard_partial() -> None:
-        try:
-            path.unlink(missing_ok=True)
-        except OSError:  # pragma: no cover - 残骸清理失败只留痕
-            _log.warning("上传失败后的半截文件收不走：%s", path)
-
-    try:
-        while True:
-            try:
-                handle = await anyio.open_file(path, "xb")
-                break
-            except FileExistsError:
-                # 查完重名到真正落盘之间被人抢了位：让到下一个序号名再试
-                path = runtime.materials_next_free(path)
-        try:
-            if source_path is None:
-                async for chunk in request.stream():
-                    await handle.write(chunk)
-            else:
-                # from 档：流式拷贝盘上那份源文件（原样字节，一块一兆，不整段进内存）
-                source = await anyio.open_file(source_path, "rb")
-                try:
-                    while True:
-                        chunk = await source.read(_MATERIALS_COPY_CHUNK_BYTES)
-                        if not chunk:
-                            break
-                        await handle.write(chunk)
-                finally:
-                    await source.aclose()
-        finally:
-            await handle.aclose()
-    except ActionError:
-        _discard_partial()
-        raise
-    except OSError as exc:
-        _discard_partial()
-        return _error_response(
-            _action_error(
-                "persist_failed",
-                f"资料写盘失败（{type(exc).__name__}: {exc}）",
-                status=500,
-                detail={"error": f"{type(exc).__name__}: {exc}"},
-            )
-        )
-    except BaseException:
-        _discard_partial()
-        raise
-    material = runtime.materials_record(path)
-    _log.info("会议资料落盘：%s（%d 字节）", path, material["size_bytes"])
     return JSONResponse(
         {"ok": True, "revision": runtime.revision, "material": material}
     )
 
 
+@_needs_runtime
 async def _api_materials_file(request: Request) -> Response:
     """取原文件：原始字节 + 按扩展名判的 `Content-Type`（认不出 `application/octet-stream`）。
 
@@ -410,9 +380,6 @@ async def _api_materials_file(request: Request) -> Response:
     同一套清洗（防路径穿越），存不在这个名字上回 404 `material_missing`。
     """
     runtime = _runtime_of(request)
-    if runtime is None:  # pragma: no cover - 应用未装配
-        return JSONResponse({"error": "runtime 未装配"}, status_code=500)
-    runtime.bind_from_scope(request.scope)
     try:
         _, path = runtime.materials_item_path(
             request.path_params.get("dir"), request.path_params.get("name")
@@ -425,6 +392,7 @@ async def _api_materials_file(request: Request) -> Response:
         return _error_response(exc)
 
 
+@_needs_runtime
 async def _api_materials_delete(request: Request) -> Response:
     """删除：**只删那一个文件**（场次目录与资料目录里别的文件一个字节不动）。
 
@@ -432,9 +400,6 @@ async def _api_materials_delete(request: Request) -> Response:
     `material_missing`。成功体 = 通用信封 + `material: {name}`；不涨 `revision`。
     """
     runtime = _runtime_of(request)
-    if runtime is None:  # pragma: no cover - 应用未装配
-        return JSONResponse({"error": "runtime 未装配"}, status_code=500)
-    runtime.bind_from_scope(request.scope)
     try:
         _, path = runtime.materials_item_path(
             request.path_params.get("dir"), request.path_params.get("name")
@@ -607,6 +572,7 @@ def _reconcile_action_registry() -> None:
 _reconcile_action_registry()
 
 
+@_needs_runtime(bind=False)
 async def _api_actions(request: Request) -> Response:
     """动作端点：信封 + 十九个动作名 + `code` 表（中间件已校验两个必需请求头）。
 
@@ -616,8 +582,6 @@ async def _api_actions(request: Request) -> Response:
     什么都不做却回 `ok: true`」的假成功通道，在结构上不存在了。
     """
     runtime = _runtime_of(request)
-    if runtime is None:  # pragma: no cover - 应用未装配
-        return JSONResponse({"error": "runtime 未装配"}, status_code=500)
 
     raw = await request.body()
     try:

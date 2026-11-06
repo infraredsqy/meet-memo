@@ -20,15 +20,13 @@ import socket
 import threading
 import time
 import webbrowser
-from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Callable
 
 import uvicorn
 from starlette.applications import Starlette
 from starlette.routing import Route
 
-from meeting import config as config_module, logging_setup
+from meeting import config as config_module
 from meeting.service.runtime import ServiceRuntime
 
 _log = logging.getLogger("meeting.service")
@@ -49,13 +47,6 @@ ALLOWED_HOSTS = ("127.0.0.1", "localhost")
 
 #: 产物缺失说明页文案（冻结项 17）
 DIST_MISSING_MESSAGE = "前端产物还没构建。跑 `npm run build`，或先用 `/debug` 自检页看服务状态"
-
-#: 进程启动那一刻（快照 `service.started_at` 的来源）。
-#: 取值窗口：这里在**导入时刻**定一次（导入即进程启动那一刻的同义词，供尚未走到
-#: `startup()` 的早期日志用它）；`ServiceRuntime.startup()` 里会把它**覆盖成真正的启动
-#: 时刻**（框架 startup 钩子跑起来的那一刻）。对外可见的最终取值只有一个 ——
-#: `startup()` 覆盖后的那个；本模块的这个模块级常量只是导入期的初值。
-PROCESS_STARTED_AT = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
 
 # 运行时错误
@@ -545,20 +536,46 @@ class _LocalGuardsMiddleware:
         await send({"type": "http.response.body", "body": body})
 
 
-def _write_guard_path(path: str, method: str) -> bool:
-    """这条请求是不是**不走动作信封的写端点**（头哨的核对表，与 routes.py 的注册逐条对应）。
+#: 头哨核对表里的写方法（与 routes.py 注册过的写端点方法一致）
+_WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
-    只认三条：`POST /api/sessions/{dir}/materials`（资料上传）、
+#: 头哨核对表的缓存：`[(路径正则, 写方法集), …]`，首次使用时从路由表派生一次
+_write_guard_cache: list[tuple[Any, frozenset[str]]] | None = None
+
+
+def _write_guard_entries() -> list[tuple[Any, frozenset[str]]]:
+    """头哨核对表：**从 `routes.api_routes()` 的注册表派生**（单一事实来源）。
+
+    取注册路由里写方法的那几条、扣掉走动作信封的 `POST /api/actions`——其余
+    全是**不走动作信封的写端点**（`POST …/materials`、`DELETE …/materials/{name}`、
+    `POST /api/dirs`）。新增不走信封的写端点只需在 routes.py 注册，头哨自动跟上，
+    不再有「两处人工同步」这一步。核对在中间件里先于路由匹配生效，派生只做一次。
+    """
+    global _write_guard_cache
+    if _write_guard_cache is None:
+        from meeting.service import routes as routes_module
+
+        entries: list[tuple[Any, frozenset[str]]] = []
+        for route in routes_module.api_routes():
+            writes = frozenset(route.methods) & _WRITE_METHODS
+            if not writes or route.path == "/api/actions":
+                continue
+            entries.append((route.path_regex, writes))
+        _write_guard_cache = entries
+    return _write_guard_cache
+
+
+def _write_guard_path(path: str, method: str) -> bool:
+    """这条请求是不是**不走动作信封的写端点**（头哨的核对表，从 routes.py 的注册表派生）。
+
+    只认注册过的那几条写端点：`POST /api/sessions/{dir}/materials`（资料上传）、
     `DELETE /api/sessions/{dir}/materials/{name}`（资料删除）与
     `POST /api/dirs`（选择器里新建目录）。清单、取原文件与 `GET /api/dirs` 是纯读，
     与其余 `GET /api/*` 同档（Host 校验已盖住）。`method` 由调用方先大写化。
     """
-    if method == "POST":
-        if path == "/api/dirs":
+    for path_regex, writes in _write_guard_entries():
+        if method in writes and path_regex.match(path):
             return True
-        return path.startswith("/api/sessions/") and path.endswith("/materials")
-    if method == "DELETE":
-        return path.startswith("/api/sessions/") and "/materials/" in path
     return False
 
 

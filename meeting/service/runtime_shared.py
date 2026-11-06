@@ -1,8 +1,10 @@
 """``meeting.service.runtime`` 模块级的公共冻结名字与 daemon 线程池类（叶子模块）。
 
 存放收尾执行器线程数常量、daemon 工作线程池 ``_DaemonThreadPoolExecutor`` 与动作层冻结名
-（``ACTION_CODES`` / ``ACTION_NAMES`` / ``SESSION_MODES`` / ``DEFAULT_SESSION_MODE`` / ``ActionError``），
-供 runtime 各 mixin 模块原样引用；本文件不 import 任何 ``meeting.*``。
+（``ACTION_CODES`` / ``ACTION_NAMES`` / ``SESSION_MODES`` / ``DEFAULT_SESSION_MODE`` / ``ActionError``）、
+Windows 保留设备名的单一权威表、``(kind, dir)`` 槽位登记的公共读法与单场目录寻址的两档判读
+（两个小 mixin），供 runtime 各 mixin 模块原样引用；模块顶层不 import 任何 ``meeting.*``
+（方法体内用到的 ``meeting.*`` 一律函数体内 import）。
 """
 from __future__ import annotations
 
@@ -164,6 +166,19 @@ KIND_LABELS: dict[str, str] = {
     "transcode": "转码",
 }
 
+#: Windows 保留设备名的**单一权威表**（大小写不敏感；判据是扩展名之前的那一段——
+#: `CON.pdf`、`COM1` 同样保留）。出处：微软文档《Naming Files, Paths, and
+#: Namespaces》的保留名规则（"Do not use the following reserved names for the name
+#: of a file…"）；`COM0` 一并收录——同一篇的 NT Namespaces 一节写明 `COM0` 与
+#: `COM1`–`COM9` 同为串口设备的符号链接，与这份全集口径一致。两个使用点：
+#: `runtime_catalog.checked_new_dir_name()`（新建目录名的拒绝式校验）与
+#: `runtime_materials.sanitize_material_name()`（上传文件名的清洗前置 `_`）。
+WINDOWS_RESERVED_DEVICE_NAMES: frozenset[str] = frozenset(
+    {"CON", "PRN", "AUX", "NUL"}
+    | {f"COM{index}" for index in range(10)}
+    | {f"LPT{index}" for index in range(1, 10)}
+)
+
 
 def name_of_kind(kind: str) -> str:
     """一种活的人话名（不认识的取值原样交回，不猜）。"""
@@ -217,8 +232,11 @@ class PostJob(TypedDict):
 def _slot_alive(job: "PostJob | dict[str, Any] | None") -> bool:
     """一格 `(kind, dir)` 登记还活着吗：是 dict、`thread` 在、线程没死。
 
-    `runtime_post` / `runtime_transcode` 两个 mixin 共用这一份判据（「在飞」的读法
-    全仓只有这一处，不另抄）。
+    槽位公共读法（下面 `PostJobSlotReadsMixin` 的三个读法与 `_only_flying_job()`）
+    都走这一份判据。全仓另有两处**内联**同款 `thread.is_alive()` 读数：
+    `runtime_catalog._post_flight_view()` 的 `running` 一格（只问「活着没」）与本文件
+    `post_jobs_state()` 的收工盖章那一处（问「死了没」，死了顺手补 `finished_at`）
+    ——它们各有各的附加动作，不走本函数。
     """
     if not isinstance(job, dict):
         return False
@@ -235,3 +253,136 @@ def _job_matches(job: PostJob | None, directory: str) -> TypeGuard[PostJob]:
     复审 #2 的裁定：只抽公共部分，行为逐字不变）。
     """
     return isinstance(job, dict) and str(job.get("dir")) == str(directory)
+
+
+# (kind, dir) 槽位登记的公共读法（post / transcode / catalog 三处共用）
+
+
+class PostJobSlotReadsMixin:
+    """`(kind, dir)` 槽位登记的公共读法。
+
+    起槽与收槽的写法在 `RuntimePostMixin._start_post_job()` / `_run_post_job()`；
+    这一批只读，「在飞」的判据是上面那把 `_slot_alive()`。
+    """
+
+    def _post_job_slot(self, kind: str, target: str) -> PostJob | None:
+        """`(kind, dir)` 那一格**还活着**的登记（死了 / 没有 → `None`）。"""
+        from meeting.workspace import canonical_dir
+
+        job = self.post_jobs.get((str(kind), canonical_dir(target)))
+        return job if _slot_alive(job) else None
+
+    def _post_jobs_of_kind(self, kind: str) -> list[PostJob]:
+        """某一种活全部**活着**的登记（按目录名排序，读数与拒跑句的次序因此稳定）。"""
+        return [
+            job
+            for (job_kind, _dir), job in sorted(self.post_jobs.items())
+            if job_kind == str(kind) and _slot_alive(job)
+        ]
+
+    def post_jobs_state(self) -> list[dict[str, Any]]:
+        """全部在飞的活（`GET /api/sessions` 顶层 `post_jobs` 那一格的原文）。
+
+        每趟三格 `{kind, dir, started_at}`；线程死透的那一格顺手记下 `finished_at`
+        （「上一趟是哪一趟、什么时候收的」还要给 `GET /api/sessions/{id}` 的 `post`
+        那一格用），但不再出现在这张清单里。
+        """
+        from meeting.state import now_iso
+
+        flying: list[dict[str, Any]] = []
+        for (_kind, _dir), job in sorted(self.post_jobs.items()):
+            if not isinstance(job, dict):
+                continue
+            thread = job.get("thread")
+            if thread is not None and not thread.is_alive():
+                if job.get("finished_at") is None:
+                    job["finished_at"] = now_iso()
+                continue
+            flying.append(
+                {
+                    "kind": job["kind"],
+                    "dir": job["dir"],
+                    "started_at": job["started_at"],
+                }
+            )
+        return flying
+
+    def _only_flying_job(
+        self, kind: str, *, what: str, flying_label: str
+    ) -> PostJob | None:
+        """省略 `dir` 时的指向解析（`post_stop` 与转码的暂停/继续共用这一份）。
+
+        恰一趟在飞才给它；没有在飞的交回 `None`（拒的话术归调用面）；多趟在飞按
+        400 `invalid_setting` 让 `dir` 点名（**不猜**），`legal` 列在飞那几场。
+        `flying_label` 与 `what` 拼拒跑句——各面各说各的话（「在飞的『生成会后
+        精细稿』不止一场」/「在跑的转码工序不止一场」），句子逐字不变。
+        """
+        flying = self._post_jobs_of_kind(kind)
+        if len(flying) > 1:
+            raise ActionError(
+                "invalid_setting",
+                f"{flying_label}不止一场：用 dir 点名要{what}哪一场",
+                status=400,
+                detail={
+                    "key": "dir",
+                    "value": None,
+                    "legal": [str(job.get("dir")) for job in flying],
+                },
+            )
+        return flying[0] if flying else None
+
+
+# 单场目录寻址的两档判读（catalog / materials / post 四处手抄的那一份）
+
+
+class SessionDirAddressingMixin:
+    """单场目录寻址的两档判读（唯一出处）。
+
+    判据同源：`classify_workspace_dir()`（目录还在不在原地）+ `_registry_entry_for()`
+    （在工作台清单里吗）。两档各落哪个 `code` / `status` / 失败句由调用面按契约正本
+    （`docs/contract.md` 4.9 / 4.12 与「会后与转码动作的 `dir` 校验」那条）给：
+    端点侧 404 + 通用失败信封、目录不在原地优先；动作侧两档都 `invalid_setting`(400)。
+    """
+
+    def _session_dir_tier(self, raw_dir: Any) -> tuple[str, str, str]:
+        """`raw_dir` 这一场的寻址档位：`(directory, tier, kind)`。
+
+        `tier` 三档：`"missing"`（目录已不在原地）/ `"unregistered"`（不在工作台清单）/
+        `"ok"`。`kind` 是名目判读原文（missing 档即 `"missing"`），给失败体的 `detail`
+        用。**目录不在原地优先**——契约 4.9 的两档定义里 `invalid_setting` 那一档说的是
+        「目录在、但这一场没在工作台清单里」。
+        """
+        from meeting.workspace import canonical_dir, classify_workspace_dir
+
+        directory = canonical_dir(raw_dir)
+        kind = str(classify_workspace_dir(directory)["kind"])
+        if kind == "missing":
+            return directory, "missing", kind
+        if self._registry_entry_for(directory) is None:
+            return directory, "unregistered", kind
+        return directory, "ok", kind
+
+    def _require_session_dir(self, raw_dir: Any, *, unregistered_message: str) -> str:
+        """端点侧的单场寻址（404 两档的唯一出口）：合格交回规范化目录，否则抛。
+
+        两档逐字对齐契约正本（4.9 / 4.12：404 + 通用失败信封）——目录已不在原地 →
+        `session_dir_missing`（`detail = {dir, kind: "missing"}`）；目录在、不在工作台
+        清单 → `invalid_setting`（`detail = {dir, kind}`）。不在清单那一档的失败句各面
+        各说各的（单场状态/稿子正文一面、资料一面），由 `unregistered_message` 给。
+        """
+        directory, tier, kind = self._session_dir_tier(raw_dir)
+        if tier == "missing":
+            raise ActionError(
+                "session_dir_missing",
+                f"这一场的目录已不在原地：{directory}",
+                status=404,
+                detail={"dir": str(directory), "kind": "missing"},
+            )
+        if tier == "unregistered":
+            raise ActionError(
+                "invalid_setting",
+                unregistered_message,
+                status=404,
+                detail={"dir": str(directory), "kind": kind},
+            )
+        return directory

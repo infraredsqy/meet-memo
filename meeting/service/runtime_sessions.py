@@ -21,7 +21,6 @@ from meeting.service.runtime_shared import (
     DEFAULT_SESSION_MODE,
     SESSION_MODES,
     ActionError,
-    _DaemonThreadPoolExecutor,
 )
 from meeting.state import (
     DRAIN_STEP_IDS,
@@ -446,15 +445,6 @@ class RuntimeSessionsMixin:
         session.paused_at_monotonic = None
         session.paused = False
 
-    def _model_executor_or_create(self) -> _DaemonThreadPoolExecutor:
-        """会中模型「收 / 放」那台执行器（**惰性创建**：没人按过暂停/继续的进程一个线程都不起）。"""
-        if self._model_executor is None:
-            self._model_executor = _DaemonThreadPoolExecutor(
-                max_workers=MODEL_EXECUTOR_MAX_WORKERS,
-                thread_name_prefix="model-lifecycle",
-            )
-        return self._model_executor
-
     def _submit_model_lifecycle(self, method_name: str, *, what: str) -> None:
         """把一次「会中模型的收 / 放」提交到后台（暂停 → `release_gpu()`；继续 → `acquire_gpu()`）。
 
@@ -474,7 +464,11 @@ class RuntimeSessionsMixin:
                 _log.exception("会中模型%s失败（如实登记，不静默）", what)
 
         try:
-            self._model_executor_or_create().submit(run)
+            self._executor_slot_or_create(
+                "_model_executor",
+                max_workers=MODEL_EXECUTOR_MAX_WORKERS,
+                thread_name_prefix="model-lifecycle",
+            ).submit(run)
         except Exception:  # noqa: BLE001 - 排不进后台也不许把按钮动作拖失败
             _log.exception("会中模型%s没能排进后台（如实登记，不静默）", what)
 
