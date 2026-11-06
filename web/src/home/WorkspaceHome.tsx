@@ -18,9 +18,11 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
  */
 
 import { postAction } from '../api';
-import { ConfirmDialog } from '../dialogs';
+import { ConfirmDialog, DialogFrame } from '../dialogs';
 import { MaterialsPanel } from '../materials/MaterialsPanel';
 import { WorkspaceRail } from './WorkspaceRail';
+import { runAction } from './dispatch';
+import { loadSessionList } from './sessions-list';
 import { chainView } from './chain';
 import { drainStripView } from './drain';
 import {
@@ -30,14 +32,13 @@ import {
 } from './transcripts';
 import {
   createSessionStatusPoller,
-  fetchSessions,
   fetchSessionTranscripts,
   SessionStatusHttpError,
   type SessionStatusTick,
 } from '../api/sessions';
 import { clampHeartbeatInterval } from '../api/heartbeat';
 import { HEARTBEAT_INTERVAL_DEFAULT_SECONDS } from '../contract';
-import { emptyStateLines, initialSelection, segmentsView, startButtonLabel, startWhy } from './model';
+import { emptyStateLines, segmentsView, startButtonLabel, startWhy } from './model';
 import {
   advanceChunkRows,
   chunkLedgerReset,
@@ -124,54 +125,54 @@ function SpeakerNamesDialog({
   };
 
   return (
-    <div className="dlg__layer" role="presentation">
-      <div className="dlg" role="dialog" aria-modal="true" aria-label="说话人名字">
-        <div className="dlg__title">说话人名字</div>
-        <p className="hint">
-          名字随该工作区目录保存，生成纪要时按这里确认的名字填写；编号按路区分。
-        </p>
-        {rows.length === 0 && (
-          <p className="empty">该工作区暂无待命名的身份（录音过的工作区才有本地、远端或编号）。</p>
-        )}
-        {rows.map((row) => (
-          <div className="picker__row" key={row.key}>
-            <button className="picker__pick" type="button" onClick={() => confirmRow(row)}>
-              <span className="picker__name num">{row.title}</span>
-              <span className="picker__kind">{row.name ?? '待确认'}</span>
-            </button>
-            <input
-              className="field__input"
-              type="text"
-              value={drafts[row.key] ?? ''}
-              placeholder={row.name ?? '待确认'}
-              aria-label={`${row.title} 的名字`}
-              disabled={pending !== null || busy}
-              onChange={(event) => {
-                const value = event.target.value;
-                setDrafts((current) => ({ ...current, [row.key]: value }));
-              }}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') confirmRow(row);
-              }}
-            />
-            <button
-              className="btn btn--small btn--primary"
-              type="button"
-              disabled={pending !== null || busy}
-              onClick={() => confirmRow(row)}
-            >
-              确认
-            </button>
-          </div>
-        ))}
-        {note !== null && <p className="hint">{note}</p>}
-        <div className="dlg__acts">
-          <button className="btn" type="button" disabled={pending !== null} onClick={onClose}>
-            关闭
+    <DialogFrame
+      title="说话人名字"
+      label="说话人名字"
+      acts={
+        <button className="btn" type="button" disabled={pending !== null} onClick={onClose}>
+          关闭
+        </button>
+      }
+    >
+      <p className="hint">
+        名字随该工作区目录保存，生成纪要时按这里确认的名字填写；编号按路区分。
+      </p>
+      {rows.length === 0 && (
+        <p className="empty">该工作区暂无待命名的身份（录音过的工作区才有本地、远端或编号）。</p>
+      )}
+      {rows.map((row) => (
+        <div className="picker__row" key={row.key}>
+          <button className="picker__pick" type="button" onClick={() => confirmRow(row)}>
+            <span className="picker__name num">{row.title}</span>
+            <span className="picker__kind">{row.name ?? '待确认'}</span>
+          </button>
+          <input
+            className="field__input"
+            type="text"
+            value={drafts[row.key] ?? ''}
+            placeholder={row.name ?? '待确认'}
+            aria-label={`${row.title} 的名字`}
+            disabled={pending !== null || busy}
+            onChange={(event) => {
+              const value = event.target.value;
+              setDrafts((current) => ({ ...current, [row.key]: value }));
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') confirmRow(row);
+            }}
+          />
+          <button
+            className="btn btn--small btn--primary"
+            type="button"
+            disabled={pending !== null || busy}
+            onClick={() => confirmRow(row)}
+          >
+            确认
           </button>
         </div>
-      </div>
-    </div>
+      ))}
+      {note !== null && <p className="hint">{note}</p>}
+    </DialogFrame>
   );
 }
 
@@ -288,21 +289,14 @@ export function WorkspaceHome(props: {
 
   // -- 取数 ---------------------------------------------------------------
 
-  /** 刷一遍注册表列表；首次加载时顺带按服务给的 `recent` 定选中行。 */
+  /** 刷一遍注册表列表；首次加载时顺带按服务给的 `recent` 定选中行
+   *  （接线与选区落座和会中屏共用同一份：`./sessions-list`）。 */
   const loadList = (): Promise<SessionsResponse | null> =>
-    fetchSessions().then(
-      (data) => {
-        setSessions(data);
-        setSelection((current) =>
-          current === null ? initialSelection(data.sessions, data.recent) : current,
-        );
-        return data;
-      },
-      (error) => {
-        setFailure(failureFrom(error));
-        return null;
-      },
-    );
+    loadSessionList({
+      onList: setSessions,
+      onSelection: setSelection,
+      onFail: (error) => setFailure(failureFrom(error)),
+    });
 
   const reloadAfterAction = (): void => {
     setBusy(true);
@@ -475,25 +469,19 @@ export function WorkspaceHome(props: {
 
   /**
    * 停掉正在跑的「生成会后精细稿」（R28 / b1c6a58e）：打一只 `post_stop`，受理即回。
-   * 界面随即靠轮询看到状态翻成「被打断」、按钮回到可按。
+   * 界面随即靠轮询看到状态翻成「被打断」、按钮回到可按。（派发骨架在 `./dispatch`。）
    */
   const stopPost = (): void => {
     if (offlineFlying === null) return;
-    setFailure(null);
-    setPostNote(null);
-    setBusy(true);
-    void postAction(POST_STOP_ACTION, { dir: offlineFlying.dir })
-      .then(
-        () =>
-          setPostNote(
-            '停止已受理：当前块收尾之后停下。',
-          ),
-        (error) => setFailure(failureFrom(error)),
-      )
-      .then(() => {
-        setBusy(false);
-        reloadAfterAction();
-      });
+    void runAction({
+      name: POST_STOP_ACTION,
+      args: { dir: offlineFlying.dir },
+      before: () => setPostNote(null),
+      onFail: setFailure,
+      setBusy: setBusy,
+      onOk: () => setPostNote('停止已受理：当前块收尾之后停下。'),
+      settle: reloadAfterAction,
+    });
   };
 
   /**
@@ -503,18 +491,16 @@ export function WorkspaceHome(props: {
    */
   const transcodeAct = (action: 'transcode_pause' | 'transcode_resume'): void => {
     if (selection === null) return;
-    setFailure(null);
-    setBusy(true);
-    void postAction(action, { dir: selection })
-      .then(
-        () => undefined,
-        (error) => setFailure(failureFrom(error)),
-      )
-      .then(() => {
-        setBusy(false);
+    void runAction({
+      name: action,
+      args: { dir: selection },
+      onFail: setFailure,
+      setBusy: setBusy,
+      settle: () => {
         const dir = selectionRef.current;
         if (dir !== null) void pollerRef.current?.tick(dir);
-      });
+      },
+    });
   };
 
   const startSelected = (): void => {
@@ -531,52 +517,41 @@ export function WorkspaceHome(props: {
     startNow(row.dir);
   };
 
-  /** 起录本体（`start` 动作 + 失败块 + 刷新）。 */
+  /** 起录本体（`start` 动作 + 失败块 + 刷新；骨架在 `./dispatch`）。 */
   const startNow = (dir: string): void => {
-    setFailure(null);
-    setBusy(true);
-    void postAction('start', { dir, mode: 'both' })
-      .then(
-        () => undefined,
-        (error) => setFailure(failureFrom(error)),
-      )
-      .then(() => {
-        setBusy(false);
-        reloadAfterAction();
-      });
+    void runAction({
+      name: 'start',
+      args: { dir, mode: 'both' },
+      onFail: setFailure,
+      setBusy: setBusy,
+      settle: reloadAfterAction,
+    });
   };
 
   /**
    * 确认打断之后的起录：先停（`post_stop` 受理即回，当前块收尾后才真停），再等
    * 在飞清空、起录。那一等靠 `start` 自己的 409 兜底（服务侧硬闸同一句读数）：
    * 还没停到块边界就按 409 退回，这里隔一拍再试（上限 60 拍，超了如实画失败块）。
+   * 重试那一拍自己善后（`onReject` 回 true）：忙保持、失败块不画。
    */
   const START_RETRY_LIMIT = 60;
   const START_RETRY_MS = 500;
   const startAfterInterrupt = (dir: string): void => {
-    setFailure(null);
-    setBusy(true);
     const attempt = (left: number): void => {
-      void postAction('start', { dir, mode: 'both' })
-        .then(
-          () => true,
-          (error) => {
-            const failure = failureFrom(error);
-            if (failure.kind === 'envelope' && failure.code === 'draining' && left > 0) {
-              return false; // 还没停到块边界：隔一拍再试
-            }
-            setFailure(failure);
-            return true;
-          },
-        )
-        .then((settled) => {
-          if (!settled) {
+      void runAction({
+        name: 'start',
+        args: { dir, mode: 'both' },
+        onFail: setFailure,
+        setBusy: setBusy,
+        onReject: (failure) => {
+          if (failure.kind === 'envelope' && failure.code === 'draining' && left > 0) {
             window.setTimeout(() => attempt(left - 1), START_RETRY_MS);
-            return;
+            return true;
           }
-          setBusy(false);
-          reloadAfterAction();
-        });
+          return false;
+        },
+        settle: reloadAfterAction,
+      });
     };
     attempt(START_RETRY_LIMIT);
   };
@@ -593,30 +568,26 @@ export function WorkspaceHome(props: {
    */
   const postSelected = (action: string): void => {
     if (selection === null) return;
-    setFailure(null);
-    setPostNote(null);
-    setBusy(true);
-    void postAction(action, { dir: selection })
-      .then(
-        (result) => {
-          const parts = [`${POST_LABELS[action]}：这一趟已起。`];
-          if (result.kind === 'post' && result.post.inputs !== undefined) {
-            parts.push(`这次读到的输入档位：${POST_INPUT_LABELS[result.post.inputs] ?? result.post.inputs}。`);
-          }
-          if (result.kind === 'post' && result.post.note !== undefined) {
-            parts.push(`${result.post.note}。`);
-          }
-          setPostNote(parts.join(''));
-        },
-        (error) => {
-          setFailure(failureFrom(error));
-          setPostNote(null);
-        },
-      )
-      .then(() => {
-        setBusy(false);
-        reloadAfterAction();
-      });
+    void runAction({
+      name: action,
+      args: { dir: selection },
+      onFail: (failure) => {
+        setFailure(failure);
+        setPostNote(null);
+      },
+      setBusy: setBusy,
+      onOk: (result) => {
+        const parts = [`${POST_LABELS[action]}：这一趟已起。`];
+        if (result.kind === 'post' && result.post.inputs !== undefined) {
+          parts.push(`这次读到的输入档位：${POST_INPUT_LABELS[result.post.inputs] ?? result.post.inputs}。`);
+        }
+        if (result.kind === 'post' && result.post.note !== undefined) {
+          parts.push(`${result.post.note}。`);
+        }
+        setPostNote(parts.join(''));
+      },
+      settle: reloadAfterAction,
+    });
   };
 
   /**
@@ -627,16 +598,16 @@ export function WorkspaceHome(props: {
    */
   const renameSpeaker = (key: string, name: string): Promise<void> => {
     if (selection === null) return Promise.resolve();
-    setFailure(null);
-    return postAction(SPEAKER_RENAME_ACTION, { dir: selection, key, name }).then(
-      () => undefined,
-      (error) => {
-        setFailure(failureFrom(error));
-        throw error;
+    // 失败照原样抛回弹窗那一侧（rethrow）：它要据此清提示、收回忙。
+    return runAction({
+      name: SPEAKER_RENAME_ACTION,
+      args: { dir: selection, key, name },
+      onFail: setFailure,
+      rethrow: true,
+      settle: () => {
+        const dir = selectionRef.current;
+        if (dir !== null) void pollerRef.current?.tick(dir);
       },
-    ).then(() => {
-      const dir = selectionRef.current;
-      if (dir !== null) void pollerRef.current?.tick(dir);
     });
   };
 

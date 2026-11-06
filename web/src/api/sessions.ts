@@ -13,6 +13,14 @@ import {
   type SessionsResponse,
 } from '../contract/index';
 import { clampHeartbeatInterval } from './heartbeat';
+import {
+  HttpRejectError,
+  ProtocolError,
+  UnavailableError,
+  getJsonOk,
+  readFailureEnvelope,
+} from './common';
+import { createPollerLoop } from './polling';
 
 /**
  * 工作区注册表、目录选择器与单场状态的读端点（`docs/contract.md` 4.8 / 4.9），
@@ -28,41 +36,20 @@ export const SESSIONS_URL = '/api/sessions';
 export const DIRS_URL = '/api/dirs';
 
 /** 应答体形状不对。 */
-export class SessionsProtocolError extends Error {
-  readonly status: number;
-  readonly raw: string;
-
+export class SessionsProtocolError extends ProtocolError {
   constructor(what: string, status: number, raw: string, cause: unknown) {
     const reason = cause instanceof Error ? cause.message : String(cause);
-    super(`${what}的应答形状不符合契约（HTTP ${status}）：${reason}`);
+    super(`${what}的应答形状不符合契约（HTTP ${status}）：${reason}`, status, raw);
     this.name = 'SessionsProtocolError';
-    this.status = status;
-    this.raw = raw;
   }
 }
 
 /** 取不到（网络层失败、服务没应答）。 */
-export class SessionsUnavailableError extends Error {
+export class SessionsUnavailableError extends UnavailableError {
   constructor(what: string, cause: unknown) {
     super(`取不到${what}：${cause instanceof Error ? cause.message : String(cause)}`);
     this.name = 'SessionsUnavailableError';
   }
-}
-
-/** 两只只读端点共用的取数骨架（照 `api/summaries.ts` 的先例）。 */
-function parseOk(what: string): (response: Response, text: string) => unknown {
-  return (response, text) => {
-    if (!response.ok) {
-      throw new SessionsProtocolError(what, response.status, text, `HTTP ${response.status}`);
-    }
-    let json: unknown;
-    try {
-      json = JSON.parse(text);
-    } catch (cause) {
-      throw new SessionsProtocolError(what, response.status, text, cause);
-    }
-    return json;
-  };
 }
 
 export interface FetchSessionsOptions {
@@ -74,20 +61,13 @@ export interface FetchSessionsOptions {
 export async function fetchSessions(
   options: FetchSessionsOptions = {},
 ): Promise<SessionsResponse> {
-  const doFetch = options.fetchImpl ?? fetch;
-  let response: Response;
-  try {
-    response = await doFetch(options.url ?? SESSIONS_URL, { method: 'GET' });
-  } catch (cause) {
-    throw new SessionsUnavailableError('工作区列表', cause);
-  }
-  const text = await response.text();
-  const raw = parseOk('工作区列表')(response, text);
-  const parsed = sessionsResponseSchema.safeParse(raw);
-  if (!parsed.success) {
-    throw new SessionsProtocolError('工作区列表', response.status, text, parsed.error);
-  }
-  return parsed.data;
+  return getJsonOk({
+    url: options.url ?? SESSIONS_URL,
+    schema: sessionsResponseSchema,
+    doFetch: options.fetchImpl ?? fetch,
+    unavailable: (cause) => new SessionsUnavailableError('工作区列表', cause),
+    protocol: (status, text, cause) => new SessionsProtocolError('工作区列表', status, text, cause),
+  });
 }
 
 export interface BrowseDirsOptions {
@@ -107,35 +87,22 @@ export interface BrowseDirsOptions {
  * `message` 就是信封 `message` 的原话（「要浏览的目录不存在：…」）——地址栏跳层
  * 失败要当场说清人话（57ab5255），协议话术不顶到选择器上。
  */
-export class DirsHttpError extends Error {
-  readonly status: number;
-  readonly code: string | null;
-  /** 失败信封的 `message` 原话；读不出信封就是 `null`。 */
-  readonly note: string | null;
-
+export class DirsHttpError extends HttpRejectError {
   constructor(status: number, code: string | null, note: string | null, raw: string) {
-    super(note ?? (code !== null ? `目录浏览被拒：HTTP ${status} · ${code}` : `目录浏览被拒：HTTP ${status}`));
+    super(
+      note ?? (code !== null ? `目录浏览被拒：HTTP ${status} · ${code}` : `目录浏览被拒：HTTP ${status}`),
+      status,
+      code,
+      note,
+      raw,
+    );
     this.name = 'DirsHttpError';
-    this.status = status;
-    this.code = code;
-    this.note = note;
-    this.raw = raw;
   }
-
-  readonly raw: string;
 }
 
-/** 4xx/5xx 信封读法：`code` / `message` 读得出就带走，整份信封读不出就都 `null`。 */
+/** 4xx/5xx 信封读法走公共的那一份（`api/common.ts`），这里只管把它装进自己的错误类。 */
 function dirsHttpError(status: number, text: string): DirsHttpError {
-  let code: string | null = null;
-  let note: string | null = null;
-  try {
-    const body = JSON.parse(text) as { code?: unknown; message?: unknown };
-    if (typeof body.code === 'string') code = body.code;
-    if (typeof body.message === 'string' && body.message !== '') note = body.message;
-  } catch {
-    // 非 JSON：两格都留在 null，message 走固定话术
-  }
+  const { code, note } = readFailureEnvelope(text);
   return new DirsHttpError(status, code, note, text);
 }
 
@@ -143,7 +110,6 @@ export async function browseDirs(
   dir: string | null = null,
   options: BrowseDirsOptions = {},
 ): Promise<DirsResponse> {
-  const doFetch = options.fetchImpl ?? fetch;
   // `?files=1` 只在文件模式那档带上（`BrowseDirsOptions.withFiles`）：老路径的请求
   // 串一个字节不动，服务也就照旧不摆 `files` 键。
   const filesParam = options.withFiles === true ? 'files=1' : null;
@@ -151,22 +117,14 @@ export async function browseDirs(
     .filter((part): part is string => part !== null)
     .join('&');
   const url = query === '' ? DIRS_URL : `${DIRS_URL}?${query}`;
-  let response: Response;
-  try {
-    response = await doFetch(url, { method: 'GET' });
-  } catch (cause) {
-    throw new SessionsUnavailableError('目录浏览', cause);
-  }
-  const text = await response.text();
-  if (!response.ok) {
-    throw dirsHttpError(response.status, text);
-  }
-  const raw = parseOk('目录浏览')(response, text);
-  const parsed = dirsResponseSchema.safeParse(raw);
-  if (!parsed.success) {
-    throw new SessionsProtocolError('目录浏览', response.status, text, parsed.error);
-  }
-  return parsed.data;
+  return getJsonOk({
+    url,
+    schema: dirsResponseSchema,
+    doFetch: options.fetchImpl ?? fetch,
+    unavailable: (cause) => new SessionsUnavailableError('目录浏览', cause),
+    protocol: (status, text, cause) => new SessionsProtocolError('目录浏览', status, text, cause),
+    httpError: (status, text) => dirsHttpError(status, text),
+  });
 }
 
 /** 目录判读三档：chooser/确认弹窗都按它走（`suspected` 照收编那一档处理）。 */
@@ -188,27 +146,20 @@ export function probeDecision(kind: DirKind): ProbeDecision {
 // ---------------------------------------------------------------------------
 
 /** `POST /api/dirs` 的 HTTP 拒答（400 非法名 / 409 同名已存在 / 500 盘上出岔等）。 */
-export class DirCreateHttpError extends Error {
-  readonly status: number;
-  readonly code: string | null;
-  /** 失败信封的 `message` 原话；读不出信封就是 `null`（弹窗里画固定话术）。 */
-  readonly note: string | null;
-
+export class DirCreateHttpError extends HttpRejectError {
   constructor(status: number, code: string | null, note: string | null, raw: string) {
     super(
       note ??
         (code !== null
           ? `新建目录被拒：HTTP ${status} · ${code}`
           : `新建目录被拒：HTTP ${status}`),
+      status,
+      code,
+      note,
+      raw,
     );
     this.name = 'DirCreateHttpError';
-    this.status = status;
-    this.code = code;
-    this.note = note;
-    this.raw = raw;
   }
-
-  readonly raw: string;
 }
 
 export interface CreateDirOptions {
@@ -246,19 +197,16 @@ export async function createDir(
   }
   const text = await response.text();
   if (!response.ok) {
-    let code: string | null = null;
-    let note: string | null = null;
-    try {
-      const body = JSON.parse(text) as { code?: unknown; message?: unknown };
-      if (typeof body.code === 'string') code = body.code;
-      if (typeof body.message === 'string' && body.message !== '') note = body.message;
-    } catch {
-      // 非 JSON：两格都留在 null，message 走固定话术
-    }
+    const { code, note } = readFailureEnvelope(text);
     throw new DirCreateHttpError(response.status, code, note, text);
   }
-  const raw = parseOk('新建目录')(response, text);
-  const parsed = dirCreateOkSchema.safeParse(raw);
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch (cause) {
+    throw new SessionsProtocolError('新建目录', response.status, text, cause);
+  }
+  const parsed = dirCreateOkSchema.safeParse(json);
   if (!parsed.success) {
     throw new SessionsProtocolError('新建目录', response.status, text, parsed.error);
   }
@@ -270,23 +218,19 @@ export async function createDir(
 // ---------------------------------------------------------------------------
 
 /** 单场状态那一档服务回的错误（404：目录不在原地 / 不在清单里；失败体是通用信封）。 */
-export class SessionStatusHttpError extends Error {
-  readonly status: number;
-  readonly code: string | null;
-
+export class SessionStatusHttpError extends HttpRejectError {
   constructor(status: number, code: string | null, raw: string) {
     super(
       code !== null
         ? `取不到单场状态：HTTP ${status} · ${code}`
         : `取不到单场状态：HTTP ${status}`,
+      status,
+      code,
+      null,
+      raw,
     );
     this.name = 'SessionStatusHttpError';
-    this.status = status;
-    this.code = code;
-    this.raw = raw;
   }
-
-  readonly raw: string;
 }
 
 export interface FetchSessionStatusOptions {
@@ -305,31 +249,17 @@ export async function fetchSessionStatus(
   dir: string,
   options: FetchSessionStatusOptions = {},
 ): Promise<SessionStatus> {
-  const doFetch = options.fetchImpl ?? fetch;
-  const url = `${SESSIONS_URL}/${encodeURIComponent(dir)}`;
-  let response: Response;
-  try {
-    response = await doFetch(url, { method: 'GET' });
-  } catch (cause) {
-    throw new SessionsUnavailableError('单场状态', cause);
-  }
-  const text = await response.text();
-  if (!response.ok) {
-    let code: string | null = null;
-    try {
-      const body = JSON.parse(text) as { code?: unknown };
-      if (typeof body?.code === 'string') code = body.code;
-    } catch {
-      // 失败体读不出信封：code 保持 null，只报 HTTP 状态。
-    }
-    throw new SessionStatusHttpError(response.status, code, text);
-  }
-  const raw = parseOk('单场状态')(response, text);
-  const parsed = sessionStatusSchema.safeParse(raw);
-  if (!parsed.success) {
-    throw new SessionsProtocolError('单场状态', response.status, text, parsed.error);
-  }
-  return parsed.data;
+  return getJsonOk({
+    url: `${SESSIONS_URL}/${encodeURIComponent(dir)}`,
+    schema: sessionStatusSchema,
+    doFetch: options.fetchImpl ?? fetch,
+    unavailable: (cause) => new SessionsUnavailableError('单场状态', cause),
+    protocol: (status, text, cause) => new SessionsProtocolError('单场状态', status, text, cause),
+    httpError: (status, text) => {
+      const { code } = readFailureEnvelope(text);
+      return new SessionStatusHttpError(status, code, text);
+    },
+  });
 }
 
 /** 进度区轮询一次的读数（成功那一跳带 `status`，失败那一跳带 `error`）。 */
@@ -342,23 +272,19 @@ export type SessionStatusTick =
 // ---------------------------------------------------------------------------
 
 /** 稿子正文那一档服务回的错误（404 两档：目录不在原地 / 不在清单里；失败体是通用信封）。 */
-export class SessionTranscriptsHttpError extends Error {
-  readonly status: number;
-  readonly code: string | null;
-
+export class SessionTranscriptsHttpError extends HttpRejectError {
   constructor(status: number, code: string | null, raw: string) {
     super(
       code !== null
         ? `取不到这一场的稿子：HTTP ${status} · ${code}`
         : `取不到这一场的稿子：HTTP ${status}`,
+      status,
+      code,
+      null,
+      raw,
     );
     this.name = 'SessionTranscriptsHttpError';
-    this.status = status;
-    this.code = code;
-    this.raw = raw;
   }
-
-  readonly raw: string;
 }
 
 export interface FetchSessionTranscriptsOptions {
@@ -376,31 +302,18 @@ export async function fetchSessionTranscripts(
   dir: string,
   options: FetchSessionTranscriptsOptions = {},
 ): Promise<SessionTranscripts> {
-  const doFetch = options.fetchImpl ?? fetch;
-  const url = `${SESSIONS_URL}/${encodeURIComponent(dir)}/transcripts`;
-  let response: Response;
-  try {
-    response = await doFetch(url, { method: 'GET' });
-  } catch (cause) {
-    throw new SessionsUnavailableError('这一场的稿子', cause);
-  }
-  const text = await response.text();
-  if (!response.ok) {
-    let code: string | null = null;
-    try {
-      const body = JSON.parse(text) as { code?: unknown };
-      if (typeof body?.code === 'string') code = body.code;
-    } catch {
-      // 失败体读不出信封：code 保持 null，只报 HTTP 状态。
-    }
-    throw new SessionTranscriptsHttpError(response.status, code, text);
-  }
-  const raw = parseOk('这一场的稿子')(response, text);
-  const parsed = sessionTranscriptsSchema.safeParse(raw);
-  if (!parsed.success) {
-    throw new SessionsProtocolError('这一场的稿子', response.status, text, parsed.error);
-  }
-  return parsed.data;
+  return getJsonOk({
+    url: `${SESSIONS_URL}/${encodeURIComponent(dir)}/transcripts`,
+    schema: sessionTranscriptsSchema,
+    doFetch: options.fetchImpl ?? fetch,
+    unavailable: (cause) => new SessionsUnavailableError('这一场的稿子', cause),
+    protocol: (status, text, cause) =>
+      new SessionsProtocolError('这一场的稿子', status, text, cause),
+    httpError: (status, text) => {
+      const { code } = readFailureEnvelope(text);
+      return new SessionTranscriptsHttpError(status, code, text);
+    },
+  });
 }
 
 export interface SessionStatusPollerOptions {
@@ -408,8 +321,8 @@ export interface SessionStatusPollerOptions {
 }
 
 /**
- * 按心跳的样板自排轮询单场状态（`api/heartbeat.ts` 的同款骨架：`setTimeout`
- * 自我重排 —— 周期改了即时生效，不必等当前这一轮走完）。
+ * 按心跳的样板自排轮询单场状态（排程骨架与 `createHeartbeatClient` 共用同一份，
+ * `api/polling.ts`：`setTimeout` 自我重排 —— 周期改了即时生效，不必等当前这一轮走完）。
  *
  * **它只管「问一次、交一次」**：什么时候开、什么时候停由组件按读数决定
  * （有活动才轮询，不空转）。周期随快照的 `settings.heartbeat_interval_seconds` 走
@@ -435,21 +348,8 @@ export function createSessionStatusPoller(
   options: SessionStatusPollerOptions = {},
 ): SessionStatusPoller {
   const doFetch = options.fetchImpl ?? fetch;
-  let interval = HEARTBEAT_INTERVAL_DEFAULT_SECONDS;
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  let stopped = true;
+  /** 正在轮询的那一场（`start()` 换目标；骨架的 `ready` 闸按它放行）。 */
   let target: string | null = null;
-
-  const schedule = (): void => {
-    if (stopped || target === null) return;
-    timer = setTimeout(() => {
-      // 与心跳同款：tick() 是一次性的，排下一次是这里的活儿。
-      void tick(target as string).then((result) => {
-        onTick(result);
-        schedule();
-      });
-    }, interval * 1000);
-  };
 
   const tick = async (dir: string): Promise<SessionStatusTick> => {
     try {
@@ -464,21 +364,24 @@ export function createSessionStatusPoller(
     }
   };
 
+  const loop = createPollerLoop({
+    defaultSeconds: HEARTBEAT_INTERVAL_DEFAULT_SECONDS,
+    clamp: clampHeartbeatInterval,
+    // 有目标才排：没 start 过（或还没指到哪一场）时不空转。
+    ready: () => target !== null,
+    beat: async () => {
+      const result = await tick(target as string);
+      onTick(result);
+    },
+  });
+
   return {
     setIntervalFromSnapshot(seconds: number): void {
-      const next = clampHeartbeatInterval(seconds);
-      if (next === interval) return;
-      interval = next;
-      // 周期变了就重排下一次（心跳同款）。
-      if (timer !== null) {
-        clearTimeout(timer);
-        timer = null;
-        schedule();
-      }
+      loop.setIntervalSeconds(seconds);
     },
 
     intervalSeconds(): number {
-      return interval;
+      return loop.intervalSeconds();
     },
 
     async tick(dir: string): Promise<SessionStatusTick> {
@@ -489,21 +392,15 @@ export function createSessionStatusPoller(
 
     start(dir: string): void {
       target = dir;
-      if (!stopped) return;
-      stopped = false;
-      schedule();
+      loop.start();
     },
 
     stop(): void {
-      stopped = true;
-      if (timer !== null) {
-        clearTimeout(timer);
-        timer = null;
-      }
+      loop.stop();
     },
 
     running(): boolean {
-      return !stopped;
+      return loop.running();
     },
   };
 }

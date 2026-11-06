@@ -107,7 +107,6 @@ export const transcriptDataSchema = z
  * 因为多出两个键被 `strict()` 拒掉。
  */
 export const statefulDataSchema = z.union([resyncSnapshotSchema, snapshotSchema]);
-export type StatefulData = z.infer<typeof statefulDataSchema>;
 
 /**
  * SSE 帧样本形状（`contract/fixtures/sse/*.json`）：`{event, id, data}`。

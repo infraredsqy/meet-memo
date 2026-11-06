@@ -1,6 +1,4 @@
 import type { SessionRow } from '../contract';
-import type { ProbeDecision } from '../api/sessions';
-import { probeDecision as probeDecisionFromKind } from '../api/sessions';
 import { formatWallClock } from '../live/format';
 
 /**
@@ -121,11 +119,4 @@ export function emptyStateLines(): { title: string; body: string } {
     title: '当前工作区为空',
     body: '通过「添加工作区」选择目录：空目录将建立新工作区，含会议材料的目录将被收录。',
   };
-}
-
-export type { ProbeDecision };
-
-/** 名目 → 三档处理（`api/sessions.ts` 的单一出处，这里只转手给视图层）。 */
-export function decisionFor(kind: 'empty' | 'meeting' | 'unknown' | 'missing'): ProbeDecision {
-  return probeDecisionFromKind(kind);
 }

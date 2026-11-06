@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  alertsHiddenByHeartbeat,
   applyHeartbeatReading,
   captureGapNote,
   captureStalled,
@@ -10,9 +9,9 @@ import {
   frozenClockValue,
   initialHeartbeatState,
   lostBanner,
+  lostPredicate,
   recoveredNoteText,
   recoveredNoteVisible,
-  transcriptGap,
   RECOVERED_NOTE_SECONDS,
 } from '../src/live/heartbeat';
 import { makeHeartbeat, T } from './live-fixtures';
@@ -66,7 +65,7 @@ describe('applyHeartbeatReading：四级迁移', () => {
     expect(state.level).toBe('迟到');
     expect(state.lateText).toBe('心跳迟到 · 8 秒没收到应答');
     // 迟到这一档不出声、无横幅 —— 它连告警区都不碰
-    expect(alertsHiddenByHeartbeat(state)).toBe(false);
+    expect(lostPredicate(state)).toBe(false);
   });
 
   it('失联：记下起点，冻结时刻停在最后一次应答', () => {
@@ -80,7 +79,7 @@ describe('applyHeartbeatReading：四级迁移', () => {
     expect(lost.lostSinceMs).toBe(MS('20:58:05'));
     expect(lost.frozenAt).toBe(T('20:57:31'));
     expect(lost.lastReplyAt).toBe(T('20:57:31'));
-    expect(alertsHiddenByHeartbeat(lost)).toBe(true);
+    expect(lostPredicate(lost)).toBe(true);
   });
 
   it('一次应答都没成功过时不算失联：我还没问到，别把真实存在的告警藏起来', () => {
@@ -91,7 +90,7 @@ describe('applyHeartbeatReading：四级迁移', () => {
     );
     expect(never.level).toBe('失联');
     expect(never.lastReplyAt).toBeNull();
-    expect(alertsHiddenByHeartbeat(never)).toBe(false);
+    expect(lostPredicate(never)).toBe(false);
   });
 
   it('失联持续：起点不动，冻结时刻还是最后那次应答', () => {
@@ -252,18 +251,6 @@ describe('失联档的几处读数', () => {
 
   it('标签与数字一起冻（返工轮 m1）：失联中标签 clockLabelWhileLost()、数字 frozenClockValue()，都不再走', () => {
     expect(clockLabelWhileLost()).toBe('最后读数');
-  });
-
-  it('转写断口：`[20:57–20:58] 采集中断`', () => {
-    expect(transcriptGap(T('20:57:31'), T('20:58:13'))).toEqual({
-      from: '20:57',
-      to: '20:58',
-      text: '采集中断',
-    });
-  });
-
-  it('没有冻结时刻就没有断口', () => {
-    expect(transcriptGap(null, T('20:58:13'))).toBeNull();
   });
 });
 

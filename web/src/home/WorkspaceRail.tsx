@@ -1,8 +1,9 @@
 import { useState, type ReactNode } from 'react';
 
-import { postAction } from '../api';
-import { ConfirmDialog } from '../dialogs';
+import { probeDecision } from '../api/sessions';
+import { ConfirmDialog, DialogFrame } from '../dialogs';
 import { confirmWorkspaceOpen } from './confirmWorkspaceOpen';
+import { runAction } from './dispatch';
 import { DirPicker, useDirBrowse, type PickerPick } from './DirPicker';
 import { ThemeToggle } from './ThemeToggle';
 import { rowDurationLabel } from './model';
@@ -10,6 +11,24 @@ import { rowStatusView } from './progress';
 import { failureFrom, type ActionFailureView } from '../failure';
 import type { GpuBusyView } from './progress';
 import type { PostJobCell, SessionsResponse } from '../contract';
+
+/**
+ * 「显卡忙不忙」那一格（R31）：读法与判据在 `home/progress.ts` 的 `gpuBusyView()`，
+ * 画法只有这一份 —— 会中屏顶栏（App.tsx 的 topbar__right）与这条栏的栏底两处同款
+ * （web-gpucell-markup-duplicated）。全站没有全局进度条 —— 进度跟着各自的工作区走。
+ */
+export function GpuCell({ gpu }: { gpu: GpuBusyView }): ReactNode {
+  return (
+    <span
+      className={`gpucell ${gpu.busy ? 'gpucell--busy' : ''}`}
+      title={gpu.note}
+      data-busy={gpu.busy ? 'true' : 'false'}
+    >
+      <span className={`glyph ${gpu.mark}`} aria-hidden="true" />
+      {gpu.label}
+    </span>
+  );
+}
 
 /**
  * 常驻工作区栏（左栏那条，`home__list`）：会中屏与工作台**共用同一条**（d61829f1）——
@@ -59,19 +78,15 @@ export function WorkspaceRail({
   const [railBusy, setRailBusy] = useState(false);
   const busyOr = busy || railBusy;
 
-  /** 登记本体（`workspace_open` 动作 + 失败块 + 重取）。 */
+  /** 登记本体（`workspace_open` 动作 + 失败块 + 重取；骨架在 `./dispatch`）。 */
   const openDirNow = (dir: string): void => {
-    onFailure(null);
-    setRailBusy(true);
-    void postAction('workspace_open', { dir })
-      .then(
-        () => undefined,
-        (error) => onFailure(failureFrom(error)),
-      )
-      .then(() => {
-        setRailBusy(false);
-        onReload();
-      });
+    void runAction({
+      name: 'workspace_open',
+      args: { dir },
+      onFail: onFailure,
+      setBusy: setRailBusy,
+      settle: onReload,
+    });
   };
 
   /** 名目 → 挑了之后走哪一档（判据唯一出处 `api/sessions.ts` 的 `probeDecision()`）。 */
@@ -83,7 +98,8 @@ export function WorkspaceRail({
       onFailure(failureFrom(new Error(`该目录已不存在：${pick.dir}`)));
       return;
     }
-    if (pick.kind === 'empty' || pick.kind === 'meeting') {
+    const decision = probeDecision(pick.kind);
+    if (decision === 'empty' || decision === 'meeting') {
       openDirNow(pick.dir);
       return;
     }
@@ -172,17 +188,10 @@ export function WorkspaceRail({
         {/* 会中屏塞进来的那小块：选中工作区的读数与那颗开始录音钮（工作台不给） */}
         {detail}
 
-        {/* 忙闲一格住在这一列的末尾（R31）：读法与判据在 `home/progress.ts`
-            的 `gpuBusyView()`。全站没有全局进度条 —— 进度跟着各自的工作区走。 */}
+        {/* 忙闲一格住在这一列的末尾（R31）：读法在 `home/progress.ts` 的
+            `gpuBusyView()`，画法与顶栏共用同一份（`GpuCell`）。 */}
         <div className="home__foot">
-          <span
-            className={`gpucell ${gpu.busy ? 'gpucell--busy' : ''}`}
-            title={gpu.note}
-            data-busy={gpu.busy ? 'true' : 'false'}
-          >
-            <span className={`glyph ${gpu.mark}`} aria-hidden="true" />
-            {gpu.label}
-          </span>
+          <GpuCell gpu={gpu} />
         </div>
       </aside>
 
@@ -200,17 +209,17 @@ export function WorkspaceRail({
         />
       )}
       {picker && dirBrowse.browseError !== null && (
-        <div className="dlg__layer" role="presentation">
-          <div className="dlg">
-            <div className="dlg__title">目录浏览失败</div>
-            <div className="dlg__text">{dirBrowse.browseError}</div>
-            <div className="dlg__acts">
-              <button className="btn" type="button" onClick={() => setPicker(false)}>
-                关闭
-              </button>
-            </div>
-          </div>
-        </div>
+        <DialogFrame
+          title="目录浏览失败"
+          modal={false}
+          acts={
+            <button className="btn" type="button" onClick={() => setPicker(false)}>
+              关闭
+            </button>
+          }
+        >
+          <div className="dlg__text">{dirBrowse.browseError}</div>
+        </DialogFrame>
       )}
 
       {confirm !== null && confirm.what === 'unknown' && (
@@ -246,17 +255,13 @@ export function WorkspaceRail({
           onConfirm={() => {
             const dir = confirm.dir;
             setConfirm(null);
-            onFailure(null);
-            setRailBusy(true);
-            void postAction('workspace_remove', { dir })
-              .then(
-                () => undefined,
-                (error) => onFailure(failureFrom(error)),
-              )
-              .then(() => {
-                setRailBusy(false);
-                onReload();
-              });
+            void runAction({
+              name: 'workspace_remove',
+              args: { dir },
+              onFail: onFailure,
+              setBusy: setRailBusy,
+              settle: onReload,
+            });
           }}
           onCancel={() => setConfirm(null)}
         />

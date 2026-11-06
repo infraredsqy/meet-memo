@@ -12,14 +12,6 @@ import { workspaceOkSchema } from './sessions';
  * `status` 是 HTTP 状态码，`body` 是掩码后的应答体。
  */
 
-/** 请求信封：`{action, args}`。`args` 是对象，省略时按 `{}` 处理。 */
-export const actionRequestSchema = z
-  .object({
-    action: z.string(),
-    args: z.record(z.unknown()).default({}),
-  })
-  .strict();
-
 /**
  * 九个 `code` 各自的 `detail` **键集合**（`docs/contract.md` 4.4 的表逐条抄下来）。
  *
@@ -384,7 +376,6 @@ export const actionFixtureSchema = z
   })
   .strict();
 
-export type ActionRequest = z.infer<typeof actionRequestSchema>;
 export type ActionOk = z.infer<typeof actionOkSchema>;
 export type PostOk = z.infer<typeof postOkSchema>;
 export type TranscodeOk = z.infer<typeof transcodeOkSchema>;

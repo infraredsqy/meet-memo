@@ -198,8 +198,10 @@ describe('SSE onError 的失败块（渲染层转手）', () => {
  * 失败块的 extraLines 先对 detail 去重（web-drain-failure-double-lines）：
  * 每一行在失败块里**恰出现一次**（去重口径 = 字符串精确相等，行序保持）。
  * 直给 `FailureBlock` 钉口径，不经过任何一屏。
+ * （`kind: 'drain'` 那一档已随 d61829f1 的收尾带退场一起删掉：ActionFailureView
+ * 只剩 forbidden / unclassified / envelope 三档，去重口径由 envelope 档钉住。）
  */
-describe('失败块的去重口径（drain / envelope 两档同一把尺）', () => {
+describe('失败块的去重口径（envelope 档同一把尺）', () => {
   it('FailureBlock 直给：与 detail 相同的 extra 行去重，独有行仍渲染且行序保持', () => {
     const walk = (current: TestRenderer.ReactTestInstance): string => {
       const parts: string[] = [];
@@ -210,36 +212,7 @@ describe('失败块的去重口径（drain / envelope 两档同一把尺）', ()
       return parts.join(' ');
     };
 
-    // drain 档：detail 含一行 + 一行收尾总述；extra 复述一行 + 添一行独有行。
-    const drain = TestRenderer.create(
-      createElement(FailureBlock, {
-        failure: {
-          kind: 'drain',
-          message: '收尾没走完',
-          detail: ['收尾失败：磁盘满了', '收尾第 post 步失败：钩子抛错'],
-          fields: {},
-        },
-        logPath: null,
-        extraLines: ['收尾第 post 步失败：钩子抛错', 'log：C:\\out\\260921\\drain.log'],
-      }),
-    );
-    const failNode = drain.root.findAll(
-      (node) => `${node.props.className ?? ''}` === 'fail',
-    )[0] as TestRenderer.ReactTestInstance;
-    const drainText = walk(failNode);
-    // 复述的不重复、独有行照常渲染：去重只按精确相等，不过滤任何别的行。
-    expect(drainText.split('收尾第 post 步失败：钩子抛错').length - 1).toBe(1);
-    expect(drainText).toContain('收尾失败：磁盘满了');
-    expect(drainText).toContain('log：C:\\out\\260921\\drain.log');
-    // 行序保持：独有 extra 行排在 detail 行之后。
-    expect(drainText.indexOf('收尾第 post 步失败：钩子抛错')).toBeGreaterThan(
-      drainText.indexOf('收尾失败：磁盘满了'),
-    );
-    expect(drainText.indexOf('log：C:\\out\\260921\\drain.log')).toBeGreaterThan(
-      drainText.indexOf('收尾失败：磁盘满了'),
-    );
-
-    // envelope 档用同一套 FailureBlock：同口径去重，不偏袒哪一档。
+    // envelope 档：detail 含一行；extra 复述一行 + 添一行独有行。
     const envelope = TestRenderer.create(
       createElement(FailureBlock, {
         failure: {
@@ -259,8 +232,11 @@ describe('失败块的去重口径（drain / envelope 两档同一把尺）', ()
     const envelopeText = walk(envelopeNode);
     expect(envelopeText.split('failed_steps.post：钩子抛错').length - 1).toBe(1);
     expect(envelopeText).toContain('收尾第 post 步失败：钩子抛错');
+    // 行序保持：独有 extra 行排在 detail 行之后。
+    expect(envelopeText.indexOf('收尾第 post 步失败：钩子抛错')).toBeGreaterThan(
+      envelopeText.indexOf('failed_steps.post：钩子抛错'),
+    );
 
-    drain.unmount();
     envelope.unmount();
   });
 });

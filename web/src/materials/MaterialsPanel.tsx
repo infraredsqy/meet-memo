@@ -6,7 +6,7 @@ import {
   uploadMaterial,
   uploadMaterialFromDisk,
 } from '../api/materials';
-import { ConfirmDialog } from '../dialogs';
+import { ConfirmDialog, DialogFrame } from '../dialogs';
 import { DirPicker, useDirBrowse, type PickerPick } from '../home/DirPicker';
 import {
   dragFiles,
@@ -74,32 +74,11 @@ function SubmitTextDialog({
   };
 
   return (
-    <div className="dlg__layer" role="presentation">
-      <div className="dlg" role="dialog" aria-modal="true" aria-label="提交文字">
-        <div className="dlg__title">提交文字</div>
-        <p className="hint">
-          落成资料里的一份 Markdown：标题就是文件名（不填用贴上那一刻的时间戳），正文必填。
-        </p>
-        <input
-          className="field__input"
-          type="text"
-          value={title}
-          placeholder="标题（可不填）"
-          aria-label="标题（可不填）"
-          disabled={sending}
-          onChange={(event) => setTitle(event.target.value)}
-        />
-        <textarea
-          className="field__input mat__textinput"
-          value={text}
-          placeholder="正文（必填）"
-          aria-label="正文（必填）"
-          rows={6}
-          disabled={sending}
-          onChange={(event) => setText(event.target.value)}
-        />
-        {note !== null && <p className="picker__jumperr">{note}</p>}
-        <div className="dlg__acts">
+    <DialogFrame
+      title="提交文字"
+      label="提交文字"
+      acts={
+        <>
           <button className="btn" type="button" disabled={sending} onClick={onClose}>
             取消
           </button>
@@ -111,9 +90,32 @@ function SubmitTextDialog({
           >
             放进资料
           </button>
-        </div>
-      </div>
-    </div>
+        </>
+      }
+    >
+      <p className="hint">
+        落成资料里的一份 Markdown：标题就是文件名（不填用贴上那一刻的时间戳），正文必填。
+      </p>
+      <input
+        className="field__input"
+        type="text"
+        value={title}
+        placeholder="标题（可不填）"
+        aria-label="标题（可不填）"
+        disabled={sending}
+        onChange={(event) => setTitle(event.target.value)}
+      />
+      <textarea
+        className="field__input mat__textinput"
+        value={text}
+        placeholder="正文（必填）"
+        aria-label="正文（必填）"
+        rows={6}
+        disabled={sending}
+        onChange={(event) => setText(event.target.value)}
+      />
+      {note !== null && <p className="picker__jumperr">{note}</p>}
+    </DialogFrame>
   );
 }
 
@@ -559,32 +561,33 @@ export function MaterialsPanel({
         />
       )}
       {pickerOpen && browseError !== null && (
-        <div className="dlg__layer" role="presentation">
-          <div className="dlg">
-            <div className="dlg__title">目录浏览失败</div>
-            <div className="dlg__text">{browseError}</div>
-            <div className="dlg__acts">
-              <button className="btn" type="button" onClick={() => setPickerOpen(false)}>
-                关闭
-              </button>
-            </div>
-          </div>
-        </div>
+        <DialogFrame
+          title="目录浏览失败"
+          modal={false}
+          acts={
+            <button className="btn" type="button" onClick={() => setPickerOpen(false)}>
+              关闭
+            </button>
+          }
+        >
+          <div className="dlg__text">{browseError}</div>
+        </DialogFrame>
       )}
 
       {/* 原图查看：原样字节就是取原文件端点那一副，缩放归浏览器（服务不另做缩略文件） */}
       {viewer !== null && (
-        <div className="dlg__layer" role="presentation">
-          <div className="dlg dlg--viewer" role="dialog" aria-modal="true" aria-label={viewer}>
-            <div className="dlg__title">{viewer}</div>
-            <img className="mat__view" src={materialFileUrl(dir, viewer)} alt={viewer} />
-            <div className="dlg__acts">
-              <button className="btn" type="button" onClick={() => setViewer(null)}>
-                关闭
-              </button>
-            </div>
-          </div>
-        </div>
+        <DialogFrame
+          title={viewer}
+          label={viewer}
+          className="dlg--viewer"
+          acts={
+            <button className="btn" type="button" onClick={() => setViewer(null)}>
+              关闭
+            </button>
+          }
+        >
+          <img className="mat__view" src={materialFileUrl(dir, viewer)} alt={viewer} />
+        </DialogFrame>
       )}
     </section>
   );

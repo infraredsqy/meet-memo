@@ -1,4 +1,5 @@
 import { summariesResponseSchema, type SummariesResponse } from '../contract';
+import { ProtocolError, UnavailableError, getJsonOk } from './common';
 
 /**
  * `GET /api/summaries`：本场总结记录（`docs/contract.md` 4.7）。
@@ -14,21 +15,16 @@ import { summariesResponseSchema, type SummariesResponse } from '../contract';
 export const SUMMARIES_URL = '/api/summaries';
 
 /** 应答体形状不对（不是契约里那份 `{session_id, entries}`）。 */
-export class SummariesProtocolError extends Error {
-  readonly status: number;
-  readonly raw: string;
-
+export class SummariesProtocolError extends ProtocolError {
   constructor(status: number, raw: string, cause: unknown) {
     const reason = cause instanceof Error ? cause.message : String(cause);
-    super(`本场总结记录的应答形状不符合契约（HTTP ${status}）：${reason}`);
+    super(`本场总结记录的应答形状不符合契约（HTTP ${status}）：${reason}`, status, raw);
     this.name = 'SummariesProtocolError';
-    this.status = status;
-    this.raw = raw;
   }
 }
 
 /** 取不到（网络层失败、服务没应答）。 */
-export class SummariesUnavailableError extends Error {
+export class SummariesUnavailableError extends UnavailableError {
   constructor(cause: unknown) {
     super(`取不到本场总结记录：${cause instanceof Error ? cause.message : String(cause)}`);
     this.name = 'SummariesUnavailableError';
@@ -46,32 +42,13 @@ export interface FetchSummariesOptions {
 export async function fetchSummaries(
   options: FetchSummariesOptions = {},
 ): Promise<SummariesResponse> {
-  const doFetch = options.fetchImpl ?? fetch;
-
-  let response: Response;
-  try {
-    response = await doFetch(options.url ?? SUMMARIES_URL, { method: 'GET' });
-  } catch (cause) {
-    throw new SummariesUnavailableError(cause);
-  }
-
-  const text = await response.text();
-  if (!response.ok) {
+  return getJsonOk({
+    url: options.url ?? SUMMARIES_URL,
+    schema: summariesResponseSchema,
+    doFetch: options.fetchImpl ?? fetch,
+    unavailable: (cause) => new SummariesUnavailableError(cause),
     // 契约说它「任何状态下都 200」，因此非 2xx 是协议外的一档：如实报，不编一个空列表
     // （把取不到画成「这一场还没总结过」会让人以为记录真的没有了）。
-    throw new SummariesProtocolError(response.status, text, `HTTP ${response.status}`);
-  }
-
-  let json: unknown;
-  try {
-    json = JSON.parse(text);
-  } catch (cause) {
-    throw new SummariesProtocolError(response.status, text, cause);
-  }
-
-  const parsed = summariesResponseSchema.safeParse(json);
-  if (!parsed.success) {
-    throw new SummariesProtocolError(response.status, text, parsed.error);
-  }
-  return parsed.data;
+    protocol: (status, text, cause) => new SummariesProtocolError(status, text, cause),
+  });
 }

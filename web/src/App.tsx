@@ -67,10 +67,10 @@ import { liveView } from './live/view';
 import type { ChannelView } from './live/view';
 import { normalizeDefaultWindow } from './live/settings';
 import { clampHeartbeatInterval } from './api/heartbeat';
-import { fetchSessions } from './api/sessions';
 import { gpuBusyView } from './home/progress';
-import { initialSelection, startButtonLabel } from './home/model';
-import { WorkspaceRail } from './home/WorkspaceRail';
+import { startButtonLabel } from './home/model';
+import { loadSessionList } from './home/sessions-list';
+import { WorkspaceRail, GpuCell } from './home/WorkspaceRail';
 import { MaterialsPanel } from './materials/MaterialsPanel';
 import { SettingsDrawer } from './settings/SettingsDrawer';
 import { HomeGate } from './home/HomeGate';
@@ -477,7 +477,7 @@ export function LiveView({
       setNowMs(at);
       if (before.level === '失联' && next.level !== '失联' && before.frozenAt !== null) {
         // 恢复：转写区在中断那一格留一条断口（设计章 4.5）。
-        // 形状照 transcriptGap() 给的那一档：`[HH:MM–HH:MM] 数据已停` ——
+        // 形状照 `insertGap()` / `gapRow()` 给的那一档：`[HH:MM–HH:MM] 数据已停` ——
         // 起于冻结那一刻（frozenAt），止于恢复这一刻
         setRows((rowsNow) => insertGap(rowsNow, before.frozenAt!, '', new Date(at).toISOString()));
       }
@@ -500,20 +500,23 @@ export function LiveView({
   // 工作区栏读数（review-1 m2 起，d61829f1 扩成整份清单）：挂上这一屏就按心跳节奏取
   // 一遍 `GET /api/sessions`，把顶层 `post_jobs` 喂给全局那格「显卡忙不忙」、清单整份
   // 喂给左栏那条常驻工作区栏。取不到的那一跳（瞬态失联）手上这份照旧，下一跳再试；
-  // 周期与心跳同一个可配节奏。首份到手时给选区落座：最近一次被打开的那一场。
+  // 周期与心跳同一个可配节奏。首份到手时给选区落座：最近一次被打开的那一场
+  // （取数与选区落座的接线与工作台共用同一份：`./home/sessions-list`）。
   const postJobs = wsSessions?.post_jobs ?? [];
   useEffect(() => {
     let cancelled = false;
     const seconds = clampHeartbeatInterval(heartbeatSeconds ?? HEARTBEAT_INTERVAL_DEFAULT_SECONDS);
     const load = (): void => {
-      void fetchSessions().then(
-        (data) => {
+      void loadSessionList({
+        onList: (data) => {
           if (cancelled) return;
           setWsSessions(data);
-          setWsSelection((current) => current ?? initialSelection(data.sessions, data.recent));
         },
-        () => undefined,
-      );
+        onSelection: (seat) => {
+          if (cancelled) return;
+          setWsSelection(seat);
+        },
+      });
     };
     load();
     const timer = setInterval(load, seconds * 1000);
@@ -525,13 +528,10 @@ export function LiveView({
 
   /** 清单重取（左栏的登记动作落地后走这一条）。 */
   const reloadWs = useCallback((): void => {
-    void fetchSessions().then(
-      (data) => {
-        setWsSessions(data);
-        setWsSelection((current) => current ?? initialSelection(data.sessions, data.recent));
-      },
-      () => undefined,
-    );
+    void loadSessionList({
+      onList: setWsSessions,
+      onSelection: setWsSelection,
+    });
   }, []);
 
   // 快速总结的缺省档同样来自快照的 settings（`311f84f5`）：预选跟着服务走，
@@ -953,16 +953,10 @@ export function LiveView({
         </div>
 
         <div className="topbar__right">
-          {/* 全局只留这一格「显卡忙不忙」（R31；工作台的顶栏是另一处同款）。
-              全站没有全局进度条 —— 进度跟着各自的工作区走。 */}
-          <span
-            className={`gpucell ${gpu.busy ? 'gpucell--busy' : ''}`}
-            title={gpu.note}
-            data-busy={gpu.busy ? 'true' : 'false'}
-          >
-            <span className={`glyph ${gpu.mark}`} aria-hidden="true" />
-            {gpu.label}
-          </span>
+          {/* 全局只留这一格「显卡忙不忙」（R31）：画法与工作区栏底共用同一份
+              （`WorkspaceRail.tsx` 的 `GpuCell`）。全站没有全局进度条 ——
+              进度跟着各自的工作区走。 */}
+          <GpuCell gpu={gpu} />
           {/* 设置按钮（R32：一个设置按钮 → 网页内小窗；类名契约把「齿轮」这一档
               预留在 topbar__right，docs/ui-design.md §7.10） */}
           <button
@@ -1236,15 +1230,6 @@ export function LiveView({
           {/* 心跳迟到：一行弱提示，不出声、无横幅 */}
           {heartbeat.level === '迟到' && heartbeat.lateText !== null && (
             <div className="heartbeat heartbeat--inline">{heartbeat.lateText}</div>
-          )}
-
-          {/* 失败与拒绝：按 code 分派，detail 有哪个键显示哪个键（契约 6.7） */}
-          {failure !== null && (
-            <FailureBlock
-              failure={failure}
-              logPath={logPath}
-              extraLines={drainFailedSteps}
-            />
           )}
         </section>
       )}

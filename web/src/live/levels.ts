@@ -14,7 +14,7 @@
  * 新的事实）之后，手上那帧比它还旧就不能再顶着用。
  */
 
-import type { LevelsData, Snapshot, Source } from '../contract';
+import type { LevelsData, Source } from '../contract';
 import { dbfsToPercent } from './format';
 
 /**
@@ -106,22 +106,4 @@ export function holdFrameWhileDataStopped(
 /** 数据回来（失联解除 / 采集恢复）那一刻松手：下一帧起回到实时。 */
 export function releaseHeldFrame(): null {
   return null;
-}
-
-/**
- * 一路死掉时它的历史包络怎么画。
- *
- * 设计章 2.5 / 4.3：出事那一路的**历史包络塌成直线并冻结**，读数打叉。
- * 直线不是零高度：柱子全部落到零位线上（`ui.css` 的 `.m-ch--dead .m-env__bar`
- * 把高度压到 1px 并贴上零位线），所以这里把 15 根都置 0 交给样式去画那条直线，
- * 界面上不会出现「一半还在动」的包络。
- */
-export function deadEnvelope(count: number): number[] {
-  return new Array<number>(count).fill(0);
-}
-
-/** 「半小时的两路」是不是都没有读数 —— 给「还没开始采」那一档的占位刻度用。 */
-export function hasAnyReading(snapshot: Snapshot | null): boolean {
-  if (snapshot === null) return false;
-  return snapshot.sources.some((s) => numeric(s.level_dbfs) !== null);
 }

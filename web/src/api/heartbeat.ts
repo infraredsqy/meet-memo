@@ -5,6 +5,7 @@ import {
   heartbeatSchema,
   type Heartbeat,
 } from '../contract';
+import { createPollerLoop } from './polling';
 
 /**
  * 心跳轮询与三态判定（`docs/contract.md` 第 5 章）。
@@ -87,10 +88,10 @@ export type HeartbeatTick =
   | { kind: 'error'; error: Error; status: HeartbeatStatus };
 
 /**
- * 可配周期的心跳轮询。
+ * 可配周期的心跳轮询。排程骨架（setTimeout 自我重排、周期即改即生效）与单场状态
+ * 轮询共用同一份（`api/polling.ts`）—— 这边只管「问什么、读数交给谁」。
  *
  * 周期随快照走：`setIntervalFromSnapshot(snapshot.settings.heartbeat_interval_seconds)`。
- * 轮询用 `setTimeout` 自我重排 —— 周期改了就即时生效，不必等当前这一轮走完。
  */
 export interface HeartbeatClient {
   /** 用快照里的 `settings.heartbeat_interval_seconds` 设周期（clamp 1–60）。 */
@@ -115,23 +116,6 @@ export function createHeartbeatClient(
   const now = options.now ?? Date.now;
   const url = options.url ?? HEARTBEAT_URL;
 
-  let interval = HEARTBEAT_INTERVAL_DEFAULT_SECONDS;
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  let stopped = true;
-
-  const schedule = (): void => {
-    if (stopped) return;
-    timer = setTimeout(() => {
-      // 这一句不能少：`tick()` 是**一次性**的，排下一次是这里的活儿。
-      // 少了它整套轮询只发一次请求 —— 「多久没收到应答」就永远停在第一跳那一刻，
-      // 迟到与失联两档永远不会出现（真机上表现为：第一跳正常之后界面再无动静）。
-      void tick().then((result) => {
-        onTick(result);
-        schedule();
-      });
-    }, interval * 1000);
-  };
-
   const tick = async (): Promise<HeartbeatTick> => {
     try {
       const response = await doFetch(url, { headers: { Accept: 'application/json' } });
@@ -150,7 +134,7 @@ export function createHeartbeatClient(
           status: '失联',
         };
       }
-      const status = judgeHeartbeat(parsed.data.server_time, interval, now());
+      const status = judgeHeartbeat(parsed.data.server_time, loop.intervalSeconds(), now());
       const lagSeconds = (now() - Date.parse(parsed.data.server_time)) / 1000;
       return { kind: 'reply', heartbeat: parsed.data, status, lagSeconds };
     } catch (cause) {
@@ -162,21 +146,22 @@ export function createHeartbeatClient(
     }
   };
 
+  const loop = createPollerLoop({
+    defaultSeconds: HEARTBEAT_INTERVAL_DEFAULT_SECONDS,
+    clamp: clampHeartbeatInterval,
+    beat: async () => {
+      const result = await tick();
+      onTick(result);
+    },
+  });
+
   return {
     setIntervalFromSnapshot(seconds: number): void {
-      const next = clampHeartbeatInterval(seconds);
-      if (next === interval) return;
-      interval = next;
-      // 周期变了就重排下一次 —— 否则旧周期要等走完才换。
-      if (timer !== null) {
-        clearTimeout(timer);
-        timer = null;
-        schedule();
-      }
+      loop.setIntervalSeconds(seconds);
     },
 
     intervalSeconds(): number {
-      return interval;
+      return loop.intervalSeconds();
     },
 
     async tick(): Promise<HeartbeatTick> {
@@ -186,21 +171,15 @@ export function createHeartbeatClient(
     },
 
     start(): void {
-      if (!stopped) return;
-      stopped = false;
-      schedule();
+      loop.start();
     },
 
     stop(): void {
-      stopped = true;
-      if (timer !== null) {
-        clearTimeout(timer);
-        timer = null;
-      }
+      loop.stop();
     },
 
     running(): boolean {
-      return !stopped;
+      return loop.running();
     },
   };
 }

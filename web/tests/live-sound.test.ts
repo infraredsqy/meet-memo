@@ -7,7 +7,7 @@ import {
   type GainLike,
   type OscillatorLike,
 } from '../src/live/sound';
-import { deadEnvelope, hasAnyReading, holdFrameWhileDataStopped, meterView, releaseHeldFrame, type StoredLevels } from '../src/live/levels';
+import { holdFrameWhileDataStopped, meterView, releaseHeldFrame, type StoredLevels } from '../src/live/levels';
 import { dbfsToPercent } from '../src/live/format';
 import { liveView } from '../src/live/view';
 import { CAPTURE_STOP_CONFIRMATIONS, initialHeartbeatState } from '../src/live/heartbeat';
@@ -182,26 +182,8 @@ describe('meterView：柱高来自服务推的读数', () => {
     expect(view.envelope).toEqual([0, 50, 100, 0, 100]);
   });
 
-  it('死掉的那一路：包络塌成 15 根零位线', () => {
-    expect(deadEnvelope(15)).toEqual(new Array(15).fill(0));
-  });
-
   it('没有读数时读数是 null（由组件退成 `—`）', () => {
     expect(meterView(makeSource('mic', { level_dbfs: null }), null, 7).readout).toBeNull();
-  });
-});
-
-describe('hasAnyReading', () => {
-  it('两路都没读数时是假（空闲态「未探测」那一档）', () => {
-    const snapshot = makeSnapshot({
-      session: null,
-      sources: [
-        makeSource('mic', { health: 'unprobed', level_dbfs: null }),
-        makeSource('loopback', { health: 'unprobed', level_dbfs: null }),
-      ],
-    });
-    expect(hasAnyReading(snapshot)).toBe(false);
-    expect(hasAnyReading(null)).toBe(false);
   });
 });
 

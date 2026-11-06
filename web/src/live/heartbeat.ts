@@ -13,8 +13,7 @@
  * （任务书「边界」第 6 条）——它的处置在下面 `captureStalled` 里写清楚了。
  */
 
-import type { HeartbeatStatus } from '../api/heartbeat';
-import { lateHeartbeatText } from '../api/heartbeat';
+import { lateHeartbeatText, type HeartbeatTick } from '../api/heartbeat';
 import type { Heartbeat, TopState } from '../contract';
 import { formatElapsed, formatWallClock, formatWallClockSeconds } from './format';
 
@@ -71,13 +70,9 @@ export function initialHeartbeatState(): HeartbeatState {
   };
 }
 
-/** 一次应答或一次失败的读数（与 `api/heartbeat.ts` 的 `HeartbeatTick` 同形）。 */
-export type HeartbeatReading =
-  | { kind: 'reply'; heartbeat: Heartbeat; status: HeartbeatStatus; lagSeconds: number }
-  | { kind: 'error'; error: Error; status: HeartbeatStatus };
-
 /**
- * 把一次读数并进本地态（纯函数）。
+ * 把一次读数并进本地态（纯函数）。读数就是 `api/heartbeat.ts` 的 `HeartbeatTick`
+ * —— 轮询回调交来的那份，形状只有一处出处。
  *
  * 四条迁移：
  *
@@ -93,7 +88,7 @@ export type HeartbeatReading =
  */
 export function applyHeartbeatReading(
   state: HeartbeatState,
-  reading: HeartbeatReading,
+  reading: HeartbeatTick,
   nowMs: number,
 ): HeartbeatState {
   const lastReplyAt = reading.kind === 'reply' ? reading.heartbeat.server_time : state.lastReplyAt;
@@ -204,7 +199,7 @@ export function lostBanner(state: HeartbeatState, intervalSeconds: number): Lost
  *
  * `seconds_since_last_tick` 是「多久没收到帧」的原始读数；据此倒推出**最后一次收到帧**
  * 的墙钟时刻（分钟级）。它与失联横幅互斥（HTTP 不通才是失联），与致命级横幅也不同屏
- * —— 判据见 `alertsHiddenByHeartbeat()`。
+ * —— 失联那条判据见 `lostPredicate()`。
  */
 export interface CaptureStalledView {
   /** 已经多少秒没收到任何一路的音频帧。 */
@@ -274,18 +269,6 @@ export function lostPredicate(state: HeartbeatState): boolean {
 }
 
 /**
- * 心跳失联时整块告警区收不收。
- *
- * 收。两句话不得同屏（设计章 4.5）：这时候屏幕上说「出事了」的地方只有全屏横幅。
- *
- * **一次应答都没成功过时不算**（`lastReplyAt` 还是空）：那一档「我还没问到」，
- * 收掉告警区会把一条真实存在的致命告警藏起来。判据 = `lostPredicate()`。
- */
-export function alertsHiddenByHeartbeat(state: HeartbeatState): boolean {
-  return lostPredicate(state);
-}
-
-/**
  * 时长那一格在失联时改标签 `最后读数`，数字停在最后一次应答那一刻。
  *
  * 停的那个数取本次**会话已录的秒数**（`session.elapsed_seconds`），服务侧一进
@@ -298,20 +281,4 @@ export function clockLabelWhileLost(): string {
 /** 失联时那条「最后读数」的数字：沿用最后一份快照的已录时长。 */
 export function frozenClockValue(elapsedSeconds: number | null | undefined): string {
   return formatElapsed(elapsedSeconds ?? 0);
-}
-
-/** 转写区在中断那一格留的断口：`[20:57–20:58] 采集中断`。 */
-export interface TranscriptGap {
-  from: string;
-  to: string;
-  text: string;
-}
-
-export function transcriptGap(frozenAt: string | null, recoveredAtIso: string): TranscriptGap | null {
-  if (frozenAt === null) return null;
-  return {
-    from: formatWallClock(frozenAt),
-    to: formatWallClock(recoveredAtIso),
-    text: '采集中断',
-  };
 }

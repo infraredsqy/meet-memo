@@ -22,15 +22,12 @@ export type FailureDetail = Record<string, unknown>;
  *   画出来是界面自己编的（复审抓到的那一格）。
  * - `envelope`：走到了端点，服务回了失败信封，`code` 与 `detail` 都按第 4 章读。
  *
- * `forbidden` / `envelope` 之外还有两档（web-client-failure-fabricated-code）：
+ * `forbidden` / `envelope` 之外还有一档（web-client-failure-fabricated-code）：
  *
  * - `unclassified`：**没有失败信封、也没有 code** 的网络/协议错误（请求根本没拿到
  *   服务给的那份信封 —— 应答形状不对、连接被掐断这类）。早先把它折成
  *   `code: 'invalid_setting'`，那个 code 服务在这条路径上根本不会回，画出来是
  *   界面自己编的（复审抓到的那一格）；SSE onError 同理走它。
- * - `drain`：收尾失败那一档（服务自己的收尾出事），明细摊平逐条给，不挂 `code`
- *   —— `persist_failed` 只在服务真回失败信封时（如 settings_update 写盘失败）
- *   经 `envelope` 档出现，界面不替它补。
  *
  * **两样都留着**：`lines` 是摊平后给人看的（通用失败块直接用），`fields` 是 `detail`
  * 原文（按 `code` + `detail` 里**有哪些键**分派画法的那几条要读它 —— 例如会中总结的
@@ -40,7 +37,6 @@ export type FailureDetail = Record<string, unknown>;
 export type ActionFailureView =
   | { kind: 'forbidden'; status: number; text: string }
   | { kind: 'unclassified'; text: string }
-  | { kind: 'drain'; message: string; detail: string[]; fields: FailureDetail }
   | {
       kind: 'envelope';
       code: ErrorCode;

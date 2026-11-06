@@ -50,34 +50,6 @@ export function FailureBlock({
       </div>
     );
   }
-  if (failure.kind === 'drain') {
-    // 收尾失败那一档：形状照信封档，但首行没有 code 芯片（这个 code 服务没有回过）。
-    return (
-      <div className="fail">
-        <div className="fail__why">{failure.message}</div>
-        {failure.detail.length > 0 && (
-          <ul className="fail__next">
-            {failure.detail.map((line) => (
-              <li key={line}>{line}</li>
-            ))}
-          </ul>
-        )}
-        {extraUnique.length > 0 && (
-          <ul className="fail__next">
-            {extraUnique.map((line) => (
-              <li key={line}>{line}</li>
-            ))}
-          </ul>
-        )}
-        {logPath !== null && (
-          <>
-            <code className="codeblock">{logPath}</code>
-            <div className="fail__log">log：{logPath}</div>
-          </>
-        )}
-      </div>
-    );
-  }
   return (
     <div className="fail">
       <div className="fail__why">

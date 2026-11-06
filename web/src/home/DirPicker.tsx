@@ -83,9 +83,7 @@ export function useDirBrowse(withFiles: boolean): {
         (data) => setBrowse(data),
         (error) => {
           const view = failureFrom(error);
-          setBrowseError(
-            view.kind === 'envelope' || view.kind === 'drain' ? view.message : view.text,
-          );
+          setBrowseError(view.kind === 'envelope' ? view.message : view.text);
         },
       );
     },
@@ -106,8 +104,7 @@ export function useDirBrowse(withFiles: boolean): {
         },
         (error) => {
           const view = failureFrom(error);
-          const message =
-            view.kind === 'envelope' || view.kind === 'drain' ? view.message : view.text;
+          const message = view.kind === 'envelope' ? view.message : view.text;
           return `跳不过去：${message}`;
         },
       ),

@@ -6,6 +6,7 @@ import {
   type MaterialUploadOk,
   type MaterialsList,
 } from '../contract/index';
+import { HttpRejectError, ProtocolError, UnavailableError, getJsonOk, readFailureEnvelope } from './common';
 
 /**
  * 会议资料的四条端点（`docs/contract.md` 4.12，资料节点 285bf58c）与选择器文件模式
@@ -38,21 +39,16 @@ export function materialFileUrl(dir: string, name: string): string {
 }
 
 /** 应答体形状不对。 */
-export class MaterialsProtocolError extends Error {
-  readonly status: number;
-  readonly raw: string;
-
+export class MaterialsProtocolError extends ProtocolError {
   constructor(what: string, status: number, raw: string, cause: unknown) {
     const reason = cause instanceof Error ? cause.message : String(cause);
-    super(`${what}的应答形状不符合契约（HTTP ${status}）：${reason}`);
+    super(`${what}的应答形状不符合契约（HTTP ${status}）：${reason}`, status, raw);
     this.name = 'MaterialsProtocolError';
-    this.status = status;
-    this.raw = raw;
   }
 }
 
 /** 取不到（网络层失败、服务没应答）。 */
-export class MaterialsUnavailableError extends Error {
+export class MaterialsUnavailableError extends UnavailableError {
   constructor(what: string, cause: unknown) {
     super(`取不到${what}：${cause instanceof Error ? cause.message : String(cause)}`);
     this.name = 'MaterialsUnavailableError';
@@ -60,21 +56,10 @@ export class MaterialsUnavailableError extends Error {
 }
 
 /** 服务回了失败信封的 HTTP 拒答（4.12 的 `material_missing` / 寻址与盘上两档等）。 */
-export class MaterialsHttpError extends Error {
-  readonly status: number;
-  /** 失败信封的 `code`；读不出信封就是 `null`。 */
-  readonly code: string | null;
-  /** 失败信封的 `message` 原话；读不出信封就是 `null`。 */
-  readonly note: string | null;
-  readonly raw: string;
-
+export class MaterialsHttpError extends HttpRejectError {
   constructor(status: number, code: string | null, note: string | null, raw: string) {
-    super(note ?? `会议资料被拒：HTTP ${status}`);
+    super(note ?? `会议资料被拒：HTTP ${status}`, status, code, note, raw);
     this.name = 'MaterialsHttpError';
-    this.status = status;
-    this.code = code;
-    this.note = note;
-    this.raw = raw;
   }
 }
 
@@ -91,17 +76,9 @@ export class MaterialsForbiddenError extends Error {
   }
 }
 
-/** 4xx/5xx 信封读法：`code` / `message` 读得出就带走，整份信封读不出就都 `null`。 */
+/** 4xx/5xx 信封读法走公共的那一份（`api/common.ts`），这里只管把它装进自己的错误类。 */
 function materialsHttpError(status: number, text: string): MaterialsHttpError {
-  let code: string | null = null;
-  let note: string | null = null;
-  try {
-    const body = JSON.parse(text) as { code?: unknown; message?: unknown };
-    if (typeof body.code === 'string') code = body.code;
-    if (typeof body.message === 'string' && body.message !== '') note = body.message;
-  } catch {
-    // 非 JSON：两格都留在 null，message 走固定话术
-  }
+  const { code, note } = readFailureEnvelope(text);
   return new MaterialsHttpError(status, code, note, text);
 }
 
@@ -147,28 +124,14 @@ export async function fetchMaterials(
   dir: string,
   options: MaterialsRequestOptions = {},
 ): Promise<MaterialsList> {
-  const doFetch = options.fetchImpl ?? fetch;
-  let response: Response;
-  try {
-    response = await doFetch(materialsUrl(dir), { method: 'GET' });
-  } catch (cause) {
-    throw new MaterialsUnavailableError('资料清单', cause);
-  }
-  const text = await response.text();
-  if (!response.ok) {
-    throw materialsHttpError(response.status, text);
-  }
-  let json: unknown;
-  try {
-    json = JSON.parse(text);
-  } catch (cause) {
-    throw new MaterialsProtocolError('资料清单', response.status, text, cause);
-  }
-  const parsed = materialsListSchema.safeParse(json);
-  if (!parsed.success) {
-    throw new MaterialsProtocolError('资料清单', response.status, text, parsed.error);
-  }
-  return parsed.data;
+  return getJsonOk({
+    url: materialsUrl(dir),
+    schema: materialsListSchema,
+    doFetch: options.fetchImpl ?? fetch,
+    unavailable: (cause) => new MaterialsUnavailableError('资料清单', cause),
+    protocol: (status, text, cause) => new MaterialsProtocolError('资料清单', status, text, cause),
+    httpError: (status, text) => materialsHttpError(status, text),
+  });
 }
 
 /**
