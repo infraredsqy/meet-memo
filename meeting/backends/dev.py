@@ -11,7 +11,7 @@
    （缺省 `DEV_FAULT_DEFAULT_SECONDS`）；同一路再次注入**替换前一次**重新计时。
    三档故障都不动 `top_state` 的迁移路径——能不能回 `recording` 由 `alerts.py` 判定。
 
-它**不写真实音频**，`finalize()` / `transcode()` 只登记（收尾第 1、2 步记 `skipped`）。
+它**不写真实音频**，`finalize()` 只登记（收尾第 1 步记 `skipped`）。
 
 `DevTranscriberBackend`（`transcriber.backend = dev` 按 **key 分流**解析到它，两档互不影响）
 是会中能出合成行的替身：不读盘、不加载模型，`stop()` 后一行不再产。**首发延迟取 2.0 秒**：
@@ -91,6 +91,9 @@ class DevCaptureBackend:
     #: 帧间隔的声明位（**类属性形态**，runtime 在 `bind()` 之后读它）
     frame_interval = DEV_FRAME_INTERVAL_SECONDS
 
+    #: 能力声明（`registry.capabilities_of()` 读它）：不写真实音频，两项收尾能力为假
+    writes_real_audio = False
+
     def __init__(self) -> None:
         self.seed = DEV_LEVEL_SEED
         self._emit: Callable[[Any], None] | None = None
@@ -103,9 +106,8 @@ class DevCaptureBackend:
         self._sources: tuple[str, ...] = ("mic", "loopback")
         self._mode = "both"
         self._session_dir: str | None = None
-        #: 登记（不写真实音频）：两次收尾调用各记一笔
+        #: 登记（不写真实音频）：收尾调用记一笔
         self.finalize_calls = 0
-        self.transcode_calls = 0
         self.emitted_frames = 0
         #: 每路一份的合成电平增量缓存（`source → (rng, 相位, 已生成的值)`）：
         #: `level_sequence()` 的取数位用 —— `_run()` 每拍只取末位，过去每次都从种子
@@ -164,11 +166,6 @@ class DevCaptureBackend:
         """**只登记**（不写真实音频）：音频字节的写入归 `dca4539b`。"""
         self.finalize_calls += 1
         _log.info("dev 替身 finalize()：只登记，不写真实音频（session=%s）", self._session_dir)
-
-    def transcode(self) -> None:
-        """**只登记**（没有真实音频可转码）。"""
-        self.transcode_calls += 1
-        _log.info("dev 替身 transcode()：只登记，不写真实音频")
 
     # -- 故障注入（dev-only 动作的唯一入口） ------------------------------
 

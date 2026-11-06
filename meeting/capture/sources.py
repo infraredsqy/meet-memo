@@ -17,7 +17,10 @@ from __future__ import annotations
 import logging
 import queue
 import threading
-from typing import Any, Iterable
+from typing import TYPE_CHECKING, Any, Iterable
+
+if TYPE_CHECKING:
+    import numpy as np  # noqa: F401 - 只进注解（numpy 在函数体内惰性 import，见模块说明）
 
 from meeting.capture.devices import (
     PROBE_CHANNELS,

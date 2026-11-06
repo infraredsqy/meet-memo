@@ -368,8 +368,8 @@ def test_start_refuses_when_no_endpoint_can_be_opened():
     assert CaptureUnavailable is capture_module.CaptureUnavailable
 
 
-def test_finalize_transcode_and_stop_are_safe_before_any_session():
-    """一场都没开就收尾（`start()` 抛错之后那条路）：三件套不抛错、不复用什么会话。"""
+def test_finalize_and_stop_are_safe_before_any_session():
+    """一场都没开就收尾（`start()` 抛错之后那条路）：不抛错、不复用什么会话。"""
     backend = capture_module.CaptureBackend(
         list_inputs=lambda: [],
         list_renders=lambda: [],
@@ -377,7 +377,6 @@ def test_finalize_transcode_and_stop_are_safe_before_any_session():
         test_open_loopback=lambda endpoint: refuse_attempt(),
     )
     assert backend.finalize() is None
-    assert backend.transcode() is None
     assert backend.stop() is None
 
 

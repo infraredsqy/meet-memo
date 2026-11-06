@@ -9,9 +9,9 @@
 产品调用方，已随收尾第 4 步的退场一并删除：**「跑会后一套」的产品入口只剩
 `meeting post` 这一条**。
 
-类的 `__module__` 是 `meeting.backends.post` —— `registry.capabilities_of()` 靠它区分
-替身与本实现（写进别的模块名下会被当成替身）。**不实现 `finalize` / `transcode`**：
-那两项是采集后端的能力，采集侧那两步的闸门只看采集实现。
+**不实现 `finalize` / `transcode`**：那两项是采集后端的能力，采集侧那两步的闸门只看采集
+实现——`registry.capabilities_of()` 按实现自己声明的能力位（`writes_real_audio`）回答，
+本类不声明，两项照旧为假。
 """
 
 from __future__ import annotations

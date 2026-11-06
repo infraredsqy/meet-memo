@@ -20,10 +20,14 @@ import logging
 import os
 import threading
 import time
-from typing import Any, Callable, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Callable, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    import numpy as np  # noqa: F401 - 只进注解（numpy 在函数体内惰性 import）
 
 from meeting.backends.base import (
     DEFAULT_FRAME_INTERVAL_SECONDS,
+    SOURCE_IDS,
     FrameGap,
     LevelFrame,
     SourceFacts,
@@ -32,13 +36,10 @@ from meeting.backends.base import (
 from meeting.capture.archive import PcmArchiveWriter, SAMPLE_RATE, SAMPLE_WIDTH
 from meeting.capture.gaps import FrameGapDetector
 from meeting.capture.levels import frame_level
-from meeting.session import archive_name, next_segment_number, segment_archive_paths
+from meeting.session import archive_name, next_segment_number
 from meeting.state import now_iso
 
 _log = logging.getLogger("meeting.capture.engine")
-
-#: 两路（`mic` = 本地、`loopback` = 远端）；口径与 `meeting.backends.base.SOURCE_IDS` 一致
-SOURCE_IDS: tuple[str, ...] = ("mic", "loopback")
 
 #: `start()` 收到的三种模式（未选中的那一路**不读、不发帧**，但按整段时间写静音）
 CAPTURE_MODES: tuple[str, ...] = ("both", "mic", "loopback")
@@ -228,6 +229,11 @@ class _SourceWorker:
         一个都不动（「一路出事另一路照跑」就是这么落地的）。用户主动关掉的那一路**不走**
         这条报障路：读线程转去跑静音节拍器。
 
+        关路动作可以落进「顶层检查已过、`read()` 已进」的那一瞬（`deactivate()` 置位并停源，
+        停源让这一次 `read()` 交回 `None` 或抛错）——这一拍是停源的瞬时读空，不是「流结束」：
+        两个分支都回循环顶交给静音节拍器，读线程不在这里死（死了 `reactivate()` 就没有
+        「正跑在节拍器上的读线程」可接，重开的那一路永远录不到内容）。
+
         **源每一轮现取**（`self.source_impl`，不在循环外缓存）：用户关掉再重新打开
         （`deactivate()` / `reactivate()`）时读线程一直在原地转，缓存下来的旧源会让它
         一直读那条已经关掉的流 —— 于是「重新打开」这条路上什么都不恢复。
@@ -241,13 +247,18 @@ class _SourceWorker:
             try:
                 data = source.read(READ_POLL_SECONDS)
             except Exception as exc:  # noqa: BLE001 - 采集侧的任何读错都如实报成 SourceLost
-                if not self._user_closed.is_set():
-                    self._lose(f"{type(exc).__name__}: {exc}")
+                if self._user_closed.is_set():
+                    # 关路动作恰好落在读的中途：停源引发的读错不是故障，交静音节拍器接管
+                    continue
+                self._lose(f"{type(exc).__name__}: {exc}")
                 return
             if data is None:
                 if not self._user_closed.is_set():
                     self._lose("这一路的采集流已经结束")
-                return
+                    return
+                # 关路动作恰好落在顶层检查之后、read() 之中：停源让 read() 交回 None，
+                # 这不是「流结束」，回循环顶走静音节拍器（与顶层「已关」分支同一条路）
+                continue
             if not data:
                 continue
             self._feed(data)
@@ -335,7 +346,7 @@ class _SourceWorker:
 
 
 class CaptureSession:
-    """一场会话的采集引擎：两路读侧 / 写侧 / 0.5 秒电平刻度，收尾 `finalize()`；`transcode()` 是采集后端的协议成员。
+    """一场会话的采集引擎：两路读侧 / 写侧 / 0.5 秒电平刻度，收尾 `finalize()`。
 
     生命周期（`meeting/service/runtime.py` 的调用顺序）：构造时**先定本段段号、再把两路的
     段归档文件建出来**并起写线程（此刻还没有读侧）——次序不能反：`open_pcm()` 是截断写，
@@ -343,8 +354,8 @@ class CaptureSession:
     本段起点戳；`pause()` / `resume()` 暂停与继续（暂停期间写静音不录内容，段不切段）；
     `deactivate_source()` / `activate_source()` 用户关 / 重开某一路（关掉那路改写静音、
     不报 `SourceLost`）；`finalize()` 停流 + join + 关文件 + `fsync`，结出在录时长（权威数
-    只从写侧的字节计数来）；`transcode()` 各段 PCM → MP3（转不动原样上抛，PCM 留着）；
-    `stop()` 幂等收场。
+    只从写侧的字节计数来）；各段 PCM → MP3 的转码归 `meeting/capture/transcode.py` 的
+    独立工序（flush 落定自动起，不占收尾序列）；`stop()` 幂等收场。
 
     段记录（`segment_records()` / `audio_duration_seconds()`）由服务侧落进 `session.json`；
     本类只管记对，不做任何墙钟核对（第 6 条：元信息除权威时长外一律不当判据）。
@@ -577,27 +588,6 @@ class CaptureSession:
                 for source in SOURCE_IDS
             ),
         )
-
-    def transcode(self) -> None:
-        """采集后端协议成员：各段 PCM → MP3。**不做决定论的口径**，转不动就抛。
-
-        （转码已摘出收尾序列：服务侧那道独立工序走 `meeting/capture/transcode.py` 的
-        逐段凭据判据，不再调本方法；本方法保留为后端协议的成员。）
-
-        逐段转（`meeting/session.py` 枚举出的**整场**段文件——续接过的会每路多段，
-        旧段与新段一并转；旧段 MP3 已在的也照转一遍，产物内容不变）。判据照旧是
-        `convert_to_mp3()` 的空文件口径：0 字节的段不产出 MP3；写满静音的段字节非空，
-        照转（盘上事实如此，产物里就是一段静音）。
-        """
-        # 函数内 import：转码这一层是「可以整块换掉」的（测试拿它验失败那一档）
-        from meeting.capture.archive import convert_to_mp3, mp3_path_for
-
-        produced: list[str] = []
-        for source in SOURCE_IDS:
-            for pcm_path in segment_archive_paths(self.session_dir, source):
-                if convert_to_mp3(pcm_path, mp3_path_for(pcm_path)):
-                    produced.append(mp3_path_for(pcm_path).name)
-        _log.info("收尾转码完成：%s（产出 %s）", self.session_dir, produced or "无")
 
     def stop(self) -> None:
         """幂等收场：没落过盘就先 `finalize()`，再什么都不做（进程关停时调它）。"""

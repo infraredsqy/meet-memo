@@ -41,8 +41,11 @@ class CaptureUnavailable(RuntimeError):
 class NullCaptureBackend:
     """显式配 `null` 时的采集替身：**两路都 `unprobed`**，`start` 抛 `capture_unavailable`。
 
-    `finalize()` / `transcode()` / `stop()` 是安全空实现。
+    `finalize()` / `stop()` 是安全空实现。
     """
+
+    #: 能力声明（`registry.capabilities_of()` 读它）：不写真实音频，两项收尾能力为假
+    writes_real_audio = False
 
     def __init__(self) -> None:
         # 帧间隔的声明位（协议默认 0.5s）
@@ -72,9 +75,6 @@ class NullCaptureBackend:
         raise CaptureUnavailable()
 
     def finalize(self) -> None:
-        """安全空实现。"""
-
-    def transcode(self) -> None:
         """安全空实现。"""
 
     def stop(self) -> None:

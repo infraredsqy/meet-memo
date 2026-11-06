@@ -161,9 +161,6 @@ class CaptureBackend(Protocol):
     def finalize(self) -> None:
         """收尾的落盘（可抛错，runtime 如实登记）。"""
 
-    def transcode(self) -> None:
-        """收尾的转码（可抛错，runtime 如实登记）。"""
-
     def stop(self) -> None:
         """停采集。"""
 

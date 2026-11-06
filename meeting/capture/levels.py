@@ -20,6 +20,11 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import numpy as np  # noqa: F401 - 只进注解（numpy 在函数体内惰性 import，见模块说明）
+
 #: 全零 / 空窗口兜底的 dBFS（静音窗口必须落到 `alert.silence_dbfs` 默认值 `-60` 以下）
 SILENCE_DBFS = -120.0
 

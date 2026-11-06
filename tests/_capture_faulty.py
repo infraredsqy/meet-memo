@@ -12,9 +12,8 @@
   - **本文件带进场的是「真后端 + 假源」这一对搭档**：`FaultyCaptureBackend` 继承生产类
     `meeting.backends.capture.CaptureBackend`，只把「端点表 / 试开 / 造源」三个接缝换成
     假件；`probe()` / `start()` / 归档 / 电平刻度 / 收尾各步走的都是生产代码。`registry`
-    的 `capabilities_of()` 按实现类的 `__module__` 判替身（只认 `meeting.backends.null` /
-    `meeting.backends.dev`），本类的 `__module__` 是 `tests._capture_faulty`，两项收尾能力
-    如实为 `True` —— 收尾第 1、2 步因此真的调它。
+    的 `capabilities_of()` 按实现自己声明的能力位（`writes_real_audio`）判收尾能力，
+    本类从生产类继承到的就是 `True`，两项收尾能力如实为真 —— 收尾第 1 步因此真的调它。
 
 **可预期样本序列**（核对的根基）：每一路的每一块内容由 `chunk_bytes(source, index)` 一处
 定死 —— 样本常值携带**块号**（mic 基值 2000、loopback 基值 12000，避免两路混ReadStream时
@@ -250,8 +249,8 @@ class FaultyCaptureBackend(CaptureBackend):
 
     生产路径上只换三样：端点表（本模块的两条假端点）、试开（能打开且有波形的结果）、
     造源（`ScriptedSource`：一路可在第 N 块后抛错）。其余 —— `probe()` 的挑选策略、
-    `start()` 的抛错口径、归档写线程、电平刻度、收尾 `finalize()` / `transcode()` ——
-    全是生产代码。
+    `start()` 的抛错口径、归档写线程、电平刻度、收尾 `finalize()` 与 flush 落定后自动起
+    的转码独立工序 —— 全是生产代码。
 
     `created` 记下造出来的每一路假源（`fed` 是核对里「喂进去的块数」的来源）；
     `endpoints` 记下每一路挑到的假端点（对快照 `device_name` 的交叉核对用）。

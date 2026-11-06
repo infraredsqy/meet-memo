@@ -317,11 +317,10 @@ class FakePipeline:
         return note
 
 
-def stub_backend(pipeline: FakePipeline, *, segment_timeout: float = 20.0) -> TranscriberBackend:
+def stub_backend(pipeline: FakePipeline) -> TranscriberBackend:
     """把替身流水线挂进一个真 `TranscriberBackend`（只换「流水线」那一环）。"""
     backend = TranscriberBackend()
     backend._pipeline = pipeline
-    backend._segment_timeout = float(segment_timeout)
     return backend
 
 

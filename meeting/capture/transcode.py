@@ -23,11 +23,14 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
 from meeting.backends.base import SOURCE_IDS
+# 归档 PCM 的形状只认**一个口径来源**：`meeting/capture/archive.py`（同款先例见
+# `meeting/asr/pipeline.py` 顶部）——这里不再抄第二份，防两处各自漂移。
+from meeting.capture.archive import EMPTY_PCM_BYTES, SAMPLE_RATE, SAMPLE_WIDTH
+from meeting.state import now_iso
 
 _log = logging.getLogger("meeting.capture.transcode")
 
@@ -48,11 +51,9 @@ LEDGER_KIND = "transcode-ledger"
 #: 模式版本（读方不认识就拒收，不猜）
 SCHEMA_VERSION = 1
 
-#: 空 PCM 的判据（与 `capture.archive.EMPTY_PCM_BYTES` 同一条：装不下一个 int16 样本）
-EMPTY_PCM_BYTES = 2
-
-#: PCM 的形状（16k / 单声道 / int16 → 每秒 32000 字节；与 `capture.archive` 同一条口径）
-PCM_BYTES_PER_SECOND = 32000
+#: PCM 的形状（16k / 单声道 / int16 → 每秒 32000 字节；`SAMPLE_RATE` / `SAMPLE_WIDTH`
+#: 与空段判据 `EMPTY_PCM_BYTES` 都来自 `capture/archive` 那一处口径）
+PCM_BYTES_PER_SECOND = SAMPLE_RATE * SAMPLE_WIDTH
 
 #: 逐段结果档：`transcoded`（转出了 MP3）/ `skipped`（空段，无产物可产）/ `failed`（没转成）
 ROW_TRANSCODED = "transcoded"
@@ -71,11 +72,6 @@ STATUS_STATES: tuple[str, ...] = (STATE_RUNNING, STATE_PAUSED, STATE_DONE, STATE
 
 #: 暂停旗标的轮询间隔（秒）：后台工序在段边界等旗标摘下，等的是事件、轮询只是它的腿
 PAUSE_POLL_SECONDS = 0.05
-
-
-def now_iso() -> str:
-    """现在的 ISO 时刻（本地时区、秒精度；与离线层 `_now_iso()` 同形）。"""
-    return datetime.now().isoformat(timespec="seconds")
 
 
 def credential_name(source: str, segment: int) -> str:

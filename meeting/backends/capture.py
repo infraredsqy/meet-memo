@@ -11,8 +11,9 @@
   - 用户在录音前改了配置打 `reprobe`，runtime 再调一次 `probe()` 就重新探测（`probe()` 幂等）；
   - `start()` 起**两路各自独立**的采集（读侧在 `sources.py`、写侧与电平刻度在
     `meeting/capture/engine.py`），归档写进 `start()` 收到的 `session_dir`；
-  - `finalize()` 停流 + join + 关文件 + `fsync`，`transcode()` 把各段 PCM 转成 MP3
-    （收尾第 1、2 步），`stop()` 幂等收场（进程关停时调）；
+  - `finalize()` 停流 + join + 关文件 + `fsync`（收尾第 1 步），`stop()` 幂等收场
+    （进程关停时调）；各段 PCM → MP3 的转码归 `meeting/capture/transcode.py` 的独立
+    工序（flush 落定自动起，判据是 `capabilities_of()` 的 `transcode` 能力位）；
   - `pause()` / `resume()` / `deactivate_source()` / `activate_source()` 是暂停与
     「用户关一路 / 重新打开一路」的服务层出口（写静音、不录内容；告警语义不动），
     动作面入口是 `pause` / `resume` / `set_source` 三个动作（`meeting/service/routes.py`）。
@@ -54,10 +55,15 @@ except ImportError:  # pragma: no cover - null.py 一直在，这里只是不让
 
 
 class CaptureBackend:
-    """真采集后端：`probe()` 真探测，`start()` 真起两路，收尾真落盘与真转码。"""
+    """真采集后端：`probe()` 真探测，`start()` 真起两路，收尾真落盘。"""
 
     #: 帧间隔的声明位（协议默认 0.5s：服务侧的心跳窗口是 `max(2.0s, 3 × frame_interval)`）
     frame_interval: float = DEFAULT_FRAME_INTERVAL_SECONDS
+
+    #: **能力声明**（`registry.capabilities_of()` 读它）：本类写真实音频归档，
+    #: `finalize` 与 `transcode`（转码独立工序读本类写下的 PCM）两项收尾能力因此为真。
+    #: 替身（`null` / `dev`）不声明这一格，两项照旧为假。
+    writes_real_audio = True
 
     def __init__(
         self,
@@ -236,17 +242,6 @@ class CaptureBackend:
         if session is None:  # pragma: no cover - 收尾只在采集能力在场时被调
             return
         session.finalize()
-
-    def transcode(self) -> None:
-        """两路 PCM → MP3（转不动就原样抛错，PCM 留着）。
-
-        采集后端的协议成员；转码已摘出收尾序列，服务侧的独立工序
-        （`meeting/capture/transcode.py`）不再调它。
-        """
-        session = self.session
-        if session is None:  # pragma: no cover - 同上
-            return
-        session.transcode()
 
     def stop(self) -> None:
         """停采集（**幂等**）：没落过盘就先 `finalize()`，再清掉这一场。"""

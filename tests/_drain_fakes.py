@@ -318,6 +318,9 @@ BLOCK_SECONDS = _block_seconds_from_env()
 class FakeCaptureBackend:
     """采集假件：`probe()` 如实报「没有探测结果」，`finalize()` / `transcode()` 可控拖长或抛错。
 
+    它在收尾用例里顶的是**真采集后端**那一档（flush 要真的调它的 `finalize()`），
+    因此声明能力位 `writes_real_audio = True`（`registry.capabilities_of()` 读它）。
+
     构造参数全部有缺省（registry 无参实例化后端，**构造函数不许有必填参数**）：
 
       - `finalize_delay_seconds`：`finalize()` 睡多久再返回（`0` = 立刻返回）；
@@ -336,6 +339,9 @@ class FakeCaptureBackend:
     """
 
     frame_interval = 0.1
+
+    #: 能力声明（`registry.capabilities_of()` 读它）：收尾用例里它顶的是真采集后端
+    writes_real_audio = True
 
     def __init__(
         self,

@@ -14,9 +14,11 @@
 | `bind(emit, *, config)` | `probe()` 之前调一次。`emit` 是事实出口，`config` 是只读配置视图 |
 | `probe() -> list[SourceProbe]` | 枚举并试开设备，两路各一条（`mic` / `loopback`） |
 | `start(mode, session_dir)` | 按定下的 `mode` 起采集、开始写归档。单路起不来不抛错：只给那一路发一条 `SourceLost`，另一路照跑；该采的路全部起不来才抛 `CaptureUnavailable`。抛错前自己拉起的线程自己收干净 |
+| `writes_real_audio` | **能力声明**（类属性）：本实现写真实音频归档。真采集后端 `True`；替身显式 `False`；没声明的按「没这能力」算。`capabilities_of()` 据此回答 `finalize` / `transcode` 两项（见 §3） |
 | `finalize()` | 收尾第 1 步：停流 + join + 关文件 + `fsync`。幂等 |
-| `transcode()` | 收尾第 2 步：归档转 MP3。可抛错（该步据此记 `failed`，原始归档原样留下） |
 | `stop()` | 停采集（进程关停时调）。幂等，没落过盘就先 `finalize()` |
+
+归档转 MP3 不在后端协议里：那是 `meeting/capture/transcode.py` 的独立工序（flush 落定自动起，判据见 §3 的 `transcode` 能力位）。
 
 `SourceProbe.status` 只许报这三档（快照里另外四档由状态迁移写值）；报了取值域之外的档，runtime 记 warning 并落 `probe_failed`，服务照常起：
 
@@ -51,7 +53,7 @@
 
 ### `PostProcessHook` —— 会后钩子（解析落点）
 
-不带任何钩子方法：收尾第 4 步不拉起它；「生成会后精细稿」按钮走 `run_session(..., minutes=False)` 直路，`post.hook` 在那一侧只答「这一层接没接」（`null` → 按钮 404）。`capabilities_of()` 靠 `__module__` 把它当本实现、不当替身；它不带 `finalize` / `transcode`——那两项是采集侧能力，这两个键上的闸门不看它。
+不带任何钩子方法：收尾第 4 步不拉起它；「生成会后精细稿」按钮走 `run_session(..., minutes=False)` 直路，`post.hook` 在那一侧只答「这一层接没接」（`null` → 按钮 404）。它不带 `finalize` / `transcode`，也不声明 `writes_real_audio` 能力位——`capabilities_of()` 对它的前两项照旧为假，那两项是采集侧能力，这两个键上的闸门不看它。
 
 ### `MinutesHook` —— 会后纪要钩子
 
@@ -66,7 +68,7 @@
 
 | 替身 / 占位 | 行为 |
 |---|---|
-| `NullCaptureBackend` | 两路都 `unprobed`、`device_name` 为 `null`；`start()` 抛 `CaptureUnavailable`（服务回 `503 capture_unavailable` + 一句人话）；`finalize()` / `transcode()` / `stop()` 是安全空实现 |
+| `NullCaptureBackend` | 两路都 `unprobed`、`device_name` 为 `null`；`start()` 抛 `CaptureUnavailable`（服务回 `503 capture_unavailable` + 一句人话）；`finalize()` / `stop()` 是安全空实现 |
 | `NullTranscriberBackend` | 恒 `health = normal`、`backlog_depth() = 0`、`segment_timeout() = 20.0`；起停是安全空实现 |
 | 两个钩子 | 没有替身，缺席占位在 `registry.py`；缺席那一档根本不会被调用（调用方先问 `has_implementation`）：界面上对应按钮回 404 `action_unavailable`，`meeting post` 补纪要的那一路按缺席档登记 |
 
@@ -100,7 +102,7 @@
 | `has_implementation` | `true` / `false` | 这个构建里**有没有**可执行实现（null / dev 替身也算「有」）；`false` = 缺席 |
 | `run_ok` | `null` / `true` / `false` | 那个实现**跑起来成不成**：被调用之前 `null`，走完 `true`，抛异常或超时 `false` |
 
-`capabilities_of(implementation)` 另答采集实现有没有 `finalize` / `transcode` / `dev_inject` 三项：null / dev 没有前两项，收尾第 1 步记 `skipped`；真采集后端前两项都是 `True`（闸门只看采集侧）。`finalize` 落定那一刻，有 `transcode` 能力的构建自动在后台起转码独立工序（不占收尾预算，判据见 `docs/state.md`）。`dev_inject` 只有 dev 替身有——真后端**有意不加** `inject_fault`，加上会把非产品动作在真后端上打开。
+`capabilities_of(implementation)` 另答采集实现有没有 `finalize` / `transcode` / `dev_inject` 三项。判据是采集实现自己声明的**能力位** `writes_real_audio`（类属性；真采集后端 `True`、null / dev 替身显式 `False`，没声明的按「没这能力」算）：`finalize` 还要求方法在场（runtime 要调它），`transcode` 只看声明位——转码独立工序吃的是实现写下的 PCM 归档文件，不走实现的方法。替身两项为假 → 收尾第 1 步记 `skipped`；真采集后端两项都是 `True`（闸门只看采集侧）。`finalize` 落定那一刻，有 `transcode` 能力的构建自动在后台起转码独立工序（不占收尾预算，判据见 `docs/state.md`）。`dev_inject` 只有 dev 替身有——真后端**有意不加** `inject_fault`，加上会把非产品动作在真后端上打开。
 
 `post.engine`（会后离线引擎）与两个钩子**分开解析**，换引擎时 `post.hook` 一字不动：`auto` 按约定路径落 `meeting.offline.engine:MossOfflineEngine`，`module:Class` 按它导入，`null` 当场抛错——这一层没有替身引擎。`post.dtype` 收引擎认得的几个名字，写错启动时就拦下。其余会后两层的配置键（`post.model` / `post.dtype` / `post.chunk_seconds`，纪要四键 `minutes.chunk_lines` / `minutes.max_segments` / `minutes.timeout_seconds` / `minutes.dsh_url`）的当前值与默认值正本在 `docs/service.md`，取值依据见 `docs/asr-backends.md`；都非热读、改了要重启。
 

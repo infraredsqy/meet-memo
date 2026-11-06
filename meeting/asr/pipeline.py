@@ -431,7 +431,6 @@ class TranscriptionPipeline:
         # 第一趟 `stop()` 算好的登记（幂等档原样交回它，不再重算、不覆写 note）
         self._last_drain: dict[str, Any] | None = None
         self._started = False
-        self._model_failed = False
         #: 收队 deadline（`stop()` 里设；`worker_alive()` 用它判「还在收尾预算内」）
         self._drain_deadline: float | None = None
         #: 登记（给 `meeting/backends/transcribe.py` 的 `health()` 与 log 用）
@@ -440,7 +439,6 @@ class TranscriptionPipeline:
         self.segments_seen = 0
         self.segments_done = 0
         self.failures: dict[str, int] = {}
-        self.model_error: str = ""
         self.last_unfinished_note: str = ""
 
     # -- 起 ---------------------------------------------------------------
@@ -626,9 +624,6 @@ class TranscriptionPipeline:
         try:
             result = self.transcriber.transcribe_segment(audio)
         except Exception as exc:  # noqa: BLE001 - 模型抛错一律写占位符，不许静默丢段
-            with self._lock:
-                self._model_failed = True
-                self.model_error = f"{type(exc).__name__}: {exc}"
             _log.warning("识别抛错（写占位符，不落半截文本）：%s: %s", type(exc).__name__, exc)
             result = None
         duration = max(0.0, time.monotonic() - started)
@@ -650,13 +645,9 @@ class TranscriptionPipeline:
                 duration=float(getattr(result, "duration", duration) or duration),
                 timed_out=bool(getattr(result, "timed_out", False)),
             )
-            with self._lock:
-                self._model_failed = False
             self._finish_failed(source, captured_at, waited, audio_seconds, text, reason, duration, tokens)
             return
 
-        with self._lock:
-            self._model_failed = False
         # 文本级兜底剥离（phase1 内部已剥过一次，这里再兜一道）。
         text = glm_module._strip_repeat_loops(
             str(getattr(result, "text", "") or ""),
@@ -956,10 +947,6 @@ class TranscriptionPipeline:
             return False
         self._close_handles()
         return True
-
-    def model_ok(self) -> bool:
-        """模型这一侧还好吗：最近一次识别没有因为加载 / 推理失败而抛错。"""
-        return not self._model_failed
 
 
 def _sources_for_mode(mode: str) -> tuple[str, ...]:

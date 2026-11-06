@@ -99,7 +99,6 @@ class TranscriberBackend:
         self._stop = threading.Event()
         self._mode: str | None = None
         self._session_dir: str | None = None
-        self._segment_timeout: float | None = None
         self._model_error: str = ""
         self._transcriber: Any = None
         #: 模型引用这一格的锁：`release_gpu()` 的「丢引用 + `empty_cache()`」与
@@ -316,13 +315,17 @@ class TranscriberBackend:
         return True
 
     def _has_model_reference_locked(self) -> bool:
-        """现在手上真的握着模型引用吗（`release_gpu()` 判 no-op 的那一格）。"""
+        """现在手上真的握着模型引用吗（`release_gpu()` 判 no-op 的那一格）。
+
+        判据问模型自己（`has_model_references()`）：后端不按字段名戳它的内部。
+        模型对象没声明这一格时按「握着」算——释放照常往下走（与老口径对替身对象的行为一致）。
+        """
         if self._transcriber is None:
             return False
-        return any(
-            getattr(self._transcriber, name, None) is not None
-            for name in ("processor", "transcriber")
-        )
+        teller = getattr(self._transcriber, "has_model_references", None)
+        if callable(teller):
+            return bool(teller())
+        return True
 
     def _wait_for_inflight_inference(self) -> bool:
         """等在飞的推理收干净（事件驱动，上界 `RELEASE_GPU_WAIT_SECONDS`）。
@@ -348,19 +351,25 @@ class TranscriberBackend:
         return False
 
     def _drop_model_references_locked(self) -> bool:
-        """丢掉模型引用的三格（后端这一格 + `GlmAsrTranscriber` 内部那两格）。"""
+        """丢掉模型引用（后端这一格 + 模型对象经公开释放方法丢它内部那几格）。
+
+        释放走模型自己的 `release_model_references()`：内部布局归模型类管，后端不再按
+        字段名 `setattr`。模型对象没声明这个方法时只丢后端这一格并如实登记（不静默）。
+        """
         model = self._transcriber
         if model is None:
             return False
+        dropper = getattr(model, "release_model_references", None)
         dropped = False
-        for name in ("processor", "transcriber"):
-            if getattr(model, name, None) is not None:
-                try:
-                    setattr(model, name, None)
-                except Exception:  # noqa: BLE001 - 只读替身上丢不掉这一格，不影响别的
-                    _log.warning("丢掉模型内部那一格 %s 失败（如实登记，不静默）", name, exc_info=True)
-                else:
-                    dropped = True
+        if callable(dropper):
+            try:
+                dropped = bool(dropper())
+            except Exception:  # noqa: BLE001 - 释放失败照旧丢后端这一格，不掩盖
+                _log.warning("模型对象丢内部引用时抛错（如实登记，不静默）", exc_info=True)
+        else:
+            _log.warning(
+                "模型对象没有声明 release_model_references()：只丢了后端这一格（如实登记，不静默）"
+            )
         self._transcriber = None
         return dropped
 
@@ -469,11 +478,12 @@ class TranscriberBackend:
         return int(pipeline.backlog_depth())
 
     def segment_timeout(self) -> float:
-        """单段超时（秒）：配置里的 `asr.timeout_seconds`（默认 20.0）。"""
-        if self._segment_timeout is not None:
-            return float(self._segment_timeout)
-        self._segment_timeout = self._read_timeout()
-        return float(self._segment_timeout)
+        """单段超时（秒）：配置里的 `asr.timeout_seconds`（默认 20.0）。
+
+        **每问每读**（热档）：`asr.timeout_seconds` 是热读键，glm 那一侧每段现读；
+        预算与识别取同一档热度，改配置后两边才不会分叉（识别按新值、预算按旧值）。
+        """
+        return self._read_timeout()
 
     # -- 内部 -------------------------------------------------------------
 

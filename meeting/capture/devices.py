@@ -295,10 +295,6 @@ def host_rank(host_api: str) -> int:
     return HOST_RANK_FALLBACK
 
 
-#: 兼容别名（`host_rank` 就是 V1 那个名字）
-host_api_rank = host_rank
-
-
 def sort_candidates(endpoints: Iterable[DeviceEndpoint]) -> list[DeviceEndpoint]:
     """候选排序：按 host rank（V1 的 `cands.sort(key=host_rank)`，`recorder.py:401`）。"""
     return sorted(endpoints, key=lambda endpoint: host_rank(endpoint.host_api))
@@ -642,7 +638,6 @@ __all__ = [
     "SelectionOutcome",
     "TestSample",
     "attempt_reason",
-    "host_api_rank",
     "host_rank",
     "is_pseudo_capture",
     "loopback_candidates",

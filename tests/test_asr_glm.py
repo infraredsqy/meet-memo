@@ -593,3 +593,21 @@ def test_load_from_hub_does_not_swallow_non_oserror():
     with pytest.raises(ValueError):
         glm._load_from_hub(_Loader)
     assert len(calls) == 1 and calls[0] == {"local_files_only": True}
+
+def test_release_model_references_drops_the_model_slots_itself():
+    """`GlmAsrTranscriber` 自己会丢引用（公开释放口）：两格各丢一次、幂等、如实交回。
+
+    后端（`meeting/backends/transcribe.py`）经这个公开方法让模型退出显存，不再按字段名
+    `setattr`——这一条钉的是模型侧那一半：丢没丢、幂不等、返回值如实。
+    """
+    model = glm.GlmAsrTranscriber()
+    assert model.has_model_references() is False, "没加载过 = 手上没有引用"
+
+    model.processor = object()
+    model.transcriber = object()
+    assert model.has_model_references() is True
+    assert model.release_model_references() is True
+    assert model.processor is None and model.transcriber is None
+    assert model.has_model_references() is False
+
+    assert model.release_model_references() is False, "幂等：再丢一次什么都没有"

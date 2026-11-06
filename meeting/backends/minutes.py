@@ -27,9 +27,8 @@
   - **重依赖在函数体内 import**：本模块顶层只有标准库，`import meeting.backends.minutes`
     因此保持轻量（`meeting web` 的启动链不会被拖慢）。
 
-类的 `__module__` 是 `meeting.backends.minutes` —— `registry.capabilities_of()` 靠它区分替身
-与本实现（写进别的模块名下会被当成替身）。**不实现 `finalize` / `transcode`**：那两项是采集
-后端的能力。
+**不实现 `finalize` / `transcode`**：那两项是采集后端的能力，`registry.capabilities_of()`
+按实现自己声明的能力位（`writes_real_audio`）回答——本类不声明，两项照旧为假。
 """
 
 from __future__ import annotations

@@ -63,13 +63,27 @@ class FakeTorch:
 
 
 class FakeGlm:
-    """假识别器：`GlmAsrTranscriber` 在释放眼里就是这两格 + 一个识别方法。"""
+    """假识别器：`GlmAsrTranscriber` 在释放眼里就是这个公开释放口 + 一个识别方法。"""
 
     def __init__(self, *, text: str = "假模型认出来的一行。") -> None:
         self.processor = object()
         self.transcriber = object()
         self.text = text
         self.calls = 0
+
+    def has_model_references(self) -> bool:
+        return self.processor is not None or self.transcriber is not None
+
+    def release_model_references(self) -> bool:
+        """与真模型同一份语义：丢自己那两格，交回是否真丢掉了。"""
+        dropped = False
+        if self.processor is not None:
+            self.processor = None
+            dropped = True
+        if self.transcriber is not None:
+            self.transcriber = None
+            dropped = True
+        return dropped
 
     def transcribe_segment(self, audio_int16):  # noqa: ARG002
         self.calls += 1

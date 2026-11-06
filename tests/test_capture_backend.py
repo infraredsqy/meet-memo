@@ -328,63 +328,6 @@ def test_finalize_flushes_both_archives(tmp_path: Path, monkeypatch: pytest.Monk
     } == sizes
 
 
-def test_transcode_writes_one_mp3_per_route(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    """`transcode()` 之后场次目录里出现两个 `.mp3`，两份 PCM 原样留着。"""
-    factory = SourceFactory(chunks=8)
-    backend = make_backend(monkeypatch, factory=factory)
-    session_dir = tmp_path / "250906"
-    session_dir.mkdir()
-
-    backend.start("both", str(session_dir))
-    wait_until(
-        lambda: backend.session.bytes_written("mic") >= 8 * CHUNK_BYTES
-        and backend.session.bytes_written("loopback") >= 8 * CHUNK_BYTES,
-        timeout=BACKEND_POLL_TIMEOUT_SECONDS,
-        what="两路归档都长起来",
-    )
-    backend.finalize()
-    backend.transcode()
-
-    assert sorted(item.name for item in session_dir.iterdir()) == [
-        "meeting_audio_loopback_001.mp3",
-        "meeting_audio_loopback_001.pcm",
-        "meeting_audio_mic_001.mp3",
-        "meeting_audio_mic_001.pcm",
-    ]
-    backend.stop()
-
-
-def test_transcode_raises_when_the_conversion_fails(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    """转不动时原样抛错（收尾第 2 步据此记 `failed`），PCM 留着。"""
-    from meeting.capture import archive as archive_module
-
-    factory = SourceFactory(chunks=4)
-    backend = make_backend(monkeypatch, factory=factory)
-    session_dir = tmp_path / "250906"
-    session_dir.mkdir()
-
-    backend.start("both", str(session_dir))
-    wait_until(
-        lambda: backend.session.bytes_written("mic") >= 4 * CHUNK_BYTES,
-        timeout=BACKEND_POLL_TIMEOUT_SECONDS,
-        what="mic 那一路的归档长起来",
-    )
-    backend.finalize()
-
-    def boom(*args, **kwargs):
-        raise RuntimeError("假件：ffmpeg 不在")
-
-    monkeypatch.setattr(archive_module, "convert_to_mp3", boom)
-    with pytest.raises(RuntimeError):
-        backend.transcode()
-    assert (session_dir / archive_name("mic")).stat().st_size > 0
-    backend.stop()
-
-
 def test_stop_is_idempotent_and_clears_the_session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):

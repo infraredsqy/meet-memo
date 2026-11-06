@@ -83,13 +83,15 @@ def test_two_instances_produce_the_same_level_sequence():
     assert first.level_sequence("mic", 5) != first.level_sequence("loopback", 5)
 
 
-def test_finalize_and_transcode_only_keep_books(tmp_path):
-    """**不写真实音频**：`finalize()` / `transcode()` 只登记，盘上一份文件都不落地。
+def test_finalize_only_keeps_books(tmp_path):
+    """**不写真实音频**：`finalize()` 只登记，盘上一份文件都不落地。
 
-    「只登记」的判据落在两处：两笔调用计数各加一；把**真实存在的场次目录**交给替身之后，
-    这两口子跑完目录里依旧空无一物（`iterdir()` 一个条目都没有）。此前这里只断言
+    「只登记」的判据落在两处：调用计数加一；把**真实存在的场次目录**交给替身之后，
+    这一口子跑完目录里依旧空无一物（`iterdir()` 一个条目都没有）。此前这里只断言
     `_session_dir` 这个字符串还被替身记着 —— 那句话证明不了「没落音频」，因为整条用例
     并没有碰过盘。现在目录是真的（`tmp_path`），盘上有没有东西由 `iterdir()` 直接说话。
+    （替身不再有 `transcode()`：转码归 `meeting/capture/transcode.py` 的独立工序，
+    替身没有真实 PCM 可转。）
     """
     session_dir = tmp_path / "session"
     session_dir.mkdir()
@@ -97,10 +99,8 @@ def test_finalize_and_transcode_only_keep_books(tmp_path):
     backend.start("both", str(session_dir))
     backend.stop()
     backend.finalize()
-    backend.transcode()
     assert backend.finalize_calls == 1
-    assert backend.transcode_calls == 1
-    # 登记那两口子走完之后场次目录仍在（替身只拿它登记），盘上一份音频都没有
+    # 登记走完之后场次目录仍在（替身只拿它登记），盘上一份音频都没有
     assert backend._session_dir == str(session_dir)  # noqa: SLF001 - 替身只把它记着，不拿它落盘
     assert list(session_dir.iterdir()) == [], [p.name for p in session_dir.iterdir()]
 

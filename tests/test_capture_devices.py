@@ -166,8 +166,6 @@ def test_host_rank_follows_the_v1_table():
     assert devices_module.host_rank("Windows DirectSound") == direct_sound
     assert unknown == HOST_RANK_FALLBACK
     assert devices_module.host_rank("") == HOST_RANK_FALLBACK
-    # `host_api_rank` 是同一个函数的别名（老名字留着）
-    assert devices_module.host_api_rank is devices_module.host_rank
 
 
 def test_sort_candidates_uses_host_rank():

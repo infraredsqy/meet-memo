@@ -19,6 +19,8 @@ from dataclasses import dataclass
 
 from meeting import config as config_module
 from meeting.asr.guards import _DeadlineStop, _LoopGuard, _strip_repeat_loops
+# 采样率口径只认 `capture/archive` 一处（包内 import，轻；模块头的硬约束不受影响）
+from meeting.capture.archive import SAMPLE_RATE
 from meeting.importlock import heavy_imports
 
 #: 本项目自己的 logger（V1 那一行是 `logging.getLogger("meeting")`）
@@ -33,9 +35,9 @@ MODEL_ID = "zai-org/GLM-ASR-Nano-2512"
 # 首次失败后置 False，不再每段都试一遍（避免每段都白跑一次生成）。
 _NO_REPEAT_NGRAM_SUPPORTED = True
 
-# 搬自 V1 mnotes_core/config.py:35（`SAMPLE_RATE = 16000`，V1 的 `recorder.py` 从那里 import）
 # 采集与识别的采样率：16000 Hz / 单声道 / int16（`docs/v1-lineage.md` 的 B8）。
-SAMPLE_RATE = 16000
+# `SAMPLE_RATE` 不在本模块再抄一份：从 `capture/archive` 的同一处口径 import（上面），
+# V1 那份是 `mnotes_core/config.py:35`（V1 的 `recorder.py` 从那里 import）。
 
 
 # 搬自 V1 mnotes_core/recorder.py:32-44
@@ -156,6 +158,26 @@ class GlmAsrTranscriber:
         if self.transcriber is not None:
             return
         self.processor, self.transcriber = _load_models()
+
+    # 「用完即关」的模型侧一半（`docs/design-intent.md` 第 21 条）：引用由模型自己丢，
+    # 后端（`meeting/backends/transcribe.py`）经这两个公开方法问与放，不按字段名戳内部。
+    def has_model_references(self) -> bool:
+        """模型引用还在手上吗（processor 或权重任一格非空）。"""
+        return self.processor is not None or self.transcriber is not None
+
+    def release_model_references(self) -> bool:
+        """丢掉 processor 与权重两格引用，交回是否真丢掉了至少一格（幂等）。
+
+        显存真正的清理由调用方在丢完引用之后做（`torch.cuda.empty_cache()`）。
+        """
+        dropped = False
+        if self.processor is not None:
+            self.processor = None
+            dropped = True
+        if self.transcriber is not None:
+            self.transcriber = None
+            dropped = True
+        return dropped
 
     # 搬自 V1 mnotes_core/recorder.py:495-598（核心段 `:512-597`）
     def transcribe_segment(self, audio_int16) -> TranscribeResult:

@@ -48,6 +48,10 @@ CHUNK_BYTES = CHUNK_FRAMES * 2
 MIN_SILENCE_FRAMES = 3
 FRAME_WAIT_TIMEOUT_SECONDS = 5.0
 
+#: 竞态用例里的等待上限（秒）：接管与重开都是事件驱动的即时到达，2 秒有约一个数量级
+#: 的余量，也给「单条用例 ≤5 秒」那条看门留出余裕
+RACE_WAIT_TIMEOUT_SECONDS = 2.0
+
 
 def block(value: int = 1200, frames: int = CHUNK_FRAMES) -> bytes:
     """一块可预期的 int16 裸 PCM（每个样本都是 `value`）。"""
@@ -530,6 +534,83 @@ def test_deactivating_a_route_writes_silence_without_source_lost(tmp_path: Path)
     )
 
 
+class _DeactivateRaceSource:
+    """把「关路动作落进读线程顶层检查之后、`read()` 之内」的窗口钉死的注入源。
+
+    `read()` 一进门就点亮 `entered`（读线程此刻已越过 `_read_loop` 顶层的
+    `_user_closed` 检查），然后等 `release`；主线程在这一空档里调 `deactivate()`
+    （置位 + 停源），再放行 `read()` —— 停源之后的那一次读就交回 `None` 或抛错，
+    正是竞态命中时读线程手里的那一拍。
+    """
+
+    name = "mic"
+
+    def __init__(self, *, outcome: object) -> None:
+        #: `None` = 停源后的瞬时读空；`BaseException` = 停源引发的读错
+        self.outcome = outcome
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self.stopped = False
+
+    def start(self) -> None:
+        pass
+
+    def read(self, timeout: float) -> bytes | None:
+        self.entered.set()
+        self.release.wait(5.0)
+        if isinstance(self.outcome, BaseException):
+            raise self.outcome
+        return self.outcome  # type: ignore[return-value]
+
+    def latest_samples(self) -> np.ndarray:
+        return np.empty(0, dtype=np.int16)
+
+    def stop(self) -> None:
+        self.stopped = True
+
+
+@pytest.mark.parametrize("outcome_name", ["read_returns_none", "read_raises"])
+def test_closing_a_route_mid_read_keeps_the_silence_metronome(tmp_path, outcome_name):
+    """关路动作落进「顶层检查之后、`read()` 之内」的窗口：读线程不死、静音节拍器接管。
+
+    验的是关路与读线程轮询的竞态：`_read_loop` 顶层判过 `_user_closed` 才进的
+    `read()`，此刻 `deactivate()` 置位并停源，停源让 `read()` 交回 `None`（或抛错）
+    —— 这一拍不是「流结束」，是停源的瞬时读空；读线程必须转上静音节拍器（旧代码在
+    `data is None` / `except` 分支无条件 return：读线程死亡、静音不涨、重开一路后
+    这一路永远录不到内容而 `stream_alive` 仍报 true）。判据取三步实测：接管后静音
+    继续涨、读线程还活着、重开一路后录得到内容。
+    """
+    outcome = RuntimeError("停源引发的读错") if outcome_name == "read_raises" else None
+    mic = _DeactivateRaceSource(outcome=outcome)
+    session, facts, _sources = make_session(tmp_path, mode="mic", mic=mic)
+    session.start()
+    try:
+        assert mic.entered.wait(FRAME_WAIT_TIMEOUT_SECONDS), "读线程该已经进到 read() 里"
+        # 读线程已越过顶层检查（_user_closed 还没置位）：把关路动作塞进这个窗口
+        session.deactivate_source("mic")
+        assert mic.stopped is True
+        mic.release.set()
+
+        # 静音节拍器接管：关掉之后静音继续涨（读线程死了它就永远不涨）
+        assert wait_for(
+            lambda: session.silence_bytes("mic") >= CHUNK_BYTES,
+            timeout=RACE_WAIT_TIMEOUT_SECONDS,
+        ), "关路之后静音节拍器该接管（读线程不该死在 data is None / except 分支上）"
+        assert session.workers["mic"]._threads[0].is_alive(), "读线程该还活着（转在节拍器上）"
+        assert only(facts, SourceLost) == [], "主动关掉的那一路不报故障"
+
+        # 重开这一路：读线程活着才接得上新源、录得到内容（reactivate 的前提）
+        fresh = FakeCaptureSource("mic", chunk=block(900))
+        fresh.start()
+        session.activate_source("mic", fresh)
+        assert wait_for(
+            lambda: session.content_bytes("mic") >= CHUNK_BYTES,
+            timeout=RACE_WAIT_TIMEOUT_SECONDS,
+        ), "重开之后这一路该重新录到内容"
+    finally:
+        session.finalize()
+
+
 def test_segment_account_before_finalize_has_no_closing_stamp(tmp_path: Path):
     """还在录时段记录没有终点戳、权威时长为 0（没写完的段没有尾可收）。"""
     mic = FakeCaptureSource("mic", chunk=block(900), pace_seconds=0.005)
@@ -712,54 +793,6 @@ def test_finalize_after_stop_writes_the_same_bytes(tmp_path: Path):
     assert wait_for(lambda: mic.fed >= 3)
     session.stop()
     assert session.bytes_written("mic") == 3 * CHUNK_BYTES
-
-
-def test_transcode_produces_one_mp3_per_filled_segment(tmp_path: Path):
-    """收尾第 2 步：每路**写了字节的段**各出一个 MP3，PCM 原样留着。"""
-    mic = FakeCaptureSource("mic", chunks=8)
-    loop = FakeCaptureSource("loopback", chunks=8)
-    session, _facts, _sources = make_session(tmp_path, mic=mic, loopback=loop)
-    session.start()
-    assert wait_for(lambda: mic.fed >= 8 and loop.fed >= 8)
-    session.finalize()
-    session.transcode()
-
-    for source in SOURCE_IDS:
-        assert (tmp_path / archive_name(source).replace(".pcm", ".mp3")).exists()
-        assert (tmp_path / archive_name(source)).exists()
-
-
-def test_transcode_skips_the_route_with_no_audio(tmp_path: Path):
-    """收尾那一刻一个字节都没写到的段不产出它的 MP3（照 V1 的空文件口径）。"""
-    session, _facts, _sources = make_session(tmp_path, mode="mic")
-    session.finalize()  # start() 都没调：两路都是 0 字节
-    session.transcode()
-
-    assert not (tmp_path / "meeting_audio_mic_001.mp3").exists()
-    assert not (tmp_path / "meeting_audio_loopback_001.mp3").exists()
-    assert (tmp_path / archive_name("mic")).exists()
-
-
-def test_transcode_raises_but_keeps_the_pcm(tmp_path: Path, monkeypatch):
-    """转不动时原样抛错：该步据此记 `failed`，PCM 留在场面上。"""
-    from meeting.capture import archive as archive_module
-
-    mic = FakeCaptureSource("mic", chunks=4)
-    session, _facts, _sources = make_session(tmp_path, mode="mic", mic=mic)
-    session.start()
-    assert wait_for(lambda: mic.fed >= 4)
-    session.finalize()
-    payload = (tmp_path / archive_name("mic")).read_bytes()
-
-    def boom(*args, **kwargs):
-        raise RuntimeError("假件：转码失败")
-
-    monkeypatch.setattr(archive_module, "convert_to_mp3", boom)
-    import pytest
-
-    with pytest.raises(RuntimeError):
-        session.transcode()
-    assert (tmp_path / archive_name("mic")).read_bytes() == payload
 
 
 def test_start_is_idempotent(tmp_path: Path):

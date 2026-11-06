@@ -299,17 +299,16 @@ class _AbsentMinutesHook:
 def capabilities_of(implementation: Any) -> dict[str, bool]:
     """一个采集实现声明的能力（收尾记录的输入）。
 
-    `finalize` / `transcode` 两项按实现在场与否单独回答：`null` / `dev` 这一类不写真实音频的
-    采集替身不具备这两项能力，于是收尾第 1 步记 `skipped`、flush 落定后的转码独立工序
-    不自动起（判据都是采集侧，见 `docs/state.md` 第 1 章）。
+    判据是实现自己声明的能力位 `writes_real_audio`（类属性；真采集后端为 `True`，
+    `null` / `dev` 替身显式为 `False`，没声明的按「没这能力」算）：`finalize` 还要求
+    方法真的在场（runtime 要调它），`transcode` 只看声明位——转码独立工序吃的是实现
+    写下的 PCM 归档文件，不走实现的方法。替身两项为假 → 收尾第 1 步记 `skipped`、
+    flush 落定后的转码独立工序不自动起（判据都是采集侧，见 `docs/state.md` 第 1 章）。
     """
-    is_stand_in = implementation.__class__.__module__ in (
-        "meeting.backends.null",
-        "meeting.backends.dev",
-    )
+    writes_audio = bool(getattr(implementation, "writes_real_audio", False))
     return {
-        "finalize": (not is_stand_in) and callable(getattr(implementation, "finalize", None)),
-        "transcode": (not is_stand_in) and callable(getattr(implementation, "transcode", None)),
+        "finalize": writes_audio and callable(getattr(implementation, "finalize", None)),
+        "transcode": writes_audio,
         "dev_inject": callable(getattr(implementation, "inject_fault", None)),
     }
 
