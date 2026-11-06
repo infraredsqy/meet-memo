@@ -2558,13 +2558,16 @@ def test_a_two_segment_session_feeds_both_segments_of_both_routes(tmp_path) -> N
     assert not (session / CHUNK_DIR_NAME).exists()
 
 
-def test_a_corrupted_wall_clock_changes_no_conclusion(tmp_path) -> None:
+def test_a_corrupted_wall_clock_changes_no_conclusion(monkeypatch, tmp_path) -> None:
     """故意把墙钟那一栏改错：程序的行为与结论**一个字都不变**（元信息不当判据）。
 
     两份完全相同的场次目录，一份的 `session.json` 墙钟字段与段戳被改成胡话；
     同一引擎各跑一遍，逐字节比较三份产物与状态文件——除此之外任何代码都不许拿
     墙钟核对（`docs/design-intent.md` 第 6 条；spec 完成判定第 4 条）。
     """
+    # status 里 started_at 打的是 runner 运行那一刻的真实墙钟（秒级），跟结论无关；
+    # 冻住这条时钟缝，逐字节比较才不用赌两次运行恰好落进同一秒。
+    monkeypatch.setattr("meeting.offline.runner._now_iso", lambda: "2025-09-19T21:30:00")
     clean = synth_session(tmp_path / "clean" / "250919")
     corrupt = synth_session(tmp_path / "corrupt" / "250919")
 
