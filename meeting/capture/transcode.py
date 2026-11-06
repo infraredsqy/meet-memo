@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 
 from meeting.backends.base import SOURCE_IDS
+from meeting.atomicio import write_text_atomic
 # 归档 PCM 的形状只认**一个口径来源**：`meeting/capture/archive.py`（同款先例见
 # `meeting/asr/pipeline.py` 顶部）——这里不再抄第二份，防两处各自漂移。
 from meeting.capture.archive import EMPTY_PCM_BYTES, SAMPLE_RATE, SAMPLE_WIDTH
@@ -214,29 +215,6 @@ def segment_done(entry: TranscodeSegment) -> bool:
     return credential_matches(entry, read_credential(credential_path(entry.pcm.parent, entry.source, entry.segment)))
 
 
-# 原子写（临时文件 + os.replace；凭据 / 状态 / 记录三层共用同一份写法）
-
-
-def _write_atomic(path: Path | str, text: str) -> Path:
-    target = Path(path)
-    parent = target.parent
-    parent.mkdir(parents=True, exist_ok=True)
-    tmp = parent / f".{target.name}.{os.getpid()}.tmp"
-    try:
-        with open(tmp, "w", encoding="utf-8") as handle:
-            handle.write(text)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp, target)
-    finally:
-        if os.path.exists(tmp):
-            try:
-                os.unlink(tmp)
-            except OSError:  # pragma: no cover - 清理失败不影响结果
-                pass
-    return target
-
-
 def write_credential(entry: TranscodeSegment, document: dict[str, Any]) -> Path:
     """落一份逐段凭据（**原子写**：这一段「写完了」的事实以此为准）。
 
@@ -251,9 +229,10 @@ def write_credential(entry: TranscodeSegment, document: dict[str, Any]) -> Path:
         "pcm": entry.pcm.name,
         **document,
     }
-    return _write_atomic(
+    return write_text_atomic(
         credential_path(entry.pcm.parent, entry.source, entry.segment),
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        fsync=True,
     )
 
 
@@ -299,8 +278,8 @@ def read_status(session_dir: Path | str) -> dict[str, Any] | None:
 
 def write_status(session_dir: Path | str, document: dict[str, Any]) -> Path:
     """落一份工序状态（原子替换；半份状态比晚一点落地坏得多）。"""
-    return _write_atomic(
-        status_path(session_dir), json.dumps(document, ensure_ascii=False, indent=2) + "\n"
+    return write_text_atomic(
+        status_path(session_dir), json.dumps(document, ensure_ascii=False, indent=2) + "\n", fsync=True
     )
 
 
@@ -321,7 +300,7 @@ def write_progress(
     lines = [json.dumps(header, ensure_ascii=False)]
     for row in rows:
         lines.append(json.dumps(dict(row), ensure_ascii=False))
-    return _write_atomic(progress_path(session_dir), "\n".join(lines) + "\n")
+    return write_text_atomic(progress_path(session_dir), "\n".join(lines) + "\n", fsync=True)
 
 
 def read_progress(session_dir: Path | str) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
