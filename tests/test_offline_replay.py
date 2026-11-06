@@ -472,7 +472,7 @@ def test_replay_entry_runs_with_config_selected_engine(
             "log.dir": str(tmp_path / "log"),
         },
     )
-    monkeypatch.setattr(cli_module, "_load_config_or_exit", lambda: config)
+    monkeypatch.setattr(cli_module, "_load_config_or_exit", lambda **_kwargs: config)
     ConfigSelectedEngine.constructed = []
 
     code, out, _err = _run_entry(capsys, str(source), "--seconds", "2", "--out", str(tmp_path / "work"))
@@ -497,13 +497,37 @@ def test_replay_entry_maps_failed_session_to_exit_failure(
             "log.dir": str(tmp_path / "log"),
         }
     )
-    monkeypatch.setattr(cli_module, "_load_config_or_exit", lambda: config)
+    monkeypatch.setattr(cli_module, "_load_config_or_exit", lambda **_kwargs: config)
 
     code, out, _err = _run_entry(capsys, str(source), "--out", str(tmp_path / "work"))
 
     assert code == EXIT_FAILURE
     assert "failed" in out
     assert "EXIT_FAILURE" in out
+
+
+def test_replay_entry_asks_for_its_old_log_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """replay() 调共用前奏时点名 replay 旧本的形状：`log_rebuild_failure=False`。
+
+    重建失败的 log 流里不落那行 error 是 replay 旧本没有的形状，这个 kwarg 就是
+    还原它的开关——漏传的话 drift 会悄悄回来（替身 `**_kwargs` 会照单全收）。
+    """
+    seen: dict[str, Any] = {}
+
+    def fake_prelude(**kwargs: Any) -> Any:
+        seen.update(kwargs)
+        raise SystemExit(EXIT_OK)  # 前奏之后一概不走
+
+    monkeypatch.setattr(cli_module, "_load_config_or_exit", fake_prelude)
+    source = tmp_path / "250906"
+    source.mkdir()
+
+    with pytest.raises(SystemExit):
+        replay_entry([str(source)])
+
+    assert seen == {"log_rebuild_failure": False}
 
 
 def test_chunk_states_are_the_four_known_states() -> None:

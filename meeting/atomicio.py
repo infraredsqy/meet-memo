@@ -54,12 +54,26 @@ def _is_transient_replace_error(exc: OSError) -> bool:
     return getattr(exc, "winerror", None) in _TRANSIENT_WINERRORS
 
 
-def write_text_atomic(path: Path | str, text: str, *, retries: int = REPLACE_RETRIES) -> Path:
-    """写一份文本产物：先写一份**本调用独占的**临时文件，再 `os.replace` 换上去。"""
+def write_text_atomic(
+    path: Path | str,
+    text: str,
+    *,
+    retries: int = REPLACE_RETRIES,
+    fsync: bool = False,
+) -> Path:
+    """写一份文本产物：先写一份**本调用独占的**临时文件，再 `os.replace` 换上去。
+
+    `fsync=True` 在换名之前把临时文件冲到盘上：配置 / 注册表 / 场次记录这类
+    「丢了就说不清」的小状态文件走这一档；产物文件不 fsync（丢了一份产物重跑就有）。
+    """
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = _tmp_path_for(target)
-    tmp.write_text(text, encoding="utf-8")
+    with open(tmp, "w", encoding="utf-8") as handle:
+        handle.write(text)
+        if fsync:
+            handle.flush()
+            os.fsync(handle.fileno())
     attempts = max(1, int(retries))
     try:
         for attempt in range(attempts):

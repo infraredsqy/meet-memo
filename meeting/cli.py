@@ -33,10 +33,14 @@ from meeting.capture import transcode as transcode_module
 from meeting.offline import progress as offline_progress
 from meeting.offline import replay as offline_replay
 from meeting.offline import runner as offline_runner
+from meeting.offline.artifacts import (
+    REPORT_NAME,
+    SPEAKERS_NAME_TEMPLATE,
+    TRANSCRIPT_NAME_TEMPLATE,
+)
 from meeting.service import app as service_app
 from meeting.session import (
     archive_name,
-    archive_segment_number,
     segment_archive_paths,
 )
 
@@ -430,18 +434,42 @@ def _parse_post_args(argv: Sequence[str]) -> dict[str, Any]:
 # `meeting post` —— 参数面（校验落在可被用例直接调用的函数上，不埋在 main() 里）
 
 
-def _load_config_or_exit() -> config_module.Config:
-    """`meeting post` 这一条入口的配置前奏：读配置 → 值级校验 → 生效，交回生效配置。
+def _load_config_or_exit(
+    *,
+    config_source_after_rebuild: bool = False,
+    log_rebuild_failure: bool = True,
+) -> config_module.Config:
+    """三入口（web / post / replay）共用的启动前奏：bootstrap 日志 → 读配置并生效 → 按生效配置重建服务级日志。
 
-    与 `web()` 第 ② 步同一套口径：配置损坏 → `EXIT_STARTUP_UNMET`；取值非法 →
-    `EXIT_REJECTED`；异常一律在本函数里接住，不冒到解释器变成解释器默认码。
+    与 §3.5 的时序定死（不得对调）：配置损坏 → `EXIT_STARTUP_UNMET`；取值非法 →
+    `EXIT_REJECTED`；主 log 不可写 → `EXIT_STARTUP_UNMET`——异常一律在本函数里
+    接住，不冒到解释器变成解释器默认码，终端话术与退出码三入口逐字同源。
+
+    两个关键字参数只管 log 流的形状，默认值取 post/replay 的旧行为（共用实现不拆，
+    三入口各按旧本逐字还原）：
+    - `config_source_after_rebuild`：「配置来源」行落重建③**之前**（bootstrap 日志，
+      post/replay 旧本）还是**之后**（生效 log.dir/level/轮转，web 旧本）——web 传 True。
+    - `log_rebuild_failure`：重建③失败的 log 流里落不落那行 error——web/post 旧本落，
+      replay 旧本不落——replay 传 False。终端话术与退出码两档完全一致。
 
     为什么这条路必须有这一段：`run_post()` 的每个取值都经 `config_module.get(...)` 现读
     （`minutes.hook` 决定要不要真拉起花钱的子会话、`post.engine` 决定造不造真引擎）——
     没读进来的话它们全部退回 `DEFAULT_VALUES`，用户显式写的 `minutes.hook = null` 会被
     当成缺省 `auto` 照旧拉起子会话。读取时机在幂等闸与花钱之前：配置本身就决定这一趟
-    要不要花钱，判早了会按默认值误判。交回的配置供调用方走重建服务级日志那一格。
+    要不要花钱，判早了会按默认值误判。交回的配置供调用方接着用。
     """
+    # ① bootstrap 日志：默认日志目录 + 默认轮转参数。默认日志目录不可写时 bootstrap
+    # 建不起来：这一刻只有终端可写，是否拒绝启动由 ③（生效 log.dir）决定。
+    try:
+        logging_setup.setup_service_logging(config_module.default_log_dir())
+    except OSError as exc:
+        print(
+            f"注意：默认日志目录不可写（{exc}），bootstrap 阶段只有终端可写",
+            file=sys.stderr,
+            flush=True,
+        )
+
+    # ② 读配置并做值级校验
     try:
         loaded = config_module.load()
     except config_module.ConfigCorruptError as exc:
@@ -460,14 +488,54 @@ def _load_config_or_exit() -> config_module.Config:
         sys.exit(EXIT_REJECTED)
 
     config_module.set_current(loaded)
+    if not config_source_after_rebuild:
+        # post/replay 旧本：这行在重建③之前记，落 bootstrap 日志（web 那份在重建③之后）。
+        try:
+            _log().info(
+                "配置来源：%s；生效值清单：\n%s",
+                loaded.config_path(),
+                config_module.format_applied(loaded),
+            )
+        except Exception:  # pragma: no cover - 同上
+            pass
+
+    # ③ 按生效配置重建服务级日志：不重建的话用户配的 `log.dir` 不生效、日志照旧落默认目录。
+    log_dir = loaded.get("log.dir")
     try:
-        _log().info(
-            "配置来源：%s；生效值清单：\n%s",
-            loaded.config_path(),
-            config_module.format_applied(loaded),
+        logging_setup.setup_service_logging(
+            log_dir,
+            level=loaded.get("log.level"),
+            max_bytes=loaded.get("log.max_bytes"),
+            backup_count=loaded.get("log.backup_count"),
         )
-    except Exception:  # pragma: no cover - 同上
-        pass
+    except OSError as exc:
+        # 主 log 不可写 → 拒绝启动（不再照 V1 那样静默降级）
+        print(
+            f"启动前提不成立：主 log 不可写：{log_dir}（{type(exc).__name__}: {exc}）",
+            file=sys.stderr,
+            flush=True,
+        )
+        if log_rebuild_failure:
+            # web/post 旧本在 log 流里另落一行 error；replay 旧本没有（传 False 还原）。
+            try:
+                _log().error(
+                    "启动前提不成立：主 log 不可写：%s（%s: %s） -> EXIT_STARTUP_UNMET",
+                    log_dir, type(exc).__name__, exc,
+                )
+            except Exception:  # pragma: no cover - 同上
+                pass
+        sys.exit(EXIT_STARTUP_UNMET)
+
+    if config_source_after_rebuild:
+        # web 旧本：这行在重建③之后记，落生效 log.dir/level/轮转（post/replay 那份在重建③之前）。
+        try:
+            _log().info(
+                "配置来源：%s；生效值清单：\n%s",
+                loaded.config_path(),
+                config_module.format_applied(loaded),
+            )
+        except Exception:  # pragma: no cover - 同上
+            pass
     return loaded
 
 
@@ -491,41 +559,8 @@ def post(argv: Sequence[str] | None = None) -> None:
         sys.exit(EXIT_REJECTED)
 
     # 配置层在幂等闸与花钱之前读进来（§3.5 第 1 条，与 `web()` 同源）：这一趟里每个取值
-    # 都从它现读。bootstrap 日志照 `web()` 第 ① 步那一套。
-    try:
-        logging_setup.setup_service_logging(config_module.default_log_dir())
-    except OSError as exc:
-        print(
-            f"注意：默认日志目录不可写（{exc}），bootstrap 阶段只有终端可写",
-            file=sys.stderr,
-            flush=True,
-        )
+    # 都从它现读。启动前奏（bootstrap 日志 → 读配置 → 重建服务级日志）走三入口共用的那一份。
     loaded = _load_config_or_exit()
-
-    # ③ 按生效配置重建服务级日志：不重建的话用户配的 `log.dir` 不生效、日志照旧落默认目录。
-    log_dir = loaded.get("log.dir")
-    try:
-        logging_setup.setup_service_logging(
-            log_dir,
-            level=loaded.get("log.level"),
-            max_bytes=loaded.get("log.max_bytes"),
-            backup_count=loaded.get("log.backup_count"),
-        )
-    except OSError as exc:
-        # 主 log 不可写 → 拒绝启动（与 `web()` 第 ④ 步同一句话、同一个退出码）
-        print(
-            f"启动前提不成立：主 log 不可写：{log_dir}（{type(exc).__name__}: {exc}）",
-            file=sys.stderr,
-            flush=True,
-        )
-        try:
-            _log().error(
-                "启动前提不成立：主 log 不可写：%s（%s: %s） -> EXIT_STARTUP_UNMET",
-                log_dir, type(exc).__name__, exc,
-            )
-        except Exception:  # pragma: no cover - 同上
-            pass
-        sys.exit(EXIT_STARTUP_UNMET)
 
     try:
         _log().info(
@@ -717,32 +752,9 @@ def replay(argv: Sequence[str] | None = None) -> None:
 
     # 配置与日志的时序照 post() 那一套：上限按块的换算读 `post.chunk_seconds`、缺省引擎读
     # `post.engine/model/dtype`，都必须来自用户写的那份 config.json 而不是默认值表。
-    try:
-        logging_setup.setup_service_logging(config_module.default_log_dir())
-    except OSError as exc:
-        print(
-            f"注意：默认日志目录不可写（{exc}），bootstrap 阶段只有终端可写",
-            file=sys.stderr,
-            flush=True,
-        )
-    loaded = _load_config_or_exit()
-
-    log_dir = loaded.get("log.dir")
-    try:
-        logging_setup.setup_service_logging(
-            log_dir,
-            level=loaded.get("log.level"),
-            max_bytes=loaded.get("log.max_bytes"),
-            backup_count=loaded.get("log.backup_count"),
-        )
-    except OSError as exc:
-        print(
-            f"启动前提不成立：主 log 不可写：{log_dir}（{type(exc).__name__}: {exc}）",
-            file=sys.stderr,
-            flush=True,
-        )
-        sys.stdout.flush()
-        sys.exit(EXIT_STARTUP_UNMET)
+    # 启动前奏（bootstrap 日志 → 读配置 → 重建服务级日志）走三入口共用的那一份；
+    # 重建失败的 log 流里不落 error 行是 replay 旧本的形状（log_rebuild_failure=False 还原）。
+    loaded = _load_config_or_exit(log_rebuild_failure=False)
 
     try:
         _log().info(
@@ -1290,9 +1302,9 @@ def _finished_offline_outcome(directory: Path, status: dict[str, Any]) -> dict[s
         hook=LAYER_DONE,
         sources={
             str(source): {
-                "transcript": f"meeting_offline_transcript_{source}.md",
-                "speakers": f"meeting_offline_speakers_{source}.json",
-                "report": "meeting_offline_report.md",
+                "transcript": TRANSCRIPT_NAME_TEMPLATE.format(source=source),
+                "speakers": SPEAKERS_NAME_TEMPLATE.format(source=source),
+                "report": REPORT_NAME,
             }
             for source in offline_runner.declared_sources(directory)
         },
@@ -1348,10 +1360,10 @@ def _missing_names(directory: Path, names: Iterable[str]) -> list[str]:
 
 def _offline_artifacts_complete(directory: Path, status: dict[str, Any]) -> bool:
     """离线段的三份产物是不是都在：逐路的两份按本场声明的每一路各算一份，外加一份报告。"""
-    names = ["meeting_offline_report.md"]
+    names = [REPORT_NAME]
     for source in offline_runner.declared_sources(directory):
-        names.append(f"meeting_offline_transcript_{source}.md")
-        names.append(f"meeting_offline_speakers_{source}.json")
+        names.append(TRANSCRIPT_NAME_TEMPLATE.format(source=source))
+        names.append(SPEAKERS_NAME_TEMPLATE.format(source=source))
     return not _missing_names(directory, names)
 
 
@@ -1531,17 +1543,6 @@ def sync_archive(
     return {"state": state, "sources": rows}
 
 
-def archive_mp3_path_for(pcm_path: Path) -> Path:
-    """这一路 PCM 的 MP3 归档落点——求路径只走那一份现成实现。
-
-    `meeting/capture/archive.py::mp3_path_for()` 是全仓唯一的求法；只在函数体内 import，
-    那边换了形这边静默跟不上这种事不会发生。
-    """
-    from meeting.capture.archive import mp3_path_for
-
-    return mp3_path_for(pcm_path)
-
-
 # 每层的结论与产物
 
 
@@ -1620,9 +1621,9 @@ def _offline_outcome(
         # 离线那一趟没交回摘要（整体抛出这类）时，按产物契约定死的名字补上那几格
         row["sources"] = {
             str(source): {
-                "transcript": f"meeting_offline_transcript_{source}.md",
-                "speakers": f"meeting_offline_speakers_{source}.json",
-                "report": "meeting_offline_report.md",
+                "transcript": TRANSCRIPT_NAME_TEMPLATE.format(source=source),
+                "speakers": SPEAKERS_NAME_TEMPLATE.format(source=source),
+                "report": REPORT_NAME,
             }
             for source in offline_runner.declared_sources(directory)
         }
@@ -1908,13 +1909,13 @@ def _artifact_paths(directory: Path) -> dict[str, str]:
     """这一趟该报出来的产物（**逐条绝对路径**；不在场的产物不列）。"""
     names = [
         (offline_runner.artifacts.STATUS_NAME, "会后离线状态文件"),
-        ("meeting_offline_report.md", "会后离线运行报告"),
+        (REPORT_NAME, "会后离线运行报告"),
         (offline_runner.MINUTES_STATUS_NAME, "会后纪要状态文件"),
         (MINUTES_FINAL_NAME, "会后纪要"),
     ]
     for source in offline_runner.declared_sources(directory):
-        names.append((f"meeting_offline_transcript_{source}.md", f"{source} 的离线转写"))
-        names.append((f"meeting_offline_speakers_{source}.json", f"{source} 的说话人对照表"))
+        names.append((TRANSCRIPT_NAME_TEMPLATE.format(source=source), f"{source} 的离线转写"))
+        names.append((SPEAKERS_NAME_TEMPLATE.format(source=source), f"{source} 的说话人对照表"))
     for source in offline_runner.declared_sources(directory):
         for path in segment_archive_paths(directory, source, suffix=".mp3"):
             names.append((path.name, f"{source} 的归档 MP3（{path.stem.rsplit('_', 1)[-1]} 段）"))
@@ -2002,69 +2003,12 @@ def web() -> None:
     意外异常 → `EXIT_FAILURE`**（同一档另落一行 error 与终端说明，不静默）；进到服务器
     主循环之后的退出码由 `_drain_exit_code()` 按本次关停落在哪一档挑。
     """
-    # ① bootstrap 日志：默认日志目录 + 默认轮转参数
-    try:
-        logging_setup.setup_service_logging(config_module.default_log_dir())
-    except OSError as exc:
-        # 默认日志目录不可写时 bootstrap 建不起来：这一刻只有终端可写。
-        # 是否拒绝启动由 ④（生效 log.dir）决定。
-        print(
-            f"注意：默认日志目录不可写（{exc}），bootstrap 阶段只有终端可写",
-            file=sys.stderr,
-            flush=True,
-        )
-
-    # ② 读配置并做值级校验
-    try:
-        loaded = config_module.load()
-    except config_module.ConfigCorruptError as exc:
-        print(f"启动前提不成立：{exc}", file=sys.stderr, flush=True)
-        try:
-            _log().error("启动前提不成立：%s -> EXIT_STARTUP_UNMET", exc)
-        except Exception:
-            pass
-        sys.exit(EXIT_STARTUP_UNMET)
-    except config_module.ConfigValueError as exc:
-        print(f"配置值非法：{exc}", file=sys.stderr, flush=True)
-        try:
-            _log().error("配置值非法：%s -> EXIT_REJECTED", exc)
-        except Exception:
-            pass
-        sys.exit(EXIT_REJECTED)
-
-    config_module.set_current(loaded)
-
-    # ③ 按生效配置重建服务级日志（写不进去即「主 log 不可写」）
-    log_dir = loaded.get("log.dir")
-    try:
-        logging_setup.setup_service_logging(
-            log_dir,
-            level=loaded.get("log.level"),
-            max_bytes=loaded.get("log.max_bytes"),
-            backup_count=loaded.get("log.backup_count"),
-        )
-    except OSError as exc:
-        # ④ 主 log 不可写 → 拒绝启动（不再照 V1 那样静默降级）
-        print(
-            f"启动前提不成立：主 log 不可写：{log_dir}（{type(exc).__name__}: {exc}）",
-            file=sys.stderr,
-            flush=True,
-        )
-        try:
-            _log().error(
-                "启动前提不成立：主 log 不可写：%s（%s: %s） -> EXIT_STARTUP_UNMET",
-                log_dir, type(exc).__name__, exc,
-            )
-        except Exception:
-            pass
-        sys.exit(EXIT_STARTUP_UNMET)
+    # ①②③ 启动前奏（bootstrap 日志 → 读配置并生效 → 按生效配置重建服务级日志）：
+    # 三入口共用 `_load_config_or_exit()` 那一份，不再逐行重抄；「配置来源」行按 web 旧本
+    # 落重建③之后（生效 log.dir/level/轮转），故传 config_source_after_rebuild=True。
+    loaded = _load_config_or_exit(config_source_after_rebuild=True)
 
     logger = _log()
-    logger.info(
-        "配置来源：%s；生效值清单：\n%s",
-        loaded.config_path(),
-        config_module.format_applied(loaded),
-    )
     logger.info(
         "热读键（每段重新读）：%s；其余键改了要重启；环境变量一律启动时求值",
         " / ".join(loaded.hot_keys()),

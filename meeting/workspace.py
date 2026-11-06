@@ -18,7 +18,8 @@ from pathlib import Path
 from typing import Any
 
 from meeting import config as config_module
-from meeting.session import SESSION_FILE_NAME, archive_name
+from meeting.atomicio import write_text_atomic
+from meeting.session import SESSION_FILE_NAME, archive_name, normalize_dir
 from meeting.state import now_iso
 
 _log = logging.getLogger("meeting.workspace")
@@ -34,14 +35,13 @@ PCM_SUFFIX = ".pcm"
 def canonical_dir(value: Any) -> str:
     """把用户给的工作区目录算成**规范的绝对路径**（去重判据就落在这条路径上）。
 
-    相对路径照 `resolve_workspace_dir()` 的做法锚到进程当前目录；`~` 展开；
-    不判存在、不建目录。注册表的去重判据在它之上再 `normcase`（见 `_registry_key`）。
+    规范化走 `session.normalize_dir()` 的唯一出处（`expanduser` → 相对路径锚进程
+    当前目录 → `normpath`）；`None` 宽容地当 `~`（这一侧不做「必给」校验，start 路径
+    的那一侧才做）；不判存在、不建目录。注册表的去重判据在它之上再 `normcase`
+    （见 `_registry_key`）。
     """
     text = "~" if value is None else str(value)
-    path = Path(text.strip()).expanduser()
-    if not path.is_absolute():
-        path = Path.cwd() / path
-    return str(os.path.normpath(str(path)))
+    return normalize_dir(text.strip())
 
 
 def meeting_material_names() -> frozenset[str]:
@@ -181,24 +181,14 @@ class WorkspaceRegistry:
         return data
 
     def _write_file(self, data: dict[str, Any]) -> str:
-        """原子写注册表（同目录临时文件 + `os.replace` + fsync；先例是
-        `config.write_config_values()`）。写盘失败抛 `OSError`，由调用方收。"""
+        """原子写注册表（同目录临时文件 + `os.replace` + fsync，走 atomicio 共用实现）。
+        写盘失败抛 `OSError`，由调用方收。"""
         target = self._registry_path()
-        directory = os.path.dirname(os.path.abspath(target))
-        os.makedirs(directory, exist_ok=True)
-        tmp = os.path.join(directory, f".{REGISTRY_FILE_NAME}.{os.getpid()}.tmp")
-        try:
-            with open(tmp, "w", encoding="utf-8") as handle:
-                json.dump(data, handle, ensure_ascii=False, indent=2)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(tmp, target)
-        finally:
-            if os.path.exists(tmp):
-                try:
-                    os.unlink(tmp)
-                except OSError:  # pragma: no cover - 清理失败不影响结果
-                    pass
+        write_text_atomic(
+            Path(target),
+            json.dumps(data, ensure_ascii=False, indent=2),
+            fsync=True,
+        )
         return target
 
     def entries(self) -> list[dict[str, Any]]:

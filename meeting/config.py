@@ -19,6 +19,8 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
+from meeting.atomicio import write_text_atomic
+
 # 异常（退出码常量由 cli.main() 映射成 §3.4 的常量后 sys.exit，本模块不定义）
 
 
@@ -347,13 +349,7 @@ def validate_setting_changes(
 
     segment = applied.get("asr.max_segment_seconds", effective("asr.max_segment_seconds"))
     timeout = applied.get("asr.timeout_seconds", effective("asr.timeout_seconds"))
-    if float(timeout) <= float(segment):
-        raise ConfigValueError(
-            "asr.timeout_seconds",
-            timeout,
-            f"必须大于 asr.max_segment_seconds（当前 {segment}）",
-            "键间规则不成立（超时必须大于段长）",
-        )
+    _validate_timeout_exceeds_segment(segment, timeout)
 
     # 键间规则：active_preset 指向的名字必须在预设清单里。只拦 settings_update 的写前
     # 校验，刻意不在装载时拦——手删一套预设后服务照常起。
@@ -412,21 +408,11 @@ def write_config_values(
     merged = dict(current)
     merged.update(changes)
 
-    directory = os.path.dirname(os.path.abspath(target))
-    os.makedirs(directory, exist_ok=True)
-    tmp = os.path.join(directory, f".{CONFIG_FILE_NAME}.{os.getpid()}.tmp")
-    try:
-        with open(tmp, "w", encoding="utf-8") as handle:
-            json.dump(merged, handle, ensure_ascii=False, indent=2)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp, target)
-    finally:
-        if os.path.exists(tmp):
-            try:
-                os.unlink(tmp)
-            except OSError:  # pragma: no cover - 清理失败不影响结果
-                pass
+    write_text_atomic(
+        target,
+        json.dumps(merged, ensure_ascii=False, indent=2),
+        fsync=True,
+    )
     return target
 
 
@@ -660,16 +646,19 @@ def validate_value(key: str, value: Any) -> Any:
     raise KeyError(key)  # pragma: no cover - DEFAULT_VALUES 全覆盖
 
 
-def _validate_cross_rules(applied: dict[str, Any]) -> None:
-    """键间规则：`asr.timeout_seconds` 必须大于 `asr.max_segment_seconds`。"""
-    segment = applied["asr.max_segment_seconds"]
-    timeout = applied["asr.timeout_seconds"]
-    if timeout <= segment:
+def _validate_timeout_exceeds_segment(segment: Any, timeout: Any) -> None:
+    """键间规则：`asr.timeout_seconds` 必须大于 `asr.max_segment_seconds`（唯一一份）。
+
+    装载路径（`load()`）与 `validate_setting_changes()` 的写前校验都走这一条，
+    错误的键名 / 合法范围 / detail 只此一份措辞。没改到的那一半由调用方补齐：
+    装载路径取 applied 里的两键，写前校验没改到的取生效配置里的当前值。
+    """
+    if float(timeout) <= float(segment):
         raise ConfigValueError(
             "asr.timeout_seconds",
             timeout,
             f"必须大于 asr.max_segment_seconds（当前 {segment}）",
-            "键间规则不成立",
+            "键间规则不成立（超时必须大于段长）",
         )
 
 
@@ -809,7 +798,9 @@ def load(
         applied[key] = validate_value(key, raw)
         sources[key] = f"环境变量 {env_name}"
 
-    _validate_cross_rules(applied)
+    _validate_timeout_exceeds_segment(
+        applied["asr.max_segment_seconds"], applied["asr.timeout_seconds"]
+    )
 
     return Config(applied=applied, sources=sources, path=config_file)
 

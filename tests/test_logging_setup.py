@@ -25,9 +25,10 @@ from pathlib import Path
 import pytest
 
 from tests import _helpers as helpers
+from meeting import cli as cli_module
 from meeting import config as config_module
 from meeting import logging_setup
-from meeting.cli import EXIT_STARTUP_UNMET
+from meeting.cli import EXIT_OK, EXIT_STARTUP_UNMET
 
 EXPECTED_FORMAT = "%(asctime)s %(levelname)-7s [%(threadName)s] session=%(session)s %(name)s: %(message)s"
 
@@ -258,6 +259,145 @@ def test_build_rotating_handler_uses_given_parameters(temp_logging):
         assert handler.baseFilename.endswith("custom.log")
     finally:
         handler.close()
+
+
+# ---------------------------------------------------------------------------
+# 启动前奏的 log 落点：「配置来源」行与重建失败分支（三入口各按旧本逐字还原）
+# ---------------------------------------------------------------------------
+
+
+class _RecordSink(logging.Handler):
+    """抓 `meeting` 命名空间本进程发出的记录（断言读法：消息文本列表）。"""
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.DEBUG)
+        self.messages: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.messages.append(record.getMessage())
+
+
+def test_web_entry_logs_config_source_after_the_rebuild(tmp_path, monkeypatch):
+    """web 形状（`config_source_after_rebuild=True`）：「配置来源」落重建③之后、进生效 log.dir 那份。
+
+    自定义 log.dir 场景：bootstrap 先落默认目录；这行要落在自定义目录里、排在
+    重建交接注**之后**（= 记在重建之后），bootstrap 默认目录那份里没有它。
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    custom_dir = tmp_path / "custom_logs"
+    helpers.write_config_json(home, {"log.dir": str(custom_dir)})
+    logging_setup.reset_for_tests()
+    try:
+        cli_module._load_config_or_exit(config_source_after_rebuild=True)
+        text = helpers.read_text(custom_dir / "meeting.log")
+        handover_index = text.find("bootstrap 阶段的日志留在")
+        source_index = text.find("配置来源：")
+        assert handover_index != -1, text
+        assert source_index > handover_index, text
+        default_log = Path(config_module.default_log_dir()) / "meeting.log"
+        assert default_log.exists()
+        assert "配置来源：" not in helpers.read_text(default_log)
+    finally:
+        logging_setup.reset_for_tests()
+
+
+def test_post_and_replay_entries_log_config_source_before_the_rebuild(tmp_path, monkeypatch):
+    """post/replay 形状（默认参数）：「配置来源」落重建③之前、进 bootstrap 默认目录那份。
+
+    这行记在 bootstrap handler 还在的时候（= 重建之前），所以它出现在默认目录那份里，
+    自定义 log.dir 那份里没有它。
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    custom_dir = tmp_path / "custom_logs"
+    helpers.write_config_json(home, {"log.dir": str(custom_dir)})
+    logging_setup.reset_for_tests()
+    try:
+        cli_module._load_config_or_exit()
+        default_log = Path(config_module.default_log_dir()) / "meeting.log"
+        assert "配置来源：" in helpers.read_text(default_log)
+        custom_log = custom_dir / "meeting.log"
+        assert custom_log.exists()
+        assert "配置来源：" not in helpers.read_text(custom_log)
+    finally:
+        logging_setup.reset_for_tests()
+
+
+def test_replay_shape_rebuild_failure_adds_no_error_line_to_the_log_stream(
+    tmp_path, monkeypatch, capsys
+):
+    """replay 形状（`log_rebuild_failure=False`）：重建失败的 log 流里没有那行 error（旧本没有）。
+
+    终端那行 print 照旧（子进程档已有用例钉住退出码与话术）；这里钉的是 log 流形状：
+    重建失败这条 error 记录根本不发。
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    blocker = tmp_path / "blocker"
+    blocker.write_text("普通文件挡路，让生效 log.dir 建不起来", encoding="utf-8")
+    helpers.write_config_json(home, {"log.dir": str(blocker / "sub" / "logs")})
+    logging_setup.reset_for_tests()
+    sink = _RecordSink()
+    meeting_logger = logging.getLogger("meeting")
+    meeting_logger.addHandler(sink)
+    try:
+        with pytest.raises(SystemExit) as info:
+            cli_module._load_config_or_exit(log_rebuild_failure=False)
+        assert info.value.code == EXIT_STARTUP_UNMET
+        assert capsys.readouterr().err.startswith("启动前提不成立：主 log 不可写：")
+        assert not [m for m in sink.messages if "主 log 不可写" in m]
+    finally:
+        meeting_logger.removeHandler(sink)
+        logging_setup.reset_for_tests()
+
+
+def test_web_and_post_shape_rebuild_failure_still_logs_the_error_line(
+    tmp_path, monkeypatch, capsys
+):
+    """web/post 形状（默认 `log_rebuild_failure=True`）：重建失败的 log 流里另落那行 error（旧本有）。"""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    blocker = tmp_path / "blocker"
+    blocker.write_text("普通文件挡路，让生效 log.dir 建不起来", encoding="utf-8")
+    helpers.write_config_json(home, {"log.dir": str(blocker / "sub" / "logs")})
+    logging_setup.reset_for_tests()
+    sink = _RecordSink()
+    meeting_logger = logging.getLogger("meeting")
+    meeting_logger.addHandler(sink)
+    try:
+        with pytest.raises(SystemExit) as info:
+            cli_module._load_config_or_exit()
+        assert info.value.code == EXIT_STARTUP_UNMET
+        assert capsys.readouterr().err.startswith("启动前提不成立：主 log 不可写：")
+        error_lines = [m for m in sink.messages if "主 log 不可写" in m]
+        assert len(error_lines) == 1, sink.messages
+        assert error_lines[0].endswith("-> EXIT_STARTUP_UNMET")
+    finally:
+        meeting_logger.removeHandler(sink)
+        logging_setup.reset_for_tests()
+
+
+def test_web_entry_asks_for_the_after_rebuild_log_shape(monkeypatch):
+    """web() 调共用前奏时点名 web 旧本的形状：`config_source_after_rebuild=True`。"""
+    seen: dict = {}
+
+    def fake_prelude(**kwargs):
+        seen.update(kwargs)
+        raise SystemExit(EXIT_OK)  # 前奏之后一概不走
+
+    monkeypatch.setattr(cli_module, "_load_config_or_exit", fake_prelude)
+    with pytest.raises(SystemExit):
+        cli_module.web()
+    assert seen == {"config_source_after_rebuild": True}
 
 
 # ---------------------------------------------------------------------------

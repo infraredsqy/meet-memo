@@ -61,9 +61,6 @@ SOURCE_HEALTH: tuple[str, ...] = (
 # （`notice` 槽位已随「默认输出根」退场，见 `docs/design-intent.md` 第 4 条；
 #   "最近一场"由工作台收编节点（e2f6166b）落在工作区注册表里，不再扫场次目录。）
 
-#: 告警文案：某一路的流中断（`SourceLost` 事实）
-SOURCE_LOST_MESSAGE = "这一路的采集流中断了"
-
 #: 包络：一根柱的窗口（秒）与柱数（最近 30 秒 = 15 × 2 秒）
 ENVELOPE_BAR_SECONDS = 2.0
 ENVELOPE_BAR_COUNT = 15
@@ -594,35 +591,13 @@ def end_session(snapshot: Snapshot) -> None:
 
 # 收尾三函数（签名由 phase2 冻结；只改内存快照、自己不碰 IO）。
 # 作用在哪一份内存快照上由调用方指定（`ServiceRuntime` 在收尾编排里经 `snapshot=`
-# 关键字交进来），省略时用 `bind_snapshot()` 写入的当前快照。落盘与提交不在这里：
-# `session.json` 由 `ServiceRuntime` 一侧写，`revision +1` 与广播由 `commit()` 做。
+# 关键字交进来），没有隐式回源：调用点显式给快照，是谁的现场就在谁身上改。
+# 落盘与提交不在这里：`session.json` 由 `ServiceRuntime` 一侧写，`revision +1`
+# 与广播由 `commit()` 做。
 
-#: 当前快照（`ServiceRuntime` 启动时写入；只为「无参调用」这一读法服务）
-_CURRENT_SNAPSHOT: Snapshot | None = None
-
-
-def bind_snapshot(snapshot: Snapshot | None) -> None:
-    """由 `ServiceRuntime` 写入 / 清除「当前快照」（收尾三函数的无参读法靠它）。"""
-    global _CURRENT_SNAPSHOT
-    _CURRENT_SNAPSHOT = snapshot
-
-
-def current_snapshot() -> Snapshot | None:
-    return _CURRENT_SNAPSHOT
-
-
-def _resolve(snapshot: Snapshot | None) -> Snapshot:
-    target = snapshot if snapshot is not None else _CURRENT_SNAPSHOT
-    if target is None:
-        raise DrainStateError(
-            "拿不到内存快照：ServiceRuntime 尚未启动，且调用点没有显式给出快照"
-        )
-    return target
-
-
-def begin_drain_step(step_id: str, snapshot: Snapshot | None = None) -> DrainStep:
+def begin_drain_step(step_id: str, snapshot: Snapshot) -> DrainStep:
     """把该步的 `status` 置 `running`、`detail` 刷成这一趟的说明（只改内存）。"""
-    step = _resolve(snapshot).drain_step(step_id)
+    step = snapshot.drain_step(step_id)
     step.status = "running"
     step.detail = f"收尾步骤 {step_id} 进行中"
     step.error = None
@@ -635,7 +610,7 @@ def finish_drain_step(
     detail: str | None = None,
     error: str | None = None,
     *,
-    snapshot: Snapshot | None = None,
+    snapshot: Snapshot,
     frozen_ended: bool = False,
     frozen_interrupted: bool = False,
 ) -> DrainStep:
@@ -658,7 +633,7 @@ def finish_drain_step(
             f"别的步骤不许落回 `waiting`：{step_id!r}"
         )
 
-    target = _resolve(snapshot)
+    target = snapshot
     step = target.drain_step(step_id)
     step.status = status
     step.detail = "" if detail is None else str(detail)
@@ -670,7 +645,7 @@ def finish_drain_step(
     return step
 
 
-def finish_drain(snapshot: Snapshot | None = None, *, cancelled: bool = False) -> str:
+def finish_drain(snapshot: Snapshot, *, cancelled: bool = False) -> str:
     """收尾的唯一出口：按当前三步结果判终态，返回最终 `ended.phase`（写盘与提交不在这里）。
 
     三步都落定（`{done, skipped, waiting}`，或只差 `post` 停在 `running`）且无 `failed`
@@ -681,7 +656,7 @@ def finish_drain(snapshot: Snapshot | None = None, *, cancelled: bool = False) -
     在飞那一步照实记成 `running`，所以「只差 post 停在 running」那条必须让开这一趟，
     否则取消会被误判成「收尾走完了」。
     """
-    target = _resolve(snapshot)
+    target = snapshot
     if target.ended is None:
         raise DrainStateError("当前没有收尾中的会话（ended 为 None）")
     settled = all(
@@ -740,14 +715,6 @@ def validate_health(value: Any) -> str:
     return str(value) if value in SOURCE_HEALTH else "probe_failed"
 
 
-def cleanup_windows(snapshot: Snapshot) -> None:
-    """会话结束时清掉包络的累计窗口（下一场从空数组重新长）。"""
-    for item in snapshot.sources:
-        item.bars = []
-        item.window = EnvelopeWindow()
-        item.bar_default = -100.0
-
-
 __all__ = [
     "ALERT_LEVEL",
     "DRAIN_STEP_IDS",
@@ -762,7 +729,6 @@ __all__ = [
     "SESSION_STATE",
     "SOURCE_HEALTH",
     "SOURCE_LABELS",
-    "SOURCE_LOST_MESSAGE",
     "TOP_STATE",
     "Alert",
     "AlertState",
@@ -780,9 +746,6 @@ __all__ = [
     "begin_alert",
     "begin_drain",
     "begin_drain_step",
-    "bind_snapshot",
-    "cleanup_windows",
-    "current_snapshot",
     "elapsed_seconds",
     "end_session",
     "finish_drain",

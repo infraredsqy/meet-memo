@@ -84,7 +84,6 @@ from meeting.state import (
     begin_alert,
     begin_drain,
     begin_drain_step,
-    bind_snapshot,
     finish_drain,
     finish_drain_step,
     new_snapshot,
@@ -179,7 +178,6 @@ class ServiceRuntime(
 
         # 唯一一份状态
         self.snapshot: Snapshot = new_snapshot(settings=self._settings_view())
-        bind_snapshot(self.snapshot)
 
         # 后端与判定
         self.capture_resolution: BackendResolution | None = None

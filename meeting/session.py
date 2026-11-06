@@ -14,10 +14,10 @@ import json
 import logging
 import os
 import shutil
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
+from meeting.atomicio import write_text_atomic
 from meeting.backends.base import SOURCE_IDS
 from meeting.state import DRAIN_STEP_IDS
 
@@ -136,13 +136,6 @@ def state_for(*, top_state: str, ended_phase: str | None = None, has_failed_step
     return "done" if ended_phase == "done" else "draining"
 
 
-@dataclass
-class SessionRecord:
-    """一份 `session.json` 的盘上内容（dict 形状，字段名与形状都是冻结项）。"""
-
-    data: dict[str, Any]
-
-
 def build_session_record(
     *,
     session_id: str,
@@ -223,6 +216,20 @@ def steps_from_ended(ended: Any) -> list[dict[str, Any]]:
     return steps
 
 
+def normalize_dir(value: str) -> str:
+    """把目录文本算成**规范的绝对路径**（目录寻址两侧共用的唯一出处）。
+
+    `expanduser()` 展开 `~`；相对路径锚到进程当前目录；末尾 `normpath()` 收拢 `..`
+    与重复分隔符。不判存在、不建目录——更严的两条校验（必给、目录已存在）只归
+    `resolve_workspace_dir()`（start 路径）管；注册表侧的判别与去重
+    （`workspace.canonical_dir()`）不重复它们、也不做存在性分支。
+    """
+    path = Path(str(value)).expanduser()
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    return os.path.normpath(str(path))
+
+
 def resolve_workspace_dir(value: Any) -> str:
     """把 start 请求 / 命令行给的目标工作区目录算成绝对路径（不建目录）。
 
@@ -236,10 +243,7 @@ def resolve_workspace_dir(value: Any) -> str:
             "缺目标工作区目录：start 必须显式给一个已存在的目录（args.dir），"
             "本服务不设默认落点、也不建目录"
         )
-    path = Path(text).expanduser()
-    if not path.is_absolute():
-        path = Path.cwd() / path
-    path = Path(os.path.normpath(str(path)))
+    path = Path(normalize_dir(text))
     if not path.is_dir():
         raise ValueError(f"目标工作区目录不存在（只接受已存在的目录，不自动建）：{path}")
     return str(path)
@@ -252,22 +256,13 @@ class SessionStore:
         return Path(session_dir) / SESSION_FILE_NAME
 
     def write_session_json(self, session_dir: str, record: dict[str, Any]) -> str:
-        """原子写 `session.json`（同目录临时文件 + `os.replace` + `flush`）。"""
+        """原子写 `session.json`（同目录临时文件 + `os.replace` + fsync，走 atomicio 共用实现）。"""
         target = self.session_file(session_dir)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        tmp = target.parent / f".{SESSION_FILE_NAME}.{os.getpid()}.tmp"
-        try:
-            with open(tmp, "w", encoding="utf-8") as handle:
-                json.dump(record, handle, ensure_ascii=False, indent=2)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(tmp, target)
-        finally:
-            if tmp.exists():
-                try:
-                    tmp.unlink()
-                except OSError:  # pragma: no cover - 清理失败不影响结果
-                    pass
+        write_text_atomic(
+            target,
+            json.dumps(record, ensure_ascii=False, indent=2),
+            fsync=True,
+        )
         return str(target)
 
     def read_session_json(self, session_dir: str) -> dict[str, Any] | None:
@@ -281,28 +276,6 @@ class SessionStore:
         except ValueError:
             return None
         return data if isinstance(data, dict) else None
-
-    def load(self, session_dir: str) -> tuple[SessionRecord | None, str | None]:
-        """读一份场次记录并回答两个问题：记录本身 + 「读不出来」的说明。
-
-        条数口径（phase1 的观测面，phase2 照旧）：文件根本不存在 → 未命中且不落 log
-        （说明为 `None`）；存在却读不出来 / 解码失败 / 顶层不是对象 → 同样按未命中，
-        但必须留一行「读不出来…按未命中处理」的 WARNING（说明非 `None`）。
-        """
-        target = self.session_file(session_dir)
-        if not target.exists():
-            return None, None
-        try:
-            raw = target.read_text(encoding="utf-8")
-        except (OSError, ValueError) as exc:
-            return None, f"{type(exc).__name__}: {exc}"
-        try:
-            data = json.loads(raw)
-        except ValueError as exc:
-            return None, f"{type(exc).__name__}: {exc}"
-        if not isinstance(data, dict):
-            return None, "session.json 顶层不是 JSON 对象"
-        return SessionRecord(data), None
 
     def mark_interrupted(self, session_dir: str, record: dict[str, Any]) -> str:
         """强制打断的先落盘入口：把 `state: "draining"` + `interrupted: true` 那一版写到盘上。
@@ -333,12 +306,12 @@ class SessionStore:
 __all__ = [
     "SESSION_FILE_NAME",
     "SEGMENT_NUMBER_WIDTH",
-    "SessionRecord",
     "SessionStore",
     "archive_name",
     "archive_segment_number",
     "build_session_record",
     "next_segment_number",
+    "normalize_dir",
     "resolve_workspace_dir",
     "segment_archive_paths",
     "segment_numbers",
