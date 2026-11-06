@@ -68,7 +68,10 @@ from meeting.minutes.status import (
     RUN_PROMPT_NAME,
     WORKING_DIR,
     DeliveryForbidden,
+    FAILURE_TIMEOUT,
+    ISOLATION_GRANT,
     ISOLATION_MESSAGE,
+    write_run_log,
 )
 
 _log = logging.getLogger("meeting.minutes.dsh_web")
@@ -104,7 +107,8 @@ SESSION_PROMPT = "session/prompt"
 #: 三个端点的参数名（端点描述符的 `wire` 字段）
 REQUEST_WIRE = "request"
 
-#: 交付失败的分档（读方按它分档，不必去解析错误消息）。
+#: 交付失败的分档（读方按它分档，不必去解析错误消息）。`FAILURE_TIMEOUT` 的唯一定义点
+#: 在 `status.py`（两条分支的失败词落进同一格 `dsh.failure`，同名词必须同值）。
 #:
 #: 第一档说的是**凭据**：这一层唯一在握手之前就能断掉的环节是自签 cookie（读不到
 #: `~/.dsh/.credentials.yaml`、那条记录不在、密钥长度不对）。连不上服务端那一档不在这里
@@ -113,7 +117,6 @@ FAILURE_CREDENTIALS = "credentials"
 FAILURE_WORKSPACE = "workspace_failed"
 FAILURE_SESSION = "session_failed"
 FAILURE_PROMPT = "prompt_failed"
-FAILURE_TIMEOUT = "timeout"
 FAILURES: tuple[str, ...] = (
     FAILURE_CREDENTIALS,
     FAILURE_WORKSPACE,
@@ -129,8 +132,9 @@ SECRET_PATTERN = re.compile(
     rf"{re.escape(SECRET_RECORD)}:[\s\S]*?secret:\s*([A-Za-z0-9_\-]+)"
 )
 
-#: 放行参数缺席时的拒绝理由（`probe()` / `handoff()` 共用；话术与 headless 启动器同源）
-ISOLATION_REASON = f"{ISOLATION_MESSAGE}（放行参数是 allow_dsh=True，由人工入口下传）"
+#: 放行参数缺席时的拒绝理由（`probe()` / `handoff()` 共用；话术与 headless 启动器
+#: 同源——括号补语取 `status.ISOLATION_GRANT` 那一份，措辞不再各漂各的）
+ISOLATION_REASON = f"{ISOLATION_MESSAGE}（{ISOLATION_GRANT}）"
 
 #: 自签 cookie 的有效期（与 dsh 默认的 cookieMaxAgeDays 一致）
 COOKIE_MAX_AGE_MS = 30 * 24 * 3600 * 1000
@@ -613,33 +617,35 @@ def _write_log(
 ) -> None:
     """落 `working/minutes-run.log`（头几行说清这一趟是怎么交付的、成没成）。
 
-    与 headless 那一版同形（头几行是给人排查用的），只是中间那一段换成三步 RPC 的记录：
-    没有子进程的 stdout / stderr 可落，落的就是这三步的请求与应答摘要。
+    写盘骨架走 `status.write_run_log()`（两路共用的唯一实现），这里只出 web 分支的
+    头行与分节。没有子进程的 stdout / stderr 可落，分节落的是三步 RPC 的请求与应答
+    摘要，没走到的节写明占位。
     """
-    lines = [
+    header = [
         f"# 交付：{WORKSPACE_CREATE} → {SESSION_CREATE} → {SESSION_PROMPT}",
         f"# 场次目录：{directory}",
         f"# DSH web：{url}",
         f"# 结果：{'交付成功' if failure is None else f'交付失败（{failure}）'}",
     ]
     if workspace:
-        lines.append(f"# 工作区：{workspace}")
+        header.append(f"# 工作区：{workspace}")
     if session_id:
-        lines.append(f"# 会话：{session_id}")
-    lines.append(f"# 耗时：{float(seconds):.3f}s")
+        header.append(f"# 会话：{session_id}")
+    header.append(f"# 耗时：{float(seconds):.3f}s")
     if error:
-        lines.append(f"# 失败：{error}")
-    lines.append("")
-    for step in (WORKSPACE_CREATE, SESSION_CREATE, SESSION_PROMPT):
-        key = {
-            WORKSPACE_CREATE: "workspace",
-            SESSION_CREATE: "session",
-            SESSION_PROMPT: "prompt",
-        }[step]
-        lines.append(f"## {step}")
-        lines.append(record.get(key, "（没走到这一步）"))
-        lines.append("")
-    write_text_atomic(directory / WORKING_DIR / MINUTES_RUN_LOG_NAME, "\n".join(lines))
+        header.append(f"# 失败：{error}")
+    step_keys = (
+        (WORKSPACE_CREATE, "workspace"),
+        (SESSION_CREATE, "session"),
+        (SESSION_PROMPT, "prompt"),
+    )
+    write_run_log(
+        directory / WORKING_DIR / MINUTES_RUN_LOG_NAME,
+        header=header,
+        sections=tuple(
+            (step, record.get(key, "（没走到这一步）")) for step, key in step_keys
+        ),
+    )
 
 
 __all__ = [

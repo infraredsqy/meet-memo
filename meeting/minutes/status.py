@@ -31,7 +31,7 @@ import json
 import logging
 import os
 import time as _time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
@@ -96,6 +96,18 @@ STATE_SKIPPED = "skipped"
 #: （`meeting post` 与工作台「直接出纪要」按钮）显式放行，其余调用一律跳过。
 ISOLATION_MESSAGE = "纪要层隔离：本次非人工发起，跳过"
 
+#: 放行参数的下传说明（`DeliveryForbidden` 拒绝话术的括号补语，**一处定稿**）：
+#: 放行参数叫 `allow_dsh=True`、由两条人工入口经 `MinutesHook.launch(deliver=True)` 下传。
+#: headless 启动器、web 交付与编排层三处拒绝话术都接这一份，措辞不再各漂各的。
+ISOLATION_GRANT = (
+    "放行参数是 allow_dsh=True，由人工入口经 MinutesHook.launch(deliver=True) 下传"
+)
+
+#: `dsh.failure` 格里「超时」那一档的词：headless 与 web 两条分支的失败词落进
+#: **同一张状态文件的同一格**，同名词必须同值，因此只此一份（两分支各自的
+#: `FAILURES` 词表从这里取它）。
+FAILURE_TIMEOUT = "timeout"
+
 #: 启动分支：配置里的三个词（`auto` / `headless` / `web`）与实际走的两条
 BRANCH_AUTO = "auto"
 BRANCH_HEADLESS = "headless"
@@ -147,6 +159,17 @@ class DeliveryForbidden(RuntimeError):
 def now_iso() -> str:
     """现在的 ISO 时刻（与 `meeting/offline/runner.py` 的 `_now_iso()` 同形）。"""
     return datetime.now().isoformat(timespec="seconds")
+
+
+def finished_at_for(state: str) -> str:
+    """状态文件 `finished_at` 那一格的取值（**唯一出处**）。
+
+    `state = "running"`（在飞那一版）**明写成空串**——读方据此分得出「正在跑」；
+    其余各档取当前时刻。`write_session_status()` 把 `None` 当「调用方没给」并补上
+    当前时刻（那条口径给终局那几份用），所以在飞的这一版必须显式递空串而不能递
+    `None`。`runner._status_document()` 与 `_write_in_flight()` 都从这里取。
+    """
+    return "" if state == STATE_RUNNING else now_iso()
 
 
 def build_status(
@@ -266,6 +289,29 @@ def write_session_status(
     return document
 
 
+def write_run_log(
+    path: str | Path,
+    *,
+    header: Sequence[str],
+    sections: Sequence[tuple[str, str]],
+) -> None:
+    """把这一趟的记录写进 `working/minutes-run.log`（**两路共用的唯一写盘实现**）。
+
+    文件骨架取 web 交付那一路的（两套里信息更全的一套）：`# ` 头行若干——每一行
+    「键：值」，给人排查用的现场事实，可选的行（工作区、失败原因）在场才落——
+    然后一个空行，`## ` 分节若干（节名 + 节正文 + 空行），原子替换落盘。
+    头行与分节的**内容**归各分支自己（headless 是命令 / cwd / 退出码与 stdout/stderr，
+    web 是交付三步的请求与应答摘要，没走到的节写明占位），两路记录的事实本来就不同，
+    一行都不丢；骨架与落盘只有这一份，读这份文件的人不再按 branch 猜两种布局。
+    （放这里：这份产物名与 `artifacts.log` 那一格都登记在 status.py，写它的公共
+    实现就近放同处，`launch` / `dsh_web` 两路都已在 import 它，不添新依赖边。）
+    """
+    lines = [*header, ""]
+    for title, body in sections:
+        lines.extend([f"## {title}", body, ""])
+    write_text_atomic(path, "\n".join(lines))
+
+
 def mark_failed(session_dir: str | Path, error: str) -> dict[str, Any]:
     """把纪要状态文件补成 `failed` + 原因；盘上那一版的身世能留的都留着。
 
@@ -379,14 +425,17 @@ def _already_running_reason(session: Path) -> str:
 
 
 def _write_in_flight(session: Path, *, moment: str, branch: str) -> dict[str, Any]:
-    """落那一版「在飞」的状态文件（形状与 `runner` 线程体那一版同形，取值为空的那几格）。"""
+    """落那一版「在飞」的状态文件（形状与 `runner` 线程体那一版同形，取值为空的那几格）。
+
+    「在飞版 `finished_at` 空串」的口径从 `finished_at_for()` 取（唯一出处）。
+    """
     return write_session_status(
         session,
         state=STATE_RUNNING,
         mode=MODE_UNKNOWN,
         branch=str(branch),
         started_at=moment,
-        finished_at="",
+        finished_at=finished_at_for(STATE_RUNNING),
         artifacts={},
         dsh={},
     )
@@ -423,6 +472,8 @@ __all__ = [
     "BRANCH_HEADLESS",
     "BRANCH_WEB",
     "DeliveryForbidden",
+    "FAILURE_TIMEOUT",
+    "ISOLATION_GRANT",
     "ISOLATION_MESSAGE",
     "KNOWN_SCHEMA_MAJOR",
     "LOCK_ATTEMPTS",
@@ -440,6 +491,7 @@ __all__ = [
     "STATE_SKIPPED",
     "StatusError",
     "build_status",
+    "finished_at_for",
     "lock_path",
     "mark_failed",
     "mark_running",
@@ -448,6 +500,7 @@ __all__ = [
     "read_status",
     "RUN_PROMPT_NAME",
     "status_path",
+    "write_run_log",
     "write_session_status",
     "write_status",
     "WORKING_DIR",

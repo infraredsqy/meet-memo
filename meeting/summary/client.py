@@ -37,6 +37,8 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from meeting.summary.settings import DEADLINE_KEY, _default
+
 #: 端点路径（照 V1：base_url 后面直接接它）
 CHAT_COMPLETIONS_PATH = "/chat/completions"
 
@@ -44,8 +46,10 @@ CHAT_COMPLETIONS_PATH = "/chat/completions"
 TEMPERATURE = 0.3
 
 #: 一次请求的兜底超时（秒）：只作 `HttpRequest.timeout` 这个 dataclass 字段的默认值
-#: ——生产路径上 `run_summary()` 按「剩余预算」现算并显式传超时
-DEFAULT_TIMEOUT_SECONDS = 25.0
+#: ——生产路径上 `run_summary()` 按「剩余预算」现算并显式传超时。数值取登记正本
+#: `summary.deadline_seconds` 那一格（`config.default_for`，经 `settings._default()`），
+#: 不再另存一个同值字面量。
+DEFAULT_TIMEOUT_SECONDS = float(_default(DEADLINE_KEY))
 
 #: `SummaryError.reason` 的取值域（phase2 照它分辨怎么跟人说）
 ERROR_REASONS: tuple[str, ...] = ("timeout", "bad_status", "bad_json", "no_content")

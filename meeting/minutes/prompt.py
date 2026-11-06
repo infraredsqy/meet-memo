@@ -24,6 +24,7 @@ from meeting.minutes.chunk import (
     discover_inputs,
     mode_for,
 )
+from meeting.minutes.defaults import DEFAULT_MAX_SEGMENTS  # 包内唯一定义点，这里只 import
 from meeting.minutes.lines import count_lines
 from meeting.speaker_names import identity_rows
 
@@ -56,9 +57,6 @@ MODEL_CWD = "."
 #: 模板里任何一处没被填掉的占位符（渲染完还留着的就是「对不上号」）
 PLACEHOLDER_RE = re.compile(r"\{\{[^{}]*\}\}")
 
-#: 每段上限的默认值（与 `minutes.max_segments` 配置键的默认值一致）
-DEFAULT_MAX_SEGMENTS = 8
-
 #: 两路各自的说话人标签形态（写进提示词，模型据此知道哪一份稿带编号）
 SPEAKER_SHAPE_NOTES: dict[str, str] = {
     "live": "无说话人标签（每行形如 `[HH:MM] 正文`）",
@@ -78,12 +76,17 @@ KIND_FILE_TEMPLATES: dict[str, str] = {
     "offline": "meeting_offline_transcript_<source>.md",
 }
 
+#: 只有一份稿的那两档（`live_only` / `offline_only`）缺席的是哪一份稿的人话标签。
+#: 说明段的四个同构分支（`mode_note_text()` 两档、`_note_sentence()` 两档）都从这里取词，
+#: 改一句只动这一处；输出逐字钉在 `tests/test_minutes_prompt.py`。
+_MISSING_DRAFT_LABELS: dict[str, str] = {
+    "live_only": KIND_LABELS["offline"],
+    "offline_only": KIND_LABELS["live"],
+}
+
 #: 两路各自的稿型（判逐 source 档位与列表说明用）
 KINDS: tuple[str, ...] = ("live", "offline")
 
-#: 一条输入**可能有哪几种稿**（`PromptInput.kind` 那一格的全部取值）：两条都在 / 只有会中 /
-#: 只有会后。清单与说明段都按它说话，`kinds_per_source()` 的分类也落在这三个词上。
-INPUT_KINDS: tuple[str, ...] = ("both", "live_only", "offline_only")
 
 def shape_of(kind: str) -> str:
     """某一份稿的形态说明（`会中稿，无说话人标签（…）`；写进清单与说明段）。"""
@@ -109,7 +112,8 @@ def _note_sentence(source: str, kinds: Sequence[str]) -> str:
     """说明段里**某一路**那一句：它这一路手上有哪几份稿、每一份长什么样。
 
     逐条写清、不做排序（R11）；缺一条时如实写缺的是哪一份，
-    **不把缺的那一条说成不可信**。
+    **不把缺的那一条说成不可信**。只有一份稿的两个档逐字同构、只差缺席稿的名字
+    （`_MISSING_DRAFT_LABELS` 一处收敛）。
     """
     kind = kind_for(kinds)
     if kind == "both":
@@ -118,15 +122,9 @@ def _note_sentence(source: str, kinds: Sequence[str]) -> str:
             f"> `{source}` 这一路的稿：{shape}。两份都在，**平级、不合并**，"
             "逐块对照那一步两份都要读。"
         )
-    only = kinds[0]
-    if kind == "live_only":
-        return (
-            f"> `{source}` 这一路本次只有{shape_of(only)}。会后稿不在这台机器上，"
-            "逐块对照那一步没有第二条可对。附录里如实写明「这一路分不出个人」，"
-            "不要为任何人名给出推断。"
-        )
     return (
-        f"> `{source}` 这一路本次只有{shape_of(only)}。会中稿不在这台机器上，"
+        f"> `{source}` 这一路本次只有{shape_of(kinds[0])}。"
+        f"{_MISSING_DRAFT_LABELS[kind]}不在这台机器上，"
         "逐块对照那一步没有第二条可对。附录里如实写明「这一路分不出个人」，"
         "不要为任何人名给出推断。"
     )
@@ -227,15 +225,11 @@ def mode_note_text(mode: str, per_source: Sequence[tuple[str, str]]) -> str:
                 "逐块对照那一步两份都要读。"
             )
         return "\n".join(_note_sentence(source, _kinds_of(kind)) for source, kind in per_source)
-    if mode == "live_only":
-        return (
-            f"> 本次两路都只有{shape_of('live')}。会后稿不在这台机器上，"
-            "逐块对照那一步没有第二条可对。附录里如实写明「这一路分不出个人」，"
-            "不要为任何人名给出推断。"
-            f"（这一档的两路：{where}。）"
-        )
+    # live_only / offline_only 两档逐字同构、只差缺席稿的名字（`_MISSING_DRAFT_LABELS`
+    # 一处收敛）：四段模型可见文案逐字钉在 `tests/test_minutes_prompt.py`。
+    present = "live" if mode == "live_only" else "offline"
     return (
-        f"> 本次两路都只有{shape_of('offline')}。会中稿不在这台机器上，"
+        f"> 本次两路都只有{shape_of(present)}。{_MISSING_DRAFT_LABELS[mode]}不在这台机器上，"
         "逐块对照那一步没有第二条可对。附录里如实写明「这一路分不出个人」，"
         "不要为任何人名给出推断。"
         f"（这一档的两路：{where}。）"
@@ -250,7 +244,7 @@ def _kinds_of(kind: str) -> tuple[str, ...]:
         return ("live",)
     if kind == "offline_only":
         return ("offline",)
-    raise PromptTemplateError(f"稿型只认 {INPUT_KINDS}，收到 {kind!r}")
+    raise PromptTemplateError(f"稿型只认 {MODES}，收到 {kind!r}")
 
 
 #: `{{SPEAKER_NAMES}}` 的空态正文：盘上没有可用的确认记录时**如实**渲染这一段，
@@ -643,7 +637,6 @@ if __name__ == "__main__":  # pragma: no cover - 进程入口
 __all__ = [
     "DEFAULT_MAX_SEGMENTS",
     "DEFAULT_TEMPLATE",
-    "INPUT_KINDS",
     "KINDS",
     "KIND_FILE_TEMPLATES",
     "KIND_LABELS",

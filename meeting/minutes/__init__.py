@@ -1,9 +1,9 @@
 """会后纪要这一层（`41465462` 节点）。
 
-本包服务 spec「需求冻结 · 归属划分」里那一格：两条转写的行解析、按行切块、分块产物的契约校验、
+本包服务 spec「需求冻结 · 归属划分」里那一格：两条转写的行数口径、按行切块、分块产物的契约校验、
 编排提示词渲染，以及把这条链拉起来的那几件活。phase1 的四个模块各管一段，phase2 接着补上编排：
 
-  - `meeting.minutes.lines`：`[HH:MM] 正文` 与 `[HH:MM] **S01**: 正文` 两种行形一起吃的解析器；
+  - `meeting.minutes.lines`：转写行数的口径（`count_lines()`，区间表与契约校验共用的分母）；
   - `meeting.minutes.chunk`：按行切块 + `00_index.md` 行号区间表（落 `working/<source>/`）；
   - `meeting.minutes.contract`：`segmentation.json` 的契约校验（连续性**按 source 各判一遍**）；
   - `meeting.minutes.prompt`：把路径与档位填进模板，产出子会话读的那份提示词；

@@ -170,8 +170,10 @@ class SummarySettings:
     api_key: str = ""
     model: str = ""
     extra_body: dict[str, Any] | None = field(default=None)
-    deadline_seconds: float = 25.0
-    max_attempts: int = 3
+    #: 预算两件的缺省取登记正本那一格（`config.default_for`，经 `_default()`），
+    #: 不再另存 25.0 / 3 的字面量。
+    deadline_seconds: float = float(_default(DEADLINE_KEY))
+    max_attempts: int = int(_default(MAX_ATTEMPTS_KEY))
     default_window: str = DEFAULT_WINDOW
     from_preset: str = ""
 
@@ -239,10 +241,10 @@ class SummarySettings:
             model=model,
             extra_body=extra_body,
             deadline_seconds=_as_float(
-                _lookup(config, DEADLINE_KEY), float(_default(DEADLINE_KEY) or 25.0)
+                _lookup(config, DEADLINE_KEY), float(_default(DEADLINE_KEY))
             ),
             max_attempts=_as_attempts(
-                _lookup(config, MAX_ATTEMPTS_KEY), int(_default(MAX_ATTEMPTS_KEY) or 3)
+                _lookup(config, MAX_ATTEMPTS_KEY), int(_default(MAX_ATTEMPTS_KEY))
             ),
             default_window=normalize_window(_lookup(config, DEFAULT_WINDOW_KEY)),
             from_preset=preset["name"] if preset is not None else "",

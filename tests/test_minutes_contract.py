@@ -25,7 +25,6 @@ from meeting.minutes import __main__ as minutes_main
 from meeting.minutes.contract import (
     DEFAULT_MAX_SEGMENTS,
     SCHEMA_VERSION,
-    SEGMENTATION_NAME,
     SegmentationContractError,
     expected_lines_from_chunks,
     expected_lines_from_inputs,
@@ -554,7 +553,7 @@ def test_the_check_subcommand_checks_coverage_against_inputs_json(
     """
     working = tmp_path / "working"
     working.mkdir()
-    path = working / SEGMENTATION_NAME
+    path = working / "segmentation.json"
     path.write_text(
         json.dumps(
             _plan([_segment(1, "loopback", 1, 20), _segment(2, "mic", 1, 12)]),
@@ -600,7 +599,7 @@ def test_the_check_subcommand_falls_back_when_inputs_json_is_absent(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """没有 `inputs.json` 时退回方案自述那一档：单 source + 整数照样自证。"""
-    path = tmp_path / SEGMENTATION_NAME
+    path = tmp_path / "segmentation.json"
     path.write_text(
         json.dumps(_plan([_segment(1, "loopback", 1, 20)], total_lines=20), ensure_ascii=False),
         encoding="utf-8",
@@ -630,7 +629,7 @@ def test_load_segmentation_reads_a_valid_file(tmp_path: Path) -> None:
 def test_load_segmentation_reports_a_missing_file(tmp_path: Path) -> None:
     """文件不在 → `FileNotFoundError`（调用方据此报「方案还没交回来」）。"""
     with pytest.raises(FileNotFoundError):
-        load_segmentation(tmp_path / SEGMENTATION_NAME, expected_lines={"mic": 12})
+        load_segmentation(tmp_path / "segmentation.json", expected_lines={"mic": 12})
 
 
 def test_load_segmentation_reports_broken_json(tmp_path: Path) -> None:
@@ -664,16 +663,14 @@ def test_load_segmentation_reports_a_contract_failure(tmp_path: Path) -> None:
 def test_segmentation_lands_in_the_working_directory(tmp_path: Path) -> None:
     """方案的落点就是 `working/` 那一层（`working/segmentation.json`，**一份**）。
 
-    `SEGMENTATION_NAME` 与那一层是各处的共同口径（契约校验、`check` 入口），
-    所以这一条把它们一起钉住；`_inputs_near` 另外三条用例盖两种调用写法与「找不到清单」。
+    那一层文件名是各处的共同口径（契约校验、`check` 入口），
+    所以这一条把它钉住；`_inputs_near` 另外三条用例盖两种调用写法与「找不到清单」。
     """
-    assert SEGMENTATION_NAME == "segmentation.json"
-
     working = tmp_path / "working"
     working.mkdir()
     (working / "inputs.json").write_text("{}", encoding="utf-8")
 
-    assert minutes_main._inputs_near(working / SEGMENTATION_NAME) == (working / "inputs.json")
+    assert minutes_main._inputs_near(working / "segmentation.json") == (working / "inputs.json")
 
 
 def test_the_check_subcommand_also_recognizes_a_nested_plan_path(tmp_path: Path) -> None:
@@ -683,7 +680,7 @@ def test_the_check_subcommand_also_recognizes_a_nested_plan_path(tmp_path: Path)
     nested.mkdir(parents=True)
     (working / "inputs.json").write_text("{}", encoding="utf-8")
 
-    assert minutes_main._inputs_near(nested / SEGMENTATION_NAME) == (working / "inputs.json")
+    assert minutes_main._inputs_near(nested / "segmentation.json") == (working / "inputs.json")
 
 
 def test_the_check_subcommand_reports_no_inputs_json_when_there_is_none(
@@ -693,7 +690,7 @@ def test_the_check_subcommand_reports_no_inputs_json_when_there_is_none(
     working = tmp_path / "working"
     working.mkdir()
 
-    assert minutes_main._inputs_near(working / SEGMENTATION_NAME) is None
+    assert minutes_main._inputs_near(working / "segmentation.json") is None
 
 
 #: 方案那一份被写成 `working/<source>/segmentation.json` 的样子。命中要同时满足两件事：

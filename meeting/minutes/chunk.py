@@ -19,8 +19,8 @@
     三行头，两者都让「块文件的行号」与「源文件的行号」错位；区间表已经把这件事说清楚了。
   - **先清本源的块目录再写**：重跑时会议变短会让上一次跑剩下的 `chunk_09.md` 留在盘上，
     子 agent 照 `chunk_*.md` 通配去读就会读到一段不存在的会议。V1 只做 `"w"` 覆盖，没有这一步。
-  - **切块不解析行格式**：块就是原始行的搬运（与 V1 同口径）。格式解析归 `meeting.minutes.lines`，
-    它服务契约校验与提示词那两处读者。
+  - **切块不解析行格式**：块就是原始行的搬运（与 V1 同口径）。行数口径归
+    `meeting.minutes.lines`（`count_lines()` 是区间表与契约校验共用的分母）。
 """
 
 from __future__ import annotations
@@ -31,6 +31,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from meeting.minutes.defaults import DEFAULT_CHUNK_LINES
 from meeting.minutes.lines import count_lines
 
 #: 转写文件名的两个模板（上游已冻结的契约，本模块**按名字找、不猜**）。
@@ -58,8 +59,8 @@ INDEX_NAME = "00_index.md"
 #: 块文件的通配（清理与列举都按它）
 CHUNK_GLOB = "chunk_*.md"
 
-#: 每块行数的默认值与允许区间（与 `minutes.chunk_lines` 配置键的取值域一致）
-DEFAULT_CHUNK_LINES = 100
+#: 每块行数的允许区间（与 `minutes.chunk_lines` 配置键的取值域一致；缺省值
+#: `DEFAULT_CHUNK_LINES` 的唯一定义点在 `meeting/minutes/defaults.py`，这里 import）
 MIN_CHUNK_LINES = 10
 MAX_CHUNK_LINES = 1000
 

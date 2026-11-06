@@ -14,11 +14,9 @@
 from __future__ import annotations
 
 import threading
-import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
 
 from meeting.backends.base import TranscriptLine
 
@@ -194,16 +192,6 @@ def render_window(lines: Sequence[BufferedLine]) -> str:
     return "\n".join(rendered)
 
 
-def now_seconds() -> float:
-    """当前墙钟秒（`select_window()` 的 `now_ts` 缺省来源）。"""
-    return time.time()
-
-
-def line_count(lines: Sequence[Any]) -> int:
-    """窗口里有多少行（`run_summary()` 报 `lines` 用的那一个数）。"""
-    return len(lines)
-
-
 __all__ = [
     "DEFAULT_MAX_LINES",
     "SOURCE_LABELS",
@@ -211,8 +199,6 @@ __all__ = [
     "WINDOW_LABELS",
     "BufferedLine",
     "TranscriptBuffer",
-    "line_count",
-    "now_seconds",
     "render_window",
     "select_window",
     "source_label",

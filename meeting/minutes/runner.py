@@ -76,8 +76,13 @@ from meeting import config as config_module
 from meeting.minutes import dsh_web as dsh_web_module
 from meeting.minutes import launch as launch_module
 from meeting.minutes import status as status_module
-from meeting.minutes.chunk import DEFAULT_CHUNK_LINES, chunk_session, discover_inputs, mode_for
-from meeting.minutes.contract import DEFAULT_MAX_SEGMENTS, expected_lines_from_chunks
+from meeting.minutes.chunk import chunk_session, discover_inputs
+from meeting.minutes.defaults import (
+    DEFAULT_CHUNK_LINES,
+    DEFAULT_HOOK,
+    DEFAULT_MAX_SEGMENTS,
+    DEFAULT_TIMEOUT_SECONDS,
+)
 from meeting.minutes.inputs import (
     MODE_NONE,
     SourceEntry,
@@ -90,12 +95,6 @@ from meeting.minutes.prompt import PromptTemplateError, render_session_prompt
 from meeting.minutes.status import ARTIFACT_FINAL, ARTIFACT_INPUTS, ARTIFACT_LOG
 
 _log = logging.getLogger("meeting.minutes.runner")
-
-#: `minutes.hook` 的缺省取值（与 `config.DEFAULT_VALUES` 同一格同值）
-DEFAULT_HOOK = "auto"
-
-#: `minutes.timeout_seconds` 的缺省（四小时：R8 的「会后可以挂到第二天早上」）
-DEFAULT_TIMEOUT_SECONDS = 14400.0
 
 #: 一次运行的墙钟上限兜底（配置层取值域的上界是 86400，这里不另设口径，只防 0/负数）
 MIN_TIMEOUT_SECONDS = 1.0
@@ -122,10 +121,9 @@ def _status_document(
     """落一份状态文件并把它交回调用方（本模块的唯一登记出口）。
 
     `state = "running"` 那一份（拉起 DSH **之前**落）走的是同一条路：收尾时刻**明写成空串**
-    —— `write_session_status()` 把 `None` 当成「调用方没给」并补上当前时刻（那条口径给终局
-    那几份用），而还在跑的这一份要的正是「收尾时刻空着」，读方据此分得出「正在跑」。
+    —— 口径取 `status.finished_at_for()`（唯一出处），读方据此分得出「正在跑」。
     """
-    finished_at = "" if state == status_module.STATE_RUNNING else status_module.now_iso()
+    finished_at = status_module.finished_at_for(state)
     document = status_module.write_session_status(
         directory,
         state=state,
@@ -207,7 +205,7 @@ def run(
     if not deliver:
         raise status_module.DeliveryForbidden(
             f"minutes.runner.run 被拒：{status_module.ISOLATION_MESSAGE}"
-            "（放行参数是 deliver=True，由 MinutesHook.launch(deliver=True) 下传）"
+            f"（{status_module.ISOLATION_GRANT}）"
         )
 
     # **探一次 DSH web 服务端**：在跑就把这一场交付给它，不在跑才是本进程自己起 headless
@@ -384,11 +382,6 @@ def _chunk_summary(chunks: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def expected_lines_for(session_dir: str | Path, chunks: Mapping[str, Any]) -> dict[str, dict[str, int]]:
-    """`chunk_session()` 的结果 → 每一路每一份稿的真实行数（契约校验的输入）。"""
-    return expected_lines_from_chunks(chunks)
-
-
 def _timeout_seconds(config: Any = None) -> float:
     """`minutes.timeout_seconds` 的生效值（秒）；拿不到或不是正数时退回缺省档。"""
     raw = _config_value("minutes.timeout_seconds", config, DEFAULT_TIMEOUT_SECONDS)
@@ -420,34 +413,9 @@ def _config_value(key: str, config: Any, fallback: Any) -> Any:
     return fallback if value is None else value
 
 
-def hook_selector(config: Any = None) -> str:
-    """`minutes.hook` 的生效取值（`auto` / `null` / `dev` / `module:Class`）。"""
-    return str(_config_value("minutes.hook", config, DEFAULT_HOOK))
-
-
-def chunk_lines_of(config: Any = None) -> int:
-    """`minutes.chunk_lines` 的生效取值。"""
-    return int(_config_value("minutes.chunk_lines", config, DEFAULT_CHUNK_LINES))
-
-
-def max_segments_of(config: Any = None) -> int:
-    """`minutes.max_segments` 的生效取值。"""
-    return int(_config_value("minutes.max_segments", config, DEFAULT_MAX_SEGMENTS))
-
-
-def mode_of(session_dir: str | Path) -> str | None:
-    """这一场按盘上的输入落在哪一档（`chunk.mode_for()` 的快捷入口）。"""
-    return mode_for(discover_inputs(session_dir))
-
-
 __all__ = [
     "DEFAULT_HOOK",
     "DEFAULT_TIMEOUT_SECONDS",
     "MIN_TIMEOUT_SECONDS",
-    "chunk_lines_of",
-    "expected_lines_for",
-    "hook_selector",
-    "max_segments_of",
-    "mode_of",
     "run",
 ]

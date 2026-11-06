@@ -46,26 +46,19 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from meeting.minutes.defaults import DEFAULT_MAX_SEGMENTS  # 包内唯一定义点，这里只 import
+
 #: 分段方案的模式版本。**主版本号读方认识才收**：结构变了就抬它，读方据此拒收。
 SCHEMA_VERSION = 1
 
 #: 本实现认识的主版本号
 KNOWN_SCHEMA_MAJOR = 1
 
-#: 一份方案里每个 source 的段数上限（`minutes.max_segments` 配置键的取值域是 1–20）
-DEFAULT_MAX_SEGMENTS = 8
-
-#: 方案的文件名（落在 `working/` 那一层，spec 交付物表钉死的）
-SEGMENTATION_NAME = "segmentation.json"
-
 #: 输入清单的文件名（`working/inputs.json`，spec 交付物表钉死的）。
 #: 这一格是本模块自己那份清单的真源：`check` 子命令靠它在方案旁边找到逐 source 的真实行数。
 #: 名字与 `inputs.INPUTS_NAME` 逐字相同，但**不从 `inputs` 模块 import**——`minutes.contract`
 #: 只依赖标准库，契约校验不因为「输入清单长什么样」而多一条依赖边。
 INPUTS_NAME = "inputs.json"
-
-#: 段里逐段可选的字段（在就一定按类型校验，不在也不报错）
-OPTIONAL_SEGMENT_FIELDS: tuple[str, ...] = ("chunks", "key_topics", "is_off_topic", "summary")
 
 #: 段里的必填字段（顺序照 V1 的 `SEGMENT_SCHEMA`，报错时按它列）
 REQUIRED_SEGMENT_FIELDS: tuple[str, ...] = ("id", "title", "source", "line_start", "line_end")
@@ -445,10 +438,8 @@ __all__ = [
     "DEFAULT_MAX_SEGMENTS",
     "INPUTS_NAME",
     "KNOWN_SCHEMA_MAJOR",
-    "OPTIONAL_SEGMENT_FIELDS",
     "REQUIRED_SEGMENT_FIELDS",
     "SCHEMA_VERSION",
-    "SEGMENTATION_NAME",
     "SegmentationContractError",
     "expected_lines_from_chunks",
     "expected_lines_from_inputs",

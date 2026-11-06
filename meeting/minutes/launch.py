@@ -56,7 +56,10 @@ from meeting.minutes.status import (
     RUN_PROMPT_NAME,
     WORKING_DIR,
     DeliveryForbidden,
+    FAILURE_TIMEOUT,
+    ISOLATION_GRANT,
     ISOLATION_MESSAGE,
+    write_run_log,
 )
 
 #: 说话人附录那两段固定标题（spec 定死；启动器的产物校验按它们判）
@@ -83,11 +86,11 @@ MISSING_EXECUTABLE_HINT = (
     "先 shutil.which(\"dsh\") 解析出真实路径，或者把 dsh 装到 PATH 上"
 )
 
-#: 三档失败的名字（读方按它分档，不必去解析错误消息）
+#: 三档失败的名字（读方按它分档，不必去解析错误消息）。`FAILURE_TIMEOUT` 的唯一定义点
+#: 在 `status.py`（两条分支的失败词落进同一格 `dsh.failure`，同名词必须同值）。
 FAILURE_EXECUTABLE_MISSING = "executable_missing"
 FAILURE_EXIT_CODE = "exit_code"
 FAILURE_ARTIFACT_MISSING = "artifact_missing"
-FAILURE_TIMEOUT = "timeout"
 FAILURES: tuple[str, ...] = (
     FAILURE_EXECUTABLE_MISSING,
     FAILURE_EXIT_CODE,
@@ -328,8 +331,7 @@ def launch_headless(
     """
     if not allow_dsh:
         raise DeliveryForbidden(
-            f"launch_headless() 被拒：{ISOLATION_MESSAGE}"
-            "（放行参数是 allow_dsh=True，由人工入口经 MinutesHook.launch(deliver=True) 下传）"
+            f"launch_headless() 被拒：{ISOLATION_MESSAGE}（{ISOLATION_GRANT}）"
         )
     directory = Path(session_dir)
     if not str(directory):
@@ -500,25 +502,23 @@ def _write_log(
 ) -> None:
     """把这一趟的记录写进 `working/minutes-run.log`（**头一行是命令、cwd 与退出码**）。
 
-    头那一行是给事后排查用的：现场出问题时先看的就是「跑的是哪条命令、在哪个目录、
-    退出码是多少」。
+    写盘骨架走 `status.write_run_log()`（两路共用的唯一实现），这里只出本分支的
+    头行与分节。头那一行是给事后排查用的：现场出问题时先看的就是「跑的是哪条命令、
+    在哪个目录、退出码是多少」。
     """
-    lines = [
+    header = [
         f"# 命令：{_command_text(command)}",
         f"# cwd：{cwd}",
         f"# 退出码：{'（没跑起来）' if exit_code is None else exit_code}"
         + ("" if seconds is None else f"；耗时：{float(seconds):.3f}s"),
     ]
     if error:
-        lines.append(f"# 失败：{error}")
-    lines.append("")
-    lines.append("## stdout")
-    lines.append(stdout.rstrip("\n"))
-    lines.append("")
-    lines.append("## stderr")
-    lines.append(stderr.rstrip("\n"))
-    lines.append("")
-    write_text_atomic(path, "\n".join(lines))
+        header.append(f"# 失败：{error}")
+    write_run_log(
+        path,
+        header=header,
+        sections=(("stdout", stdout.rstrip("\n")), ("stderr", stderr.rstrip("\n"))),
+    )
 
 
 def interpreter() -> str:

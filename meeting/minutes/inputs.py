@@ -237,11 +237,6 @@ def inputs_path(session_dir: str | Path) -> Path:
     return Path(session_dir) / WORKING_DIR / INPUTS_NAME
 
 
-def source_ids_with_transcripts(session_dir: str | Path) -> tuple[str, ...]:
-    """这一场有两份稿的 `<source>` 顺序（`SOURCE_IDS` 的序，缺席的不出现）。"""
-    return tuple(item.source for item in entries_for_session(session_dir))
-
-
 #: `os.replace` 的瞬时失败判定、独占临时文件名与退避重试：与 `meeting.offline.artifacts`
 #: 共用同一份实现，住在 `meeting/atomicio.py`（`REPLACE_RETRIES` 是它的重试次数常量，
 #: 这里转发导出，`__all__` 与既有调用方一个不动）。
@@ -262,7 +257,6 @@ __all__ = [
     "inputs_path",
     "parse_inputs_document",
     "read_inputs",
-    "source_ids_with_transcripts",
     "write_inputs",
     "write_inputs_for_session",
     "write_text_atomic",

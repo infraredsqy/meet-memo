@@ -37,6 +37,9 @@ import logging
 import threading
 from typing import Any
 
+#: `minutes.hook` 的缺省取值（唯一定义点在 `meeting/minutes/defaults.py`）
+from meeting.minutes.defaults import DEFAULT_HOOK
+
 #: 「这一层已经在飞」那一档（`meeting/minutes/status.py` 定义，本模块原样转出）：
 #: `launch()` 读到盘上停着一版 `running` 时抛它，调用方据此按拒跑档收场。
 #: 转出它是为了让调用方**不必**自己去 import `meeting.minutes.status`（那一包是重的那一头，
@@ -53,9 +56,6 @@ THREAD_NAME = "minutes-final"
 STATE_RUNNING = "running"
 STATE_DONE = "done"
 STATE_FAILED = "failed"
-
-#: `minutes.hook` 的缺省取值（与 `meeting/minutes/runner.py::DEFAULT_HOOK` 同一格同值）
-DEFAULT_HOOK = "auto"
 
 #: 再入闸的环境变量名（子会话里看到它就不再拉起 DSH）
 CHILD_FLAG = "MEETING_MINUTES_CHILD"
