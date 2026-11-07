@@ -30,7 +30,8 @@ from typing import Any
 import pytest
 
 from tests import _helpers as helpers
-from tests._service import post_action, wait_until
+from tests._helpers import wait_until
+from tests._service import post_action
 
 #: 慢档标记（68927c27 收尾轮）：真服务/真样本采集的收尾验收，不进每次迭代圈。
 pytestmark = pytest.mark.slow

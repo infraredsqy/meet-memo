@@ -1,21 +1,20 @@
-"""真服务子进程夹具的驱动件与全部解析 / 等待助手（phase2 §5.4）。
+"""真服务子进程夹具的驱动件与全部解析助手（phase2 §5.4）。
 
 **定位**：本文件是测试支持模块 —— 文件名不以 `test_` 开头，`pytest` **不收集**它；
 它**不是 `conftest.py`**，因此不提供 fixture（fixture 全在 `tests/conftest.py`）。
 
-**导出全集（九个名字，逐字冻结；phase3 只引用、不自起别名）**：
+**导出全集（八个名字，逐字冻结；只引用、不自起别名）**：
 
     ServiceProcess / SseClient / post_action() / dev_inject() / read_session_json() /
-    write_config_json() / parse_sse_frame() / read_sse_frames() / wait_until()
+    write_config_json() / parse_sse_frame() / read_sse_frames()
 
-`__all__` **恰为这九个**；模块内另有几个**常量**（`WAIT_POLL_INTERVAL_SECONDS` /
-`SERVICE_ID` 与三条 SSE 行正则）随本模块一起工作，它们是本模块的实现细节，**不进导出名单**
-（名单一漂移，phase3 就会照着一个并不存在的导出名去 import）。`iter_session_dirs()` 这个
-无人使用的第十个公开名已删掉。
+`__all__` **恰为这八个**；模块内另有几个**常量**（`SERVICE_ID` 与三条 SSE 行正则）随本模块
+一起工作，它们是本模块的实现细节，**不进导出名单**（名单一漂移，用例就会照着一个并不存在
+的导出名去 import）。`iter_session_dirs()` 这个无人使用的公开名已删掉。
 
-等待助手的名字收成一个：**`wait_until()`**（§2.2 / §3.8 的冻结口径）。需要夹具能力
-（真服务子进程 / SSE）的用例走本模块这一个（`timeout` 必传）；phase1 的组件级用例走
-`tests/_helpers.py` 里同名的那个（签名与语义保持不变）。旧名在 `tests/` 下已经清干净。
+等待助手只有 `wait_until()` 一个名字（§2.2 / §3.8 的冻结口径，`wait_for` 这个旧名已清干净），
+**正本在 `tests/_helpers.py`**（原先本模块的那份已并进去，语义与签名以它为准），本模块与
+各用例一律从那里 import。
 
 与 phase1 的 `tests/_helpers.py` 的分工（**同一职责只留一处落点**）：子进程的底层构造
 （`spawn_service()` / 家目录隔离 / 假 `webbrowser` 注入）与 ASGI 客户端仍在 `_helpers.py`
@@ -35,15 +34,12 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import httpx
 
 from tests import _helpers as helpers
-from tests._helpers import REPO_ROOT
-
-#: `wait_until()` 的缺省轮询间隔（秒）；用例仍须显式传 `timeout`
-WAIT_POLL_INTERVAL_SECONDS = 0.05
+from tests._helpers import REPO_ROOT, wait_until
 
 #: 服务标识（就绪判定与端口探针同一判据）
 SERVICE_ID = "meeting"
@@ -65,57 +61,8 @@ __all__ = [
     "post_action",
     "read_session_json",
     "read_sse_frames",
-    "wait_until",
     "write_config_json",
 ]
-
-
-# ---------------------------------------------------------------------------
-# 等待助手
-# ---------------------------------------------------------------------------
-
-
-def wait_until(
-    predicate: Callable[[], Any],
-    *,
-    timeout: float,
-    interval: float = WAIT_POLL_INTERVAL_SECONDS,
-) -> Any:
-    """同步等待一个条件成立（`predicate` 返回真值即返回它）。
-
-    `timeout` **必传**（用例里显式给具名秒数、不留裸数字）；到超时抛 `AssertionError`。
-    谓词自身抛异常时继续等（探针还没就绪是常态）。
-
-    **异常留在这里、只当诊断用**（这是本助手最容易走歪的一格）：谓词抛出的异常**一律不当成
-    返回值**。它此前被摆进 `last` 里，而异常本身就是真值 —— 于是一次**瞬时**的读故障
-    （本机实测过 `httpx.ReadError: [WinError 10054] 远程主机强迫关闭了一个现有的连接。`
-    与 `httpx.ReadTimeout: timed out`）会让 `wait_until()` 当场把它**当成「等到了」交回去**，
-    调用点接着去取字段，炸成一句与现场无关的
-    `TypeError: string indices must be integers, not 'str'`（`tests/test_drain.py` 的 ⑤f 条
-    就是这么偶发的：同一趟子进程的 log 里收尾各步完全正常，红却红在这句话上）。
-
-    现在改成就地重试：故障落在窗口里 → 下一次读把它绕过去、用例照常过；窗口内一直读不到 →
-    那条报错作为**最后观察值**带进超时报告，红的时候手上有一句能读的现场。
-    """
-    deadline = time.monotonic() + float(timeout)
-    last_failure: BaseException | None = None
-    while True:
-        try:
-            observed = predicate()
-        except Exception as exc:  # 探针自身报错时继续等（不把它当成「等到了」）
-            last_failure = exc
-            observed = None
-        if observed:
-            return observed
-        if time.monotonic() >= deadline:
-            detail = f"wait_until 超时（{timeout}s，间隔 {interval}s）：最后观察值 {observed!r}"
-            if last_failure is not None:
-                detail += (
-                    f"；窗口内探针最后一次报错："
-                    f"{type(last_failure).__name__}: {last_failure}"
-                )
-            raise AssertionError(detail)
-        time.sleep(interval)
 
 
 # ---------------------------------------------------------------------------
@@ -203,8 +150,9 @@ class ServiceProcess(helpers.ServiceProcess):
         # **两个后端的共用缺省**（与 `_helpers.spawn_service()` / `run_cli()` 同源）：本用例的
         # `config.json` 里没写 `capture.backend` 时补 `DEFAULT_CAPTURE_BACKEND`（`dev` 替身）、
         # 没写 `post.hook` 时补 `DEFAULT_POST_HOOK`（`null` 缺席档）。不补的话产品缺省 `auto`
-        # 会让子进程 startup 里的 `probe()` 走到真实采集入口上、收尾 `post` 那一步起一条后台线程跑
-        # 整条会后链。用例自己写过的值一个字节都不动（只补缺，见 `apply_backend_defaults()`）。
+        # 会让子进程 startup 里的 `probe()` 走到真实采集入口上、收尾 `post` 那一步解析到
+        # 真实现（R26 之后那一格做完释放会中模型就停在 `waiting`，不自动跑会后）。
+        # 用例自己写过的值一个字节都不动（只补缺，见 `apply_backend_defaults()`）。
         helpers.apply_backend_defaults(home)
 
         # 环境变量覆盖：调用方给全的 `env` 优先；否则按七项布置（家目录两项都设）

@@ -31,10 +31,11 @@ import pytest
 
 from meeting.alerts import BACKLOG_HINT_THRESHOLD, HINT_LIMIT
 from tests import _helpers as helpers
+from tests._app_drivers import snapshot_of
+from tests._helpers import wait_until
 
 #: 端到端那一条要等节拍真跑起来，所以给它一个明确的超时（不留裸秒数）
 TICKER_WAIT_SECONDS = 10.0
-TICKER_POLL_SECONDS = 0.02
 
 
 class StubTranscriber:
@@ -66,21 +67,6 @@ class StubTranscriber:
 
     def segment_timeout(self) -> float:
         return 20.0
-
-
-def wait_until(predicate, *, timeout: float = TICKER_WAIT_SECONDS, what: str = "条件"):
-    deadline = time.monotonic() + timeout
-    last = None
-    while time.monotonic() < deadline:
-        last = predicate()
-        if last:
-            return last
-        time.sleep(TICKER_POLL_SECONDS)
-    raise AssertionError(f"等待超时（{timeout}s）：{what}（最后观察值 {last!r}）")
-
-
-def snapshot_of(client) -> dict:
-    return client.get("/api/state").json()
 
 
 def live(tmp_path: Path, backend: StubTranscriber) -> tuple[Path, dict]:
@@ -369,6 +355,7 @@ def test_the_health_ticker_carries_the_hint_without_any_new_line(tmp_path):
 
         hints = wait_until(
             lambda: (lambda s: s if s["alerts"]["hints"] else None)(snapshot_of(client)),
+            timeout=TICKER_WAIT_SECONDS,
             what="节拍把提示级带进快照",
         )
         assert [item["message"] for item in hints["alerts"]["hints"]] == ["转写落后了"]
@@ -446,6 +433,7 @@ def test_hints_stay_empty_in_idle_and_ended(tmp_path):
         ).status_code == 200
         ended = wait_until(
             lambda: (lambda s: s if s["top_state"] == "ended" else None)(snapshot_of(client)),
+            timeout=TICKER_WAIT_SECONDS,
             what="收尾走到 ended",
         )
         assert ended["alerts"]["hints"] == [], "结束时提示级一并清掉"

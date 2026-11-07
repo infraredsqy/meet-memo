@@ -28,8 +28,9 @@ from meeting.backends.registry import capabilities_of
 from meeting.capture import sources as sources_module
 from meeting.capture.devices import DeviceEndpoint, OpenAttempt
 from meeting.session import archive_name
-from tests.test_api_actions import live, post, snapshot_of, wait_until
-from tests.test_capture_engine import CHUNK_BYTES, FakeCaptureSource
+from tests._app_drivers import live, post, snapshot_of
+from tests._helpers import wait_until
+from tests._capture_fakes import CHUNK_BYTES, FakeCaptureSource
 
 #: 慢档标记（68927c27 收尾轮）：真流式/真后端的收尾验收，不进每次迭代圈。
 pytestmark = pytest.mark.slow

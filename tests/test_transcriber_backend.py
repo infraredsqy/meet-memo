@@ -52,6 +52,7 @@ from meeting.backends.transcribe import (
 from meeting.service.runtime import compute_drain_budget
 from meeting.session import archive_name
 from tests import _helpers as helpers
+from tests._helpers import wait_until
 
 #: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md`。
 pytestmark = pytest.mark.slow
@@ -201,21 +202,6 @@ def wait_for(predicate, *, timeout: float = WAIT_TIMEOUT_SECONDS, what: str = "�
             return last
         time.sleep(0.01)
     raise AssertionError(f"等待超时（{timeout}s）：{what}（最后观察值：{last!r}）")
-
-
-def wait_until(predicate, *, timeout: float = WAIT_TIMEOUT_SECONDS) -> bool:
-    """等一个条件成立；超时就返回 `False`（**不抛**）。
-
-    与 `wait_for()` 的差别只有一个：这一条给「条件**不该**在某个窗口里成立」的判据用
-    （成立与否由调用方自己断），因此超时不是错误、只是这一次的观察结果。
-    """
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():
-            return True
-        time.sleep(0.01)
-    return bool(predicate())
-
 
 def make_backend(
     model,

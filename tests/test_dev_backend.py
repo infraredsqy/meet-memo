@@ -6,7 +6,7 @@
 覆盖（整文件慢档；`68927c27` 收尾轮按机主判尺删去时钟观察用例后，只剩这三条纯逻辑测试）：
 
   - 确定性（构造两个 `DevCaptureBackend()`、取前若干帧逐项比对，电平序列**逐帧相同**）；
-  - **不写真实音频、`finalize()` / `transcode()` 只登记**（把真实存在的场次目录交给替身，
+  - **不写真实音频、`finalize()` 只登记**（把真实存在的场次目录交给替身，
     跑完目录里空无一物）；
   - `inject_fault()` 的参数校验：非法 `source` / `fault` / `duration_seconds` /
     `after_seconds` 一律抛 `ValueError`；非 dev 后端 `dev_inject` 回

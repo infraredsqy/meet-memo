@@ -21,7 +21,7 @@ from meeting import config as config_module
 from meeting.capture import sources as sources_module
 from meeting.capture.devices import DeviceEndpoint
 from tests import _helpers as helpers
-from tests.test_api_actions import live, post, snapshot_of
+from tests._app_drivers import live, post, snapshot_of
 
 #: 假端点表（形状照 `tests/test_capture_probe.py` 的本机实测样子，名字自带「假-」前缀）
 FAKE_INPUTS = (

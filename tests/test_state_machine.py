@@ -29,6 +29,7 @@ from pathlib import Path
 import pytest
 
 from tests import _helpers as helpers
+from tests._app_drivers import post
 from meeting import config as config_module
 from meeting.config import ConfigValueError
 from meeting.service import app as service_app
@@ -137,13 +138,6 @@ def wait_for_drain_done(client, *, timeout: float = STATE_POLL_TIMEOUT_SECONDS) 
         return snapshot if ended is not None and ended["phase"] == "done" else None
 
     return _wait(check, timeout=timeout, what="ended.phase == done")
-
-
-def post(client, action: str, args: dict | None = None):
-    body = {"action": action}
-    if args is not None or action == "start":
-        body["args"] = helpers.start_args(action, args, client.place_root)
-    return client.post("/api/actions", json=body, headers={"X-Meeting-Service": "1"})
 
 
 # ---------------------------------------------------------------------------

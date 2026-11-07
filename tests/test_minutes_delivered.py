@@ -39,7 +39,7 @@ from meeting.minutes.status import (
 )
 
 from tests import _helpers as helpers
-from tests.test_minutes_launch import GOOD_FINAL
+from tests._minutes_fakes import GOOD_FINAL
 
 #: 交付这一步用的那个地址（用例自己塞进配置，不会是真实那一台）
 FAKE_DSH_URL = "http://127.0.0.1:54321"

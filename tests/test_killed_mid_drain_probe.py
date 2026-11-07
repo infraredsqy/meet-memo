@@ -36,7 +36,8 @@ from urllib.parse import quote
 import pytest
 
 from tests import _helpers as helpers
-from tests._service import post_action, wait_until
+from tests._helpers import wait_until
+from tests._service import post_action
 
 #: 慢档标记：真服务子进程，不进每次迭代圈（全量档归收尾）。
 pytestmark = pytest.mark.slow

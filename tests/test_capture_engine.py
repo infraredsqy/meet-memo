@@ -35,12 +35,10 @@ from meeting.capture.engine import (
 )
 from meeting.session import archive_name
 
+from tests._capture_fakes import CHUNK_BYTES, CHUNK_FRAMES, FakeCaptureSource, block
+
 #: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md`。
 pytestmark = pytest.mark.slow
-
-#: 一块 0.1 秒的 16k / 单声道 / int16 样本（3200 字节；一秒 32000 字节的由来）
-CHUNK_FRAMES = 1600
-CHUNK_BYTES = CHUNK_FRAMES * 2
 
 #: 「安静的一路照样发帧」那条用例的等待口径：至少等到的电平帧数，与等待的超时（秒）。
 #: 本机实测 0.05 的 `frame_interval` 约 15 拍/秒（`Event.wait()` 被 Windows 定时器粒度
@@ -51,90 +49,6 @@ FRAME_WAIT_TIMEOUT_SECONDS = 5.0
 #: 竞态用例里的等待上限（秒）：接管与重开都是事件驱动的即时到达，2 秒有约一个数量级
 #: 的余量，也给「单条用例 ≤5 秒」那条看门留出余裕
 RACE_WAIT_TIMEOUT_SECONDS = 2.0
-
-
-def block(value: int = 1200, frames: int = CHUNK_FRAMES) -> bytes:
-    """一块可预期的 int16 裸 PCM（每个样本都是 `value`）。"""
-    return np.full(frames, value, dtype=np.int16).tobytes()
-
-
-class FakeCaptureSource:
-    """假采集源：按计划给块、可指定在第几块抛错、可指定给多少块（喂完就空转）。
-
-    `read()` 的三种回法都对得上 `CaptureSource` 协议：给块、给空（这一拍没有新块）、
-    抛错（这一路出事）。
-
-    `start()` 与真源同一档：`auto_start=True`（后端那边造出来的源）时由调用方显式起，
-    `auto_start=False`（引擎自己起的那些用例）时 `start()` 什么也不做 —— 引擎的读线程
-    本来就不等源起没起，假源因此两种用法都顺手。
-    """
-
-    def __init__(
-        self,
-        name: str,
-        *,
-        chunk: bytes | None = None,
-        chunks: int | None = None,
-        error_at: int | None = None,
-        error: BaseException | None = None,
-        poll_seconds: float = 0.005,
-        pace_seconds: float = 0.0,
-        auto_start: bool = True,
-    ) -> None:
-        self.name = name
-        self.chunk = block() if chunk is None else chunk
-        self.chunks = chunks
-        self.error_at = error_at
-        self.error = error or RuntimeError(f"假源 {name} 按计划炸了")
-        self.poll_seconds = poll_seconds
-        #: 交一块之后歇多久（秒）。0 = 能多快给多快（引擎自己的用例要的就是这个）；
-        #: 端到端那些用例把它设成 0.1，与真采集一个块 0.1 秒的节奏对齐 —— 否则假源会以
-        #: 每秒几百兆的速度把盘写满，收尾的 join 也就不是在验收尾了。
-        self.pace_seconds = pace_seconds
-        self.auto_start = auto_start
-        self.fed = 0
-        self.reads = 0
-        self.started = False
-        self.stopped = False
-        self._stop = threading.Event()
-        self._latest = np.empty(0, dtype=np.int16)
-
-    # -- CaptureSource 协议 ------------------------------------------------
-
-    def start(self) -> None:
-        """起这一路的采集（后端会在造完源之后调它；引擎自己起的那些用例不调）。"""
-        self.started = True
-        if not self.auto_start:
-            return
-
-    def read(self, timeout: float) -> bytes | None:
-        self.reads += 1
-        if self._stop.is_set():
-            return None
-        if self.error_at is not None and self.fed >= self.error_at:
-            raise self.error
-        if self.chunks is not None and self.fed >= self.chunks:
-            time.sleep(min(timeout, self.poll_seconds))
-            return b""
-        self.fed += 1
-        samples = np.frombuffer(self.chunk, dtype=np.int16)
-        self._latest = samples
-        if self.pace_seconds:
-            time.sleep(self.pace_seconds)
-        return self.chunk
-
-    def latest_samples(self) -> np.ndarray:
-        return self._latest
-
-    def stop(self) -> None:
-        self.stopped = True
-        self._stop.set()
-
-    # -- 给用例看的读数 ----------------------------------------------------
-
-    @property
-    def bytes_fed(self) -> int:
-        return self.fed * len(self.chunk)
 
 
 def make_session(

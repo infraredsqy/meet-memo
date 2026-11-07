@@ -34,6 +34,8 @@ import pytest
 
 
 from tests import _helpers as helpers
+from tests._app_drivers import post
+from tests._helpers import wait_until
 from meeting.backends.base import SourceFacts, SourceLost
 from meeting.state import (
     DEFAULT_FRAME_INTERVAL_SECONDS,
@@ -42,10 +44,6 @@ from meeting.state import (
     frame_clock_window,
 )
 
-#: 用例的显式等待上限（秒）
-HEARTBEAT_TIMEOUT_SECONDS = 15.0
-#: 轮询间隔
-HEARTBEAT_INTERVAL_SECONDS = 0.05
 #: `stall` 的停帧窗口：比帧时钟窗口长，才观测得到「HTTP 通着但录音停了」
 HEARTBEAT_STALL_SECONDS = 5.0
 
@@ -68,24 +66,6 @@ def live(tmp_path: Path, values: dict | None = None):
     with helpers.app_client(home, values=config) as client:
         client.place_root = out_root
         yield client, client.app.state.runtime, home
-
-
-def wait_until(predicate, *, timeout: float = HEARTBEAT_TIMEOUT_SECONDS, what: str = "条件"):
-    deadline = time.monotonic() + timeout
-    last = None
-    while time.monotonic() < deadline:
-        last = predicate()
-        if last:
-            return last
-        time.sleep(HEARTBEAT_INTERVAL_SECONDS)
-    raise AssertionError(f"等待超时（{timeout}s）：{what}（最后观察值 {last!r}）")
-
-
-def post(client, action: str, args: dict | None = None):
-    body = {"action": action}
-    if args is not None or action == "start":
-        body["args"] = helpers.start_args(action, args, client.place_root)
-    return client.post("/api/actions", json=body, headers={"X-Meeting-Service": "1"})
 
 
 # ---------------------------------------------------------------------------

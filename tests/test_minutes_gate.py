@@ -45,7 +45,7 @@ from meeting.minutes.status import (
 from meeting.offline import runner as offline_runner
 
 from tests.conftest import RealDshDeliveryForbidden
-from tests.test_offline_runner import FakeConfig, FakeEngine, synth_session
+from tests._offline_fakes import FakeConfig, FakeEngine, synth_session
 
 
 def _transcripts(session: Path) -> Path:

@@ -43,9 +43,16 @@ from meeting.offline import artifacts as offline_artifacts
 from meeting.offline import runner as offline_runner
 
 from tests import _helpers as helpers
-from tests.test_cli_post import FakeHook, FakeResolution, RecordingConverter, RecordingLauncher
-from tests.test_minutes_launch import GOOD_FINAL
-from tests.test_offline_runner import FakeEngine, synth_session
+from tests._minutes_fakes import (
+    DelayedHookImplementation,
+    FakeHook,
+    FakeResolution,
+    RecordingConverter,
+    RecordingLauncher,
+    write_final,
+    write_minutes_done,
+)
+from tests._offline_fakes import FakeEngine, synth_session
 
 from meeting.cli import (
     EXIT_FAILURE,
@@ -169,26 +176,6 @@ def offline_product_names(sources: tuple[str, ...] = SOURCES) -> list[str]:
     return names
 
 
-def write_minutes_done(session: Path, *, state: str = "done") -> Path:
-    """按纪要那一层自己的写方落一份状态文件（走 `write_session_status()`）。"""
-    minutes_status.write_session_status(
-        session,
-        state=state,
-        mode="offline_only",
-        branch="headless",
-        started_at="2025-09-19T22:00:00",
-        artifacts={},
-    )
-    return session / MINUTES_STATUS_NAME
-
-
-def write_final(session: Path) -> Path:
-    """落一份过得了四条判据的 `meeting_final.md`。"""
-    path = session / MINUTES_FINAL_NAME
-    path.write_text(GOOD_FINAL, encoding="utf-8")
-    return path
-
-
 def _run_post_entry(session: Path, *flags: str) -> tuple[int, str]:
     """走**真入口** `meeting.cli.post([目录, *flags])`，交回 `(退出码, 终端输出)`。
 
@@ -252,43 +239,6 @@ class SettlingLauncher(RecordingLauncher):
     def launch(self, session_dir: Any) -> None:
         """产品路径拉起的是 `resolution.implementation.launch(目录)` 这个形状（同一条收工）。"""
         self(session_dir)
-
-
-class DelayedHookImplementation:
-    """**真 `MinutesHook` 的时序形状**：`launch()` 起一条 daemon 线程就返回，终态隔一会儿才落。
-
-    真启动器（`meeting/backends/minutes.py::MinutesHook.launch`）返回即算启动成功，
-    线程体第一件事是把状态文件落成 `running`（`meeting/minutes/runner.py:190`），整条链要跑
-    几十分钟。这台替身照那个形状来：线程体先落 `running`、隔 `latency` 秒再落终态，
-    终态是 `done` 时**先写 `meeting_final.md` 再写状态文件**（真链也是先交出产物、由启动器
-    写终态那一版）。
-
-    `latency` 是**被模拟的那个子会话的耗时**，用它造出「拉起那一刻盘上还是 `running`」
-    这个现场；用例侧的等待落在产品代码那条轮询上（`_wait_for_settled_minutes()`），
-    因此这里不必用 `wait_until()` 去赌时序。
-    """
-
-    def __init__(self, *, latency: float = 0.1, state: str = "done") -> None:
-        self.calls: list[str] = []
-        self.latency = float(latency)
-        self.state = str(state)
-        self.threads: list[threading.Thread] = []
-
-    def launch(self, session_dir: Any) -> None:
-        self.calls.append(str(session_dir))
-        session = Path(session_dir)
-
-        def body() -> None:
-            write_minutes_done(session, state="running")
-            if self.latency:
-                time.sleep(self.latency)
-            if self.state == "done":
-                write_final(session)
-            write_minutes_done(session, state=self.state)
-
-        thread = threading.Thread(target=body, daemon=True)
-        self.threads.append(thread)
-        thread.start()
 
 
 class AbsentResolution:

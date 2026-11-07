@@ -21,6 +21,7 @@ import pytest
 
 
 from tests import _helpers as helpers
+from tests._helpers import wait_until
 from tests._service import SseClient
 
 #: 慢档标记（68927c27 收尾轮）：真流式/真后端的收尾验收，不进每次迭代圈。
@@ -28,8 +29,6 @@ pytestmark = pytest.mark.slow
 
 #: 用例的显式等待上限（秒）
 MULTI_TIMEOUT_SECONDS = 15.0
-#: 轮询间隔
-MULTI_POLL_INTERVAL_SECONDS = 0.05
 
 
 @pytest.fixture()
@@ -59,17 +58,6 @@ def post(proc, action: str, args: dict | None = None):
 
 def snapshot_of(proc) -> dict:
     return helpers.local_get(f"{proc.base_url}/api/state", timeout=5.0).json()
-
-
-def wait_until(predicate, *, timeout: float = MULTI_TIMEOUT_SECONDS, what: str = "条件"):
-    deadline = time.monotonic() + timeout
-    last = None
-    while time.monotonic() < deadline:
-        last = predicate()
-        if last:
-            return last
-        time.sleep(MULTI_POLL_INTERVAL_SECONDS)
-    raise AssertionError(f"等待超时（{timeout}s）：{what}（最后观察值 {last!r}）")
 
 
 def open_pair(proc) -> tuple[SseClient, SseClient]:

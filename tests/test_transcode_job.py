@@ -20,13 +20,14 @@ import json
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from meeting import config as config_module
 from meeting.capture import transcode as transcode_module
 from meeting.service.app import build_runtime
-from tests.test_offline_runner import synth_session
+from tests._offline_fakes import synth_session
 
 #: 等后台那一趟收工的轮询上限（事件驱动地等，等到了就立刻回）
 JOB_TIMEOUT_SECONDS = 5.0
@@ -239,6 +240,29 @@ def test_pause_stops_the_progress_and_a_resume_pass_finishes_it(tmp_path) -> Non
 # 二、服务侧：三只动作与读数（进程内真运行时）
 # ---------------------------------------------------------------------------
 
+#: 本文件起过的运行时（收场统一把转写流水线收干净，见下面那道 autouse 夹具）
+_RUNTIMES: list[Any] = []
+
+
+@pytest.fixture(autouse=True)
+def _join_transcriber_pipelines():
+    """收场把本用例起过的转写流水线收干净（线程汇合，`asr-` 线程不漏给同进程的下一个文件）。
+
+    生产路径上转写后端的 `stop()` 只有 `shutdown()` 一个调用点（收尾编排不停转写），本文件
+    的用例又各自 `start_session()` 起一条真转写流水线（worker + 两路读线程，daemon）：单进程
+    连跑时这些线程会一直活着漏给下一个文件，`tests/test_asr_pipeline.py` 开场那条「进程里
+    一条 `asr-` 线程都不剩」的线程闸因此每条用例都红（实测 4 条流水线 12 个线程、44 errors）。
+    这里在测试层补上汇合点：收场对本文件登记过的每个运行时调一次
+    `transcriber_backend.stop()`（幂等；空闲流水线毫秒级收工）。
+    """
+    yield
+    for runtime in _RUNTIMES:
+        backend = getattr(runtime, "transcriber_backend", None)
+        stop = getattr(backend, "stop", None)
+        if callable(stop):
+            stop()
+    _RUNTIMES.clear()
+
 
 def _runtime(tmp_path: Path, monkeypatch, **values):
     """起一台真运行时（dev 采集替身），配置里覆盖 `**values`。"""
@@ -258,6 +282,7 @@ def _runtime(tmp_path: Path, monkeypatch, **values):
         config_module.Config(applied=applied, sources={key: "默认" for key in applied}, path="")
     )
     runtime._resolve_backends()
+    _RUNTIMES.append(runtime)
     return runtime, previous
 
 

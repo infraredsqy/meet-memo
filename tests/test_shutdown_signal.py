@@ -108,7 +108,8 @@ from meeting.service import app as service_app
 from meeting.state import DRAIN_STEP_IDS, DRAIN_STEP_STATUS
 from tests import _drain_fakes as fakes
 from tests import _helpers as helpers
-from tests._service import post_action, read_session_json, wait_until
+from tests._helpers import wait_until
+from tests._service import post_action, read_session_json
 
 #: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md`。
 pytestmark = pytest.mark.slow

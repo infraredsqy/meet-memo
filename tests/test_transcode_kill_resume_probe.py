@@ -5,8 +5,8 @@
   1. 工作区里躺着一场会：两路各 10 段真 PCM（每段 1.5 秒，字节是确定的正弦形状），
      `session.json` 照真实形状声明 sources 与段归档；
   2. 经 `workspace_open` 登记进工作台，`transcode_run` 起真转码工序；
-  3. 逐段进度记录长出第 3 行**之后立刻强杀进程**（`kill()`，不是优雅退出）——
-     盘上留下「半路的凭据 + 停在 `running` 的状态文件 + 可能的半截产物」；
+  3. 盘上落出数段认账凭据（短间隔探测循环等这个事件，不数钟点）**之后立刻强杀进程**
+     （`kill()`，不是优雅退出）——盘上留下「半路的凭据 + 停在 `running` 的状态文件 + 可能的半截产物」；
   4. 把其中一段已转完的 MP3 改成半截垃圾（凭据记的字节数对不上 → 不认账）；
   5. 重启服务，再按一次 `transcode_run`（界面补跑与它同一条路）。
 
@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import json
 import math
-import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -31,7 +30,8 @@ import pytest
 
 from meeting.capture import transcode as transcode_module
 from tests import _helpers as helpers
-from tests._service import post_action, wait_until
+from tests._helpers import wait_until
+from tests._service import post_action
 
 #: 慢档标记：真服务子进程 + 真 ffmpeg，不进每次迭代圈（全量档归收尾）。
 pytestmark = pytest.mark.slow
@@ -42,8 +42,13 @@ SEGMENT_SECONDS = 1.5
 #: PCM 的形状（16k / 单声道 / int16）：每秒 32000 字节。
 BYTES_PER_SECOND = 32000
 
-#: 等逐段进度记录长出第 N 行的上限（秒）。
-KILL_AFTER_ROWS = 3
+#: 杀前事件：盘上认账凭据落满 2 段就杀，等的是「凭据落盘」这个事实、不数钟点。
+#: 取小是为了让强杀尽量早地落进工序半路，与「20 段全部转完」拉开间隔；判据与服务
+#: 共用 `segment_done` 那一份（凭据在且认账），补跑认的正是同一批凭据。
+KILL_AFTER_SEGMENTS = 2
+#: 杀前事件的探测间隔（秒）：短间隔探测循环，不拿固定长 sleep 等杀点。
+KILL_PROBE_INTERVAL_SECONDS = 0.02
+#: 等杀前事件落盘的上限（秒）。
 KILL_WAIT_SECONDS = 20.0
 
 #: MP3 时长与 PCM 时长的容差（秒；与 `tests/test_capture_e2e.py` 同一档）。
@@ -116,6 +121,13 @@ def _progress_rows(session_dir: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def _done_segments(
+    plan: list[transcode_module.TranscodeSegment],
+) -> list[transcode_module.TranscodeSegment]:
+    """计划里凭据已认账的段（按计划顺序；判据与服务共用 `segment_done` 那一份）。"""
+    return [entry for entry in plan if transcode_module.segment_done(entry)]
+
+
 def test_a_transcode_killed_mid_run_resumes_and_every_mp3_decodes(
     tmp_path: Path, meeting_env: Any, service_process: Any
 ) -> None:
@@ -137,17 +149,15 @@ def test_a_transcode_killed_mid_run_resumes_and_every_mp3_decodes(
         "started": True,
     }, receipt.text
 
-    # ② 等逐段进度记录长出第 3 行（工序确实跑进了半路），立刻强杀
-    wait_until(
-        lambda: len(_progress_rows(workspace)) >= KILL_AFTER_ROWS or None,
+    # ② 短间隔探测盘面：一落出 ≥KILL_AFTER_SEGMENTS 段认账凭据（工序确实跑进了半路）就立刻强杀
+    plan = transcode_module.plan_segments(workspace, SOURCES)
+    done_segments = wait_until(
+        lambda: (done if len(done := _done_segments(plan)) >= KILL_AFTER_SEGMENTS else None),
         timeout=KILL_WAIT_SECONDS,
+        interval=KILL_PROBE_INTERVAL_SECONDS,
+        what=f"盘上落出 ≥{KILL_AFTER_SEGMENTS} 段认账凭据",
     )
     proc.kill()
-    deadline = time.monotonic() + 10.0
-    while time.monotonic() < deadline:
-        if proc.returncode is not None:
-            break
-        time.sleep(0.05)
     killed_rows = _progress_rows(workspace)
     assert len(killed_rows) < SEGMENTS_PER_SOURCE * len(SOURCES), (
         f"强杀该落在工序半路（实测进度 {len(killed_rows)} 行）"
@@ -156,9 +166,9 @@ def test_a_transcode_killed_mid_run_resumes_and_every_mp3_decodes(
     assert on_disk_status is not None, "强杀后盘上该停着一版状态文件"
     assert on_disk_status["state"] in ("running", "paused"), on_disk_status
 
-    # ③ 造一份「半截产物」：拿一段已转完的 MP3 改成垃圾（凭据记的字节数对不上 → 不认账）
-    victim_source, victim_segment = str(killed_rows[0]["source"]), int(killed_rows[0]["segment"])
-    victim_mp3 = workspace / f"meeting_audio_{victim_source}_{victim_segment:03d}.mp3"
+    # ③ 造一份「半截产物」：拿一段凭据已认账的 MP3 改成垃圾（凭据记的字节数对不上 → 不认账）
+    victim = done_segments[0]
+    victim_mp3 = victim.mp3
     assert victim_mp3.is_file(), "被拿来造半截的那一段该已有产物"
     victim_mp3.write_bytes(b"half-written-garbage")
 

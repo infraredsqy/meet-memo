@@ -34,7 +34,8 @@ from tests._capture_faulty import (
     chunk_bytes,
     chunk_value,
 )
-from tests.test_api_actions import live, post, snapshot_of, wait_until
+from tests._app_drivers import live, post, snapshot_of
+from tests._helpers import wait_until
 
 #: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md`。
 pytestmark = pytest.mark.slow

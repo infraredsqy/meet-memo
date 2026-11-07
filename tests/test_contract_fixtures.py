@@ -44,7 +44,8 @@ from tests import _contract
 from tests import _drain_fakes as fakes
 from tests import _helpers as helpers
 from tests._contract import emit, normalize, normalize_frame
-from tests._service import SseClient, parse_sse_frame, post_action, wait_until
+from tests._helpers import wait_until
+from tests._service import SseClient, parse_sse_frame, post_action
 
 #: 结构断言与心跳样本共用的键全集（与 `Snapshot.to_dict()` 的产出逐字对应）
 TOP_LEVEL_KEYS = {

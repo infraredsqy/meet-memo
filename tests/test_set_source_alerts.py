@@ -29,7 +29,8 @@ from __future__ import annotations
 
 import pytest
 
-from tests.test_api_actions import live, post, snapshot_of, wait_until
+from tests._app_drivers import live, post, snapshot_of
+from tests._helpers import wait_until
 
 #: 慢档标记：进程内真运行时 + 真墙钟等待的收尾验收，与 `tests/test_api_actions.py` 同档。
 pytestmark = pytest.mark.slow

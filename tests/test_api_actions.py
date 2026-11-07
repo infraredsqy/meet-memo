@@ -26,7 +26,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import json
 import time
 from pathlib import Path
@@ -34,17 +33,14 @@ from pathlib import Path
 import pytest
 
 from tests import _helpers as helpers
+from tests._app_drivers import live, post, snapshot_of, wait_for_done
+from tests._helpers import wait_until
 from meeting import config as config_module
 from meeting.service import runtime as runtime_module
 from meeting.service.runtime import ACTION_CODES, ACTION_NAMES
 
 #: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md`。
 pytestmark = pytest.mark.slow
-
-#: 用例里的显式超时（不留裸秒数）
-ACTION_POLL_TIMEOUT_SECONDS = 15.0
-#: 轮询间隔
-ACTION_POLL_INTERVAL_SECONDS = 0.05
 
 #: 三分表：可热读的十二键（`asr.*` 五个 + `alarm.sound` + 设置抽屉那四项 + 会中切模型两键）
 APPLIED_KEYS = {
@@ -75,60 +71,6 @@ PENDING_KEYS = {
     "summary.base_url", "summary.api_key", "summary.model", "summary.extra_body_json",
     "summary.deadline_seconds", "summary.max_attempts",
 }
-
-
-@contextlib.contextmanager
-def live(tmp_path: Path, values: dict | None = None):
-    """起一个进程内已启动的运行时；`yield (client, runtime, home, out_root)`。
-
-    `out_root` 沿用旧名，语义变了：它只是**测试层的场次放置根**（给 start 的 `args.dir`
-    预建工作区目录用），不再是任何配置键的值 —— 产品没有默认落点。
-    """
-    home = tmp_path / "home"
-    home.mkdir(parents=True, exist_ok=True)
-    out_root = tmp_path / "out"
-    out_root.mkdir(parents=True, exist_ok=True)
-    config = {"capture.backend": "dev",
-              "web.dist_dir": str(helpers.missing_dist_dir(home))}
-    config.update(values or {})
-    with helpers.app_client(home, values=config) as client:
-        client.place_root = out_root
-        yield client, client.app.state.runtime, home, out_root
-
-
-def post(client, action: str, args: dict | None = None):
-    body = {"action": action}
-    if args is not None or action == "start":
-        place_root = getattr(client, "place_root", None)
-        assert place_root is not None, (
-            "start 要显式给 dir：live() 给的 client 自带放置根（client.place_root）"
-        )
-        body["args"] = helpers.start_args(action, args, place_root)
-    return client.post("/api/actions", json=body, headers={"X-Meeting-Service": "1"})
-
-
-def snapshot_of(client) -> dict:
-    return client.get("/api/state").json()
-
-
-def wait_until(predicate, *, timeout: float = ACTION_POLL_TIMEOUT_SECONDS, what: str = "条件"):
-    deadline = time.monotonic() + timeout
-    last = None
-    while time.monotonic() < deadline:
-        last = predicate()
-        if last:
-            return last
-        time.sleep(ACTION_POLL_INTERVAL_SECONDS)
-    raise AssertionError(f"等待超时（{timeout}s）：{what}（最后观察值 {last!r}）")
-
-
-def wait_for_done(client):
-    return wait_until(
-        lambda: (lambda s: s if s["ended"] and s["ended"]["phase"] == "done" else None)(
-            snapshot_of(client)
-        ),
-        what="收尾停在 done",
-    )
 
 
 # ---------------------------------------------------------------------------

@@ -318,13 +318,13 @@ DEFAULT_CAPTURE_BACKEND = "dev"
 
 #: **会后钩子在测试层的共用缺省**：`null`（缺席档）。
 #:
-#: 产品缺省是 `auto`，`7c6952e5` phase2 落地 `meeting/backends/post.py` 之后那一条会解析到真
-#: 实现，收尾第 4 步于是真的起一条**后台线程**跑整条会后链、往这一场的场次目录里落四五份产物。
-#: 对绝大多数用例那是纯粹的噪音：它们数的是收尾编排、采集归档或服务状态的记录，
-#: 而后台线程往场次目录里写文件会让「目录里恰好这几份文件」这类断言变成与线程赛跑的断言。
-#: 测试层因此与 `DEFAULT_CAPTURE_BACKEND` 同一个口径 —— 把缺省收成**不产生副作用的那一档**。
+#: 产品缺省是 `auto`：它会解析到真实现（`meeting/backends/post.py`），收尾第 4 步于是走到
+#: 「解析到真实现」那一档。R26 之后那一格**不拉起任何会后动作**——做完释放会中模型就停在
+#: `waiting`，不起线程、不往场次目录落产物；测试层仍把缺省收成 `null`，为的是「缺席」这半边
+#: 的确定性：缺席档第 4 步直接记 `skipped`，数收尾编排、采集归档或服务状态记录的用例因此
+#: 钉死在这一档上，不必跟「解析到真实现」那一档的面孔搅在一起。
 #:
-#: **要验真实现的用例显式传 `post.hook = "auto"`**（`tests/test_post_hook.py` 走的就是这一档）。
+#: **要验真实现那一档的用例显式传 `post.hook = "auto"`**（`tests/test_post_hook.py` 走的就是这一档）。
 DEFAULT_POST_HOOK = "null"
 
 #: **纪要钩子在测试层的共用缺省**：`null`（缺席档）。
@@ -390,24 +390,41 @@ def read_text(path: Path) -> str:
 
 
 def wait_until(predicate, timeout: float = 20.0, interval: float = 0.05, what: str = "条件"):
-    """同步等待一个条件成立（测试一律同步写，所以不用事件循环）。
+    """同步等待一个条件成立（`predicate` 返回真值即返回它；测试一律同步写，不用事件循环）。
 
-    名字与 `tests/_service.py` 的等待助手同名（§2.2 / §3.8：**等待助手只有 `wait_until()` 一个
-    名字**，`wait_for` 这个旧名全仓作废）；两者的分工按位置分：需要夹具能力（真服务子进程 /
-    SSE）的用例走 `tests/_service.py` 那一份（`timeout` 必传），phase1 的组件级用例走这一份。
-    语义与签名与改名前逐字相同。
+    **全仓只有这一份 `wait_until()`**（§2.2 / §3.8：等待助手只有这一个名字，`wait_for` 这个
+    旧名全仓作废）；原先散在 `tests/_service.py` 与各 `test_*.py` 里的副本已并到这里，
+    用法一律 `from tests._helpers import wait_until`。签名沿用本模块原签名。
+
+    **异常留在这里、只当诊断用**（这是本助手最容易走歪的一格；语义取自 `tests/_service.py`
+    修好的那份）：谓词抛出的异常**一律不当成返回值**。它若被摆进「最后观察值」，而异常本身
+    就是真值 —— 一次**瞬时**的读故障（本机实测过
+    `httpx.ReadError: [WinError 10054] 远程主机强迫关闭了一个现有的连接。` 与
+    `httpx.ReadTimeout: timed out`）就会让 `wait_until()` 当场把它**当成「等到了」交回去**，
+    调用点接着去取字段，炸成一句与现场无关的
+    `TypeError: string indices must be integers, not 'str'`。
+    现在的语义：窗口内探针报错就地重试（探针还没就绪是常态），故障被下一次读绕过去、用例
+    照常过；窗口内一直读不到 → 那条报错作为诊断带进超时报告，红的时候手上有一句能读的现场。
     """
-    deadline = time.monotonic() + timeout
-    last = None
-    while time.monotonic() < deadline:
+    deadline = time.monotonic() + float(timeout)
+    last_failure: BaseException | None = None
+    observed: Any = None
+    while True:
         try:
-            last = predicate()
-        except Exception as exc:  # pragma: no cover - 探针自身报错时继续等
-            last = exc
-        if last:
-            return last
+            observed = predicate()
+        except Exception as exc:  # 探针自身报错时继续等（不把它当成「等到了」）
+            last_failure = exc
+            observed = None
+        if observed:
+            return observed
+        if time.monotonic() >= deadline:
+            detail = f"等待超时（{timeout}s）：{what}（最后观察值 {observed!r}）"
+            if last_failure is not None:
+                detail += (
+                    f"；窗口内探针最后一次报错：{type(last_failure).__name__}: {last_failure}"
+                )
+            raise AssertionError(detail)
         time.sleep(interval)
-    raise AssertionError(f"等待超时（{timeout}s）：{what}（最后观察值：{last!r}）")
 
 
 def wait_for_session_record(session_dir: Path, predicate, timeout: float = 20.0) -> dict:
@@ -547,8 +564,8 @@ def spawn_service(
 
     **后端在这里补上共用缺省**（`apply_backend_defaults(home)`）：本用例的 `config.json`
     里没写 `capture.backend` 时补 `dev` 替身（不补的话产品缺省 `auto` 会让子进程 startup
-    里的 `probe()` 去真枚举、真试开声卡设备），没写 `post.hook` 时补 `null`（不补的话
-    收尾第 4 步会起一条后台线程跑整条会后链，往场次目录里落产物）。两处的说明分别见
+    里的 `probe()` 去真枚举、真试开声卡设备），没写 `post.hook` 时补 `null`（缺席档：收尾
+    第 4 步记 `skipped`；R26 之后真实现那一档也不自动跑会后）。两处的说明分别见
     `DEFAULT_CAPTURE_BACKEND` / `DEFAULT_POST_HOOK`。用例自己写过的值一个字节都不动。
 
     子进程要走到「打开浏览器」这一步（`MEETING_NO_BROWSER` 被显式拿掉）时，**必须**同时把
@@ -601,7 +618,8 @@ def run_cli(
 
     **后端同样在这里补共用缺省**（与 `spawn_service()` 同源）：`web` 这一档在
     「启动前提不成立」之外的现场会真的起服务，那时缺省 `auto` 一样会走到真实采集入口上，
-    缺省 `post.hook` 一样会让收尾第 4 步起一条后台线程跑会后链。
+    缺省 `post.hook` 一样把收尾第 4 步钉在缺席档（记 `skipped`；R26 之后真实现那一档
+    也不自动跑会后）。
     只补缺、不动用例自己写的值（含用例故意写坏的那份配置）。
     """
     apply_backend_defaults(Path(home))
@@ -646,8 +664,9 @@ def app_client(
     说明）。要 `null` / `auto` / 别的档的用例**自己显式传**，那时以 `values` 为准。
 
     **会后钩子同样有一个共用缺省**（`DEFAULT_POST_HOOK = "null"`）：`values` 里没写
-    `post.hook` 时补缺席档。不补的话收尾第 4 步会起一条后台线程跑整条会后链、往场次目录里
-    落四五份产物（见 `DEFAULT_POST_HOOK` 的说明）。要验真实现的用例显式传 `auto`。
+    `post.hook` 时补缺席档。不补的话收尾第 4 步会解析到真实现那一档（R26 之后那一格停在
+    `waiting`、不自动跑会后；数收尾编排记录的用例要的是缺席档记 `skipped` 的确定性，
+    见 `DEFAULT_POST_HOOK` 的说明）。要验真实现那一档的用例显式传 `auto`。
 
     **这一步里绝不许触达真浏览器**：应用一进 startup 钩子，尾部的「打开浏览器」就会跑。
     夹具因此在构造应用之前把 `service_app.webbrowser.open` 换成本进程内的假实现，离开时还原。

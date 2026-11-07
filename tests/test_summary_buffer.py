@@ -17,7 +17,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import time
 from pathlib import Path
 
@@ -25,91 +24,12 @@ import pytest
 
 from meeting.backends.base import TranscriptLine
 from meeting.summary import TranscriptBuffer
-from tests import _helpers as helpers
+from tests._app_drivers import post
+from tests._helpers import wait_until
+from tests._summary_fakes import FakeTranscriber, live
 
 #: 慢档标记：本文件与 `tests/test_api_actions.py` 同档（起真应用 + 真 lifespan）。
 pytestmark = pytest.mark.slow
-
-#: 假客户端答的那份合法输出（三条固定标签齐备）
-GOOD_BULLETS = (
-    '{"bullets": ["【讲什么】在过排期", "【讲到哪】说到第三项", "【丢掉什么】有一处缺口"]}'
-)
-
-
-class LedgerClient:
-    """**登记的假总结客户端**（与 `test_summary_action.py` 同一副形状）。"""
-
-    def __init__(self, *, content: str = GOOD_BULLETS) -> None:
-        self.content = content
-        self.calls = 0
-        self.messages: list[dict[str, str]] = []
-
-    def complete(self, messages, *, timeout_seconds: float) -> str:
-        self.calls += 1
-        self.messages = [dict(message) for message in messages]
-        return self.content
-
-
-class FakeTranscriber:
-    """假转写后端：协议成员齐备，`start()` 什么都不起（喂行由用例自己经 sink 做）。"""
-
-    def __init__(self, *, health: str = "normal") -> None:
-        self._health = health
-        self.line_sink = None
-        self.started = 0
-        self.stopped = 0
-
-    def bind(self, line_sink, *, config=None) -> None:
-        self.line_sink = line_sink
-
-    def start(self, mode: str, session_dir: str) -> None:
-        self.started += 1
-
-    def stop(self) -> None:
-        self.stopped += 1
-
-    def health(self) -> str:
-        return self._health
-
-    def backlog_depth(self) -> int:
-        return 0
-
-    def segment_timeout(self) -> float:
-        return 20.0
-
-
-@contextlib.contextmanager
-def live(tmp_path: Path, values: dict | None = None):
-    """起一个进程内已启动的运行时，并把转写后端换成假件；`yield (client, runtime, backend, stub)`。"""
-    home = tmp_path / "home"
-    home.mkdir(parents=True, exist_ok=True)
-    out_root = tmp_path / "out"
-    out_root.mkdir(parents=True, exist_ok=True)
-    config = {
-        "capture.backend": "dev",
-        "web.dist_dir": str(helpers.missing_dist_dir(home)),
-        "summary.base_url": "http://127.0.0.1:1/v1",
-        "summary.api_key": "test-key-not-used",
-        "summary.model": "test-model",
-    }
-    config.update(values or {})
-    with helpers.app_client(home, values=config) as client:
-        client.place_root = out_root
-        runtime = client.app.state.runtime
-        backend = FakeTranscriber()
-        runtime.transcriber_backend = backend
-        backend.bind(runtime.bind_transcriber(backend), config=runtime._config_view())
-        stub = LedgerClient()
-        runtime.summary_client = stub
-        yield client, runtime, backend, stub
-
-
-def post(client, action: str, args: dict | None = None):
-    body = {"action": action}
-    if args is not None or action == "start":
-        body["args"] = helpers.start_args(action, args, client.place_root)
-    return client.post("/api/actions", json=body, headers={"X-Meeting-Service": "1"})
-
 
 def a_line(index: int, *, ts: float | None = None) -> TranscriptLine:
     """一行转写（`ts` 不给就取此刻）。"""
@@ -119,18 +39,6 @@ def a_line(index: int, *, ts: float | None = None) -> TranscriptLine:
         text=f"第 {index} 行内容",
         kind="line",
     )
-
-
-def wait_until(predicate, *, timeout: float = 15.0, what: str = "条件"):
-    """轮询等到谓词命中（收尾那几步与告警判定都是真墙钟上的事）。"""
-    deadline = time.monotonic() + timeout
-    last = None
-    while time.monotonic() < deadline:
-        last = predicate()
-        if last:
-            return last
-        time.sleep(0.05)
-    raise AssertionError(f"等待超时（{timeout}s）：{what}（最后观察值 {last!r}）")
 
 
 def start_session(client, *, mode: str | None = None) -> None:

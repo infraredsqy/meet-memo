@@ -30,8 +30,7 @@ from meeting.offline import progress as offline_progress
 from meeting.offline import runner as offline_runner
 from meeting.service.app import build_runtime
 from meeting.service.routes import api_routes
-from tests.test_offline_progress import GatedEngine
-from tests.test_offline_runner import sparse_pcm, synth_session
+from tests._offline_fakes import GatedEngine, sparse_pcm, synth_session
 
 #: 等后台那一趟收工的 join 上限（等到了就立刻回，不赌固定时长）
 JOB_TIMEOUT_SECONDS = 5.0

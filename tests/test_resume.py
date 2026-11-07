@@ -31,7 +31,8 @@ from tests._capture_faulty import (
     PACE_SECONDS_ENV,
     expected_archive_bytes,
 )
-from tests.test_api_actions import live, post, snapshot_of, wait_until
+from tests._app_drivers import live, post, snapshot_of
+from tests._helpers import wait_until
 
 #: 慢档标记：起真采集引擎与真收尾（含 ffmpeg 转码），单条实测见 report.md。
 pytestmark = pytest.mark.slow

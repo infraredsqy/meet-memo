@@ -49,8 +49,9 @@ from meeting.offline import artifacts as offline_artifacts
 from meeting.offline import progress as offline_progress
 from meeting.offline import runner as offline_runner
 
-from tests.test_offline_runner import FakeConfig, FakeEngine, synth_session
-from tests.test_minutes_launch import GOOD_FINAL
+from tests._minutes_fakes import FakeHook, FakeResolution, RecordingConverter, RecordingLauncher, write_final
+from tests._offline_fakes import FakeConfig, FakeEngine, synth_session
+from tests._minutes_fakes import GOOD_FINAL
 
 from meeting.cli import (
     EXIT_FAILURE,
@@ -80,62 +81,6 @@ MINUTES_FINAL_NAME = offline_runner.MINUTES_FINAL_NAME
 # ---------------------------------------------------------------------------
 # 假件
 # ---------------------------------------------------------------------------
-
-
-class RecordingLauncher:
-    """假启动器：只登记（被调了几次、每次的场次目录），**什么也不起**。
-
-    它替的是「把 headless DSH 子会话拉起来」那一步 —— 本文件里一次真拉起都不该发生，
-    因此这份登记就是「这一趟有没有再花一次钱」的权威读法。
-    """
-
-    def __init__(self, *, result: Any = None) -> None:
-        self.calls: list[str] = []
-        self.result = result
-
-    def __call__(self, session_dir: Any, *args: Any, **kwargs: Any) -> Any:
-        self.calls.append(str(session_dir))
-        return self.result
-
-
-class FakeHook:
-    """假钩子实现（`minutes.hook = auto` 那一格解析出来的东西）：`launch()` 只登记。"""
-
-    def __init__(self) -> None:
-        self.calls: list[str] = []
-
-    def launch(self, session_dir: str) -> None:
-        self.calls.append(str(session_dir))
-
-
-class FakeResolution:
-    """`resolve_minutes_hook()` 的替身：冒充「在场且有实现」那一档。"""
-
-    def __init__(self, hook: FakeHook) -> None:
-        self.key = "minutes.hook"
-        self.selector = "auto"
-        self.target = "fake:MinutesHook"
-        self.has_implementation = True
-        self.implementation = hook
-
-    def skipped(self) -> bool:
-        return False
-
-
-class RecordingConverter:
-    """假转码器：登记 + 按场景写/不写那份 MP3（真 ffmpeg 在不在场与用例无关）。"""
-
-    def __init__(self, *, body: bytes = b"fake-mp3", raises: str | None = None) -> None:
-        self.calls: list[tuple[str, str]] = []
-        self.body = body
-        self.raises = raises
-
-    def __call__(self, pcm_path: Any, mp3_path: Any) -> bool:
-        self.calls.append((str(pcm_path), str(mp3_path)))
-        if self.raises:
-            raise RuntimeError(self.raises)
-        Path(mp3_path).write_bytes(self.body)
-        return True
 
 
 class SettlingLauncher(RecordingLauncher):
@@ -253,13 +198,6 @@ def write_minutes_status(session: Path, *, state: str = "done") -> Path:
         artifacts={},
     )
     return session / MINUTES_STATUS_NAME
-
-
-def write_final(session: Path) -> Path:
-    """落一份过得了四条判据的 `meeting_final.md`。"""
-    path = session / MINUTES_FINAL_NAME
-    path.write_text(GOOD_FINAL, encoding="utf-8")
-    return path
 
 
 def fake_config(**values: Any) -> FakeConfig:

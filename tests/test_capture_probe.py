@@ -30,7 +30,7 @@ from meeting.capture import devices as devices_module
 from meeting.capture import sources as sources_module
 from meeting.capture.devices import DeviceEndpoint, OpenAttempt, measure_samples
 from tests import _helpers as helpers
-from tests.test_api_actions import live, post, snapshot_of
+from tests._app_drivers import live, post, snapshot_of
 
 # ---------------------------------------------------------------------------
 # 假端点表与假试开（真机实测的形状：见 meeting/capture/devices.py 的模块注释）
@@ -125,7 +125,7 @@ class FakeSources:
         后端用的是「调用那一刻再取」的模块级查找，所以打在**模块对象**上照样生效
         （`docs/v1-lineage.md` 的坑 C9）。
         """
-        from tests.test_capture_engine import FakeCaptureSource
+        from tests._capture_fakes import FakeCaptureSource
 
         monkeypatch.setattr(sources_module, "list_input_endpoints", self.list_input_endpoints)
         monkeypatch.setattr(sources_module, "list_render_endpoints", self.list_render_endpoints)
@@ -512,7 +512,7 @@ def test_reprobe_is_refused_while_a_session_is_running(tmp_path: Path):
 
         # 收尾走完之后（`ended`）重新探测又能用了
         assert post(client, "stop").status_code == 200
-        from tests.test_api_actions import wait_for_done
+        from tests._app_drivers import wait_for_done
 
         wait_for_done(client)
         allowed = post(client, "reprobe")
@@ -566,9 +566,6 @@ def test_service_startup_leaves_unprobed_for_a_source_without_a_probe(tmp_path, 
             return None
 
         def finalize(self):
-            return None
-
-        def transcode(self):
             return None
 
         def stop(self):

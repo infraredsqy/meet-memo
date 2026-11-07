@@ -48,6 +48,8 @@ from meeting.minutes.launch import (
     launch_headless,
     render_command,
 )
+
+from tests._minutes_fakes import GOOD_FINAL
 from meeting.minutes.prompt import DEFAULT_TEMPLATE
 
 #: 本文件专门测 headless 拉起机制（假可执行文件 + 假子进程，不碰系统上的 `dsh`）：
@@ -58,28 +60,6 @@ pytestmark = [pytest.mark.usefixtures("allow_dsh_protocol_stubs")]
 
 #: 一条指着提示词的 argv（渲染器把它当指针用）
 PROMPT_ARG_RE = re.compile(r"`([^`]+)`")
-
-#: 一份合格的纪要（正文 + 那张表里有一行数据行 + `### 猜不出的`）
-GOOD_FINAL = "\n".join(
-    [
-        "# 250919 会议纪要 — 2025-09-19",
-        "",
-        "## 会议概要",
-        "",
-        "这一场定了两件事。",
-        "",
-        APPENDIX_HEADING,
-        "",
-        "| 路 | 编号 | 人名 | 把握 | 依据 |",
-        "| --- | --- | --- | --- | --- |",
-        "| loopback | S01 | 张三 | 中 | 会上自称负责部署 |",
-        "",
-        UNKNOWN_HEADING,
-        "",
-        "- loopback S03：只被叫过「那个谁」",
-        "",
-    ]
-)
 
 #: 假可执行文件驱动的场景（`--scenario` 之后那个词）
 SCENARIO_OK = "ok"

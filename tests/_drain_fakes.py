@@ -6,15 +6,15 @@
     `tests/_service.py` 同形；`tests/test_drain.py` 与 `tests/test_shutdown_signal.py` 都从这里
     取假件，**只 import、不各自定义、不各写一份**，也不把假件塞进 `tests/conftest.py`
     （`conftest.py` 只放 fixture）。
-  - **五个假件**（类名与使用者一一对应）：`FakeCaptureBackend`（可控拖长的 `finalize()` /
-    `transcode()`、会抛错的同两个方法）、`FakeTranscriberBackend`（报 `backlog_depth()` /
+  - **五个假件**（类名与使用者一一对应）：`FakeCaptureBackend`（可控拖长、会抛错的
+    `finalize()`）、`FakeTranscriberBackend`（报 `backlog_depth()` /
     `segment_timeout()`）、`FakePostHook`（`launch()` 正常返回 / 可控拖长 / 「立刻返回、
     后半段交给工作线程」）、`FailingPostHook`（`launch()` 抛错）、`BlockingThreadPostHook`
     （`launch()` 把阻塞放进工作线程、自身立刻返回）。**`FakePostHook` 与 `FailingPostHook`
     是两个独立的假件类**，类名与使用者一一对应、互不顶替。
   - **旋钮一律走环境变量**（构造参数进不了子进程：`registry` 对后端**无参实例化**）。
-    `BLOCK_SECONDS_ENV` 之外还有八个：`FINALIZE_DELAY_SECONDS_ENV` / `FINALIZE_ERROR_ENV` /
-    `TRANSCODE_DELAY_SECONDS_ENV` / `TRANSCODE_ERROR_ENV` / `BACKLOG_DEPTH_ENV` /
+    `BLOCK_SECONDS_ENV` 之外还有六个：`FINALIZE_DELAY_SECONDS_ENV` / `FINALIZE_ERROR_ENV` /
+    `BACKLOG_DEPTH_ENV` /
     `SEGMENT_TIMEOUT_SECONDS_ENV` / `LAUNCH_DELAY_SECONDS_ENV` / `LAUNCH_THREAD_SECONDS_ENV`。
     **有了这几个旋钮，用例侧不再需要「构造参数固定」的本地假件子类**：`tests/test_drain.py`
     的 ③（有实现却抛错）/ ⑤（可控拖长）/ ⑤b2（大积压量）/ ⑥（启动即完成）/ ⑩（钉在 `running`）
@@ -68,8 +68,8 @@ ANNOTATION_ENV = "MEETING_TEST_DRAIN_FAKES_ANNOTATION"
 #: 那一段源码同时被**写出去**给子进程用（`_class_source()` 切片 + `_FAKE_MODULE_HEADER`），
 #: 于是「常量名 / 取值 / 读值助手 / 五个假件」**只有一份维护点**：本进程里 `from tests._drain_fakes
 #: import FakeCaptureBackend` 拿到的那一份，与子进程里 `registry` 解析出来的那一份，逐字同源。
-#: 旋钮清单与它们的用处见下面那一段的注释（`BLOCK_SECONDS_ENV` / `FINALIZE_*` / `TRANSCODE_*` /
-#: `BACKLOG_DEPTH_ENV` / `SEGMENT_TIMEOUT_SECONDS_ENV` / `LAUNCH_*` 共九个）。
+#: 旋钮清单与它们的用处见下面那一段的注释（`BLOCK_SECONDS_ENV` / `FINALIZE_*` /
+#: `BACKLOG_DEPTH_ENV` / `SEGMENT_TIMEOUT_SECONDS_ENV` / `LAUNCH_*` 共七个）。
 #:
 #: 三个配置键（既有的键，本 Phase 不新增配置键）
 CONFIG_KEY_CAPTURE = "capture.backend"
@@ -165,8 +165,6 @@ _FAKE_MODULE_FOOTER = "\n".join(
         '    "LAUNCH_THREAD_SECONDS_ENV",',
         '    "LOAD_MARKER",',
         '    "SEGMENT_TIMEOUT_SECONDS_ENV",',
-        '    "TRANSCODE_DELAY_SECONDS_ENV",',
-        '    "TRANSCODE_ERROR_ENV",',
         '    "note_module_loaded",',
         "]",
         "",
@@ -199,7 +197,7 @@ _FAKE_MODULE_SOURCE = _FAKE_MODULE_HEADER + _class_source() + _FAKE_MODULE_FOOTE
 #
 # **读值一律发生在调用时**（不在 import 期固化一个死值）：值是「这一次调用听谁的」那一件事实。
 # 本区段被 `_class_source()` 切出去时，`_FAKE_MODULE_HEADER` 里已经 import 了 `os` / `time` /
-# `threading` 三个标准库模块，因此这九个常量与三个助手在子进程那份模块里同样可用。
+# `threading` 三个标准库模块，因此这七个常量与三个助手在子进程那份模块里同样可用。
 # ---------------------------------------------------------------------------
 
 #: 承载「`BlockingThreadPostHook` 阻塞多少秒」的环境变量（**不是本服务的环境变量**）。
@@ -215,7 +213,6 @@ BLOCK_SECONDS_ENV = "MEETING_TEST_DRAIN_BLOCK_SECONDS"
 #:
 #:   - `FINALIZE_DELAY_SECONDS_ENV`：`FakeCaptureBackend.finalize()` 睡多久（可控拖长）；
 #:   - `FINALIZE_ERROR_ENV`：非空即让 `finalize()` 抛 `OSError`（造「有实现却抛错」）；
-#:   - `TRANSCODE_DELAY_SECONDS_ENV` / `TRANSCODE_ERROR_ENV`：`transcode()` 同上；
 #:   - `BACKLOG_DEPTH_ENV` / `SEGMENT_TIMEOUT_SECONDS_ENV`：`FakeTranscriberBackend` 报的
 #:     预算输入（把 `budget` 顶到公式那一档）；
 #:   - `LAUNCH_DELAY_SECONDS_ENV`：`FakePostHook.launch()` 睡多久再返回；
@@ -226,8 +223,6 @@ BLOCK_SECONDS_ENV = "MEETING_TEST_DRAIN_BLOCK_SECONDS"
 CLOCK_OFFSET_SECONDS_ENV = "MEETING_TEST_DRAIN_CLOCK_OFFSET_SECONDS"
 FINALIZE_DELAY_SECONDS_ENV = "MEETING_TEST_DRAIN_FINALIZE_DELAY_SECONDS"
 FINALIZE_ERROR_ENV = "MEETING_TEST_DRAIN_FINALIZE_ERROR"
-TRANSCODE_DELAY_SECONDS_ENV = "MEETING_TEST_DRAIN_TRANSCODE_DELAY_SECONDS"
-TRANSCODE_ERROR_ENV = "MEETING_TEST_DRAIN_TRANSCODE_ERROR"
 BACKLOG_DEPTH_ENV = "MEETING_TEST_DRAIN_BACKLOG_DEPTH"
 SEGMENT_TIMEOUT_SECONDS_ENV = "MEETING_TEST_DRAIN_SEGMENT_TIMEOUT_SECONDS"
 LAUNCH_DELAY_SECONDS_ENV = "MEETING_TEST_DRAIN_LAUNCH_DELAY_SECONDS"
@@ -316,7 +311,7 @@ BLOCK_SECONDS = _block_seconds_from_env()
 
 
 class FakeCaptureBackend:
-    """采集假件：`probe()` 如实报「没有探测结果」，`finalize()` / `transcode()` 可控拖长或抛错。
+    """采集假件：`probe()` 如实报「没有探测结果」，`finalize()` 可控拖长或抛错。
 
     它在收尾用例里顶的是**真采集后端**那一档（flush 要真的调它的 `finalize()`），
     因此声明能力位 `writes_real_audio = True`（`registry.capabilities_of()` 读它）。
@@ -324,12 +319,10 @@ class FakeCaptureBackend:
     构造参数全部有缺省（registry 无参实例化后端，**构造函数不许有必填参数**）：
 
       - `finalize_delay_seconds`：`finalize()` 睡多久再返回（`0` = 立刻返回）；
-      - `finalize_error`：非空就让 `finalize()` 抛 `OSError`（造「有实现却抛错」）；
-      - `transcode_delay_seconds` / `transcode_error`：`transcode()` 同上。
+      - `finalize_error`：非空就让 `finalize()` 抛 `OSError`（造「有实现却抛错」）。
 
-    **四个旋钮都可以由环境变量顶掉**（构造参数进不了子进程 —— `registry` 无参实例化）：
-    `FINALIZE_DELAY_SECONDS_ENV` / `FINALIZE_ERROR_ENV` /
-    `TRANSCODE_DELAY_SECONDS_ENV` / `TRANSCODE_ERROR_ENV`。**读值都发生在调用时**（不在
+    **两个旋钮都可以由环境变量顶掉**（构造参数进不了子进程 —— `registry` 无参实例化）：
+    `FINALIZE_DELAY_SECONDS_ENV` / `FINALIZE_ERROR_ENV`。**读值都发生在调用时**（不在
     `__init__` 里固化），于是「这一次 finalize() 睡多久 / 抛不抛错」是当次环境的函数，
     用例改完环境变量下一次调用就生效。`tests/test_drain.py` ③（抛错档）与 ⑤ / ⑤b2（拖长档）
     就是经这两个旋钮配出来的，本文件因此不必为它们各留一个「构造参数固定」的本地子类。
@@ -348,22 +341,17 @@ class FakeCaptureBackend:
         *,
         finalize_delay_seconds: float = 0.0,
         finalize_error: str = "",
-        transcode_delay_seconds: float = 0.0,
-        transcode_error: str = "",
     ) -> None:
         self._finalize_delay_seconds = float(finalize_delay_seconds)
         self._finalize_error = str(finalize_error)
-        self._transcode_delay_seconds = float(transcode_delay_seconds)
-        self._transcode_error = str(transcode_error)
         self.bound = False
         self.started = False
         self.stopped = False
         self.finalize_calls = 0
-        self.transcode_calls = 0
         self.session_dir = None
         self._emit = None
 
-    # -- 四个旋钮（环境变量优先，构造参数兜底；**每次调用现读**）-------------
+    # -- 两个旋钮（环境变量优先，构造参数兜底；**每次调用现读**）-------------
 
     @property
     def finalize_delay_seconds(self) -> float:
@@ -372,14 +360,6 @@ class FakeCaptureBackend:
     @property
     def finalize_error(self) -> str:
         return _text_from_env(FINALIZE_ERROR_ENV) or self._finalize_error
-
-    @property
-    def transcode_delay_seconds(self) -> float:
-        return _seconds_from_env(TRANSCODE_DELAY_SECONDS_ENV, self._transcode_delay_seconds)
-
-    @property
-    def transcode_error(self) -> str:
-        return _text_from_env(TRANSCODE_ERROR_ENV) or self._transcode_error
 
     # -- 采集协议 ---------------------------------------------------------
 
@@ -412,14 +392,6 @@ class FakeCaptureBackend:
         _write_clock_offset_marker()
         if self.finalize_error:
             raise OSError(self.finalize_error)
-
-    def transcode(self) -> None:
-        self.transcode_calls += 1
-        _log.info("假采集后端 transcode()：延迟 %ss", self.transcode_delay_seconds)
-        if self.transcode_delay_seconds > 0:
-            time.sleep(self.transcode_delay_seconds)
-        if self.transcode_error:
-            raise OSError(self.transcode_error)
 
 
 class FakeTranscriberBackend:
@@ -622,8 +594,6 @@ FAKE_CONSTANT_NAMES: tuple[str, ...] = (
     "LAUNCH_THREAD_SECONDS_ENV",
     "LOAD_MARKER",
     "SEGMENT_TIMEOUT_SECONDS_ENV",
-    "TRANSCODE_DELAY_SECONDS_ENV",
-    "TRANSCODE_ERROR_ENV",
 )
 
 
@@ -829,8 +799,6 @@ def write_knob_plugin(
     capture_class: str | None = None,
     capture_error: str = "",
     capture_delay_seconds: float | None = None,
-    transcode_error: str = "",
-    transcode_delay_seconds: float | None = None,
     post_class: str | None = None,
     post_delay_seconds: float | None = None,
     post_thread_seconds: float | None = None,
@@ -847,7 +815,7 @@ def write_knob_plugin(
       - `capture_class` / `transcriber_class` / `post_class`：写进 `capture.backend` /
         `transcriber.backend` / `post.hook` 三个**既有配置键**的 `module:Class`；
       - `capture_delay_seconds` / `capture_error`：`FakeCaptureBackend` 的 `finalize()`
-        行为（拖长 / 抛错）；`transcode_*` 同上（那一对给 `transcode()` 用）；
+        行为（拖长 / 抛错）；
       - `post_delay_seconds`：`FakePostHook.launch()` 睡多久；`post_thread_seconds`：把多少秒
         丢进工作线程（`0` = 那条线程永不返回，即「启动即完成」那一档）；
       - `backlog_depth` / `segment_timeout`：`FakeTranscriberBackend` 报的预算输入；
@@ -869,10 +837,6 @@ def write_knob_plugin(
         plugin.extra_env[FINALIZE_DELAY_SECONDS_ENV] = str(float(capture_delay_seconds))
     if capture_error:
         plugin.extra_env[FINALIZE_ERROR_ENV] = capture_error
-    if transcode_delay_seconds is not None:
-        plugin.extra_env[TRANSCODE_DELAY_SECONDS_ENV] = str(float(transcode_delay_seconds))
-    if transcode_error:
-        plugin.extra_env[TRANSCODE_ERROR_ENV] = transcode_error
     if post_delay_seconds is not None:
         plugin.extra_env[LAUNCH_DELAY_SECONDS_ENV] = str(float(post_delay_seconds))
     if post_thread_seconds is not None:
@@ -1202,8 +1166,6 @@ __all__ = [
     "LAUNCH_THREAD_SECONDS_ENV",
     "LOAD_MARKER",
     "SEGMENT_TIMEOUT_SECONDS_ENV",
-    "TRANSCODE_DELAY_SECONDS_ENV",
-    "TRANSCODE_ERROR_ENV",
     "BlockingThreadPostHook",
     "FakeCaptureBackend",
     "FakePlugin",

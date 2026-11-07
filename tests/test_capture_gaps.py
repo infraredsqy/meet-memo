@@ -41,6 +41,8 @@ from meeting.capture.engine import _SourceWorker
 from meeting.capture.gaps import FrameGapDetector
 from meeting.state import frame_clock_window
 from tests import _helpers as helpers
+from tests._app_drivers import post
+from tests._helpers import wait_until
 
 #: 空洞记录在心跳应答里的键（与 `ServiceRuntime.capture_gaps_view()` 的产出对应）
 GAP_FIELDS = {"total_count", "total_seconds", "recent"}
@@ -59,24 +61,6 @@ def live(tmp_path: Path, values: dict | None = None):
     with helpers.app_client(home, values=config) as client:
         client.place_root = out_root
         yield client, client.app.state.runtime
-
-
-def post(client, action: str, args: dict | None = None):
-    body: dict = {"action": action}
-    if args is not None or action == "start":
-        body["args"] = helpers.start_args(action, args, client.place_root)
-    return client.post("/api/actions", json=body, headers={"X-Meeting-Service": "1"})
-
-
-def wait_until(predicate, *, timeout: float = 5.0, what: str = "条件"):
-    deadline = time.monotonic() + timeout
-    last = None
-    while time.monotonic() < deadline:
-        last = predicate()
-        if last:
-            return last
-        time.sleep(0.05)
-    raise AssertionError(f"等待超时（{timeout}s）：{what}（最后观察值 {last!r}）")
 
 
 # ---------------------------------------------------------------------------

@@ -27,13 +27,17 @@ from meeting.offline.engine import OfflineSegment
 from meeting.offline.progress import ChunkProgress, OfflineProgressLedger
 from meeting.offline.runner import run_session
 from meeting.workspace import has_offline_transcript
-from tests.test_offline_runner import CHUNK_SECONDS, FakeConfig, FakeEngine, sparse_pcm, synth_session
+from tests._offline_fakes import (
+    CHUNK_SECONDS,
+    FakeConfig,
+    FakeEngine,
+    GATE_TIMEOUT_SECONDS,
+    GatedEngine,
+    sparse_pcm,
+    synth_session,
+)
 
 SAMPLE_RATE = 16000
-#: 块卡住时的放行/等待上限（等到了就立刻回，不赌固定时长）
-GATE_TIMEOUT_SECONDS = 5.0
-
-
 def chunked_session(tmp_path: Path, *, seconds: float = 25.0) -> Path:
     """两路各造 25 秒带信号的归档 PCM（块长 10 秒 → 每路 3 块）。"""
     session = synth_session(tmp_path / "250906")
@@ -53,24 +57,6 @@ def read_ledger(session: Path) -> tuple[dict | None, list[dict]]:
 def ledger_rows(session: Path, source: str) -> list[dict]:
     _header, rows = read_ledger(session)
     return [row for row in rows if row.get("source") == source]
-
-
-class GatedEngine(FakeEngine):
-    """按**第几次**调用放行的假引擎：第 `block_at` 次调用卡在闸门上（从 1 数起）。"""
-
-    def __init__(self, gate: threading.Event, *, block_at: int) -> None:
-        super().__init__()
-        self._gate = gate
-        self._block_at = int(block_at)
-        self._calls = 0
-        self.reached = threading.Event()
-
-    def transcribe(self, audio_path):
-        self._calls += 1
-        if self._calls == self._block_at:
-            self.reached.set()
-            self._gate.wait(timeout=GATE_TIMEOUT_SECONDS)
-        return super().transcribe(audio_path)
 
 
 class CountingEngine(FakeEngine):
@@ -235,7 +221,7 @@ def test_a_load_failure_still_leaves_a_row_with_the_denominator(tmp_path) -> Non
     `runner._run_one_source()`）同一个理由，行上的块号取**触发探测的那一块**（加载失手
     就是在这一块上发现的），分母照旧是这一路的总块数。
     """
-    from tests.test_offline_runner import LoadingEngine, silence_session
+    from tests._offline_fakes import LoadingEngine, silence_session
 
     session, _ranges = silence_session(
         tmp_path, name="load-failure", silent_chunks=(), chunk_seconds=CHUNK_SECONDS

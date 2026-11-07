@@ -49,13 +49,9 @@ from tests._capture_faulty import (
     expected_archive_bytes,
     PACE_SECONDS_ENV,
 )
-from tests.test_api_actions import live, post, snapshot_of, wait_until
-from tests.test_capture_accounting import (
-    audit_pcm,
-    replay_level_frames,
-    samples_within_one_block,
-)
-from tests.test_capture_engine import FakeCaptureSource
+from tests._app_drivers import live, post, snapshot_of
+from tests._helpers import wait_until
+from tests._capture_fakes import FakeCaptureSource, audit_pcm, replay_level_frames, samples_within_one_block
 
 #: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md`。
 pytestmark = pytest.mark.slow
@@ -149,10 +145,9 @@ def test_a_full_session_reconciles_frame_by_frame(tmp_path: Path, monkeypatch):
     # 于是那条流水线会真的去加载 GLM 权重（实测把本用例拖到 7 秒，越过单条用例的 5 秒看门，
     # 也违背「任何用例都不许加载真模型」这条硬要求）。
     #
-    # `post.hook` 同样显式取 `null`：会后钩子（`7c6952e5` phase2 的
-    # `meeting.backends.post:PostProcessHook`）落地之后，产品缺省 `auto` 会让收尾第 4 步
-    # 真的去起一条后台线程跑整条会后链、往这个场次目录里多落四五份产物 —— 那既不是本用例
-    # 要验的记录，也会让下面「场次目录里恰好这几份文件」那条断言变成一条与后台线程赛跑的断言。
+    # `post.hook` 同样显式取 `null`（缺席档）：缺席档下收尾第 4 步直接记 `skipped`，
+    # 场次目录里落什么由采集侧独自决定。R26 之后产品缺省 `auto` 也不再自动跑会后——
+    # 那一格做完释放会中模型就停在 `waiting`，不起线程、不往场次目录落产物；
     # 会后链自己的记录在 `tests/test_post_hook.py` 与 `tests/test_offline_runner.py` 里验。
     with live(
         tmp_path,

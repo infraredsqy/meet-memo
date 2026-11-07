@@ -90,7 +90,7 @@
 **⑤b 那两条**把「超预算 → `DrainLimitExceeded`」与「阻塞型同步步不钉住事件循环」搬到
 **进程内可注入的小 deadline** 上（0.02 秒），于是墙钟与断言语义两不误。
 
-**等到某条件一律带显式超时**：所有「等到某条件」都走 `tests/_service.py` 的 `wait_until()`，
+**等到某条件一律带显式超时**：所有「等到某条件」都走 `tests/_helpers.py` 的 `wait_until()`，
 超时值取本文件下面的具名常量，**不留裸秒数**。
 
 **每一路健康迁移与告警起止由谁造出来**：由 `MEETING_CAPTURE=dev` 的两路合成电平与
@@ -126,7 +126,8 @@ from meeting.session import SESSION_FILE_NAME
 from meeting.state import DRAIN_STEP_IDS, DRAIN_STEP_STATUS
 from tests import _drain_fakes as fakes
 from tests import _helpers as helpers
-from tests._service import post_action, read_session_json, wait_until
+from tests._helpers import wait_until
+from tests._service import post_action, read_session_json
 
 #: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md`。
 pytestmark = pytest.mark.slow
@@ -148,8 +149,8 @@ pytestmark = pytest.mark.slow
 #: **取值区间为什么仍成立、余量在哪（审查问题 M10 授权缩短后补的说明）**——这一条要的是
 #: 「轮询一定能在阻塞结束前读到 `running`」，因此它只需要**大于一次轮询往返**：
 #:
-#:   - 下界（为什么不能再小）：轮询间隔是 `tests/_service.py` 的
-#:     `WAIT_POLL_INTERVAL_SECONDS` = 0.05 秒，而 `wait_until()` 是一次「读 `/api/state`
+#:   - 下界（为什么不能再小）：轮询间隔是 `tests/_helpers.py` 里 `wait_until()` 的
+#:     缺省 0.05 秒，而 `wait_until()` 是一次「读 `/api/state`
 #:     再看条件」的往返 —— 本机实测一次往返约 1–5 ms，0.6 / 0.05 = **12 次机会**，
 #:     再加上 `DRAIN_WINDOW_ENTRY_DELAY_SECONDS`（0.2 秒）先把观察点挪进窗口，
 #:     余量是两位数倍；
@@ -1673,14 +1674,14 @@ def _inprocess_config(
     默认值表直接取 `config.DEFAULT_VALUES`（不手抄一份：`settings` 视图、告警阈值与后端解析
     都要读全键集，抄一份迟早漏键）。
 
-    `post_hook_absent=True`（缺省）时，`post.hook` 在这里显式取 `null`（缺席档）：会后钩子
-    （`7c6952e5` phase2 的 `meeting.backends.post:PostProcessHook`）落地之后，产品缺省 `auto`
-    会让收尾第 4 步真的起一条后台线程跑整条会后链 —— 那是会后节点自己的记录。本文件里数收尾
-    编排那几步记录的用例（⑤b2 那一条逐字断言 `"post": "skipped"`）靠这一格把「缺席」这一档
-    摆出来，第 4 步按缺席记 `skipped` 才是它们该看到的样子。
+    `post_hook_absent=True`（缺省）时，`post.hook` 在这里显式取 `null`（缺席档）：缺席档下
+    收尾第 4 步按「无实现」记 `skipped`。R26 之后产品缺省 `auto` 也不再拉起任何会后动作
+    （那一格做完释放会中模型就停在 `waiting`），但本文件里数收尾编排那几步记录的用例
+    （⑤b2 那一条逐字断言 `"post": "skipped"`）要的正是「缺席」这一档的面孔。
 
     `post_hook_absent=False` 时这一格整个不写，`post.hook` 于是取到 `config.DEFAULT_VALUES`
-    里的产品缺省 `auto` —— ⑤b3 那一条量的就是产品缺省那一档（实现落地之后第 4 步该记 `done`）。
+    里的产品缺省 `auto` —— ⑤b3 那一条量的就是产品缺省那一档（第 4 步解析到真实现，
+    按 R26 停在 `waiting`）。
     """
     from meeting.config import DEFAULT_VALUES, Config
 
@@ -1752,12 +1753,13 @@ def test_log_step_lands_failed_when_the_session_log_write_reports_a_problem(
 
 
 # ---------------------------------------------------------------------------
-# ⑤b3 收尾第 4 步在**产品缺省**那一档落 `done`（**进程内**，审查问题 C2）
+# ⑤b3 收尾第 4 步在**产品缺省**那一档停 `waiting`（**进程内**，审查问题 C2）
 #
 # `_inprocess_config()` 把 `post.hook` 显式钉成 `null`（缺席档），好让 ⑤b2 那条逐字断言
 # `"post": "skipped"` 继续为真 —— 那是「这一格不写实现时记 skipped」的覆盖，值钱的正是
 # 「缺席」这半边。代价是本文件从此不再观察**产品缺省**：`post.hook = auto` 配上
-# `meeting/backends/post.py` 这条真实现，第 4 步该按「有实现且启动成功」记 `done`。
+# `meeting/backends/post.py` 这条真实现，第 4 步解析到真实现、做完释放会中模型就停在
+# `waiting`（R26：会后一个动作都不自动跑）。
 # 这一条把那半边补回来：`post.hook` 整个不写（`post_hook_absent=False`，取值直接来自
 # `config.DEFAULT_VALUES`）、走真正的 `_resolve_backends()` 与真正的 `drain()` 四步。
 # 本实现不再带任何钩子方法（`launch()` 已随收尾第 4 步的退场一并删除），第 4 步因此

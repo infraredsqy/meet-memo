@@ -53,7 +53,7 @@ from meeting.minutes.status import (
 )
 
 from tests import _helpers as helpers
-from tests.test_minutes_launch import GOOD_FINAL
+from tests._minutes_fakes import GOOD_FINAL
 
 #: 后台线程收敛的轮询上限（事件驱动地等，等到了就立刻回）
 CONVERGE_TIMEOUT_SECONDS = 10.0
@@ -620,7 +620,7 @@ def test_a_minutes_run_leaves_the_offline_artifacts_untouched(
     tmp_path: Path, monkeypatch
 ) -> None:
     """跑一次纪要生成**不改动离线那三份产物与离线状态文件**（拿哈希比）。"""
-    from tests.test_offline_runner import FakeConfig, FakeEngine, synth_session
+    from tests._offline_fakes import FakeConfig, FakeEngine, synth_session
 
     session = synth_session(tmp_path / "out")
     monkeypatch.setenv("MEETING_MINUTES_CHILD", "1")  # 先让离线那一趟安静地跳过尾钩
@@ -646,7 +646,7 @@ def test_a_minutes_run_leaves_the_offline_artifacts_untouched(
 
 def test_the_offline_tail_announces_the_hook_once(tmp_path: Path, monkeypatch) -> None:
     """离线那一趟的尾巴上真的调了一次纪要钩子，并且摘要里带着那一格。"""
-    from tests.test_offline_runner import FakeConfig, FakeEngine, synth_session
+    from tests._offline_fakes import FakeConfig, FakeEngine, synth_session
 
     session = synth_session(tmp_path / "out")
     monkeypatch.setenv("MEETING_MINUTES_CHILD", "1")
@@ -669,7 +669,7 @@ def test_the_offline_tail_keeps_a_broken_minutes_layer_out_of_its_own_status(
     tmp_path: Path, monkeypatch
 ) -> None:
     """纪要那一层炸了：离线状态文件与三份产物一个字节不变，摘要里如实记一条。"""
-    from tests.test_offline_runner import FakeConfig, FakeEngine, synth_session
+    from tests._offline_fakes import FakeConfig, FakeEngine, synth_session
 
     session = synth_session(tmp_path / "out")
     monkeypatch.setenv("MEETING_MINUTES_CHILD", "1")
@@ -698,7 +698,7 @@ def _raising_resolver(*args, **kwargs):
 
 def test_a_null_hook_keeps_the_minutes_status_away(tmp_path: Path, monkeypatch) -> None:
     """`minutes.hook = null` → 离线跑完不产生纪要状态文件（安静跳过）。"""
-    from tests.test_offline_runner import FakeConfig, FakeEngine, synth_session
+    from tests._offline_fakes import FakeConfig, FakeEngine, synth_session
 
     session = synth_session(tmp_path / "out")
     monkeypatch.delenv("MEETING_MINUTES_CHILD", raising=False)

@@ -167,34 +167,20 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 # ---------------------------------------------------------------------------
 
 
-class _RecordingBrowser:
-    """进程内的假 `webbrowser`：`open()` 只把 URL 记进 `calls`，**永不打开任何东西**。"""
-
-    #: 与 `tests/_helpers.py` 的 `ServiceBrowser("safe")` 同一口径：返回 `False`
-    outcome = "safe"
-
-    def __init__(self) -> None:
-        self.calls: list[str] = []
-
-    def open(self, url: Any, *args: Any, **kwargs: Any) -> bool:
-        self.calls.append(str(url))
-        if self.outcome == "raise":
-            raise RuntimeError("假 webbrowser（conftest 兜底）：按测试要求模拟没有可用的浏览器")
-        return self.outcome == "open"
-
-
 @pytest.fixture(autouse=True)
-def _no_real_browser(monkeypatch: pytest.MonkeyPatch) -> Iterator[_RecordingBrowser]:
+def _no_real_browser(monkeypatch: pytest.MonkeyPatch) -> Iterator[helpers.ServiceBrowser]:
     """**autouse 兜底**：把 `meeting.service.app.webbrowser.open` 换成只记录的假替身。
 
+    假替身类就是 `tests/_helpers.py` 的 `ServiceBrowser`（本仓「只记录、绝不开窗」的假
+    webbrowser 只有这一份；缺省 `outcome = "safe"`：返回 `False`，只把 URL 记进 `calls`）。
     这条保护与 `tests/_helpers.py` 里 `app_client()` 自己的替换是**两层**（那一层在上下文
     退出时会把真 `open` 放回来，之后仍然由本夹具这一层兜着），因此 pytest 进程里任何一条
     路径都碰不到真浏览器。用例需要验「打开浏览器」这一步的行为时，显式再覆盖一次即可。
     """
     from meeting.service import app as service_app
 
-    fake = _RecordingBrowser()
-    monkeypatch.setattr(service_app.webbrowser, "open", fake.open, raising=False)
+    fake = helpers.ServiceBrowser()
+    monkeypatch.setattr(service_app.webbrowser, "open", fake.fake_open, raising=False)
     yield fake
 
 
