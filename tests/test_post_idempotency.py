@@ -38,8 +38,8 @@ from meeting import config as config_module
 from meeting import post_run as post_run_module
 from meeting.backends import minutes as minutes_backend
 from meeting.capture import transcode as transcode_module
+from meeting.minutes import claim as claim_module
 from meeting.minutes import launch as minutes_launch
-from meeting.minutes import status as minutes_status
 from meeting.offline import artifacts as offline_artifacts
 from meeting.offline import minutes_tail
 from meeting.offline import runner as offline_runner
@@ -684,13 +684,13 @@ def test_force_carries_the_flag_all_the_way_to_the_implementation(
     """
     session, engine, _ = a_finished_session(tmp_path / "250919")
     monkeypatch.delenv("MEETING_MINUTES_CHILD", raising=False)
-    minutes_status.mark_running(session, branch="headless")
+    claim_module.mark_running(session, branch="headless")
     calls: list[bool] = []
 
     def stub(_self, session_dir, *, force: bool = False) -> None:
         """照真实现那一格：登记、落一版在飞（这一趟不被拒），随后替子会话收工。"""
         calls.append(bool(force))
-        minutes_status.mark_running(session_dir, branch="headless", force=force)
+        claim_module.mark_running(session_dir, branch="headless", force=force)
         write_final(Path(session_dir))
         write_minutes_done(Path(session_dir))
 

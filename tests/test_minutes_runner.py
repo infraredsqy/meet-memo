@@ -31,6 +31,7 @@ import pytest
 from meeting import config as config_module
 from meeting.backends import minutes as minutes_backend
 from meeting.backends.registry import resolve_minutes_hook
+from meeting.minutes import claim as claim_module
 from meeting.minutes import inputs as inputs_module
 from meeting.minutes import prompt as prompt_module
 from meeting.minutes import runner as runner_module
@@ -595,7 +596,7 @@ def test_the_claim_lock_does_not_stay_on_disk(tmp_path: Path, monkeypatch) -> No
 
     minutes_backend.MinutesHook().launch(str(session), deliver=True)
 
-    lock = status_module.lock_path(session)
+    lock = claim_module.lock_path(session)
     assert not lock.exists(), f"claim 锁该写完那一版 running 就删掉：{lock}"
     assert (session / STATUS_NAME).is_file()
     assert lock.name not in {item.name for item in session.iterdir()}

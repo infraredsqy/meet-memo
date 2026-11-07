@@ -680,11 +680,12 @@ def test_post_minutes_is_refused_when_the_minutes_layer_is_still_in_flight(
 ) -> None:
     """第一趟还在飞时再按「直接出纪要」→ 409 `draining`，**不许回 `{kind:'minutes'}` 的假成功**（m2）。
 
-    现场（一个真 DSH 子会话都没有，不占显卡、不出声）：先由 `status.mark_running()` 在盘上
+    现场（一个真 DSH 子会话都没有，不占显卡、不出声）：先由 `claim.mark_running()` 在盘上
     落一版停在 `running` 的 `meeting_minutes_status.json`（第一趟还在飞的现场读数，
     它落的正是那一版），`meeting.minutes.runner.run` 换成登记 no-op。判据落在**动作本体**上：
     第二个按钮在起线程之前就按 409 拒，`post_jobs_state()` 因此读不到第二趟。
     """
+    from meeting.minutes import claim as claim_module
     from meeting.minutes import status as minutes_status
     from meeting.service.runtime import ActionError
 
@@ -698,8 +699,8 @@ def test_post_minutes_is_refused_when_the_minutes_layer_is_still_in_flight(
     )
     try:
         # 第一趟的现场：盘上那一版停在 running（改之前，动作本体对这一版一个字都不读）
-        minutes_status.mark_running(str(session_dir))
-        assert minutes_status._peek_state(session_dir) == minutes_status.STATE_RUNNING
+        claim_module.mark_running(str(session_dir))
+        assert claim_module._peek_state(session_dir) == minutes_status.STATE_RUNNING
 
         # 头一道闸此刻**没有**东西可拒（没有线程在飞、收尾已经落定）—— 这一趟要是被拒，
         # 只可能落在 claim 闸上；`status_path` 也只在 claim 闸那支的 detail 里（review-2 m7）

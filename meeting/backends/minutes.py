@@ -13,7 +13,7 @@
     库调用）在 `mark_running()` 之前就安静跳过（返回一份 `skipped` 结果、只留主 log 一行），
     整个项目与 DSH 隔离，只有 `meeting post` 与「直接出纪要」按钮两条人工入口显式传真；
   - **返回之前先把「这一层在飞」落到盘上**：那一版 `meeting_minutes_status.json`
-    （`state = "running"`）由 `meeting/minutes/status.py::mark_running()` 同步写，
+    （`state = "running"`）由 `meeting/minutes/claim.py::mark_running()` 同步写，
     于是「同一场会不会被拉起两个子会话」这件事在**跨进程**下也读得出来 —— 后到的那一趟
     读到这一版就按现成的 `running` 拒跑档收场（`--force` 是出路）。落点选在这里的理由：
     拉起这个动作的出口不止一处（`meeting/offline/minutes_tail.py::_announce_minutes()` 的两支之外，
@@ -40,11 +40,11 @@ from typing import Any
 #: `minutes.hook` 的缺省取值（唯一定义点在 `meeting/minutes/defaults.py`）
 from meeting.minutes.defaults import DEFAULT_HOOK
 
-#: 「这一层已经在飞」那一档（`meeting/minutes/status.py` 定义，本模块原样转出）：
+#: 「这一层已经在飞」那一档（`meeting/minutes/claim.py` 定义，本模块原样转出）：
 #: `launch()` 读到盘上停着一版 `running` 时抛它，调用方据此按拒跑档收场。
-#: 转出它是为了让调用方**不必**自己去 import `meeting.minutes.status`（那一包是重的那一头，
-#: `meeting/offline/minutes_tail.py` 的惰性纪律一个字不动）。
-from meeting.minutes.status import AlreadyRunningError  # noqa: F401  (转出给调用方)
+#: 转出它是为了让调用方只 import 本模块就够（`meeting/offline/minutes_tail.py`
+#: 的惰性纪律一个字不动）。
+from meeting.minutes.claim import AlreadyRunningError  # noqa: F401  (转出给调用方)
 from meeting.minutes.status import ISOLATION_MESSAGE
 
 _log = logging.getLogger("meeting.backends.minutes")
@@ -71,7 +71,7 @@ class MinutesHook:
     def claim(self, session_dir: str) -> None:
         """**同步**地把「这一层在飞」落到盘上；盘上已停着一版 `running` 就当场抛
         `AlreadyRunningError`（`force=True` 那一档走 `launch()`）。它就是
-        `minutes/status.py::mark_running()` 既有 claim 锁的一次同步调用。
+        `minutes/claim.py::mark_running()` 既有 claim 锁的一次同步调用。
 
         为什么要它（`post_minutes` 重复按下那一档）：`launch()` 起完线程就返回，运行时的
         在飞读数毫秒级回到空，光靠那一格判不出「另一趟还在飞」。动作本体先调本方法，
@@ -140,10 +140,10 @@ class MinutesHook:
         `--force` 时，`mark_running()` 抛 `AlreadyRunningError`，这里**原样上抛**：
         拒绝这一趟就是它的语义，调用方据此按拒跑档收场。
         """
+        from meeting.minutes import claim as claim_module
         from meeting.minutes import launch as launch_module
-        from meeting.minutes import status as status_module
 
-        status_module.mark_running(
+        claim_module.mark_running(
             session_dir,
             branch=launch_module.configured_branch(minutes_hook_selector()),
             force=force,

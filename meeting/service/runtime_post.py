@@ -394,7 +394,7 @@ class RuntimePostMixin:
         `args["dir"]` 给定时跑它指定的那一场（校验见 `_session_dir_for_post()`）。
 
         **在飞判据是同步的**（m2）：起线程之前先按 `minutes` 那一层**盘上的 claim 闸**
-        （`MinutesHook.claim()` → `meeting/minutes/status.py::mark_running()`，既有那一把锁，
+        （`MinutesHook.claim()` → `meeting/minutes/claim.py::mark_running()`，既有那一把锁，
         不另发明一套）同步认领一次 —— 上一趟还在飞时当场按 409 `draining`
         如实回一句「已经在飞」，而不是回 `{kind: 'minutes'}` 那个假成功（线程体里那条
         `AlreadyRunningError` 原先只落一条 log，动作本体早就把「已起」答出去了）。
@@ -553,14 +553,14 @@ class RuntimePostMixin:
     def _claim_minutes_layer(self, resolution: Any, target: str) -> bool:
         """起线程之前**同步**登记一次「纪要这一层在飞」（m2），**返回认没认成**。
 
-        判据复用 `meeting/minutes/status.py` 那把 claim 闸（实现经 `claim()` 暴露它，
+        判据复用 `meeting/minutes/claim.py` 那把 claim 闸（实现经 `claim()` 暴露它，
         没有 `claim()` 的实现照旧走线程体那条路，返回值是 `False`）：盘上停着一版 `running`
         时这一趟当场按 409 `draining` 拒，`detail` 带上那一层的状态文件落点与既有那一版的原因。
         """
         claim = getattr(resolution.implementation, "claim", None)
         if not callable(claim):
             return False
-        from meeting.backends.minutes import AlreadyRunningError
+        from meeting.minutes.claim import AlreadyRunningError
         from meeting.minutes.status import status_path
 
         try:
@@ -584,7 +584,7 @@ class RuntimePostMixin:
     ) -> None:
         """起线程那一步抛出来时，把刚认下的那一版 claim **如实退回**（m4）。
 
-        这一版是 `claim()` 同步落下的（`meeting/minutes/status.py` 那把既有 claim 锁）；线没起来
+        这一版是 `claim()` 同步落下的（`meeting/minutes/claim.py` 那把既有 claim 锁）；线没起来
         的话就没有人来收它，盘上会永远停在 `running`，之后每一趟都被 claim 闸按 409 拒
         （`--force` 是命令行那一趟的出路，界面上没有）。这里按 `MinutesHook._mark_failed()`
         那支**既有写法**把它补成 `failed` + 原因（同一份状态文件、同一个写入函数，
