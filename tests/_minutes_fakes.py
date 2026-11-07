@@ -18,7 +18,7 @@ from typing import Any
 
 from meeting.minutes import status as minutes_status
 from meeting.minutes.launch import APPENDIX_HEADING, UNKNOWN_HEADING
-from meeting.offline.runner import MINUTES_FINAL_NAME, MINUTES_STATUS_NAME
+from meeting.offline.minutes_tail import MINUTES_FINAL_NAME, MINUTES_STATUS_NAME
 
 
 #: 一份合格的纪要（正文 + 那张表里有一行数据行 + `### 猜不出的`）

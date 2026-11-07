@@ -1,5 +1,14 @@
-"""会后离线转写主链：一次 `run_session(session_dir)` 走完 读场次元信息 → 逐路取音频
+"""会后离线转写主链的**编排**：一次 `run_session(session_dir)` 走完 读场次元信息 → 逐路取音频
 → 逐块调引擎 → 逐路编号 → 落三份产物 → 状态文件从 `running` 落成终态。
+
+本模块是 `meeting.offline.runner` 包的主模块：编排（`run_session` 一族）住这里，
+对外的公共面也由本模块聚合；杂活各归其家——
+
+- PCM 字节读取/换算与数字静音门：包内 `runner/pcm.py`；
+- 场次元信息读取（`session_id_of` / `declared_sources`）：包内 `runner/session_info.py`；
+- 引擎解析构造（`resolve_engine` / `build_engine`）：`meeting/offline/engine.py`；
+- 状态文件行形状与逐块结论词表：`meeting/offline/artifacts.py`；
+- 尾巴上怎么拉起纪要：`meeting/offline/minutes_tail.py`（本模块只留一处调用点）。
 
 关键口径（改之前先读完）：
 
@@ -7,12 +16,9 @@
   不合并——合并错是把两个人并成一个编号（不可接受的错），不合并只是把一个人算成两个。
 - **块失败必须露出来**：缺的块进 `partial` / `missing_spans` / 转写首行注释，
   静默 `done` 加一段悄悄消失的音频是禁止的（design-intent 第 11 条）。
-- **数字静音门**：峰值低于半格（`SILENT_PEAK_FLOOR`）且长度够 `MIN_GATE_SAMPLES` 的块
-  不送引擎——引擎在样本全零的块上会编出整段假正文（`250906` 实测 69% 假字）；
-  判不了（解不开、读不全）照常送引擎并记 `gate = "unjudged"`，与健康运行分得开。
-  与 `meeting/asr/glm.py` 的 `_is_noise_segment` 分工：会中预筛按概率丢，会后闸门按全零丢。
-- **int16 与 float32 同一把尺子**：判据按 `samples_to_count_floats()` 换算成满量程格数
-  且不截断；直接 `int()` 会把真有声的 float 波形截成全零（复跑第一版实测，19 块全跳）。
+- **数字静音门**的判据与满量程换算住 `runner/pcm.py`：峰值低于半格（`SILENT_PEAK_FLOOR`）
+  且长度够 `MIN_GATE_SAMPLES` 的块不送引擎——引擎在样本全零的块上会编出整段假正文
+  （`250906` 实测 69% 假字）；判不了（解不开、读不全）照常送引擎并记 `gate = "unjudged"`。
 - 惰性：`torch` / `transformers` / `av` 不在顶层 import（`tests/test_post_hook.py` 盯着）。
 - 尾巴上的纪要钩子在产物终态**之后**最后通知；`announce_minutes` 缺省假（项目与 DSH 隔离，
   只有 `meeting post` 人工入口传 True），钩子炸了不影响离线产物。
@@ -21,44 +27,71 @@
 
 from __future__ import annotations
 
-import importlib
-import json
 import logging
-import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence, TYPE_CHECKING
+from typing import Any, Sequence
 
 from meeting import config as config_module
-from meeting.offline import artifacts
-from meeting.offline.audio import PCM_SUFFIX, PCM_SAMPLE_WIDTH, SAMPLE_RATE as PCM_SAMPLE_RATE
-from meeting.offline.engine import OfflineEngine, OfflineSegment, release_engine
-# minutes_tail 的名字 re-export 进本模块命名空间：cli/tests 经
-# offline_runner._announce_minutes 等的属性访问与打桩面照旧。
-from meeting.offline.minutes_tail import (
-    MINUTES_FINAL_NAME,
-    MINUTES_GATE_MESSAGE,
-    MINUTES_STATUS_NAME,
-    _accepts_keyword,
-    _announce_minutes,
-    _final_artifact_check,
-    _launch_minutes_implementation,
-    _minutes_gate,
-    _read_minutes_status,
+from meeting.offline import artifacts, minutes_tail
+from meeting.offline.artifacts import (
+    REASON_ALL_CHUNKS_FAILED,
+    REASON_DIGITAL_SILENCE,
+    REASON_EMPTY_PCM,
+    REASON_ENGINE_ERROR,
+    REASON_ENGINE_LOAD_ERROR,
+    REASON_GATE_UNJUDGED,
+    REASON_INTERRUPTED,
+    REASON_NO_AUDIO,
+    REASON_NO_SEGMENTS,
+    REASON_NOT_RUN,
+    REASON_TRANSCRIBED,
+    REASON_ZERO_SPAN_SEGMENTS,
+    _failed_source_row,
+    _status_artifact_row,
 )
+from meeting.offline.audio import PCM_SUFFIX, PCM_SAMPLE_WIDTH, SAMPLE_RATE as PCM_SAMPLE_RATE
+from meeting.offline.engine import (
+    DEFAULT_ENGINE_TARGET,
+    OfflineEngine,
+    OfflineSegment,
+    build_engine,
+    engine_descriptor,
+    release_engine,
+    resolve_device_of,
+    resolve_engine,
+)
+from meeting.offline.minutes_tail import MINUTES_GATE_MESSAGE
 from meeting.offline.progress import ChunkProgress, OfflineProgressLedger
+from meeting.offline.runner.pcm import (
+    GATE_METHOD_DECODE_AT_PLAN,
+    GATE_METHOD_DECODE_NOW,
+    GATE_METHOD_PCM,
+    GATE_METHOD_WAVEFORM,
+    GATE_NOT_SILENT,
+    GATE_SILENT,
+    GATE_UNJUDGED,
+    MIN_GATE_SAMPLES,
+    SILENT_PEAK_FLOOR,
+    MeasureResult,
+    _PCM_SCAN_BLOCK_BYTES,
+    _audio_paths,
+    _decode_samples,
+    _pcm_sample_count,
+    full_scale_counts,
+    is_digital_silence,
+    measure_span,
+    pcm_sample_chunk_counts,
+    samples_to_count_floats,
+    write_chunk_wav,
+)
+from meeting.offline.runner.session_info import SOURCE_IDS, declared_sources, session_id_of
 from meeting.offline.speakers import number_speakers
 from meeting.session import archive_name, segment_archive_paths
 
-if TYPE_CHECKING:  # pragma: no cover - 只为类型标注，运行时不 import（惰性纪律）
-    import numpy as np
-
 _log = logging.getLogger("meeting.offline.runner")
 
-#: 两路（与 `meeting.backends.base.SOURCE_IDS` 口径一致；不 import 它，
-#: 免得 `meeting.backends` 这条链被包进会后路径）
-SOURCE_IDS: tuple[str, ...] = ("mic", "loopback")
 
 #: 归档 PCM 的形状（16k 采样率 / 样本宽 / 后缀）：唯一出处住 `meeting/offline/audio.py`
 #: （`meeting/capture/archive.py` 的同一档），这里按本模块惯用名接进来。
@@ -74,78 +107,11 @@ DEFAULT_CHUNK_SECONDS: float = 450.0
 #: `post.chunk_seconds` 显式关掉档：整段一次跑（R9）
 CHUNK_SECONDS_OFF: float = 0.0
 
-#: `post.engine` 缺省落点（`auto` → 本节点的引擎实现）
-DEFAULT_ENGINE_TARGET = "meeting.offline.engine:MossOfflineEngine"
 
-#: 失败原因词表（报告与状态文件都用这几个名字，下游按它分档）
-REASON_NO_AUDIO = "no_audio"
-REASON_EMPTY_PCM = "empty_pcm"
-REASON_ENGINE_ERROR = "engine_error"
-#: 引擎**加载**失手：一次引擎调用都没发生，与「跑某一块时抛错」的 `engine_error`
-#: 分开记——「模型没起来」与「起来了、某块没跑成」是两件要分别动手的事。
-REASON_ENGINE_LOAD_ERROR = "engine_load_error"
-#: 这一路压根没跑（`_write_failed_status()` 给没轮到的路现开的格）：`reasons` 空、
-#: `error` 为 null。兜成 `engine_error` 会让「按原因筛引擎的锅」把没跑的算进去。
-REASON_NOT_RUN = "not_run"
-REASON_NO_SEGMENTS = "no_segments"
-#: 分块下每一块都失败：一段都没留下来（与「一块坏、别的块还在」的 `partial` 分开）
-REASON_ALL_CHUNKS_FAILED = "all_chunks_failed"
-#: 跑到块边界被取消旗标停（b1c6a58e）：已跑块保留，未跑块进 `missing_spans`
-#: （缺口只供人读，不进任何判定——design-intent 第 6 条）。
-REASON_INTERRUPTED = "interrupted"
-#: 数字静音门跳过的块。不是失败：只进 `reasons` 分布，不进缺失区间。
-REASON_DIGITAL_SILENCE = "digital_silence"
-#: 引擎跑成但交回的段全是零时长：有字却落在没有长度的区间上（实测假正文每段都是
-#: 零时长），零段与真内容都读不出来时这一格是唯一分辨依据。
-REASON_ZERO_SPAN_SEGMENTS = "zero_span_segments"
-#: 引擎跑成、交回的段都有真实时长（正常档）
-REASON_TRANSCRIBED = "transcribed"
-#: 门判不了这段的静音与否（解不开、读不全），照常送引擎；必须与「门判过、放行」
-#: 分得开，否则没门可用的运行与健康运行同形。
-REASON_GATE_UNJUDGED = "gate_unjudged"
-
-#: 一块产物都没落的那一路按次序挑一个 `reason` 词：模型没起来 > 没音频 > 抛错 > 没交回。
-#: `not_run` / `interrupted` 不在表里——按词自身认（见 `_failed_source_row()`）。
-_REASON_PRIORITY = (
-    REASON_ENGINE_LOAD_ERROR,
-    REASON_NO_AUDIO,
-    REASON_EMPTY_PCM,
-    REASON_ENGINE_ERROR,
-    REASON_NO_SEGMENTS,
-    REASON_ALL_CHUNKS_FAILED,
-)
-
-#: 数字静音判据：峰值低于半格（**开区间**，正好半格算有声）算静音。峰值按
-#: `samples_to_count_floats()` 换算成满量程格数且不截断，int16 与 float32 落同一条
-#: 分界。取值依据见模块头：实测全零块上引擎编假正文，峰值为 ±1（-90.3 dB）照样可能有声。
-SILENT_PEAK_FLOOR = 0.5
-
-#: 门只判够 0.1 秒的一段：更短的不替引擎下结论，宁可多花一次引擎调用。
-MIN_GATE_SAMPLES = PCM_SAMPLE_RATE // 10
-
-#: 按字节块扫 PCM：省的是**内存**（2 小时的会归档 260 MB），不是时间。
-_PCM_SCAN_BLOCK_BYTES = 1 << 22
-
-#: 翻译表把非零字节映成 `\x01`：`block.translate(...).count(1)` 一次算出非零字节数。
-_PCM_SCAN_TABLE = bytes(0 if index == 0 else 1 for index in range(256))
 
 #: 块内标签的命名空间模板：第 `NN` 块的 `Sxx` 变成 `cNN:Sxx`
 CHUNK_LABEL_TEMPLATE = "c{index:02d}:{label}"
 
-#: 门在一段音频上的三种结论（`ChunkRun.gate` 与逐路 `gate` 都用这三个词）
-GATE_SILENT = "silent"
-GATE_NOT_SILENT = "not_silent"
-GATE_UNJUDGED = "unjudged"
-
-#: 门凭什么判的（产物 `gate_method` 词表）：
-#: - `pcm_bytes`：按字节扫归档 PCM；
-#: - `waveform`：量长度时解好的波形上切片（单趟跑的 MP3 落这一格）；
-#: - `decode_at_plan`：量长度时解过、没成（**从不**表示门现解过）；
-#: - `decode_now`：门现解一次（产品路径到不了，留给直接调 `measure_span()` 的调用方）。
-GATE_METHOD_PCM = "pcm_bytes"
-GATE_METHOD_WAVEFORM = "waveform"
-GATE_METHOD_DECODE_AT_PLAN = "decode_at_plan"
-GATE_METHOD_DECODE_NOW = "decode_now"
 
 #: 分块时临时 wav 住在场次目录下的这个子目录里，跑完一块不留
 CHUNK_DIR_NAME = "_offline_chunks"
@@ -306,45 +272,6 @@ def plan_chunks(total_seconds: float, chunk_seconds: float) -> ChunkPlan:
     )
 
 
-def full_scale_counts(samples: Any) -> Any:
-    """归一化波形（`[-1, 1]`）→ **满量程格数**（clip ±1 × 32767，浮点、不截断）。
-
-    满量程换算的唯一出处（offline-float-scale-duplicated）：写 wav（`write_chunk_wav()`）、
-    判据（`samples_to_count_floats()`）与重放写盘（`meeting/offline/replay.py`）都从
-    这一条换算，32767 与 32768 的分歧在别处长不出来。乘 32767 而不是 32768：±1 满量程
-    对称映回 ±32767，不过冲 int16 的范围（用例 `test_write_chunk_wav_keeps_the_signal`
-    盯着）。
-    """
-    import numpy as np
-
-    data = np.asarray(samples)
-    return np.clip(data, -1.0, 1.0) * np.float32(32767.0)
-
-
-def write_chunk_wav(path: Path | str, samples: "np.ndarray") -> Path:
-    """把一段 16k 单声道波形写成 wav（引擎的 `decode_audio()` 吃它）。
-
-    ⚠ **float32 必须先乘 32767 再转 int16**：直接 `.astype("<i2")` 会把 `[-1, 1]`
-    波形截成全 0，写出一份数字静音的 wav——模型对静音照样吐 `[0.5][S01]…`
-    （phase3 实测坑，用例 `test_write_chunk_wav_keeps_the_signal` 盯着）。换算走
-    `full_scale_counts()`（满量程换算的唯一出处）。
-    「写出来全零」不作产品代码错误判据：真正安静的会议写出来本来就是零，
-    自检只在**调引擎之前**的静音门上做。`wave` / `numpy` 函数体内 import（惰性纪律）。
-    """
-    import wave
-
-    import numpy as np
-
-    target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    wave_data = np.asarray(samples, dtype=np.float32)
-    pcm = full_scale_counts(wave_data).astype("<i2")
-    with wave.open(str(target), "wb") as handle:
-        handle.setnchannels(1)
-        handle.setsampwidth(2)
-        handle.setframerate(PCM_SAMPLE_RATE)
-        handle.writeframes(pcm.tobytes())
-    return target
 
 
 def clear_chunk_dir(session_dir: Path | str) -> None:
@@ -369,306 +296,12 @@ def chunk_file(session_dir: Path | str, index: int) -> Path:
     return Path(session_dir) / CHUNK_DIR_NAME / f"chunk_{int(index):02d}.wav"
 
 
-def _audio_paths(path: "str | Path | Sequence[str | Path]") -> list[Path]:
-    """把「一个路径或一串段路径」归一成段路径表（段是本层时间轴的唯一形状）。"""
-    if isinstance(path, (list, tuple)):
-        return [Path(item) for item in path]
-    return [Path(path)]
 
 
-def _decode_samples(path: "str | Path | Sequence[str | Path]") -> "np.ndarray":
-    """解出整段 16k 单声道 float32 波形；给段路径表时逐段解、按序拼接。
-    单列出来是给用例换掉真解码的接缝（conftest 不碰真模型）。"""
-    from meeting.offline.audio import decode_audio
-
-    paths = _audio_paths(path)
-    if len(paths) == 1:
-        return decode_audio(paths[0])
-    import numpy as np
-
-    pieces = [decode_audio(item) for item in paths]
-    return np.concatenate(pieces) if pieces else np.empty(0, dtype=np.float32)
 
 
-def _pcm_sample_count(paths: "Path | str | Sequence[Path | str]") -> int:
-    """一段列 PCM 的样本数（各段字节数之和 ÷ 2，不读内容）。"""
-    return sum(
-        os.path.getsize(path) // PCM_SAMPLE_WIDTH for path in _audio_paths(paths)
-    )
 
 
-def pcm_sample_chunk_counts(
-    paths: "Path | str | Sequence[Path | str]", *, offset: float, seconds: float
-) -> Any:
-    """段列表拼成的时间轴上 `[offset, offset + seconds)` 读成 int16 计数。
-    跨段的块按各段长度切着读（字节接字节就是同一条轴）；读不全时交回空数组
-    （切块那一步照抛、门那一步放行）。"""
-    import numpy as np
-
-    series = _audio_paths(paths)
-    start = int(round(float(offset) * PCM_SAMPLE_RATE))
-    end = int(round((float(offset) + float(seconds)) * PCM_SAMPLE_RATE))
-    skip = max(0, start)
-    want = max(0, end - start)
-    pieces: list[Any] = []
-    for path in series:
-        if want <= 0:
-            break
-        try:
-            available = os.path.getsize(path) // PCM_SAMPLE_WIDTH
-        except OSError:
-            available = 0
-        if skip >= available:
-            skip -= available
-            continue
-        take = min(available - skip, want)
-        with open(path, "rb") as handle:
-            handle.seek(skip * PCM_SAMPLE_WIDTH)
-            raw = handle.read(take * PCM_SAMPLE_WIDTH)
-        got = len(raw) // PCM_SAMPLE_WIDTH
-        if got:
-            pieces.append(np.frombuffer(raw, dtype="<i2").astype(np.int32))
-            want -= got
-        skip = 0
-        if got < take:
-            break  # 这一段比标称短：时间轴到这里为止
-    if not pieces:
-        return np.empty(0, dtype=np.int32)
-    return np.concatenate(pieces)
-
-
-def _pcm_span_scan(
-    paths: "Path | str | Sequence[Path | str]", *, offset: float, seconds: float
-) -> bool | None:
-    """按字节块扫一段：读到非零字节 `False`，读满全零 `True`；没读全或读不动交回 `None`
-    ——门只对「确实读到全零」下结论。见到第一个非零字节就返回，全零才读满。
-    跨段偏移按各段长度逐段折算。
-    """
-    series = _audio_paths(paths)
-    start = max(0, int(round(float(offset) * PCM_SAMPLE_RATE)))
-    count = max(0, int(round(float(seconds) * PCM_SAMPLE_RATE)))
-    remaining = count * PCM_SAMPLE_WIDTH
-    skip = start * PCM_SAMPLE_WIDTH
-    try:
-        for path in series:
-            if remaining <= 0:
-                break
-            size = os.path.getsize(path)
-            if skip >= size:
-                skip -= size
-                continue
-            with open(path, "rb") as handle:
-                handle.seek(skip)
-                skip = 0
-                while remaining > 0:
-                    block = handle.read(min(_PCM_SCAN_BLOCK_BYTES, remaining))
-                    if not block:
-                        break
-                    if block.translate(_PCM_SCAN_TABLE).count(1):
-                        return False
-                    remaining -= len(block)
-    except OSError:  # 读不到按「可能有声」放行，引擎那一层照样报错
-        _log.warning("会后离线：数字静音门读不动 %s，照常送引擎", series, exc_info=True)
-        return None
-    if remaining > 0:
-        return None
-    return True
-
-
-def samples_to_count_floats(samples: Any) -> Any:
-    """归一化波形 → **满量程格数**（浮点，**不截断**）：判据要把 int16 与 float32 放上
-    同一条「半格」分界，截断会把半格上下的样本一起抹成 0（见模块头）。换算走
-    `full_scale_counts()`（满量程换算的唯一出处）。
-    """
-    import numpy as np
-
-    data = np.asarray(samples)
-    if data.dtype.kind == "f":
-        return full_scale_counts(data)
-    if data.dtype.kind in "iu":
-        # 只升位到 int32（后续 abs 不溢出）；绝对值与取峰在 `_peak_counts()`
-        return data.astype(np.int32)
-    raise TypeError(f"波形的 dtype 该是 float 或 int，收到 {data.dtype}")
-
-
-def _peak_counts(scaled: Any) -> float:
-    """一串**满量程格数**（浮点或整数）的峰值（空数组记 0）。"""
-    import numpy as np
-
-    if scaled.size == 0:
-        return 0.0
-    # 先 abs、再升 int64 取最大：int16 的 -32768 不会被 abs 溢出吃掉
-    magnitudes = np.abs(scaled)
-    if magnitudes.dtype.kind == "f":
-        return float(np.max(magnitudes))
-    return float(np.max(magnitudes.astype(np.int64)))
-
-
-def is_digital_silence(samples: Any) -> bool:
-    """这一段波形是不是**数字静音**：样本全零（峰值 < `SILENT_PEAK_FLOOR` 半格，开区间）
-    且长度够 `MIN_GATE_SAMPLES`（样本不足时不替引擎下结论）；空波形算静音。入参
-    int16 计数或 `[-1, 1]` float32 都收，同一把浮点尺子。与 `meeting/asr/glm.py` 的
-    `_is_noise_segment` 的分工见模块头：会中预筛按概率丢，会后闸门按全零丢。
-    """
-    scaled = samples_to_count_floats(samples)
-    if scaled.size == 0:
-        return True
-    if int(scaled.size) < MIN_GATE_SAMPLES:
-        return False
-    return _peak_counts(scaled) < float(SILENT_PEAK_FLOOR)
-
-
-@dataclass(slots=True)
-class MeasureResult:
-    """门对一段音频的结论：`silent = True/False` 是判过的两种答案，`None` 是**判不了**
-    （照常送引擎）——布尔值说不出「我没判」，产物靠它把没门可用的运行露出来。
-    """
-
-    method: str
-    silent: bool | None
-    detail: str | None = None
-
-    @property
-    def judged(self) -> bool:
-        return self.silent is not None
-
-
-def _span_samples(waveform: Any, *, offset: float, seconds: float) -> Any | None:
-    """已解好的波形上取 `[offset, offset + seconds)` 那一段；取不全（没读全）交回 `None`。"""
-    import numpy as np
-
-    data = np.asarray(waveform)
-    if data.size == 0:
-        # 空波形算静音（见 `is_digital_silence()`）
-        return data
-    start = max(0, int(round(float(offset) * PCM_SAMPLE_RATE)))
-    count = max(0, int(round(float(seconds) * PCM_SAMPLE_RATE)))
-    if start + count > int(data.size):
-        return None
-    return data[start:start + count]
-
-
-def measure_span(
-    path: "str | Path | Sequence[str | Path]",
-    *,
-    offset: float,
-    seconds: float,
-    waveform: Any = None,
-    waveform_length: int | None = None,
-    decode_attempted: bool = False,
-) -> MeasureResult:
-    """门在一段音频上的结论，按成本从低到高三条路（前一条用得上就不走后面）：
-
-      1. 归档 PCM 按字节扫那一段（见到第一个非零字节就出结果）；
-      2. 已解好的波形切片判（`_plan_for_source()` 量长度时解的那份，单趟 MP3 走这条）；
-      3. 现解一次音频文件——产品路径到不了，留给直接调用方。
-
-    `waveform_length` 是已解波形的总样本数，「这一段没读全」与「读到全零」靠它分开。
-    `decode_attempted=True` 表示量长度那一步已经解过一次没成，这里照「判不了」登记、
-    不再解第二遍（同一个坏文件解两次只会把同一句话打两遍日志）。
-    """
-    audio_paths = _audio_paths(path)
-    audio_path = audio_paths[0]
-    if audio_path.suffix.lower() == PCM_SUFFIX:
-        count = max(0, int(round(float(seconds) * PCM_SAMPLE_RATE)))
-        if count < MIN_GATE_SAMPLES:
-            return MeasureResult(
-                method=GATE_METHOD_PCM,
-                silent=False,
-                detail="这一段短于 0.1 秒，样本不足时不替引擎下结论",
-            )
-        verdict = _pcm_span_scan(audio_paths, offset=offset, seconds=seconds)
-        if verdict is None:
-            return MeasureResult(
-                method=GATE_METHOD_PCM,
-                silent=None,
-                detail=(
-                    f"归档 PCM 上这一段没读全（要 {count} 个样本，"
-                    f"{audio_path.name} 比这个区间短或者读不动）"
-                ),
-            )
-        return MeasureResult(method=GATE_METHOD_PCM, silent=verdict)
-
-    if waveform_length is not None:
-        piece = _span_samples(waveform, offset=offset, seconds=seconds)
-        if piece is None:
-            return MeasureResult(
-                method=GATE_METHOD_WAVEFORM,
-                silent=None,
-                detail=(
-                    f"解好的波形只有 {int(waveform_length)} 个样本，"
-                    "盖不住这一段的区间"
-                ),
-            )
-        return MeasureResult(
-            method=GATE_METHOD_WAVEFORM, silent=is_digital_silence(piece)
-        )
-
-    if decode_attempted:
-        return MeasureResult(
-            method=GATE_METHOD_DECODE_AT_PLAN,
-            silent=None,
-            detail="这个文件解不出波形（量长度那一步已经试过一次）",
-        )
-
-    try:
-        decoded = _decode_samples(audio_paths)
-    except Exception as exc:  # 解不开：门判不了，照常送引擎
-        return MeasureResult(
-            method=GATE_METHOD_DECODE_NOW,
-            silent=None,
-            detail=f"{type(exc).__name__}: {exc}",
-        )
-    start = max(0, int(round(float(offset) * PCM_SAMPLE_RATE)))
-    count = max(0, int(round(float(seconds) * PCM_SAMPLE_RATE)))
-    if int(decoded.size) and start + count > int(decoded.size):
-        return MeasureResult(
-            method=GATE_METHOD_DECODE_NOW,
-            silent=None,
-            detail=(
-                f"解出来只有 {int(decoded.size)} 个样本，盖不住这一段的区间"
-                f"（{start} + {count}）"
-            ),
-        )
-    return MeasureResult(
-        method=GATE_METHOD_DECODE_NOW,
-        silent=is_digital_silence(decoded[start:start + count]),
-    )
-
-
-def session_id_of(session_dir: Path | str) -> str:
-    """场次编号 = 场次目录名（目录名是服务侧生成的，本模块不另起规则）。"""
-    return Path(session_dir).name
-
-
-def declared_sources(session_dir: Path | str) -> tuple[str, ...]:
-    """这一场该跑哪几路：读 `session.json` 的 `sources[].id`，读不到按两路全集。"""
-    raw = _read_session_json(session_dir)
-    declared = raw.get("sources")
-    if isinstance(declared, list):
-        names = [
-            str(item.get("id"))
-            for item in declared
-            if isinstance(item, dict) and item.get("id")
-        ]
-        if names:
-            return tuple(names)
-    return SOURCE_IDS
-
-
-def _read_session_json(session_dir: Path | str) -> dict[str, Any]:
-    """读场次目录里的 `session.json`（缺失或读不出来时交回空映射，由调用方决定怎么办）。"""
-    import json
-
-    path = Path(session_dir) / "session.json"
-    if not path.exists():
-        return {}
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError):
-        _log.warning("场次元信息读不出来：%s（按默认口径继续）", path)
-        return {}
-    return raw if isinstance(raw, dict) else {}
 
 
 def audio_path_for(session_dir: Path | str, source: str) -> Path:
@@ -729,82 +362,6 @@ def _audio_file_label(paths: "Sequence[str]") -> str:
     return f"{names[0]} 等 {len(names)} 个段文件"
 
 
-# ---------------------------------------------------------------------------
-# 引擎解析与构造
-# ---------------------------------------------------------------------------
-
-
-def resolve_engine(selector: str | None = None) -> tuple[Any, str]:
-    """按 `post.engine` 解析引擎类，交回 `(类, 说明)`；解析不出来即抛。
-
-    取值口径同 `config.BACKEND_SELECTORS`：`auto`（缺省）→ `DEFAULT_ENGINE_TARGET`；
-    `null` → 抛（离线层没有替身引擎，关掉整条链用 `post.hook = null`）；
-    `module:Class` → 按它导入。与 `post.hook` 分开解析：换引擎时钩子层一个字不动。
-    """
-    if selector is None:
-        raw = config_module.get("post.engine")
-        selector = raw.strip() if isinstance(raw, str) and raw.strip() else "auto"
-    selector = str(selector).strip()
-    if selector == "null":
-        raise LookupError(
-            "post.engine = null：会后离线这一层没有替身引擎（关掉整条链请把 post.hook 取 null）"
-        )
-    target = DEFAULT_ENGINE_TARGET if selector == "auto" else selector
-    if ":" not in target:
-        raise LookupError(f"取值不是 module:Class 形状：{target!r}")
-    module_name, _, attr = target.partition(":")
-    module = importlib.import_module(module_name)
-    if not hasattr(module, attr):
-        raise LookupError(f"{module_name} 里没有 {attr}")
-    return getattr(module, attr), f"post.engine = {selector} → {target}"
-
-
-def _engine_options(config: Any = None) -> dict[str, str]:
-    """模型 / 档位 / 引擎选择三项：优先读传进来的那份配置，没有就读 `config.get()` 的生效值。"""
-    getter = getattr(config, "get", None)
-
-    def value(key: str) -> Any:
-        if callable(getter):
-            return getter(key)
-        return config_module.get(key)
-
-    model = value("post.model")
-    dtype = value("post.dtype")
-    selector = value("post.engine")
-    return {
-        "model": str(model) if model else config_module.default_for("post.model"),
-        "dtype": str(dtype) if dtype else config_module.default_for("post.dtype"),
-        "selector": str(selector).strip() if selector else "auto",
-    }
-
-
-def build_engine(config: Any = None) -> Any:
-    """造一台引擎（入参可换实现：换引擎时这一层下面的一切都不动）。"""
-    options = _engine_options(config)
-    cls, detail = resolve_engine(options["selector"])
-    _log.info("会后离线引擎：%s（%s，dtype=%s）", detail, options["model"], options["dtype"])
-    return cls(model=options["model"], dtype=options["dtype"])
-
-
-def resolve_device_of(engine: Any) -> str:
-    """引擎**实际落在**哪个设备（构造时已把 `auto` 落成 `cuda:0`/`cpu`），与配置里的
-    选择器字符串不是一回事；没有 `device` 格交回 `None`。"""
-    device = getattr(engine, "device", None)
-    if device is None:
-        return None
-    text = str(device).strip()
-    return text or None
-
-
-def engine_descriptor(config: Any = None, engine: Any = None) -> dict[str, Any]:
-    """产物 `engine` 四格；`device` 记引擎实际解析的设备，拿不到引擎时退回选择器字符串。"""
-    options = _engine_options(config)
-    return {
-        "model": options["model"],
-        "dtype": options["dtype"],
-        "device": resolve_device_of(engine) or "auto",
-        "selector": options["selector"],
-    }
 
 
 def run_session(
@@ -1041,7 +598,7 @@ def run_session(
         _log.info("%s（场次目录 %s）", MINUTES_GATE_MESSAGE, directory)
         minutes_summary = {"hook": "skipped", "announced": False, "reason": MINUTES_GATE_MESSAGE}
     else:
-        minutes_summary = _announce_minutes(
+        minutes_summary = minutes_tail._announce_minutes(
             directory, launcher=minutes_launcher, force=force, announce_minutes=True
         )
     summary = {
@@ -1841,64 +1398,6 @@ def _write_failed_status(
         _log.error("会后离线：这一趟抛出来了，状态文件已如实落成 failed（%s）", note)
 
 
-def _status_artifact_row(row: dict[str, Any], *, report: str | None) -> dict[str, Any]:
-    """状态文件 `artifacts.<source>` 的唯一形状（三处写方共用，键的算法只有一处）。
-    `reason` 跑成留空（`state` 说完了），没跑成带词档，一个都没有时兜 `engine_error`。
-    """
-    return {
-        "transcript": row.get("transcript"),
-        "speakers": row.get("speakers"),
-        "report": report,
-        "segments": int(row.get("segments") or 0),
-        "speaker_count": int(row.get("speaker_count") or 0),
-        "audio_seconds": row.get("audio_seconds"),
-        "state": row.get("state") or "failed",
-        "reason": None if row.get("state") == "done" else (row.get("reason") or REASON_ENGINE_ERROR),
-        "partial": bool(row.get("partial")),
-        "missing_spans": [list(item) for item in (row.get("missing_spans") or [])],
-        "silent": bool(row.get("silent")),
-        "silent_spans": [list(item) for item in (row.get("silent_spans") or [])],
-        "gate": dict(row.get("gate") or {}),
-        "error": row.get("error"),
-    }
-
-
-def _failed_source_row(metric: artifacts.SourceMetrics) -> dict[str, Any]:
-    """没落产物的那一路在状态文件 `artifacts.<source>` 里的格：与落产物那路**同形**
-    （缺的只是产物名与读数）。`reason` 按 interrupted > not_run > 次序表挑最要紧的
-    一个词，`partial` / `missing_spans` 照度量原样带。
-    """
-    if metric.reasons.get(REASON_INTERRUPTED):
-        # 打断档按词自身认：不在次序表里，兜成 engine_error 会把「被人停下」说成「引擎的锅」。
-        reason = REASON_INTERRUPTED
-    elif metric.reasons.get(REASON_NOT_RUN):
-        reason = REASON_NOT_RUN
-    elif metric.error is None and not metric.reasons:
-        # 一个词档都没有：兜 not_run（产品路径到不了，跑过的每一路至少记一笔，此为守卫）。
-        reason = REASON_NOT_RUN
-    else:
-        reason = next(
-            (name for name in _REASON_PRIORITY if metric.reasons.get(name)),
-            REASON_ENGINE_ERROR,
-        )
-    return _status_artifact_row(
-        {
-            "transcript": None,
-            "speakers": None,
-            "segments": 0,
-            "speaker_count": 0,
-            "audio_seconds": round(float(metric.audio_seconds), 3),
-            "state": metric.state,
-            "reason": reason,
-            "partial": bool(metric.partial),
-            "missing_spans": [list(item) for item in metric.missing_spans],
-            "silent": False,
-            "silent_spans": [],
-            "gate": dict(metric.gate),
-            "error": metric.error,
-        },
-        report=None,
-    )
 
 
 def _ensure_engine_loaded(engine: Any) -> str | None:
@@ -2049,8 +1548,6 @@ __all__ = [
     "GATE_SILENT",
     "GATE_UNJUDGED",
     "MIN_GATE_SAMPLES",
-    "MINUTES_FINAL_NAME",
-    "MINUTES_STATUS_NAME",
     "MeasureResult",
     "PCM_SAMPLE_RATE",
     "PCM_SAMPLE_WIDTH",

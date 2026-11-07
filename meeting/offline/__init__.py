@@ -8,7 +8,8 @@
   - `meeting.offline.engine`：MOSSTD 引擎封装与 `[start][Sxx]text[end]` 解析；
   - `meeting.offline.speakers`：每路各自编号（`S01`、`S02`…）与汇总；
   - `meeting.offline.artifacts`：三份产物 + 状态文件的写入与字段契约；
-  - `meeting.offline.runner`：把上面这些串成 `run_session(session_dir)`；
+  - `meeting.offline.runner`（子包：编排主模块 + `runner/pcm.py` 的字节门与
+    `runner/session_info.py` 的场次元信息）：把上面这些串成 `run_session(session_dir)`；
   - `meeting.offline.replay`：重放验证工具（`a3b684bd`）：截断复制素材、
     直调同一条 `run_session(minutes=False)`、出逐块读数——只验证，不是第二条生产路径。
 

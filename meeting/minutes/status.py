@@ -157,7 +157,7 @@ class DeliveryForbidden(RuntimeError):
 
 
 def now_iso() -> str:
-    """现在的 ISO 时刻（与 `meeting/offline/runner.py` 的 `_now_iso()` 同形）。"""
+    """现在的 ISO 时刻（与 `meeting/offline/runner` 编排主模块的 `_now_iso()` 同形）。"""
     return datetime.now().isoformat(timespec="seconds")
 
 

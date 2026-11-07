@@ -221,8 +221,15 @@ class RuntimePostMixin:
         """
         from meeting.offline import progress as progress_module
         from meeting.offline import runner as offline_runner
+        from meeting.offline.runner.session_info import declared_sources, session_id_of
 
-        ledger = progress_module.OfflineProgressLedger.for_session(target)
+        # 场次元信息从它的家现取（`runner/session_info.py`），逐块进度记录自己
+        # 不再反向问编排器。
+        ledger = progress_module.OfflineProgressLedger(
+            target,
+            session_id=session_id_of(target),
+            sources=declared_sources(target),
+        )
         job = self.post_jobs.get(("offline", canonical_dir(target)))
         if isinstance(job, dict):
             job["progress"] = ledger

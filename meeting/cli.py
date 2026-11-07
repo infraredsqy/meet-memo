@@ -30,9 +30,11 @@ from typing import Any, Callable, Iterable, NoReturn, Sequence
 from meeting import config as config_module
 from meeting import logging_setup
 from meeting.capture import transcode as transcode_module
+from meeting.offline import minutes_tail
 from meeting.offline import progress as offline_progress
 from meeting.offline import replay as offline_replay
 from meeting.offline import runner as offline_runner
+from meeting.offline.runner import session_info as offline_session_info
 from meeting.offline.artifacts import (
     REPORT_NAME,
     SPEAKERS_NAME_TEMPLATE,
@@ -965,7 +967,13 @@ def run_post(
         # 逐块进度记录在这一条入口上也落（`docs/design-intent.md` 第 12 条：
         # 落盘跟着链走、不挑是哪个按钮拉起的）；调用方注入的那一份优先。
         if progress is None:
-            progress = offline_progress.OfflineProgressLedger.for_session(directory)
+            # 场次元信息（编号与路清单）从它的家现取（`runner/session_info.py`），
+            # 逐块进度记录自己不再反向问编排器。
+            progress = offline_progress.OfflineProgressLedger(
+                directory,
+                session_id=offline_session_info.session_id_of(directory),
+                sources=offline_session_info.declared_sources(directory),
+            )
         try:
             # 人工入口显式放行（隔离闸）：纪要那一层只有人工发起才被拉起。
             runner_result = offline_runner.run_session(
@@ -1039,7 +1047,7 @@ def _minutes_step_outcome(
     if launcher is not None:
         try:
             # 人工入口显式放行（隔离闸）：只补纪要这一路（注入假启动器的形状）同样传真。
-            outcome = offline_runner._announce_minutes(
+            outcome = minutes_tail._announce_minutes(
                 directory, launcher=launcher, force=force, announce_minutes=True
             )
         except BaseException as exc:  # 纪要这一层炸了不许带走离线那三份产物
@@ -1108,7 +1116,7 @@ def _launch_minutes_on_the_product_path(
         baseline = _minutes_baseline(directory)
     try:
         # 人工入口显式放行（隔离闸）：「缺什么补什么」这半条也走人工那一档。
-        announce = offline_runner._announce_minutes(
+        announce = minutes_tail._announce_minutes(
             directory, force=force, announce_minutes=True
         )
     except BaseException as exc:  # 纪要这一层炸了不许带走离线那三份产物
@@ -1164,7 +1172,7 @@ def _launch_minutes_on_the_product_path(
         "reason": reason,
         "launcher": str(outcome.get("selector") or "product"),
         "announced": bool(outcome.get("announced")),
-        "status_path": str(directory / offline_runner.MINUTES_STATUS_NAME),
+        "status_path": str(directory / minutes_tail.MINUTES_STATUS_NAME),
         "final": (
             str(directory / MINUTES_FINAL_NAME)
             if (directory / MINUTES_FINAL_NAME).is_file()
@@ -1272,7 +1280,7 @@ def _skipped_minutes_outcome(
         "hook": hook,
         "state": status.get("state"),
         "reason": reason,
-        "status_path": str(directory / offline_runner.MINUTES_STATUS_NAME),
+        "status_path": str(directory / minutes_tail.MINUTES_STATUS_NAME),
         "final": str(final_path) if final_path.is_file() else None,
         "waited_seconds": 0.0,
         "skipped": True,
@@ -1285,7 +1293,7 @@ def _delivered_reason(directory: Path, status: dict[str, Any]) -> str:
     session_id = str(dsh.get("session_id") or "") if isinstance(dsh, dict) else ""
     where = f"（DSH 会话 {session_id}）" if session_id else ""
     return (
-        f"{offline_runner.MINUTES_STATUS_NAME} 停在 {LAYER_DELIVERED}：这一场已经交付 "
+        f"{minutes_tail.MINUTES_STATUS_NAME} 停在 {LAYER_DELIVERED}：这一场已经交付 "
         f"DSH web 服务端生成{where}，而 {MINUTES_FINAL_NAME} 还没落盘 —— "
         "这一趟不再拉起第二个会话；要重新交付加 --force"
     )
@@ -1323,7 +1331,7 @@ def _finished_minutes_outcome(directory: Path, status: dict[str, Any]) -> dict[s
         "hook": "already_done",
         "state": str(status.get("state") or LAYER_DONE),
         "reason": "纪要已是终态且 meeting_final.md 过得了那四条判据，不再拉起子会话",
-        "status_path": str(directory / offline_runner.MINUTES_STATUS_NAME),
+        "status_path": str(directory / minutes_tail.MINUTES_STATUS_NAME),
         "final": str(final_path) if final_path.is_file() else None,
         "waited_seconds": 0.0,
         "skipped": True,
@@ -1381,19 +1389,19 @@ def _minutes_status(directory: Path) -> dict[str, Any]:
     读不动时这一层按「没跑完」算（`state` 交回 `None`），不猜。读方在函数体内 import：
     `import meeting.cli` 仍然不拉 `meeting.minutes` 那一包。
     """
-    path = directory / offline_runner.MINUTES_STATUS_NAME
+    path = directory / minutes_tail.MINUTES_STATUS_NAME
     if not path.is_file():
-        return {"status_name": offline_runner.MINUTES_STATUS_NAME}
+        return {"status_name": minutes_tail.MINUTES_STATUS_NAME}
     try:
         from meeting.minutes.status import read_status
 
         document = read_status(path)
     except (ImportError, OSError, ValueError) as exc:
         return {
-            "status_name": offline_runner.MINUTES_STATUS_NAME,
+            "status_name": minutes_tail.MINUTES_STATUS_NAME,
             "unreadable": f"{type(exc).__name__}: {exc}",
         }
-    document["status_name"] = offline_runner.MINUTES_STATUS_NAME
+    document["status_name"] = minutes_tail.MINUTES_STATUS_NAME
     return document
 
 
@@ -1674,7 +1682,7 @@ def _minutes_from_launcher(
     `launcher` 那一格：`announce` 自己带了就原样留着，没带才按缺省 `injected` 算。
     """
     outcome = announce if isinstance(announce, dict) else None
-    status_path = directory / offline_runner.MINUTES_STATUS_NAME
+    status_path = directory / minutes_tail.MINUTES_STATUS_NAME
     final_path = directory / MINUTES_FINAL_NAME
     missing = object()
     provided_launcher = outcome.get("launcher", missing) if outcome else missing
@@ -1804,7 +1812,7 @@ def _minutes_baseline(directory: Path) -> dict[str, Any]:
     三格：文件在不在、这一版落的 `state`、这一版的标记。取的时刻是「离线那一段跑起来
     之前」，三条路径拿到的都是同一种基线。
     """
-    status_path = directory / offline_runner.MINUTES_STATUS_NAME
+    status_path = directory / minutes_tail.MINUTES_STATUS_NAME
     return {
         "exists": status_path.is_file(),
         "state": _read_minutes_state(status_path),
@@ -1847,7 +1855,7 @@ def _wait_for_settled_minutes(
     落定的那一版按 `state` 分档：`done` / `failed` → `hook="finished"`；`unreadable` →
     状态文件读不动；`timeout` → 到上界还是 `running` 或还没出现读得动的状态文件。
     """
-    status_path = directory / offline_runner.MINUTES_STATUS_NAME
+    status_path = directory / minutes_tail.MINUTES_STATUS_NAME
     final_path = directory / MINUTES_FINAL_NAME
     budget = _minutes_timeout_seconds() if timeout is None else float(timeout)
 
@@ -1910,7 +1918,7 @@ def _artifact_paths(directory: Path) -> dict[str, str]:
     names = [
         (offline_runner.artifacts.STATUS_NAME, "会后离线状态文件"),
         (REPORT_NAME, "会后离线运行报告"),
-        (offline_runner.MINUTES_STATUS_NAME, "会后纪要状态文件"),
+        (minutes_tail.MINUTES_STATUS_NAME, "会后纪要状态文件"),
         (MINUTES_FINAL_NAME, "会后纪要"),
     ]
     for source in offline_runner.declared_sources(directory):

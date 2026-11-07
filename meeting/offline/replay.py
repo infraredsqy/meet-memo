@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from meeting.offline import runner as offline_runner
+from meeting.offline.runner.session_info import declared_sources, session_id_of
 from meeting.offline.audio import PCM_SAMPLE_WIDTH, PCM_SUFFIX, SAMPLE_RATE, decode_audio
 from meeting.offline.progress import (
     CHUNK_STATES,
@@ -268,7 +269,7 @@ def stage_material(
         (target / "session.json").write_bytes(session_json.read_bytes())
     budget = _budget_samples(cap_seconds)
     staged = StagedMaterial(work_dir=target)
-    for name in offline_runner.declared_sources(source):
+    for name in declared_sources(source):
         staged.sources.append(_stage_one_source(source, target, name, budget))
     return staged
 
@@ -308,10 +309,10 @@ def run_replay(
     target = Path(work_dir) if work_dir is not None else default_work_dir(source)
     staged = stage_material(source, target, cap_seconds)
 
-    sources = offline_runner.declared_sources(source)
+    sources = declared_sources(source)
     ledger = OfflineProgressLedger(
         target,
-        session_id=offline_runner.session_id_of(source),
+        session_id=session_id_of(source),
         sources=sources,
     )
     summary = offline_runner.run_session(

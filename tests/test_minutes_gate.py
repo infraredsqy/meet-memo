@@ -42,6 +42,7 @@ from meeting.minutes.status import (
     DeliveryForbidden,
     read_status,
 )
+from meeting.offline import minutes_tail
 from meeting.offline import runner as offline_runner
 
 from tests.conftest import RealDshDeliveryForbidden
@@ -122,7 +123,7 @@ def test_run_session_still_announces_when_the_human_flag_is_on(tmp_path, monkeyp
         seen.append(dict(kwargs))
         return {"hook": "launched", "announced": True}
 
-    monkeypatch.setattr(offline_runner, "_announce_minutes", recording_announce)
+    monkeypatch.setattr(minutes_tail, "_announce_minutes", recording_announce)
 
     summary = offline_runner.run_session(
         session,
@@ -352,7 +353,7 @@ def test_offline_tail_hands_announce_down_to_the_hook(tmp_path, monkeypatch) -> 
 
     monkeypatch.setattr(registry_module, "resolve_minutes_hook", lambda *a, **k: FakeResolution())
 
-    outcome = offline_runner._announce_minutes(session, announce_minutes=True)
+    outcome = minutes_tail._announce_minutes(session, announce_minutes=True)
 
     assert outcome["hook"] == "launched"
     assert launches == [{"target": str(session), "force": False, "deliver": True}], launches
@@ -362,7 +363,7 @@ def test_offline_tail_without_the_human_flag_stays_quiet(tmp_path) -> None:
     """`_announce_minutes` 缺省假：不解析钩子、不调启动器、返回 skipped（对照既有安静跳过档）。"""
     session = _transcripts(tmp_path / "250919")
 
-    outcome = offline_runner._announce_minutes(session)
+    outcome = minutes_tail._announce_minutes(session)
 
     assert outcome == {
         "hook": "skipped",
@@ -390,7 +391,7 @@ def test_meeting_post_passes_the_human_flag_on_both_paths(tmp_path, monkeypatch)
         calls.append({"dir": str(session_dir), **kwargs})
         return {"hook": "skipped", "announced": False, "reason": "接线测试桩"}
 
-    monkeypatch.setattr(offline_runner, "_announce_minutes", recording_announce)
+    monkeypatch.setattr(minutes_tail, "_announce_minutes", recording_announce)
 
     first = cli_module.run_post(session, engine=FakeEngine())
     second = cli_module.run_post(session, engine=FakeEngine())

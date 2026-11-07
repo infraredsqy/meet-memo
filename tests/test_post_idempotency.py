@@ -40,6 +40,7 @@ from meeting.capture import transcode as transcode_module
 from meeting.minutes import launch as minutes_launch
 from meeting.minutes import status as minutes_status
 from meeting.offline import artifacts as offline_artifacts
+from meeting.offline import minutes_tail
 from meeting.offline import runner as offline_runner
 
 from tests import _helpers as helpers
@@ -69,8 +70,8 @@ pytestmark = pytest.mark.slow
 OFFLINE_STATUS_NAME = offline_artifacts.STATUS_NAME
 
 #: 纪要那一层的两个产物名
-MINUTES_STATUS_NAME = offline_runner.MINUTES_STATUS_NAME
-MINUTES_FINAL_NAME = offline_runner.MINUTES_FINAL_NAME
+MINUTES_STATUS_NAME = minutes_tail.MINUTES_STATUS_NAME
+MINUTES_FINAL_NAME = minutes_tail.MINUTES_FINAL_NAME
 
 #: 本场声明的那两路（`synth_session()` 的缺省）
 SOURCES = ("mic", "loopback")
@@ -752,12 +753,12 @@ def test_two_entries_can_inject_launchers_at_the_same_time(
         assert written["state"] == "done", f"{session.name} 的状态文件被写成了 {written['state']}"
 
 
-def test_the_offline_runner_keeps_its_own_announce_function(
+def test_the_minutes_tail_keeps_its_own_announce_function(
     tmp_path: Path, _a_short_minutes_bound: float
 ) -> None:
-    """跑完之后 `runner._announce_minutes` 仍是模块自己那一个（没有留下任何替身）。"""
+    """跑完之后 `minutes_tail._announce_minutes` 仍是模块自己那一个（没有留下任何替身）。"""
     session = synth_session(tmp_path / "250919")
-    before = offline_runner._announce_minutes
+    before = minutes_tail._announce_minutes
 
     run_post(
         session,
@@ -765,7 +766,7 @@ def test_the_offline_runner_keeps_its_own_announce_function(
         minutes_launcher=SettlingLauncher(),
     )
 
-    assert offline_runner._announce_minutes is before
+    assert minutes_tail._announce_minutes is before
     assert before.__module__ == "meeting.offline.minutes_tail"
     assert before.__qualname__ == "_announce_minutes"
 
@@ -1035,7 +1036,7 @@ def test_the_minutes_gate_rejects_a_status_file_without_the_required_fields(
     write_final(session)
     launcher = RecordingLauncher()
 
-    outcome = offline_runner._announce_minutes(session, launcher=launcher, announce_minutes=True)
+    outcome = minutes_tail._announce_minutes(session, launcher=launcher, announce_minutes=True)
 
     assert launcher.calls == [str(session)], "字段不齐的残文件该按「没跑完」放行"
     assert outcome["hook"] == "launched"
@@ -1057,7 +1058,7 @@ def test_the_minutes_gate_uses_the_launch_module_for_the_final_artifact(
     monkeypatch.setattr(minutes_launch, "check_final_artifact", stand_in)
     launcher = RecordingLauncher()
 
-    outcome = offline_runner._announce_minutes(session, launcher=launcher, announce_minutes=True)
+    outcome = minutes_tail._announce_minutes(session, launcher=launcher, announce_minutes=True)
 
     assert seen == [session], "闸该把产物判据交给现成的那一个函数"
     assert outcome["hook"] == "already_done"

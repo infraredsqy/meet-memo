@@ -1,4 +1,4 @@
-"""`meeting/offline/runner.py` 的契约用例：一场会跑完，三份产物 + 状态文件落地。
+"""`meeting/offline/runner` 的契约用例：一场会跑完，三份产物 + 状态文件落地。
 
 所有用例一律注入**假引擎**（`tests/conftest.py` 的 5 秒看门狗与「不许加载真模型」两条
 硬要求在跑）；音频是现场合成的最小 PCM（内容不重要，引擎是假的）。
@@ -1809,6 +1809,7 @@ def test_the_gate_boundary_is_the_documented_half_step_rule(tmp_path) -> None:
     import numpy as np
 
     from meeting.offline import runner as runner_module
+    from meeting.offline.runner.pcm import _peak_counts
 
     floor = float(runner_module.SILENT_PEAK_FLOOR)
     assert floor == 0.5, "文档那条规则说的是半格；常量动了，这一条与文档都要跟着改"
@@ -1826,7 +1827,7 @@ def test_the_gate_boundary_is_the_documented_half_step_rule(tmp_path) -> None:
     assert just_below < at_floor < just_above
     # 换算把半格那一个样本精确还原成 `floor`（不截断那把尺子量出来的就是它）
     scaled_at_floor = runner_module.samples_to_count_floats(np.array([at_floor], np.float32))
-    assert runner_module._peak_counts(scaled_at_floor) == floor
+    assert _peak_counts(scaled_at_floor) == floor
     # 差一个 ulp（低于分界）→ 静音；正好落在分界上 → 有声；差一个 ulp（高于分界）→ 有声
     assert gate(just_below) is True, f"{just_below!r} 低于半格，该算静音"
     assert gate(at_floor) is False, f"{at_floor!r} 正好半格，规则说的是「低于」才算静音"

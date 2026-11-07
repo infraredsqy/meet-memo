@@ -34,7 +34,7 @@
 ## 顺序不能反
 
 离线那条转写**就是这一层的输入**（spec：「先出纪要就会永远只有降级档」）。调用方
-（`meeting/offline/runner.py` 的尾巴、`meeting post`）必须在三份离线产物落完之后调它，
+（`meeting/offline/minutes_tail.py` 的尾巴、`meeting post`）必须在三份离线产物落完之后调它，
 本模块不自己去等、也不去探测离线链的状态。
 
 ## 再入闸放在最前面
@@ -397,7 +397,7 @@ def _timeout_seconds(config: Any = None) -> float:
 def _config_value(key: str, config: Any, fallback: Any) -> Any:
     """取一个配置键的生效值（**注入的配置对象优先，其次进程当前生效值**）。
 
-    与 `meeting/offline/runner.py` 的 `read_chunk_seconds()` 同一条路子：注入对象先看，
+    与 `meeting/offline/runner` 编排主模块的 `read_chunk_seconds()` 同一条路子：注入对象先看，
     没有就走模块级 `config.get()`（它为未 `load()` 的进程退回默认值表）。取值域由
     `config.validate_value()` 把关，这里只兜「调用方塞了一份残缺的配置对象」。
     """

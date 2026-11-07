@@ -16,7 +16,7 @@
     （`state = "running"`）由 `meeting/minutes/status.py::mark_running()` 同步写，
     于是「同一场会不会被拉起两个子会话」这件事在**跨进程**下也读得出来 —— 后到的那一趟
     读到这一版就按现成的 `running` 拒跑档收场（`--force` 是出路）。落点选在这里的理由：
-    拉起这个动作的出口不止一处（`meeting/offline/runner.py::_announce_minutes()` 的两支之外，
+    拉起这个动作的出口不止一处（`meeting/offline/minutes_tail.py::_announce_minutes()` 的两支之外，
     `post_minutes` 按钮也直调 `launch()`），而线程体那一版 `running` 落在
     `launch()` 返回**之后**，等它写下来再判就晚了；
   - 盘上已经停着一版 `running` 时，`launch()` 当场抛 `AlreadyRunningError`：
@@ -43,7 +43,7 @@ from meeting.minutes.defaults import DEFAULT_HOOK
 #: 「这一层已经在飞」那一档（`meeting/minutes/status.py` 定义，本模块原样转出）：
 #: `launch()` 读到盘上停着一版 `running` 时抛它，调用方据此按拒跑档收场。
 #: 转出它是为了让调用方**不必**自己去 import `meeting.minutes.status`（那一包是重的那一头，
-#: `meeting/offline/runner.py` 的惰性纪律一个字不动）。
+#: `meeting/offline/minutes_tail.py` 的惰性纪律一个字不动）。
 from meeting.minutes.status import AlreadyRunningError  # noqa: F401  (转出给调用方)
 from meeting.minutes.status import ISOLATION_MESSAGE
 

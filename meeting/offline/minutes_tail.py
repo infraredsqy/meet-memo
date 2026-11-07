@@ -1,15 +1,15 @@
-"""离线链尾巴上「怎么拉起纪要」的编排（自 `meeting/offline/runner.py` 拆出）。
+"""离线链尾巴上「怎么拉起纪要」的编排（自 `meeting/offline/runner` 拆出）。
 
 `run_session()` 的三份产物与状态文件都落定之后，还要按 `minutes.hook` 把会后纪要
 那一层拉起来 —— 这一段（通知、隔离闸、终态闸、实现拉起）与离线转写主链
 （取音频 / 切块 / 静音门 / 产物落盘）**没有共享状态**，因此单独成模块，
-`runner.run_session()` 只留一处调用点。
+`runner.run_session()` 与 `meeting post` 的人工入口各留一处调用点。
 
-依赖方向只有一条：`meeting.offline.runner` import 本模块；本模块**不** import
-`runner`。闸与判据照旧走函数体内 import（`meeting.minutes` 那一包不进本模块的
-顶层 import 图）；`runner` 顶层把下面的名字 re-import 进自己的命名空间，
-`run_session()` 的调用点与既有用例经 `offline_runner._announce_minutes` 等的
-属性访问、打桩面都照旧。
+依赖方向只有一条：调用方（`meeting.offline.runner` 与 `meeting.cli`）import 本模块；
+本模块**不** import 它们。闸与判据照旧走函数体内 import（`meeting.minutes` 那一包
+不进本模块的顶层 import 图）。通知与打桩都经本模块本体的属性
+（`minutes_tail._announce_minutes` 等）：cli 与用例只认这一处，编排器不在自己的
+命名空间里替它转发。
 """
 
 from __future__ import annotations

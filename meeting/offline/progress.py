@@ -241,20 +241,6 @@ class OfflineProgressLedger:
         self.started_at: str | None = None
         self.finished_at: str | None = None
 
-    @classmethod
-    def for_session(cls, session_dir: Path | str) -> "OfflineProgressLedger":
-        """按场次目录立一份记录：`session_id` 与路清单现问 `offline.runner`（函数体内
-        import——runner 顶层 import 本模块，顶层反向 import 会绕成环）。
-        """
-        from meeting.offline import runner as offline_runner
-
-        directory = Path(session_dir)
-        return cls(
-            directory,
-            session_id=str(offline_runner.session_id_of(directory)),
-            sources=list(offline_runner.declared_sources(directory)),
-        )
-
     # -- 写 ---------------------------------------------------------------
 
     def start(self, *, started_at: str) -> None:

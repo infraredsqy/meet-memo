@@ -15,7 +15,7 @@ from pathlib import Path
 #: 离线路径的采样率：与采集/会中转写同一档（`docs/v1-lineage.md` 的 B8）
 SAMPLE_RATE = 16000
 
-#: 归档 PCM 的后缀（`meeting/offline/runner.py` 的静音门与切块按同一个后缀分流）
+#: 归档 PCM 的后缀（`meeting/offline/runner/pcm.py` 的静音门与编排主模块的切块按同一个后缀分流）
 PCM_SUFFIX = ".pcm"
 
 #: 归档 PCM 的原始格式：16k 单声道有符号 16 位小端
@@ -64,7 +64,7 @@ def _open_container(av, path: str | Path):
     归档 PCM 是**无头裸流**，`av.open()` 的探测在它上面必然失败（实测
     `InvalidDataError`）——这与文件好坏无关，同一个文件按显式格式打开整份样本都解得出来
     （`260928` 的 900224 字节归档 PCM 解出 450112 样本，`450112 * 2 == 900224`）。
-    分流只认后缀，口径与 `meeting/offline/runner.py` 的静音门、切块同一条。
+    分流只认后缀，口径与 `meeting/offline/runner/pcm.py` 的静音门、编排主模块的切块同一条。
     """
     if Path(path).suffix.lower() == PCM_SUFFIX:
         return av.open(

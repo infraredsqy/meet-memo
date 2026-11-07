@@ -366,14 +366,14 @@ def test_the_status_round_trip_keeps_delivered(tmp_path: Path) -> None:
 
 def test_the_gate_treats_a_delivered_meeting_with_its_final_as_done(tmp_path: Path) -> None:
     """交付过、产物也过四条判据 → 这一场就是完成了（`already_done`，`state` 照实报 `delivered`）。"""
-    from meeting.offline import runner as offline_runner
+    from meeting.offline import minutes_tail
 
     session = tmp_path / "260927"
     session.mkdir()
     _delivered_status(session)
     _write_final(session)
 
-    gate = offline_runner._minutes_gate(session)
+    gate = minutes_tail._minutes_gate(session)
 
     assert gate is not None
     assert gate["hook"] == "already_done"
@@ -382,13 +382,13 @@ def test_the_gate_treats_a_delivered_meeting_with_its_final_as_done(tmp_path: Pa
 
 def test_the_gate_refuses_a_second_session_while_a_delivery_is_pending(tmp_path: Path) -> None:
     """交付过、产物还没落 → 交回 `delivered`（这就是「不许重复拉起」那一档）。"""
-    from meeting.offline import runner as offline_runner
+    from meeting.offline import minutes_tail
 
     session = tmp_path / "260927"
     session.mkdir()
     _delivered_status(session)
 
-    gate = offline_runner._minutes_gate(session)
+    gate = minutes_tail._minutes_gate(session)
 
     assert gate is not None, "这一档必须拦下第二个会话"
     assert gate["hook"] == "delivered"
@@ -398,7 +398,7 @@ def test_the_gate_refuses_a_second_session_while_a_delivery_is_pending(tmp_path:
 
 def test_the_gate_still_lets_everything_else_through(tmp_path: Path) -> None:
     """其余四档照旧放行给启动器：`done` 缺产物、`running`、`failed`、没有状态文件。"""
-    from meeting.offline import runner as offline_runner
+    from meeting.offline import minutes_tail
 
     session = tmp_path / "260927"
     session.mkdir()
@@ -406,17 +406,17 @@ def test_the_gate_still_lets_everything_else_through(tmp_path: Path) -> None:
     status_module.write_session_status(
         session, state=STATE_DONE, mode="both", branch="headless", started_at="2026-09-27T21:00:00"
     )
-    assert offline_runner._minutes_gate(session) is None, "done 但产物没落：放行重跑"
+    assert minutes_tail._minutes_gate(session) is None, "done 但产物没落：放行重跑"
 
     _write_final(session)
-    gate = offline_runner._minutes_gate(session)
+    gate = minutes_tail._minutes_gate(session)
     assert gate is not None and gate["hook"] == "already_done"
-    assert offline_runner._minutes_gate(session, force=True) is None, "--force 无视终态"
+    assert minutes_tail._minutes_gate(session, force=True) is None, "--force 无视终态"
 
     status_module.write_session_status(
         session, state=STATE_FAILED, mode="both", branch="headless", started_at="2026-09-27T21:00:00"
     )
-    assert offline_runner._minutes_gate(session) is None, "failed 那一档得让它再试"
+    assert minutes_tail._minutes_gate(session) is None, "failed 那一档得让它再试"
 
     status_module.write_session_status(
         session,
@@ -427,19 +427,19 @@ def test_the_gate_still_lets_everything_else_through(tmp_path: Path) -> None:
         dsh={"session_id": "session-abc"},
     )
     (session / "meeting_final.md").unlink()
-    assert offline_runner._minutes_gate(session) is not None, "交付过而产物没落：拦下"
+    assert minutes_tail._minutes_gate(session) is not None, "交付过而产物没落：拦下"
 
 
 def test_the_announce_path_does_not_launch_a_second_session(tmp_path: Path) -> None:
     """产品路径那一头同样不拉起第二个会话：`_announce_minutes()` 交回 `delivered`，启动器零调用。"""
-    from meeting.offline import runner as offline_runner
+    from meeting.offline import minutes_tail
 
     session = tmp_path / "260927"
     session.mkdir()
     _delivered_status(session)
     calls: list[str] = []
 
-    outcome = offline_runner._announce_minutes(
+    outcome = minutes_tail._announce_minutes(
         session, launcher=lambda target: calls.append(target), announce_minutes=True
     )
 

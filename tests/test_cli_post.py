@@ -47,6 +47,7 @@ from meeting import config as config_module
 from meeting.minutes import status as minutes_status
 from meeting.offline import artifacts as offline_artifacts
 from meeting.offline import progress as offline_progress
+from meeting.offline import minutes_tail
 from meeting.offline import runner as offline_runner
 
 from tests._minutes_fakes import FakeHook, FakeResolution, RecordingConverter, RecordingLauncher, write_final
@@ -74,8 +75,8 @@ FAKE_SECONDS = 0.01
 OFFLINE_STATUS_NAME = offline_artifacts.STATUS_NAME
 
 #: 纪要那一层的两个产物名
-MINUTES_STATUS_NAME = offline_runner.MINUTES_STATUS_NAME
-MINUTES_FINAL_NAME = offline_runner.MINUTES_FINAL_NAME
+MINUTES_STATUS_NAME = minutes_tail.MINUTES_STATUS_NAME
+MINUTES_FINAL_NAME = minutes_tail.MINUTES_FINAL_NAME
 
 
 # ---------------------------------------------------------------------------
@@ -793,11 +794,11 @@ def test_an_exploding_offline_run_is_recorded_and_re_raised(
     assert "离线段炸了" in str(written["error"])
     # 离线那一趟没走到尾钩：注入的假启动器一次都没被调到
     assert launcher.calls == []
-    # 注入的假启动器**不落在模块全局上**：`_announce_minutes` 始终是模块自己那一个函数
-    # （定义在 meeting.offline.minutes_tail，runner re-import 的同一对象），于是一个进程里
-    # 两条入口并发时谁都不会把对方的替身当成原函数
-    assert offline_runner._announce_minutes.__qualname__ == "_announce_minutes"
-    assert offline_runner._announce_minutes.__module__ == "meeting.offline.minutes_tail"
+    # 注入的假启动器**不落在模块全局上**：cli 直调 minutes_tail 本体的那一个函数
+    # （唯一的属性入口就是 minutes_tail 模块自己），于是一个进程里两条入口并发时
+    # 谁都不会把对方的替身当成原函数
+    assert minutes_tail._announce_minutes.__qualname__ == "_announce_minutes"
+    assert minutes_tail._announce_minutes.__module__ == "meeting.offline.minutes_tail"
 
 
 #: 盘上那一版兜底记录里那句**更准的原因**（`engine_load_error` 这个词档只在 `runner` 那一版里）。
@@ -1077,7 +1078,7 @@ def test_the_gate_keeps_the_launcher_away_when_minutes_are_done(tmp_path: Path) 
     write_final(session)
     launcher = RecordingLauncher()
 
-    outcome = offline_runner._announce_minutes(session, launcher=launcher, announce_minutes=True)
+    outcome = minutes_tail._announce_minutes(session, launcher=launcher, announce_minutes=True)
 
     assert launcher.calls == [], "已是终态且产物齐，这一趟不许再花一次钱"
     assert outcome["announced"] is False
@@ -1091,10 +1092,10 @@ def test_removing_the_final_artifact_lets_the_launcher_through_again(tmp_path: P
     write_minutes_status(session, state="done")
     write_final(session)
     launcher = RecordingLauncher()
-    assert offline_runner._announce_minutes(session, launcher=launcher, announce_minutes=True)["hook"] == "already_done"
+    assert minutes_tail._announce_minutes(session, launcher=launcher, announce_minutes=True)["hook"] == "already_done"
 
     (session / MINUTES_FINAL_NAME).unlink()
-    outcome = offline_runner._announce_minutes(session, launcher=launcher, announce_minutes=True)
+    outcome = minutes_tail._announce_minutes(session, launcher=launcher, announce_minutes=True)
 
     assert launcher.calls == [str(session)], "产物缺失时该按「缺什么补什么」再拉一次"
     assert outcome["announced"] is True
@@ -1111,7 +1112,7 @@ def test_a_hollow_final_artifact_is_not_enough(tmp_path: Path) -> None:
     )
     launcher = RecordingLauncher()
 
-    outcome = offline_runner._announce_minutes(session, launcher=launcher, announce_minutes=True)
+    outcome = minutes_tail._announce_minutes(session, launcher=launcher, announce_minutes=True)
 
     assert launcher.calls == [str(session)]
     assert outcome["hook"] == "launched"
@@ -1124,7 +1125,7 @@ def test_a_running_minutes_layer_is_not_a_finished_one(tmp_path: Path) -> None:
     write_final(session)
     launcher = RecordingLauncher()
 
-    outcome = offline_runner._announce_minutes(session, launcher=launcher, announce_minutes=True)
+    outcome = minutes_tail._announce_minutes(session, launcher=launcher, announce_minutes=True)
 
     assert launcher.calls == [str(session)]
     assert outcome["hook"] == "launched"
@@ -1137,7 +1138,7 @@ def test_a_failed_minutes_layer_is_retried(tmp_path: Path) -> None:
     write_final(session)
     launcher = RecordingLauncher()
 
-    outcome = offline_runner._announce_minutes(session, launcher=launcher, announce_minutes=True)
+    outcome = minutes_tail._announce_minutes(session, launcher=launcher, announce_minutes=True)
 
     assert launcher.calls == [str(session)]
     assert outcome["hook"] == "launched"
@@ -1149,7 +1150,7 @@ def test_no_status_file_means_no_gate(tmp_path: Path) -> None:
     write_final(session)
     launcher = RecordingLauncher()
 
-    outcome = offline_runner._announce_minutes(session, launcher=launcher, announce_minutes=True)
+    outcome = minutes_tail._announce_minutes(session, launcher=launcher, announce_minutes=True)
 
     assert launcher.calls == [str(session)]
     assert outcome["hook"] == "launched"
@@ -1162,7 +1163,7 @@ def test_an_unreadable_status_file_lets_the_launcher_through(tmp_path: Path) -> 
     write_final(session)
     launcher = RecordingLauncher()
 
-    outcome = offline_runner._announce_minutes(session, launcher=launcher, announce_minutes=True)
+    outcome = minutes_tail._announce_minutes(session, launcher=launcher, announce_minutes=True)
 
     assert launcher.calls == [str(session)]
     assert outcome["hook"] == "launched"
@@ -1179,7 +1180,7 @@ def test_the_gate_reads_the_disk_and_writes_nothing(tmp_path: Path) -> None:
         if path.is_file()
     }
 
-    outcome = offline_runner._minutes_gate(session)
+    outcome = minutes_tail._minutes_gate(session)
 
     after = {
         path.name: digest(path)
@@ -1202,7 +1203,7 @@ def test_the_gate_is_open_when_the_status_file_is_absent(tmp_path: Path) -> None
     """终态文件不在场时闸交回 `None`（调用方照常解析并拉起）。"""
     session = synth_session(tmp_path / "250919")
 
-    assert offline_runner._minutes_gate(session) is None
+    assert minutes_tail._minutes_gate(session) is None
 
 
 def test_the_offline_status_file_is_untouched_by_the_gate(tmp_path: Path) -> None:
@@ -1220,7 +1221,7 @@ def test_the_offline_status_file_is_untouched_by_the_gate(tmp_path: Path) -> Non
 
     write_minutes_status(session, state="done")
     write_final(session)
-    offline_runner._announce_minutes(session, launcher=RecordingLauncher(), announce_minutes=True)
+    minutes_tail._announce_minutes(session, launcher=RecordingLauncher(), announce_minutes=True)
 
     after = {path.name: digest(path) for path in tracked}
     assert after == before
@@ -1278,7 +1279,7 @@ def test_a_child_session_skip_on_the_product_path_is_a_quiet_skip(
 
     走到 `_launch_minutes_on_the_product_path()` 兜底分支的现场是「离线段已是终态、纪要段
     没到终态」，而这一趟是 DSH 子会话自己（`MEETING_MINUTES_CHILD=1`）：`_announce_minutes()`
-    交回 `hook = "skipped"`（**交回值逐字照 `meeting/offline/runner.py` 那一档抄的**）。
+    交回 `hook = "skipped"`（**交回值逐字照 `meeting/offline/minutes_tail.py` 那一档抄的**）。
 
     这一格此前掉进兜底里：`hook` 报成 `finished`、`state` 报成 `failed`、退出码
     `EXIT_FAILURE`，还把再入闸的理由当失败原因念出来 —— 同一件事在注入那一档却是
@@ -1294,7 +1295,7 @@ def test_a_child_session_skip_on_the_product_path_is_a_quiet_skip(
         "reason": "子会话（MEETING_MINUTES_CHILD=1）",
     }
     monkeypatch.setattr(
-        offline_runner, "_announce_minutes", lambda *a, **k: dict(child_skip)
+        minutes_tail, "_announce_minutes", lambda *a, **k: dict(child_skip)
     )
     session = synth_session(tmp_path / "250919")
 
@@ -1331,7 +1332,7 @@ def test_an_absent_minutes_layer_on_the_product_path_still_reports_a_failure(
     的 `no-implementation` 一格）把它钉在 `EXIT_FAILURE` 上，这一格因此一个字不动。
     """
     monkeypatch.setattr(
-        offline_runner,
+        minutes_tail,
         "_announce_minutes",
         lambda *a, **k: {
             "hook": "absent",

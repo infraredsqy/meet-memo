@@ -2,7 +2,9 @@
 
 这一层只做「一条音频路径进去，一串带 `Sxx` 标签的分段出来」：模型加载、消息构造、
 处理器调用、生成、解码、解析。**不做说话人编号规范化**（那是 `meeting/offline/speakers.py`
-的事），也不写任何场次产物。
+的事），也不写任何场次产物。引擎的**解析与构造**（按 `post.engine` 找类、按
+`post.model` / `post.dtype` 造，`resolve_engine()` / `build_engine()` 一族）也住这里
+（自 `meeting/offline/runner` 编排主模块迁入）。
 
 两条来自实测的硬约束写在这里，改之前先读完：
 
@@ -23,6 +25,7 @@
 
 from __future__ import annotations
 
+import importlib
 import logging
 import re
 import sys
@@ -31,6 +34,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, Sequence
 
+from meeting import config as config_module
 from meeting.importlock import heavy_imports
 
 log = logging.getLogger("meeting.offline.engine")
@@ -86,7 +90,7 @@ class OfflineEngine(Protocol):
     """离线引擎的协议：换引擎时上层（钩子、产物落盘）不动。
 
     实现要给出的**真实依赖面**（offline-engine-protocol-undeclared-surface；上层
-    `meeting/offline/runner.py` 鸭子类型读的就是这些，缺了只会静默降级）：
+    `meeting/offline/runner` 编排主模块鸭子类型读的就是这些，缺了只会静默降级）：
 
     - `transcribe(audio_path)`：吃音频文件路径，交回带 `Sxx` 原始标签的分段列表；
     - `load_error` / `_load()`：加载探测（`_ensure_engine_loaded()`；实现可缺——
@@ -216,7 +220,7 @@ class MossOfflineEngine:
     @property
     def load_error(self) -> str | None:
         """加载失手时交回原话，否则 None。调用方据此把「加载失败」（一整趟没开始）与
-        「跑某一块时抛错」分成两档（runner.REASON_ENGINE_LOAD_ERROR）。
+        「跑某一块时抛错」分成两档（artifacts.REASON_ENGINE_LOAD_ERROR）。
         """
         return self._load_failed
 
@@ -425,3 +429,85 @@ def release_engine(engine: object) -> bool:
     except Exception:  # 没装 torch / 没 CUDA / 清缓存失败：引用已丢，安静收场
         log.info("torch.cuda.empty_cache() 跳过（无 CUDA 或依赖缺席，不影响引用释放）")
     return dropped
+
+
+#: `post.engine` 缺省落点（`auto` → 本节点的引擎实现）
+DEFAULT_ENGINE_TARGET = "meeting.offline.engine:MossOfflineEngine"
+
+
+# ---------------------------------------------------------------------------
+# 引擎解析与构造
+# ---------------------------------------------------------------------------
+
+
+def resolve_engine(selector: str | None = None) -> tuple[Any, str]:
+    """按 `post.engine` 解析引擎类，交回 `(类, 说明)`；解析不出来即抛。
+
+    取值口径同 `config.BACKEND_SELECTORS`：`auto`（缺省）→ `DEFAULT_ENGINE_TARGET`；
+    `null` → 抛（离线层没有替身引擎，关掉整条链用 `post.hook = null`）；
+    `module:Class` → 按它导入。与 `post.hook` 分开解析：换引擎时钩子层一个字不动。
+    """
+    if selector is None:
+        raw = config_module.get("post.engine")
+        selector = raw.strip() if isinstance(raw, str) and raw.strip() else "auto"
+    selector = str(selector).strip()
+    if selector == "null":
+        raise LookupError(
+            "post.engine = null：会后离线这一层没有替身引擎（关掉整条链请把 post.hook 取 null）"
+        )
+    target = DEFAULT_ENGINE_TARGET if selector == "auto" else selector
+    if ":" not in target:
+        raise LookupError(f"取值不是 module:Class 形状：{target!r}")
+    module_name, _, attr = target.partition(":")
+    module = importlib.import_module(module_name)
+    if not hasattr(module, attr):
+        raise LookupError(f"{module_name} 里没有 {attr}")
+    return getattr(module, attr), f"post.engine = {selector} → {target}"
+
+
+def _engine_options(config: Any = None) -> dict[str, str]:
+    """模型 / 档位 / 引擎选择三项：优先读传进来的那份配置，没有就读 `config.get()` 的生效值。"""
+    getter = getattr(config, "get", None)
+
+    def value(key: str) -> Any:
+        if callable(getter):
+            return getter(key)
+        return config_module.get(key)
+
+    model = value("post.model")
+    dtype = value("post.dtype")
+    selector = value("post.engine")
+    return {
+        "model": str(model) if model else config_module.default_for("post.model"),
+        "dtype": str(dtype) if dtype else config_module.default_for("post.dtype"),
+        "selector": str(selector).strip() if selector else "auto",
+    }
+
+
+def build_engine(config: Any = None) -> Any:
+    """造一台引擎（入参可换实现：换引擎时这一层下面的一切都不动）。"""
+    options = _engine_options(config)
+    cls, detail = resolve_engine(options["selector"])
+    log.info("会后离线引擎：%s（%s，dtype=%s）", detail, options["model"], options["dtype"])
+    return cls(model=options["model"], dtype=options["dtype"])
+
+
+def resolve_device_of(engine: Any) -> str:
+    """引擎**实际落在**哪个设备（构造时已把 `auto` 落成 `cuda:0`/`cpu`），与配置里的
+    选择器字符串不是一回事；没有 `device` 格交回 `None`。"""
+    device = getattr(engine, "device", None)
+    if device is None:
+        return None
+    text = str(device).strip()
+    return text or None
+
+
+def engine_descriptor(config: Any = None, engine: Any = None) -> dict[str, Any]:
+    """产物 `engine` 四格；`device` 记引擎实际解析的设备，拿不到引擎时退回选择器字符串。"""
+    options = _engine_options(config)
+    return {
+        "model": options["model"],
+        "dtype": options["dtype"],
+        "device": resolve_device_of(engine) or "auto",
+        "selector": options["selector"],
+    }

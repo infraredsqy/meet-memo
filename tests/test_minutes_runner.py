@@ -347,10 +347,10 @@ def test_the_reentry_gate_stops_before_the_launcher(tmp_path: Path) -> None:
 
 def test_the_reentry_gate_also_quiets_the_offline_tail(tmp_path: Path, monkeypatch) -> None:
     """离线那一层的尾钩同样认这道闸：环境里有它就不再解析、不再拉起。"""
-    from meeting.offline import runner as offline_runner
+    from meeting.offline import minutes_tail
 
     monkeypatch.setenv("MEETING_MINUTES_CHILD", "1")
-    outcome = offline_runner._announce_minutes(tmp_path, announce_minutes=True)
+    outcome = minutes_tail._announce_minutes(tmp_path, announce_minutes=True)
 
     assert outcome["hook"] == "skipped"
     assert outcome["announced"] is False
@@ -456,7 +456,7 @@ def test_the_hook_launch_returns_immediately_and_never_raises(
     tmp_path: Path, monkeypatch
 ) -> None:
     """`launch()` 起一条 daemon 线程就返回；线程里的异常落状态文件、不外传。"""
-    from meeting.offline import runner as offline_runner
+    from meeting.offline import minutes_tail
 
     session = _session(tmp_path)
     seen: list[str] = []
@@ -469,7 +469,7 @@ def test_the_hook_launch_returns_immediately_and_never_raises(
     monkeypatch.setattr(config_module, "get", _config_getter({"minutes.hook": "auto"}))
     monkeypatch.setattr(runner_module, "run", boom)
 
-    outcome = offline_runner._announce_minutes(session, announce_minutes=True)
+    outcome = minutes_tail._announce_minutes(session, announce_minutes=True)
 
     assert outcome["hook"] == "launched"
     assert outcome["announced"] is True
@@ -673,6 +673,7 @@ def test_the_offline_tail_keeps_a_broken_minutes_layer_out_of_its_own_status(
 
     session = synth_session(tmp_path / "out")
     monkeypatch.setenv("MEETING_MINUTES_CHILD", "1")
+    from meeting.offline import minutes_tail
     from meeting.offline import runner as offline_runner
 
     offline_runner.run_session(
@@ -685,7 +686,7 @@ def test_the_offline_tail_keeps_a_broken_minutes_layer_out_of_its_own_status(
         "meeting.backends.registry.resolve_minutes_hook",
         _raising_resolver,
     )
-    outcome = offline_runner._announce_minutes(session, announce_minutes=True)
+    outcome = minutes_tail._announce_minutes(session, announce_minutes=True)
 
     assert outcome["hook"] == "failed"
     assert outcome["announced"] is False

@@ -5,7 +5,7 @@
 （秒级浮点，机器读）、运行报告 `meeting_offline_report.md`、状态文件 `meeting_offline_status.json`。
 
 字段契约（键表、拒收判据、五档状态、`headcount` 口径、四档留痕）的**正本在 `docs/state.md`
-的会后产物一节**；逐块结论词词表见 `runner.REASON_*`，门尺子词表见 `runner.GATE_METHOD_*`。
+的会后产物一节**；逐块结论词词表（`REASON_*`）住本模块；门尺子词表见 `meeting/offline/runner/pcm.py` 的 `GATE_METHOD_*`。
 本模块是写入与读取的唯一实现。
 
 纯标准库；原子写共用 `meeting/atomicio.py`。
@@ -60,6 +60,44 @@ STATES = ("running", "done", "partial", "failed", "interrupted")
 #: `meeting/backends/post.py` 的 `STATE_FAILED` / `STATE_PARTIAL` / `STATE_INTERRUPTED`
 #: 同值）：`interrupted`（人停的）也算 —— 后来逃出来的异常不许把它盖成 `failed`（b1c6a58e）。
 _SETTLED_STATES = ("failed", "partial", "interrupted")
+
+#: 失败原因词表（报告与状态文件都用这几个名字，下游按它分档）
+REASON_NO_AUDIO = "no_audio"
+REASON_EMPTY_PCM = "empty_pcm"
+REASON_ENGINE_ERROR = "engine_error"
+#: 引擎**加载**失手：一次引擎调用都没发生，与「跑某一块时抛错」的 `engine_error`
+#: 分开记——「模型没起来」与「起来了、某块没跑成」是两件要分别动手的事。
+REASON_ENGINE_LOAD_ERROR = "engine_load_error"
+#: 这一路压根没跑（`_write_failed_status()` 给没轮到的路现开的格）：`reasons` 空、
+#: `error` 为 null。兜成 `engine_error` 会让「按原因筛引擎的锅」把没跑的算进去。
+REASON_NOT_RUN = "not_run"
+REASON_NO_SEGMENTS = "no_segments"
+#: 分块下每一块都失败：一段都没留下来（与「一块坏、别的块还在」的 `partial` 分开）
+REASON_ALL_CHUNKS_FAILED = "all_chunks_failed"
+#: 跑到块边界被取消旗标停（b1c6a58e）：已跑块保留，未跑块进 `missing_spans`
+#: （缺口只供人读，不进任何判定——design-intent 第 6 条）。
+REASON_INTERRUPTED = "interrupted"
+#: 数字静音门跳过的块。不是失败：只进 `reasons` 分布，不进缺失区间。
+REASON_DIGITAL_SILENCE = "digital_silence"
+#: 引擎跑成但交回的段全是零时长：有字却落在没有长度的区间上（实测假正文每段都是
+#: 零时长），零段与真内容都读不出来时这一格是唯一分辨依据。
+REASON_ZERO_SPAN_SEGMENTS = "zero_span_segments"
+#: 引擎跑成、交回的段都有真实时长（正常档）
+REASON_TRANSCRIBED = "transcribed"
+#: 门判不了这段的静音与否（解不开、读不全），照常送引擎；必须与「门判过、放行」
+#: 分得开，否则没门可用的运行与健康运行同形。
+REASON_GATE_UNJUDGED = "gate_unjudged"
+
+#: 一块产物都没落的那一路按次序挑一个 `reason` 词：模型没起来 > 没音频 > 抛错 > 没交回。
+#: `not_run` / `interrupted` 不在表里——按词自身认（见 `_failed_source_row()`）。
+_REASON_PRIORITY = (
+    REASON_ENGINE_LOAD_ERROR,
+    REASON_NO_AUDIO,
+    REASON_EMPTY_PCM,
+    REASON_ENGINE_ERROR,
+    REASON_NO_SEGMENTS,
+    REASON_ALL_CHUNKS_FAILED,
+)
 
 
 class ArtifactContractError(ValueError):
@@ -801,7 +839,7 @@ def read_status(path: Path | str) -> dict[str, Any]:
 
 
 def _now_iso() -> str:
-    """现在的 ISO 时刻（与 `meeting/offline/runner.py` 的 `_now_iso()` 同形）。"""
+    """现在的 ISO 时刻（与 `meeting/offline/runner` 编排主模块的 `_now_iso()` 同形）。"""
     from datetime import datetime
 
     return datetime.now().isoformat(timespec="seconds")
@@ -839,9 +877,81 @@ def mark_failed_if_unset(session_dir: Path | str, error: str) -> Path:
     )
 
 
+def _status_artifact_row(row: dict[str, Any], *, report: str | None) -> dict[str, Any]:
+    """状态文件 `artifacts.<source>` 的唯一形状（三处写方共用，键的算法只有一处）。
+    `reason` 跑成留空（`state` 说完了），没跑成带词档，一个都没有时兜 `engine_error`。
+    """
+    return {
+        "transcript": row.get("transcript"),
+        "speakers": row.get("speakers"),
+        "report": report,
+        "segments": int(row.get("segments") or 0),
+        "speaker_count": int(row.get("speaker_count") or 0),
+        "audio_seconds": row.get("audio_seconds"),
+        "state": row.get("state") or "failed",
+        "reason": None if row.get("state") == "done" else (row.get("reason") or REASON_ENGINE_ERROR),
+        "partial": bool(row.get("partial")),
+        "missing_spans": [list(item) for item in (row.get("missing_spans") or [])],
+        "silent": bool(row.get("silent")),
+        "silent_spans": [list(item) for item in (row.get("silent_spans") or [])],
+        "gate": dict(row.get("gate") or {}),
+        "error": row.get("error"),
+    }
+
+
+def _failed_source_row(metric: SourceMetrics) -> dict[str, Any]:
+    """没落产物的那一路在状态文件 `artifacts.<source>` 里的格：与落产物那路**同形**
+    （缺的只是产物名与读数）。`reason` 按 interrupted > not_run > 次序表挑最要紧的
+    一个词，`partial` / `missing_spans` 照度量原样带。
+    """
+    if metric.reasons.get(REASON_INTERRUPTED):
+        # 打断档按词自身认：不在次序表里，兜成 engine_error 会把「被人停下」说成「引擎的锅」。
+        reason = REASON_INTERRUPTED
+    elif metric.reasons.get(REASON_NOT_RUN):
+        reason = REASON_NOT_RUN
+    elif metric.error is None and not metric.reasons:
+        # 一个词档都没有：兜 not_run（产品路径到不了，跑过的每一路至少记一笔，此为守卫）。
+        reason = REASON_NOT_RUN
+    else:
+        reason = next(
+            (name for name in _REASON_PRIORITY if metric.reasons.get(name)),
+            REASON_ENGINE_ERROR,
+        )
+    return _status_artifact_row(
+        {
+            "transcript": None,
+            "speakers": None,
+            "segments": 0,
+            "speaker_count": 0,
+            "audio_seconds": round(float(metric.audio_seconds), 3),
+            "state": metric.state,
+            "reason": reason,
+            "partial": bool(metric.partial),
+            "missing_spans": [list(item) for item in metric.missing_spans],
+            "silent": False,
+            "silent_spans": [],
+            "gate": dict(metric.gate),
+            "error": metric.error,
+        },
+        report=None,
+    )
+
+
 __all__ = [
     "ArtifactContractError",
     "KNOWN_SCHEMA_MAJOR",
+    "REASON_ALL_CHUNKS_FAILED",
+    "REASON_DIGITAL_SILENCE",
+    "REASON_EMPTY_PCM",
+    "REASON_ENGINE_ERROR",
+    "REASON_ENGINE_LOAD_ERROR",
+    "REASON_GATE_UNJUDGED",
+    "REASON_INTERRUPTED",
+    "REASON_NO_AUDIO",
+    "REASON_NO_SEGMENTS",
+    "REASON_NOT_RUN",
+    "REASON_TRANSCRIBED",
+    "REASON_ZERO_SPAN_SEGMENTS",
     "REPORT_NAME",
     "SCHEMA_VERSION",
     "SPEAKERS_NAME_TEMPLATE",

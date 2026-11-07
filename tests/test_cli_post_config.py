@@ -78,6 +78,7 @@ from meeting.cli import (
     post,
 )
 from meeting.offline import minutes_tail as minutes_tail_module
+from meeting.offline import engine as offline_engine
 from meeting.offline import runner as offline_runner
 from meeting.offline.engine import OfflineSegment
 
@@ -297,11 +298,10 @@ def a_minutes_ledger(monkeypatch: pytest.MonkeyPatch) -> MinutesLedger:
 
     ledger.launch_point = spy_launch
     monkeypatch.setattr(registry_module, "resolve_minutes_hook", spy_resolve)
-    # 拆分后真拉起点在 `minutes_tail`（`_announce_minutes` 的函数体在那里解析这个名字），
-    # `offline_runner` 上那格是 re-export 的同一函数 —— 两处一并打桩：net 真拦得住，
-    # 下面的自检（`offline_runner._launch_minutes_implementation is …`）也照旧绿。
+    # 真拉起点在 `minutes_tail` 本体（`_announce_minutes` 的函数体在那里解析这个名字）：
+    # 打桩只认这一处，net 真拦得住，
+    # 下面的自检（`minutes_tail_module._launch_minutes_implementation is …`）也照旧绿。
     monkeypatch.setattr(minutes_tail_module, "_launch_minutes_implementation", spy_launch)
-    monkeypatch.setattr(offline_runner, "_launch_minutes_implementation", spy_launch)
     return ledger
 
 
@@ -344,7 +344,7 @@ def test_the_safety_nets_this_file_relies_on_are_really_wired(
         "解析那一处的登记替身没在岗（打桩落空）：调一次解析，记录里没多出一行"
     )
 
-    assert offline_runner._launch_minutes_implementation is a_minutes_ledger.launch_point, (
+    assert minutes_tail_module._launch_minutes_implementation is a_minutes_ledger.launch_point, (
         "拉起那一处的登记替身没在岗：meeting.offline.runner._launch_minutes_implementation "
         "不是本文件夹具那个替身（真拉起点还在岗 = 这一趟可能真起子会话）"
     )
@@ -410,7 +410,7 @@ class WaitReceipt:
             "hook": "timeout",
             "state": "timeout",
             "reason": f"登记替身：按上界 {budget} 秒收场（本替身不真等）",
-            "status_path": str(Path(directory) / offline_runner.MINUTES_STATUS_NAME),
+            "status_path": str(Path(directory) / minutes_tail_module.MINUTES_STATUS_NAME),
             "final": None,
             "waited_seconds": round(float(sleep_for), 3),
         }
@@ -514,7 +514,7 @@ def write_minutes_running(session: Path) -> Path:
         started_at="2025-09-19T22:00:00",
         artifacts={},
     )
-    return session / offline_runner.MINUTES_STATUS_NAME
+    return session / minutes_tail_module.MINUTES_STATUS_NAME
 
 
 def write_offline_done(session: Path, *, sources: tuple[str, ...] = ("mic",)) -> None:
@@ -619,7 +619,7 @@ def test_the_engine_selector_reaches_the_offline_layer_as_a_config_read(
     real_build_engine = offline_runner.build_engine
 
     def watched_build_engine(config: Any = None) -> Any:
-        seen.append(str(offline_runner._engine_options(config)["selector"]))
+        seen.append(str(offline_engine._engine_options(config)["selector"]))
         return real_build_engine(config)
 
     monkeypatch.setattr(offline_runner, "build_engine", watched_build_engine)
@@ -690,7 +690,7 @@ def test_a_null_minutes_hook_is_never_launched_and_lands_on_the_absent_tier(
         f"实测拉起 {a_minutes_ledger.launch_calls}"
     )
     assert info.value.code == EXIT_OK
-    assert not (session / offline_runner.MINUTES_STATUS_NAME).exists()
+    assert not (session / minutes_tail_module.MINUTES_STATUS_NAME).exists()
     # 离线那一趟照常跑完（这一档只关掉纪要那一层，不带走离线链）
     assert (session / offline_runner.artifacts.STATUS_NAME).is_file()
 
@@ -752,10 +752,10 @@ def test_an_auto_minutes_hook_is_launched_exactly_once_on_the_ledger(
     )
 
     status = json.loads(
-        (session / offline_runner.MINUTES_STATUS_NAME).read_text(encoding="utf-8")
+        (session / minutes_tail_module.MINUTES_STATUS_NAME).read_text(encoding="utf-8")
     )
     assert status["state"] == "done", status
-    assert (session / offline_runner.MINUTES_FINAL_NAME).is_file()
+    assert (session / minutes_tail_module.MINUTES_FINAL_NAME).is_file()
     assert info.value.code == EXIT_OK, info.value.code
 
 
@@ -798,7 +798,7 @@ def test_the_null_hook_stays_absent_on_the_second_pass_too(
         row["has_implementation"] is False for row in a_minutes_ledger.resolutions
     ), a_minutes_ledger.resolutions
     assert a_minutes_ledger.launch_count() == 0, a_minutes_ledger.launch_calls
-    assert not (session / offline_runner.MINUTES_STATUS_NAME).exists()
+    assert not (session / minutes_tail_module.MINUTES_STATUS_NAME).exists()
 
 
 # ---------------------------------------------------------------------------
@@ -906,7 +906,7 @@ def test_the_wait_upper_bound_really_bounds_the_wait(
     assert quick["state"] == "timeout", quick
     assert 0.05 <= quick_elapsed < 5.0, f"秒级上界该在秒级收场，实测 {quick_elapsed:.3f}s"
     # 这一处等待只读盘、不写盘：状态文件的现场一个字都没动
-    assert (session / offline_runner.MINUTES_STATUS_NAME).is_file()
+    assert (session / minutes_tail_module.MINUTES_STATUS_NAME).is_file()
 
 
 # ---------------------------------------------------------------------------
