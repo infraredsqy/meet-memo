@@ -44,6 +44,7 @@ import pytest
 
 from meeting import cli as cli_module
 from meeting import config as config_module
+from meeting import post_run as post_run_module
 from meeting.minutes import status as minutes_status
 from meeting.offline import artifacts as offline_artifacts
 from meeting.offline import progress as offline_progress
@@ -59,8 +60,10 @@ from meeting.cli import (
     EXIT_OK,
     EXIT_REJECTED,
     _parse_post_args,
-    _wait_for_settled_minutes,
     post,
+)
+from meeting.post_run import (
+    _wait_for_settled_minutes,
     run_post,
     sync_archive,
 )
@@ -394,7 +397,7 @@ def test_a_failed_archive_alone_keeps_the_failure_exit_code(tmp_path: Path) -> N
     """
     session = synth_session(tmp_path / "250919")
 
-    summary = cli_module._summarize_run(
+    summary = post_run_module._summarize_run(
         {
             "session_id": "250919",
             "session_dir": str(session.resolve()),
@@ -1239,7 +1242,7 @@ def test_the_wait_returns_as_soon_as_the_terminal_state_lands(tmp_path: Path) ->
     「这一趟新落的终态」一出现就该立刻回来。
     """
     session = synth_session(tmp_path / "250919")
-    baseline = cli_module._minutes_baseline(session)
+    baseline = post_run_module._minutes_baseline(session)
     write_minutes_status(session, state="done")
 
     outcome = _wait_for_settled_minutes(session, baseline=baseline, timeout=600.0)
@@ -1253,7 +1256,7 @@ def test_the_wait_returns_as_soon_as_the_terminal_state_lands(tmp_path: Path) ->
 def test_the_wait_gives_up_at_its_deadline(tmp_path: Path) -> None:
     """上界到点还没落定 → 记 `timeout`，退出码走 `EXIT_FAILURE`（不无限等）。"""
     session = synth_session(tmp_path / "250919")
-    baseline = cli_module._minutes_baseline(session)
+    baseline = post_run_module._minutes_baseline(session)
     write_minutes_status(session, state="running")
 
     outcome = _wait_for_settled_minutes(session, baseline=baseline, timeout=0.0)
@@ -1261,15 +1264,15 @@ def test_the_wait_gives_up_at_its_deadline(tmp_path: Path) -> None:
     assert outcome["hook"] == "timeout"
     assert outcome["state"] == "timeout"
     assert "还没落定" in str(outcome["reason"])
-    assert cli_module._minutes_exit_code(outcome) == EXIT_FAILURE
+    assert post_run_module._minutes_exit_code(outcome) == EXIT_FAILURE
 
 
 def test_an_absent_minutes_layer_is_not_a_failure() -> None:
     """缺席档（`minutes.hook = null` / 子会话闸）不算这一趟失败。"""
-    assert cli_module._minutes_exit_code({"hook": "absent", "state": None}) == EXIT_OK
-    assert cli_module._minutes_exit_code({"hook": "skipped", "state": None}) == EXIT_OK
-    assert cli_module._minutes_exit_code({"hook": "already_done", "state": "done"}) == EXIT_OK
-    assert cli_module._minutes_exit_code({"hook": "finished", "state": "failed"}) == EXIT_FAILURE
+    assert post_run_module._minutes_exit_code({"hook": "absent", "state": None}) == EXIT_OK
+    assert post_run_module._minutes_exit_code({"hook": "skipped", "state": None}) == EXIT_OK
+    assert post_run_module._minutes_exit_code({"hook": "already_done", "state": "done"}) == EXIT_OK
+    assert post_run_module._minutes_exit_code({"hook": "finished", "state": "failed"}) == EXIT_FAILURE
 
 
 def test_a_child_session_skip_on_the_product_path_is_a_quiet_skip(
@@ -1299,14 +1302,14 @@ def test_a_child_session_skip_on_the_product_path_is_a_quiet_skip(
     )
     session = synth_session(tmp_path / "250919")
 
-    product = cli_module._launch_minutes_on_the_product_path(
+    product = post_run_module._launch_minutes_on_the_product_path(
         session,
         force=False,
         deadline=None,
-        baseline=cli_module._minutes_baseline(session),
+        baseline=post_run_module._minutes_baseline(session),
     )
-    injected = cli_module._minutes_from_launcher(
-        session, dict(child_skip), baseline=cli_module._minutes_baseline(session)
+    injected = post_run_module._minutes_from_launcher(
+        session, dict(child_skip), baseline=post_run_module._minutes_baseline(session)
     )
 
     assert product["hook"] == "skipped", product
@@ -1317,8 +1320,8 @@ def test_a_child_session_skip_on_the_product_path_is_a_quiet_skip(
         key: value for key, value in injected.items() if key != "launcher"
     }, (product, injected)
     assert product["launcher"] == "product", "这一趟走的是产品路径"
-    assert cli_module._minutes_exit_code(product) == EXIT_OK, "安静跳过不记失败"
-    assert cli_module._minutes_exit_code(product) == cli_module._minutes_exit_code(injected)
+    assert post_run_module._minutes_exit_code(product) == EXIT_OK, "安静跳过不记失败"
+    assert post_run_module._minutes_exit_code(product) == post_run_module._minutes_exit_code(injected)
 
 
 def test_an_absent_minutes_layer_on_the_product_path_still_reports_a_failure(
@@ -1343,16 +1346,16 @@ def test_an_absent_minutes_layer_on_the_product_path_still_reports_a_failure(
     )
     session = synth_session(tmp_path / "250919")
 
-    outcome = cli_module._launch_minutes_on_the_product_path(
+    outcome = post_run_module._launch_minutes_on_the_product_path(
         session,
         force=False,
         deadline=None,
-        baseline=cli_module._minutes_baseline(session),
+        baseline=post_run_module._minutes_baseline(session),
     )
 
     assert outcome["hook"] == "finished", outcome
     assert outcome["state"] == "failed", outcome
-    assert cli_module._minutes_exit_code(outcome) == EXIT_FAILURE
+    assert post_run_module._minutes_exit_code(outcome) == EXIT_FAILURE
 
 
 def test_the_wait_upper_bound_comes_from_the_minutes_wall_clock_key(
@@ -1363,7 +1366,7 @@ def test_the_wait_upper_bound_comes_from_the_minutes_wall_clock_key(
         config_module, "get", lambda key, default=None: 60 if key == "minutes.timeout_seconds" else default
     )
 
-    assert cli_module._minutes_timeout_seconds() == 60.0
+    assert post_run_module._minutes_timeout_seconds() == 60.0
 
 
 # ---------------------------------------------------------------------------

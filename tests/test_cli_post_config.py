@@ -69,6 +69,7 @@ import pytest
 
 from meeting import cli as cli_module
 from meeting import config as config_module
+from meeting import post_run as post_run_module
 from meeting.backends import registry as registry_module
 from meeting.cli import (
     EXIT_FAILURE,
@@ -393,7 +394,7 @@ class WaitReceipt:
         self.sleep_seconds = sleep_seconds
 
     def __call__(self, directory: Path, **kwargs: Any) -> dict[str, Any]:
-        budget = cli_module._minutes_timeout_seconds()
+        budget = post_run_module._minutes_timeout_seconds()
         sleep_for = budget if self.sleep_seconds is None else self.sleep_seconds
         self.calls.append(
             {
@@ -424,7 +425,7 @@ class WaitReceipt:
 def waiting(monkeypatch: pytest.MonkeyPatch) -> WaitReceipt:
     """把等待层换成不真等的登记替身（上界那一格照记）。"""
     receipt = WaitReceipt(sleep_seconds=0.0)
-    monkeypatch.setattr(cli_module, "_wait_for_settled_minutes", receipt)
+    monkeypatch.setattr(post_run_module, "_wait_for_settled_minutes", receipt)
     return receipt
 
 
@@ -865,7 +866,7 @@ def test_the_default_wait_upper_bound_is_the_frozen_default(
     assert info.value.code == EXIT_FAILURE, "这一档也走到上界（替身不真等）"
     assert waiting.upper_bound() == float(default), waiting.calls
     assert config_module.get("minutes.timeout_seconds") == default
-    assert cli_module._minutes_timeout_seconds() == float(default)
+    assert post_run_module._minutes_timeout_seconds() == float(default)
     current = config_module.current()
     assert current is not None
     assert Path(current.config_path()) == config_path
@@ -892,12 +893,12 @@ def test_the_wait_upper_bound_really_bounds_the_wait(
     write_minutes_running(session)
     config_module.set_current(config_module.load())
 
-    assert cli_module._minutes_timeout_seconds() == 60.0
+    assert post_run_module._minutes_timeout_seconds() == 60.0
 
     begun = time.monotonic()
-    quick = cli_module._wait_for_settled_minutes(
+    quick = post_run_module._wait_for_settled_minutes(
         session,
-        baseline=cli_module._minutes_baseline(session),
+        baseline=post_run_module._minutes_baseline(session),
         timeout=0.05,
     )
     quick_elapsed = time.monotonic() - begun

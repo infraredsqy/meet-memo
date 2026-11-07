@@ -10,7 +10,7 @@
      提示里点名那一个状态文件与 `--force`；带上 `--force` → 两层都重跑；
   4. **无待办**：两层都 `done`、产物齐、MP3 比 PCM 新 → `EXIT_OK`、两条计数都为 0，
      终端打出「无待办」那一句；
-  5. **入口编排**：`meeting post` 经 `meeting.cli.run_post`（起线程跑会后链的那条钩子
+  5. **入口编排**：`meeting post` 经 `meeting.post_run.run_post`（起线程跑会后链的那条钩子
      入口已随收尾第 4 步的退场删除，产品入口只剩这一条）；
   6. **注入件一路向下传**：两条并发跑的链各自的假启动器互不串台（没有一处替换模块
      全局属性，也没有摘掉 `tests/conftest.py` 的再入闸标记）。
@@ -35,6 +35,7 @@ import pytest
 
 from meeting import cli as cli_module
 from meeting import config as config_module
+from meeting import post_run as post_run_module
 from meeting.backends import minutes as minutes_backend
 from meeting.capture import transcode as transcode_module
 from meeting.minutes import launch as minutes_launch
@@ -60,8 +61,8 @@ from meeting.cli import (
     EXIT_OK,
     EXIT_REJECTED,
     post,
-    run_post,
 )
+from meeting.post_run import run_post
 
 #: 慢档标记（`68927c27` 收尾轮）：`meeting post` 是收尾功能，整文件归收尾验收。
 pytestmark = pytest.mark.slow
@@ -779,9 +780,9 @@ def test_the_minutes_tail_keeps_its_own_announce_function(
 class ExplodingConverter:
     """转码器替身：对着 PCM **抛错**（`ffmpeg` 缺席那一档的替身）。
 
-    它经 `sync_archive()` 的 `converter` 形参注进去（`meeting/cli.py` 现行的用例接缝；
+    它经 `sync_archive()` 的 `converter` 形参注进去（`meeting/post_run.py` 现行的用例接缝；
     `run_post()` 那一格叫 `archive_converter`，`post()` 那条真入口由用例把
-    `cli.sync_archive` 换成注入形参的一份），因此走产品路径那一趟也吃得到。
+    `post_run.sync_archive` 换成注入形参的一份），因此走产品路径那一趟也吃得到。
     """
 
     def __init__(self, message: str = "ffmpeg 缺席（用例注入）") -> None:
@@ -982,14 +983,14 @@ def test_a_failed_archive_is_not_swallowed_by_the_no_pending_work_exit(
     for path in sorted(session.glob("meeting_audio_*.mp3")):
         path.unlink()
     converter = ExplodingConverter()
-    # 真入口 `post()` 不收转码器：把 `cli.sync_archive` 换成「往现行接缝
+    # 真入口 `post()` 不收转码器：把 `post_run.sync_archive` 换成「往现行接缝
     # （`converter` 形参）注替身」的那一份，`run_post()` 以下整条链照真走。
-    real_sync_archive = cli_module.sync_archive
+    real_sync_archive = post_run_module.sync_archive
 
     def sync_with_converter(directory: Any, **kwargs: Any) -> Any:
         return real_sync_archive(directory, **{**kwargs, "converter": converter})
 
-    monkeypatch.setattr(cli_module, "sync_archive", sync_with_converter)
+    monkeypatch.setattr(post_run_module, "sync_archive", sync_with_converter)
 
     with pytest.raises(SystemExit) as info:
         post([str(session)])

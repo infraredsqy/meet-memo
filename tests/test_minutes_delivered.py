@@ -453,48 +453,49 @@ def test_the_cli_reads_completion_from_the_artifact_and_the_delivery_from_the_st
     tmp_path: Path,
 ) -> None:
     """`meeting post` 那一侧：完成看产物、`delivered` 看状态那一格，两者各管一件事。"""
-    from meeting import cli as cli_module
+    from meeting import post_run as post_run_module
 
     session = tmp_path / "260927"
     session.mkdir()
     status = _delivered_status(session)
 
-    assert cli_module._minutes_is_delivered(status) is True
-    assert cli_module._minutes_layer_done(session, status) is False, "产物还没落就不算完成"
+    assert post_run_module._minutes_is_delivered(status) is True
+    assert post_run_module._minutes_layer_done(session, status) is False, "产物还没落就不算完成"
 
     _write_final(session)
-    assert cli_module._minutes_layer_done(session, status) is True, "产物一落就算完成"
+    assert post_run_module._minutes_layer_done(session, status) is True, "产物一落就算完成"
 
     done = {"state": STATE_DONE, "status_name": STATUS_NAME}
     (session / "meeting_final.md").unlink()
-    assert cli_module._minutes_layer_done(session, done) is False, "done 也得看产物"
+    assert post_run_module._minutes_layer_done(session, done) is False, "done 也得看产物"
 
     failed = {"state": STATE_FAILED, "status_name": STATUS_NAME}
     _write_final(session)
-    assert cli_module._minutes_layer_done(session, failed) is False, "failed 那一档不算完成"
-    assert cli_module._minutes_is_delivered(failed) is False
+    assert post_run_module._minutes_layer_done(session, failed) is False, "failed 那一档不算完成"
+    assert post_run_module._minutes_is_delivered(failed) is False
 
 
 def test_a_delivery_counts_as_success_for_the_exit_code(tmp_path: Path) -> None:
     """退出码那一格：`delivered` 按成功算，`failed` 照旧按失败算。"""
     from meeting import cli as cli_module
+    from meeting import post_run as post_run_module
 
     session = tmp_path / "260927"
     session.mkdir()
     _delivered_status(session)
 
-    outcome = cli_module._skipped_minutes_outcome(
+    outcome = post_run_module._skipped_minutes_outcome(
         session, _delivered_status(session), running=False, delivered=True
     )
     assert outcome["hook"] == "delivered"
     assert outcome["skipped"] is True
     assert "session-abc" in outcome["reason"], "理由点名是哪一条 DSH 会话"
-    assert cli_module._minutes_exit_code(outcome) == cli_module.EXIT_OK
+    assert post_run_module._minutes_exit_code(outcome) == cli_module.EXIT_OK
     assert (
-        cli_module._minutes_exit_code({"hook": "finished", "state": STATE_FAILED})
+        post_run_module._minutes_exit_code({"hook": "finished", "state": STATE_FAILED})
         == cli_module.EXIT_FAILURE
     )
     assert (
-        cli_module._minutes_exit_code({"hook": "timeout", "state": STATE_RUNNING})
+        post_run_module._minutes_exit_code({"hook": "timeout", "state": STATE_RUNNING})
         == cli_module.EXIT_FAILURE
     )

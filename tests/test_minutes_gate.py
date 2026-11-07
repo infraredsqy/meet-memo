@@ -29,6 +29,7 @@ from typing import Any
 import pytest
 
 from meeting import cli as cli_module
+from meeting import post_run as post_run_module
 from meeting.backends import minutes as minutes_backend
 from meeting.backends import registry as registry_module
 from meeting.minutes import dsh_web
@@ -393,8 +394,8 @@ def test_meeting_post_passes_the_human_flag_on_both_paths(tmp_path, monkeypatch)
 
     monkeypatch.setattr(minutes_tail, "_announce_minutes", recording_announce)
 
-    first = cli_module.run_post(session, engine=FakeEngine())
-    second = cli_module.run_post(session, engine=FakeEngine())
+    first = post_run_module.run_post(session, engine=FakeEngine())
+    second = post_run_module.run_post(session, engine=FakeEngine())
 
     assert len(calls) == 2, calls
     for call in calls:

@@ -5,7 +5,7 @@
 不拉起任何会后动作（那一格做完释放显存就停在 `waiting`），「生成会后精细稿」按钮走
 `offline.runner.run_session(..., minutes=False)` 的直路也不经它 —— `post.hook` 在那一侧
 只答「这一层接没接」（`null` → 按钮 404 `action_unavailable`）。起 daemon 线程跑
-`meeting.cli.run_post()` 的那套钩子机器（`launch` / `_run` / `_mark_failed`）没有任何
+`meeting.post_run.run_post()` 的那套钩子机器（`launch` / `_run` / `_mark_failed`）没有任何
 产品调用方，已随收尾第 4 步的退场一并删除：**「跑会后一套」的产品入口只剩
 `meeting post` 这一条**。
 

@@ -5,10 +5,10 @@
 （取音频 / 切块 / 静音门 / 产物落盘）**没有共享状态**，因此单独成模块，
 `runner.run_session()` 与 `meeting post` 的人工入口各留一处调用点。
 
-依赖方向只有一条：调用方（`meeting.offline.runner` 与 `meeting.cli`）import 本模块；
+依赖方向只有一条：调用方（`meeting.offline.runner` 与 `meeting.post_run`）import 本模块；
 本模块**不** import 它们。闸与判据照旧走函数体内 import（`meeting.minutes` 那一包
 不进本模块的顶层 import 图）。通知与打桩都经本模块本体的属性
-（`minutes_tail._announce_minutes` 等）：cli 与用例只认这一处，编排器不在自己的
+（`minutes_tail._announce_minutes` 等）：编排器与用例只认这一处，不在自己的
 命名空间里替它转发。
 """
 
