@@ -8,7 +8,7 @@ import {
   fetchSessionStatus,
   fetchSessionTranscripts,
 } from '../src/api/sessions';
-import { postAction } from '../src/api';
+import { postAction, type ActionResult } from '../src/api';
 // 这一条**不经 `../src/api`**（那个模块在本文件里被 mock 掉了，类拿到的会是替身）
 import { ActionFailedError } from '../src/api/actions';
 import type {
@@ -1367,5 +1367,66 @@ describe('稿子正文与事后工序链（38817ecf）', () => {
     await act(async () => {
       renderer.unmount();
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 开始钮的「起录在飞」一档（spec per-session-model-reload-starves-capture 修法二）：
+// 点开始 → 在飞期间画「正在启动…」并保持禁用（现状的病：禁用但文案不变）；落定
+// （成功 / 被拒）收回原文案。「正在录制」的确认时刻是快照翻 recording 后的既有闸
+// （HomeGate 切会中屏），本文件不摆 SSE —— 落定之后钮收回原文案就是这里的落点。
+// ---------------------------------------------------------------------------
+
+describe('开始钮的「起录在飞」一档（per-session-model-reload-starves-capture）', () => {
+  it('点开始录音：在飞期间画「正在启动…」并保持禁用；成功落定后收回原文案、回到可按', async () => {
+    fetchSessionsMock.mockResolvedValue(
+      list({ sessions: [row({ dir: 'C:\\会议\\这一场' })], recent: 'C:\\会议\\这一场' }),
+    );
+    // `start` 那一跳挂在手上不放（在飞现场），其余动作照常受理。
+    let releaseStart!: () => void;
+    postActionMock.mockImplementation((name: string) => {
+      if (name !== 'start') return Promise.resolve({ kind: 'ok', ok: true, revision: 1 });
+      return new Promise<ActionResult>((resolve) => {
+        releaseStart = () => resolve({ kind: 'ok', ok: true, revision: 1 });
+      });
+    });
+    const renderer = await mountHome();
+
+    const idle = buttonByText(renderer, '开始录音');
+    expect(idle.props.disabled).toBe(false);
+    await click(renderer, idle);
+
+    // 在飞：文案换成「正在启动…」，钮禁用
+    const flying = buttonByText(renderer, '正在启动…');
+    expect(flying.props.disabled).toBe(true);
+
+    await act(async () => {
+      releaseStart();
+    });
+
+    // 成功落定：收回原文案、回到可按（真页面上此刻快照翻 recording、闸切会中屏）
+    const settled = buttonByText(renderer, '开始录音');
+    expect(settled.props.disabled).toBe(false);
+  });
+
+  it('起录被拒：失败块出列，钮收回原文案、回到可按（不楔死在「正在启动…」）', async () => {
+    fetchSessionsMock.mockResolvedValue(
+      list({ sessions: [row({ dir: 'C:\\会议\\这一场' })], recent: 'C:\\会议\\这一场' }),
+    );
+    postActionMock.mockRejectedValue(
+      new ActionFailedError(409, 'already_recording', '已经有一场在录', {
+        session_id: '别场',
+        dir: 'C:\\会议\\别场',
+        elapsed_seconds: 0,
+      }),
+    );
+    const renderer = await mountHome();
+
+    await click(renderer, buttonByText(renderer, '开始录音'));
+
+    const failures = renderer.root.findAll((node) => node.props.className === 'fail');
+    expect(failures).toHaveLength(1);
+    expect(textOf(failures[0] as TestRenderer.ReactTestInstance)).toContain('已经有一场在录');
+    expect(buttonByText(renderer, '开始录音').props.disabled).toBe(false);
   });
 });

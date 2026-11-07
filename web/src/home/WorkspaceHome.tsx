@@ -196,6 +196,9 @@ const POST_INPUT_LABELS: Readonly<Record<string, string>> = {
 /** 面板头上那只动作钮的悬停小注（可按时的说明；按不动时换成那句原因）。 */
 const RECORD_HINT = '在这一场工作区里开始一段新录音；已有段落会保留，续接在它们之后';
 
+/** 开始钮在「起录在飞」那一档的文案（spec per-session-model-reload-starves-capture 修法二）。 */
+const STARTING_LABEL = '正在启动…';
+
 /**
  * 待确认的一只弹窗：「启动新会议会打断会后总结」。打断那只挂在**开始录音**上、
  * 只在 **offline 档在飞**时摆出来（唯一硬闸：会后精细稿与会中录音不并排；
@@ -228,6 +231,16 @@ export function WorkspaceHome(props: {
   const [selection, setSelection] = useState<string | null>(null);
   const [failure, setFailure] = useState<ActionFailureView | null>(null);
   const [busy, setBusy] = useState(false);
+  /**
+   * 「起录在飞」一档（spec per-session-model-reload-starves-capture 修法二）：`busy`
+   * 在起录那两趟（`startNow` / `startAfterInterrupt`）上的细分。置位在派发前
+   * （`startNow` 走 `before`，打断确认那趟在入口置位、跨整个重试窗），收回只在
+   * **落定**（成功或没被接走的失败；被打回重试的那一拍不走尾段，忙与这一档都保持）。
+   * 在飞期间开始钮画成「正在启动…」并保持禁用；成功落定之后由 SSE 快照翻
+   * `recording`、既有闸（`HomeGate`）切会中屏 —— 那是「正在录制」的确认时刻，这里
+   * 不新增任何状态（顶层 `TOP_STATE` 四态与服务端推送都纹丝不动）。
+   */
+  const [starting, setStarting] = useState(false);
   /** 打断确认那一只弹窗（收编 / 移除的两只住在左栏）。 */
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   /**
@@ -517,14 +530,20 @@ export function WorkspaceHome(props: {
     startNow(row.dir);
   };
 
-  /** 起录本体（`start` 动作 + 失败块 + 刷新；骨架在 `./dispatch`）。 */
+  /** 起录本体（`start` 动作 + 失败块 + 刷新；骨架在 `./dispatch`）。起录那一趟把
+   * 「起录在飞」一档（`starting`）跟着忙闩一起收放：派发置位、落定收回（重试那一拍
+   * 不落定、保持），在飞期间开始钮画「正在启动…」。 */
   const startNow = (dir: string): void => {
     void runAction({
       name: 'start',
       args: { dir, mode: 'both' },
       onFail: setFailure,
       setBusy: setBusy,
-      settle: reloadAfterAction,
+      before: () => setStarting(true),
+      settle: () => {
+        setStarting(false);
+        reloadAfterAction();
+      },
     });
   };
 
@@ -537,6 +556,9 @@ export function WorkspaceHome(props: {
   const START_RETRY_LIMIT = 60;
   const START_RETRY_MS = 500;
   const startAfterInterrupt = (dir: string): void => {
+    // 「起录在飞」一档与 `startNow` 同一收放：置位在派发，收回在落定——被打回重试
+    // （`draining`）的那一拍不走尾段，这一档跨整个重试窗保持，开始钮一直画「正在启动…」。
+    setStarting(true);
     const attempt = (left: number): void => {
       void runAction({
         name: 'start',
@@ -550,7 +572,10 @@ export function WorkspaceHome(props: {
           }
           return false;
         },
-        settle: reloadAfterAction,
+        settle: () => {
+          setStarting(false);
+          reloadAfterAction();
+        },
       });
     };
     attempt(START_RETRY_LIMIT);
@@ -689,11 +714,11 @@ export function WorkspaceHome(props: {
                   <button
                     className="btn btn--primary btn--start"
                     type="button"
-                    disabled={busy || whyForSelected !== null}
+                    disabled={busy || starting || whyForSelected !== null}
                     title={whyForSelected ?? RECORD_HINT}
                     onClick={startSelected}
                   >
-                    {startButtonLabel(selected)}
+                    {starting ? STARTING_LABEL : startButtonLabel(selected)}
                   </button>
                   {whyForSelected !== null && (
                     <p className="wspane__why">{whyForSelected}</p>

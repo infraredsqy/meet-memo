@@ -50,6 +50,15 @@ LOOPBACK_FRAME_COUNT = 1600
 #: 读侧队列的积压上限（块）：写侧跟不上时丢最旧的块并留一条 warning（不许静默膨胀）
 QUEUE_MAX_CHUNKS = 512
 
+#: mic 开流的输入延迟档（秒，`InputStream` 的 `latency`）。开场每场都在同进程重载
+#: 会中 ASR 模型（设计意图第 21 条「用完即关」），加载的 GIL 压力会把麦克风回调饿过
+#: 驱动缓冲——不传 `latency` 的原档真机探针实测缓冲 ≈26 ms、最坏饿死 335 ms、
+#: 丢 ≈0.3 s 音频；这一档实测缓冲标称 100 ms（环形约 400 ms），同等窗口零溢出零丢失。
+#: 实测表与探针脚本见 spec `per-session-model-reload-starves-capture`（2026-11-06
+#: 真机探针）。只作用于 mic 这一条路：loopback 是 `soundcard` 的另一套采集，探针
+#: 未测，不跟着改。
+MIC_INPUT_LATENCY_SECONDS = 2.0
+
 
 def _import_sounddevice() -> Any:
     import sounddevice  # noqa: PLC0415 - 惰性 import 是有意的（见模块说明）
@@ -354,7 +363,7 @@ class SounddeviceMicSource:
         self._stream: Any = None
 
     def start(self) -> None:
-        """打开麦克风流（指定设备或默认输入，16k mono）。"""
+        """打开麦克风流（指定设备或默认输入，16k mono；延迟档见 `MIC_INPUT_LATENCY_SECONDS`）。"""
         sounddevice = _import_sounddevice()
         self._reader.stop_event.clear()
         stream = sounddevice.InputStream(
@@ -362,6 +371,7 @@ class SounddeviceMicSource:
             samplerate=SAMPLE_RATE,
             channels=CHANNELS,
             dtype="int16",
+            latency=MIC_INPUT_LATENCY_SECONDS,
             callback=self._callback,
         )
         stream.start()
@@ -507,6 +517,7 @@ __all__ = [
     "CHANNELS",
     "DEFAULT_RENDER_INDEX",
     "LOOPBACK_FRAME_COUNT",
+    "MIC_INPUT_LATENCY_SECONDS",
     "QUEUE_MAX_CHUNKS",
     "SAMPLE_RATE",
     "SoundcardLoopbackSource",
