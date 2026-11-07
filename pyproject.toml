@@ -94,14 +94,20 @@ test = [
 # `python -m meeting.minutes` 那三个手动子命令（`check` / `chunk` / `prompt`）
 # 也会找不到模块；`meeting.summary` 是 `1987cb20` phase1 建的会中总结内核，
 # 漏了它装好的包里 `import meeting.summary` 会直接失败（phase2 的服务接线、phase3 的
-# 界面都要经它拿到窗口切片与端点调用那一套）。
+# 界面都要经它拿到窗口切片与端点调用那一套）；`meeting.offline.runner` 是
+# `c8d62a1` 拆出的会后离线主链子包，漏了它装好的包里编排主模块与 `pcm` /
+# `session_info` 两个分片都缺席；`meeting.service.runtime_catalog` 是工作台 /
+# 场次目录 mixin 的九域分包，漏了它装好的包里 `import meeting.service.runtime`
+# 直接 ModuleNotFoundError（`RuntimeCatalogMixin` 只从这里出）。
 packages = [
     "meeting",
     "meeting.service",
+    "meeting.service.runtime_catalog",
     "meeting.backends",
     "meeting.capture",
     "meeting.asr",
     "meeting.offline",
+    "meeting.offline.runner",
     "meeting.minutes",
     "meeting.summary",
 ]

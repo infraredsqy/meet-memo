@@ -171,7 +171,7 @@ KIND_LABELS: dict[str, str] = {
 #: Namespaces》的保留名规则（"Do not use the following reserved names for the name
 #: of a file…"）；`COM0` 一并收录——同一篇的 NT Namespaces 一节写明 `COM0` 与
 #: `COM1`–`COM9` 同为串口设备的符号链接，与这份全集口径一致。两个使用点：
-#: `runtime_catalog.checked_new_dir_name()`（新建目录名的拒绝式校验）与
+#: `runtime_catalog/picker.py` 的 `checked_new_dir_name()`（新建目录名的拒绝式校验）与
 #: `runtime_materials.sanitize_material_name()`（上传文件名的清洗前置 `_`）。
 WINDOWS_RESERVED_DEVICE_NAMES: frozenset[str] = frozenset(
     {"CON", "PRN", "AUX", "NUL"}
@@ -234,7 +234,7 @@ def _slot_alive(job: "PostJob | dict[str, Any] | None") -> bool:
 
     槽位公共读法（下面 `PostJobSlotReadsMixin` 的三个读法与 `_only_flying_job()`）
     都走这一份判据。全仓另有两处**内联**同款 `thread.is_alive()` 读数：
-    `runtime_catalog._post_flight_view()` 的 `running` 一格（只问「活着没」）与本文件
+    `runtime_catalog/session_view.py` 的 `_post_flight_view()` 的 `running` 一格（只问「活着没」）与本文件
     `post_jobs_state()` 的收工盖章那一处（问「死了没」，死了顺手补 `finished_at`）
     ——它们各有各的附加动作，不走本函数。
     """
@@ -253,6 +253,14 @@ def _job_matches(job: PostJob | None, directory: str) -> TypeGuard[PostJob]:
     复审 #2 的裁定：只抽公共部分，行为逐字不变）。
     """
     return isinstance(job, dict) and str(job.get("dir")) == str(directory)
+
+
+def _disk_str_or_none(record: dict[str, Any] | None, key: str) -> str | None:
+    """盘上 `session.json` 的一个字符串格（`date` / `mode`）：缺席或不是字符串如实 `null`。"""
+    if not isinstance(record, dict):
+        return None
+    value = record.get(key)
+    return str(value) if isinstance(value, str) else None
 
 
 # (kind, dir) 槽位登记的公共读法（post / transcode / catalog 三处共用）

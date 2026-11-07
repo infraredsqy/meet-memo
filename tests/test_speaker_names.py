@@ -416,7 +416,7 @@ def test_speaker_rename_refuses_while_the_session_is_still_recording(
     """本进程正在录的那一场拒掉（会中不提供改名，d11）。
 
     判据是「本进程此刻在录、就是快照里那一场」（与工作区清单三档口径同一支，
-    `runtime_catalog._is_actively_recording()`）：盘上停在 `recording` 的强杀残档
+    `runtime_catalog/workspace.py` 的 `_is_actively_recording()`）：盘上停在 `recording` 的强杀残档
     **不是**录音中，照常放行（下一条）。
     """
     runtime, _session, previous = _registered_session(tmp_path, monkeypatch)
