@@ -1,10 +1,10 @@
 # contract/ —— 双端契约的 golden 样本
 
-> 这个目录是**服务与界面之间那份契约的可机读基准**：`fixtures/` 下的 JSON 样本一律出自真实服务路径，`tests/test_contract_fixtures.py` 每次跑测试都重走一遍采集、与盘上样本逐字比对，服务侧形状一漂移就红。
+> 这个目录是**服务与界面之间那份契约的可机读基准**：`fixtures/` 下的 JSON 样本一律出自真实服务路径，`tests/test_contract_fixtures/` 每次跑测试都重走一遍采集、与盘上样本逐字比对，服务侧形状一漂移就红。
 >
 > 契约正文在 `docs/contract.md`（端点口径、快照 schema、SSE 帧形状、动作信封与 `code`/`detail` 表、心跳语义、客户端义务、保留登记）。这个 README 只讲三件事：**样本从哪儿来、掩码怎么打、怎么再生成**。
 >
-> 代码落点：掩码与采集辅助在 `tests/_contract.py`；比对与再生成在 `tests/test_contract_fixtures.py`；再生成开关 `--regen-contract` 注册在 `tests/conftest.py` 的 `pytest_addoption`。
+> 代码落点：掩码与采集辅助在 `tests/_contract.py`；比对与再生成在 `tests/test_contract_fixtures/`；再生成开关 `--regen-contract` 注册在 `tests/conftest.py` 的 `pytest_addoption`。
 
 ## 1. 样本清单
 
@@ -138,14 +138,14 @@
 - 快照四态等于该样本该有的那一态；
 - **SSE 四帧的自报 `revision` 互相对得上**：`snapshot` / `state` 的帧级 `id:` 等于 `data.revision`，不带 `id:` 的 `levels` / `transcript` 的 `data.revision` 落在同一版上。读帧因此**不依赖到达次序**（`levels` 什么时候来由服务侧的广播节奏定），revision 的确定性由这条自洽性钉住。
 
-这些断言写在 `tests/test_contract_fixtures.py` 里，是 fixtures 形状的**第二道保险**。
+这些断言写在 `tests/test_contract_fixtures/` 里，是 fixtures 形状的**第二道保险**。
 
 ## 3. 再生成与漂移比对
 
 **默认模式 = 漂移测试**（服务侧形状一漂移就红）：
 
 ```powershell
-python -m pytest tests/test_contract_fixtures.py -q
+python -m pytest tests/test_contract_fixtures -q
 ```
 
 它重走一遍真实服务路径采集样本，与盘上 fixtures **逐文件比对**；缺文件或内容不一致即 fail，报出「fixtures 是什么、实时采集是什么」。改了服务行为（键改名、字段增删、`detail` 换档）就会在这里被拦下。
@@ -153,7 +153,7 @@ python -m pytest tests/test_contract_fixtures.py -q
 **再生成**（确认差异是有意改的之后）：
 
 ```powershell
-python -m pytest tests/test_contract_fixtures.py --regen-contract -q
+python -m pytest tests/test_contract_fixtures --regen-contract -q
 ```
 
 开关由 `tests/conftest.py` 的 `pytest_addoption` 注册（`--regen-contract`，默认关）。两种模式走**同一套采集**，只有最后那一步不同：给开关时重写文件，不给时比对。
@@ -165,7 +165,7 @@ python -m pytest tests/test_contract_fixtures.py --regen-contract -q
 - fixtures 一律**被 git 跟踪**（`.gitignore` 里没有任何规则盖住 `contract/`）。fixtures 的 diff 就是契约的 diff，它要进版本历史。
 - 改了服务行为**就要重跑 `--regen-contract` 并逐条复核差异**，再回写 `docs/contract.md` 的正文。
 - **不要手改 fixtures**：它们是采集产物，手改会在下一次比对时被冲掉，还会让「漂移」这件事失去判据。
-- 加一个新样本的做法是**在 `tests/test_contract_fixtures.py` 里加一段真实采集 + `emit({...})`**，跑一次 `--regen-contract` 落盘，然后在上面第 1 章的清单表里补一行出处。
+- 加一个新样本的做法是**在 `tests/test_contract_fixtures/` 里加一段真实采集 + `emit({...})`**，跑一次 `--regen-contract` 落盘，然后在上面第 1 章的清单表里补一行出处。
 
 ## 4. 相关文档
 

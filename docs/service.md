@@ -128,11 +128,11 @@ python -m pytest -q -m "not slow" -n auto --dist loadfile   # 快档并行（每
 - **分档**：`slow` 标记（注册在 `pyproject.toml`，带 `--strict-markers`）归慢档。归位判据——一条用例满足任一条就进慢档：起真服务子进程；依赖真实墙钟等待；注入慢模型证明解耦或存活；单条实测超 2.0 秒。
 - **慢档清单现算**：
 
-      Select-String -Path tests\test_*.py -Pattern 'pytestmark = pytest\.mark\.slow'
+      Get-ChildItem tests -Recurse -Filter test_*.py | Select-String -Pattern 'pytest\.mark\.slow'
 
-  （路径必须带 `tests\test_*.py` 这一层，否则 `tests\conftest.py` 文档串里的同名句子会被数进去。）用例数不存档，用 `python -m pytest -q --collect-only` 现算。
+  （慢档模块也可能住在 `tests\test_*\` 子包，须递归才数得全；`-Filter test_*.py` 这层滤网天然排除 `conftest.py` 与包内 `_common.py` 这类不参与收集的文件。文件头 `pytestmark` 与用例级装饰器两种写法都命中，清单与 `-m slow` 的收集口径一致。）用例数不存档，用 `python -m pytest -q --collect-only` 现算。
 - **快档红线**：每圈并行 ≤ 10 秒；新加测试必须「无 sleep、无真子进程、无真墙钟等待、毫秒级纯逻辑或结构断言」才许进快档，达不到进慢档。用例看门与七道 autouse 安全兜底的实现见 `tests/conftest.py`；测试与验证纪律见 `README.md`。
-- **契约看守**：`python -m pytest tests/test_contract_fixtures.py -q` 逐文件比对 `contract/fixtures/`；`--regen-contract` 重新生成，规则见 `contract/README.md`。
+- **契约看守**：`python -m pytest tests/test_contract_fixtures -q` 逐文件比对 `contract/fixtures/`；`--regen-contract` 重新生成，规则见 `contract/README.md`。
 - 一个例外判例：`tests/test_transcript_hints.py` 不带 `slow` 标记，但**碰了转写提示级那一路时要单跑它**。
 
 ## 4. 现在能做什么

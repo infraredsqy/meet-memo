@@ -170,7 +170,7 @@ def emit(records: dict[str, Any], *, regen: bool) -> None:
         if not target.exists():
             problems.append(
                 f"- {rel}: fixtures 文件不存在（先跑 "
-                f"`python -m pytest tests/test_contract_fixtures.py --regen-contract` 生成）"
+                f"`python -m pytest tests/test_contract_fixtures --regen-contract` 生成）"
             )
             continue
         try:

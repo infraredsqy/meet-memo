@@ -2,7 +2,7 @@
 
 > 服务与界面之间那份契约的正文：端点口径、快照 schema、SSE 帧形状、动作信封与 `code`/`detail` 表、心跳语义、客户端义务、定名未实现的保留登记。读者是接这套服务写界面（或写验收脚本）的人。
 >
-> **可机读基准**：每一条形状在 `contract/fixtures/` 里有 golden 样本，`tests/test_contract_fixtures.py` 重走真实服务路径逐字比对，服务侧形状一漂移就红；样本逐档清单、掩码与再生成规则的**正本在 `contract/README.md`**（掩码占位符 `<iso>` / `<path>` / `<session-id>` / `<port>` / `<url>` / `<dbfs>`；`revision` 与取值域字面量逐字保留）。与叙述性文档冲突时以代码实际行为为准，权威落在本册。
+> **可机读基准**：每一条形状在 `contract/fixtures/` 里有 golden 样本，`tests/test_contract_fixtures/` 重走真实服务路径逐字比对，服务侧形状一漂移就红；样本逐档清单、掩码与再生成规则的**正本在 `contract/README.md`**（掩码占位符 `<iso>` / `<path>` / `<session-id>` / `<port>` / `<url>` / `<dbfs>`；`revision` 与取值域字面量逐字保留）。与叙述性文档冲突时以代码实际行为为准，权威落在本册。
 >
 > **编号**：第 1–8 章，第 8 章是附录；章内小节号（4.3、4.9…）是稳定编号，代码注释与各分册按它们落点。
 >
@@ -463,7 +463,7 @@
 
 ## 8. fixtures 与掩码（附录）
 
-契约的**可机读基准**是 `contract/fixtures/` 下的 golden 样本，一律**出自真实服务路径**、不是手写的。逐档清单（每个文件采的是哪条路径、固定的是什么）、掩码占位符与再生成 / 漂移比对的规则，**全部只写在 `contract/README.md` 一处**，这里不复制品。速记两条：`python -m pytest tests/test_contract_fixtures.py -q` 就是漂移测试——重走真实服务路径采集样本与盘上 fixtures 逐文件比对，形状一漂移就红；改了服务行为就重跑 `--regen-contract` 并复核差异，fixtures 的 diff 就是契约的 diff。
+契约的**可机读基准**是 `contract/fixtures/` 下的 golden 样本，一律**出自真实服务路径**、不是手写的。逐档清单（每个文件采的是哪条路径、固定的是什么）、掩码占位符与再生成 / 漂移比对的规则，**全部只写在 `contract/README.md` 一处**，这里不复制品。速记两条：`python -m pytest tests/test_contract_fixtures -q` 就是漂移测试——重走真实服务路径采集样本与盘上 fixtures 逐文件比对，形状一漂移就红；改了服务行为就重跑 `--regen-contract` 并复核差异，fixtures 的 diff 就是契约的 diff。
 
 ## 相关文档
 
