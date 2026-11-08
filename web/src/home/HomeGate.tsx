@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { LiveView } from '../App';
+import { LiveView } from '../live/liveview/LiveView';
 import { WorkspaceHome } from './WorkspaceHome';
 import { showsWorkspaceHome } from './gate';
 import type { Snapshot } from '../contract';

@@ -10,7 +10,7 @@ import {
   type HeartbeatClient,
 } from '../src/api';
 import { fetchSessions } from '../src/api/sessions';
-import { LiveView } from '../src/App';
+import { LiveView } from '../src/live/liveview/LiveView';
 import type { SessionRow, SessionsResponse, Snapshot } from '../src/contract';
 import { makeSnapshot, T } from './live-fixtures';
 

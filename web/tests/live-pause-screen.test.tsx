@@ -25,7 +25,7 @@ import {
   type HeartbeatClient,
 } from '../src/api';
 import { fetchSessions } from '../src/api/sessions';
-import { LiveView } from '../src/App';
+import { LiveView } from '../src/live/liveview/LiveView';
 import type { Snapshot } from '../src/contract';
 import { makeSnapshot, makeSource, T } from './live-fixtures';
 

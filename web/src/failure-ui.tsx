@@ -8,7 +8,7 @@ export function FailureBlock({
   extraLines = [],
   /**
    * forbidden 那一档要不要带「没有失败信封…」说明行。会中主视图（App.tsx）默认带上；
-   * 工作区首页（WorkspaceHome.tsx）沿 HomeFailure 的旧画法传 false——那条旧画法只有
+   * 工作区首页（`home/WorkspaceHome/`）沿 HomeFailure 的旧画法传 false——那条旧画法只有
    * why + next 两行（不复刻旧行为时首页会因为合并组件多出一行）。
    */
   forbiddenNote = true,

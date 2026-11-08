@@ -36,7 +36,7 @@ export const sessionRowSchema = z
   .object({
     dir: z.string(),
     /** 盘上 `session.json` 的目录名；没开过会（空白工作区 / 疑似会议目录）时是 `null`，
-     *  界面那一句才拿 `dir` 兜（`home/WorkspaceHome.tsx`）。 */
+     *  界面那一句才拿 `dir` 兜（`home/WorkspaceHome/`）。 */
     session_id: sessionIdSchema.nullable(),
     dir_exists: z.boolean(),
     kind: dirKindSchema,

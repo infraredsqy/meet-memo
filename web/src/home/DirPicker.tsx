@@ -5,7 +5,7 @@ import { formatBytes } from '../materials/model';
 import type { DirRow, DirsResponse } from '../contract';
 
 /**
- * 目录选择器弹窗（节点 57ab5255 定的「选中再确认」形状；从 `WorkspaceHome.tsx`
+ * 目录选择器弹窗（节点 57ab5255 定的「选中再确认」形状；从工作台首页（`home/WorkspaceHome/`）
  * 原样搬出，160d1a78 起多一种**文件模式**给资料区用；目录选择器节点起目录模式
  * 多出**当前这一层**与**新建目录**两样）。
  *

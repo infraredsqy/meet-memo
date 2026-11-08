@@ -2,7 +2,7 @@ import { postAction } from '../api';
 import { failureFrom, type ActionFailureView } from '../failure';
 
 /**
- * 「把非空目录当工作区？→ 确认收编」那半边接线（从 `WorkspaceHome.tsx` 抽出来的一段
+ * 「把非空目录当工作区？→ 确认收编」那半边接线（从工作台首页 `home/WorkspaceHome/` 抽出来的一段
  * 纯 async，不带 JSX、免 DOM 可验；修复 C1：原先确认按钮经 `openDir('need-confirm')`
  * 回环把同一只弹窗重新摆出来，`confirm: true` 永远没发出去）。
  *

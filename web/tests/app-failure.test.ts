@@ -117,7 +117,7 @@ afterEach(async () => {
 
 describe('SSE onError 的失败块（渲染层转手）', () => {
   it('onError 的错误没有失败信封，失败块如实显示原文并说明这一档没有 code', async () => {
-    const { LiveView } = await import('../src/App');
+    const { LiveView } = await import('../src/live/liveview/LiveView');
     const { createHeartbeatClient } = await import('../src/api');
     const { fetchSessions } = await import('../src/api/sessions');
     const { makeSnapshot } = await import('./live-fixtures');

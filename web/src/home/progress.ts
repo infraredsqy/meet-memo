@@ -11,7 +11,7 @@ import { sourceDisplayName } from '../live/format';
  * 会后进度界面的**纯逻辑**（`docs/requirements.md` R27 / R31，设计意图第 12 条）。
  *
  * 这一层只做「服务给的字段 → 界面要摆的读数」，不碰组件、不碰取数；组件（
- * `home/WorkspaceHome.tsx`）只把它算好的东西摆到位置上 —— 与会中电平块同一套分层
+ * `home/WorkspaceHome/`）只把它算好的东西摆到位置上 —— 与会中电平块同一套分层
  * （`live/levels.ts` 算读数、`App.tsx` 只写 CSS 变量）。
  *
  * 四件事，判据全部落在服务给的原文上：
