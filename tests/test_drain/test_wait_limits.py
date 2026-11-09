@@ -31,6 +31,7 @@ from tests.test_drain._common import (
     DRAIN_UNIT_STEP_SECONDS,
     _inprocess_runtime,
     _new_workspace,
+    register_inprocess_runtime,
 )
 
 #: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md`。
@@ -390,6 +391,9 @@ def _inprocess_runtime_with_backends(
     # 后端解析在真服务里由 `startup()` 的 ④ 步触发（本档不起 lifespan），这里显式走一遍 ——
     # 于是 `start_session()` 有一个在位的采集替身，四条收尾也按 registry 的结论登记。
     runtime._resolve_backends()
+    # 这一台起过的真转写流水线由包级 conftest 的 autouse 夹具在收场 join
+    # （transcriber.backend=auto 在 `start_session()` 里起真线程，登记是收场的凭据）
+    register_inprocess_runtime(runtime)
     return runtime
 
 

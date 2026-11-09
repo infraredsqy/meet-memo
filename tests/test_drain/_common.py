@@ -475,6 +475,38 @@ def _inprocess_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         loaded = config_module.load()
     finally:
         logging_setup.restore_handlers(previous_handlers)
-    return ServiceRuntime(loaded)
+    runtime = ServiceRuntime(loaded)
+    register_inprocess_runtime(runtime)
+    return runtime
+
+
+#: 本包进程内用例造过的 `ServiceRuntime`（收场由 `tests/test_drain/conftest.py` 的
+#: autouse 夹具统一收转写流水线，判据是「任意收集序下泄漏都不出现」）
+_INPROCESS_RUNTIMES: list[Any] = []
+
+
+def register_inprocess_runtime(runtime: Any) -> None:
+    """进程内助手每造一台运行时就登记一台，收场好按单收转写流水线（见下面那个收场函数）。"""
+    _INPROCESS_RUNTIMES.append(runtime)
+
+
+def stop_registered_transcriber_pipelines() -> None:
+    """对本包登记过的每台运行时调一次 `transcriber_backend.stop()`（幂等；空闲毫秒级收工）。
+
+    生产路径上转写后端的 `stop()` 只有 `shutdown()` 一个调用点（收尾编排不停转写，
+    `meeting/service/runtime_backends.py` 的 `shutdown()`），进程内用例 `start_session()`
+    起的真转写流水线（asr-worker + 两路 asr-reader，daemon）因此会跨文件一直活着：
+    收集序把本包排到 `tests/test_asr_pipeline.py` 之前时，那边开场那条「进程里一条
+    `asr-` 线程都不剩」的线程闸每条用例都红（改名序 `tests/drain` 实测 29 passed
+    44 errors）。这里在测试层补上汇合点，与 `tests/test_transcode_job.py` 的
+    `_join_transcriber_pipelines` 同一手法。假件后端（`FakeTranscriberBackend`）的
+    `stop()` 同名在位、原样安全。
+    """
+    for runtime in _INPROCESS_RUNTIMES:
+        backend = getattr(runtime, "transcriber_backend", None)
+        stop = getattr(backend, "stop", None)
+        if callable(stop):
+            stop()
+    _INPROCESS_RUNTIMES.clear()
 
 

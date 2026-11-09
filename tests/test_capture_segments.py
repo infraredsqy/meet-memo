@@ -151,8 +151,13 @@ def test_a_pause_records_silence_and_the_ledger_adds_up(tmp_path: Path, monkeypa
             timeout=POLL_TIMEOUT_SECONDS,
             what="转码独立工序落 done",
         )
-        # ① 按序号命名的段：两路各一个段 1，外加各自的 MP3、场次文件与转码工序的三层记录
-        assert sorted(item.name for item in session_dir.iterdir()) == sorted(
+        # ① 按序号命名的段：两路各一个段 1，外加各自的 MP3、场次文件与转码工序的三层记录。
+        #    转码收工那一趟 `_persist()` 先写 status 再写逐段进度记录（两笔都是 atomicio 的
+        #    同目录临时名原子换名）：`read_status == "done"` 读到时，最后一笔进度记录的
+        #    在途 `.tmp` 仍可能躺在同目录里（批 2 实测的偶发红就是它撞上本断言）。
+        #    断言**逐名全等、不放宽**：等目录静默到恰好这十项再交回（事件驱动轮询；
+        #    收工之后工序不再写盘，等到即是稳态）。
+        expected_names = sorted(
             [
                 SESSION_FILE_NAME,
                 archive_name("mic"), archive_name("loopback"),
@@ -161,6 +166,16 @@ def test_a_pause_records_silence_and_the_ledger_adds_up(tmp_path: Path, monkeypa
                 "meeting_transcode_status.json", "meeting_transcode_progress.jsonl",
                 "meeting_transcode_mic_001.json", "meeting_transcode_loopback_001.json",
             ]
+        )
+        wait_until(
+            lambda: (
+                names
+                if (names := sorted(item.name for item in session_dir.iterdir()))
+                == expected_names
+                else None
+            ),
+            timeout=POLL_TIMEOUT_SECONDS,
+            what="工作区目录静默到十项逐名全等（转码最后一笔进度记录的在途 .tmp 换名完成）",
         )
 
         # ② 盘上核对（收尾结算之后做，不跟写线程的登记时序赛跑）：
