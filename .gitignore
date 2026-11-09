@@ -3,8 +3,8 @@
 .work/
 .tmp/
 
-# .pf 是工作流的过程档案（节点记录、signals、ideas），只在本地留档，不进版本控制
-.pf/
+# .superworker 是工作流的过程档案（节点记录、signals、ideas），只在本地留档，不进版本控制
+.superworker/
 
 # 密钥与本地环境文件永远不进库
 .env
