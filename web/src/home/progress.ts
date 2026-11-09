@@ -12,7 +12,7 @@ import { sourceDisplayName } from '../live/format';
  *
  * 这一层只做「服务给的字段 → 界面要摆的读数」，不碰组件、不碰取数；组件（
  * `home/WorkspaceHome/`）只把它算好的东西摆到位置上 —— 与会中电平块同一套分层
- * （`live/levels.ts` 算读数、`App.tsx` 只写 CSS 变量）。
+ * （`live/levels.ts` 算读数、`live/liveview/CaptureBand.tsx` 只写 CSS 变量）。
  *
  * 四件事，判据全部落在服务给的原文上：
  *
@@ -54,7 +54,7 @@ export interface RowStatusView {
   /** 状态格上的字。 */
   label: string;
   /**
-   * 图形标记（形状是「不靠颜色」的那一半，`ui-design` §7.10 的 `glyph--*`）。
+   * 图形标记（形状是「不靠颜色」的那一半，`styles/live.css` 的 `glyph--*`）。
    */
   mark: string;
   /** 灰档：只有「目录不存在」用它（沿 `wslist__state--dim` 的既有口径）。 */
@@ -336,7 +336,7 @@ export function advanceChunkRows(
  * 两次读数之间，逐块行该不该整段**重播**（review-2 m2：记录已重置 —— 新一趟开始了）。
  *
  * 后端每趟重跑都新建记录、`start()` 落**只有表头**的记录（`meeting/offline/progress.py`
- * 的 `start()`；`runtime.py` 每趟新造 ledger），重跑时盘上 `done` 从 0 重数 ——
+ * 的 `start()`；`service/runtime_post.py` 每趟新造 ledger），重跑时盘上 `done` 从 0 重数 ——
  * `advanceChunkRows()` 的差值 `Math.max(0, next - was)` 把回落全钳成 0，旧行一行
  * 都掉不下去，追加行号还会接旧记录（出「第 11/10 块」这种行）。判据两条、命中即重播：
  *
@@ -361,7 +361,7 @@ export function chunkLedgerReset(before: SessionStatus, next: SessionStatus): bo
 }
 
 // ---------------------------------------------------------------------------
-// 4. 全局「显卡忙不忙」（R31；两处 topbar__right 共用这一份读法）
+// 4. 全局「显卡忙不忙」（R31；顶栏 topbar__right 与工作台左栏栏底两处共用这一份读法）
 // ---------------------------------------------------------------------------
 
 export interface GpuBusyView {

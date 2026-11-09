@@ -14,7 +14,7 @@ import type { PostJobCell, SessionsResponse } from '../contract';
 
 /**
  * 「显卡忙不忙」那一格（R31）：读法与判据在 `home/progress.ts` 的 `gpuBusyView()`，
- * 画法只有这一份 —— 会中屏顶栏（App.tsx 的 topbar__right）与这条栏的栏底两处同款
+ * 画法只有这一份 —— 会中屏顶栏（LiveTopBar.tsx 的 topbar__right）与这条栏的栏底两处同款
  * （web-gpucell-markup-duplicated）。全站没有全局进度条 —— 进度跟着各自的工作区走。
  */
 export function GpuCell({ gpu }: { gpu: GpuBusyView }): ReactNode {

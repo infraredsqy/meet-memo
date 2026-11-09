@@ -131,7 +131,7 @@ export function LiveTopBar({
               进度跟着各自的工作区走。 */}
           <GpuCell gpu={gpu} />
           {/* 设置按钮（R32：一个设置按钮 → 网页内小窗；类名契约把「齿轮」这一档
-              预留在 topbar__right，docs/ui-design.md §7.10） */}
+              预留在 topbar__right，styles/live.css 的 glyph--*） */}
           <button
             className="btn btn--small btn--ghost"
             type="button"
