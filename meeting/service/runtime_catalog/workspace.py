@@ -166,6 +166,9 @@ class RuntimeCatalogWorkspaceMixin:
         `date` / `mode` 只在盘上读得出来时带值。
         `recent` 是最近一次被打开/切换的那一条的目录（**只从注册表读**，不扫任何场次
         目录 —— 启动序列对它的口径见 `docs/state.md`「重启自洽」）。
+        清单本身也按「最近在用」倒序给出（`registry.ordered()`）：最近一次被打开/切换
+        的那一场排最前，判据与 `recent` 同一条链（7058f2e1）——界面照应答次序渲染、
+        自己不重排，次序的口径正本在 `docs/contract.md` 4.8。
 
         `has_offline` 是「这一场有没有会后精细稿」那一格（R29）：判据是场次目录里在不在
         `meeting_offline_transcript_<source>.md`（`workspace.has_offline_transcript()`，
@@ -181,7 +184,7 @@ class RuntimeCatalogWorkspaceMixin:
         读数，盘上段记录原文四格，两段的会看得出接过）。
         """
         rows: list[dict[str, Any]] = []
-        for entry in self.registry.entries():
+        for entry in self.registry.ordered():
             path = str(entry["dir"])
             probe = classify_workspace_dir(path)
             record = self.store.read_session_json(path)

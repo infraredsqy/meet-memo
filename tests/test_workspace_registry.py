@@ -106,6 +106,43 @@ def test_recent_reads_only_from_registry(registry: WorkspaceRegistry, tmp_path: 
     assert registry.recent()["dir"] == str(b)
 
 
+def test_ordered_most_recent_first(registry: WorkspaceRegistry, tmp_path: Path):
+    """清单次序 = 「最近在用」倒序（7058f2e1）：登记先后不作数，最近打开的排最前。
+
+    `ordered()` 与 `recent()` 同一条判据链：倒序头一条就是最近那一条；切回最早
+    登记的那一场，它翻到最前、其余相对次序不动。
+    """
+    jia, yi, bing = (tmp_path / name for name in ("甲", "乙", "丙"))
+    for d in (jia, yi, bing):
+        d.mkdir()
+    registry.open(jia, now="2026-09-21T21:00:01+08:00")
+    registry.open(yi, now="2026-09-21T21:00:02+08:00")
+    registry.open(bing, now="2026-09-21T21:00:03+08:00")
+    # 不是登记先后（甲乙丙）：最近在用倒序是 丙、乙、甲
+    assert [e["dir"] for e in registry.ordered()] == [str(bing), str(yi), str(jia)]
+    # 切回甲：甲翻到最前，丙其次、乙最后
+    registry.open(jia, now="2026-09-21T21:00:04+08:00")
+    assert [e["dir"] for e in registry.ordered()] == [str(jia), str(bing), str(yi)]
+    assert registry.recent()["dir"] == str(jia)
+
+
+def test_ordered_same_second_reads_stable(registry: WorkspaceRegistry, tmp_path: Path):
+    """同一秒登记的两条：兜底链（同秒比 added_at，再比目录字典序）给出唯一答案，
+    两次读取同一次序——不许「刷新一次换一个样」。"""
+    yi, jia = tmp_path / "乙", tmp_path / "甲"
+    yi.mkdir()
+    jia.mkdir()
+    stamp = "2026-09-21T21:00:00+08:00"
+    registry.open(yi, now=stamp)
+    registry.open(jia, now=stamp)
+    first = [e["dir"] for e in registry.ordered()]
+    again = [e["dir"] for e in registry.ordered()]
+    assert first == again
+    # 两个时刻并列到底：倒序取大，目录字典序收尾（甲 > 乙），答案唯一且稳定
+    assert first == [str(jia), str(yi)]
+    assert registry.recent()["dir"] == str(jia)
+
+
 def test_remove_takes_no_bytes(registry: WorkspaceRegistry, tmp_path: Path):
     """删除只把这一条从名单里摘走：目录、归档、`session.json` 一个字节不动。"""
     ws = tmp_path / "ws"
@@ -448,6 +485,68 @@ def test_start_notes_registry(api, tmp_path: Path):
     assert len(rows["sessions"]) == 1
     assert rows["sessions"][0]["state"] == "recording"
     assert rows["recent"] == str(ws)
+
+
+def test_api_sessions_list_most_recent_first(api, tmp_path, monkeypatch):
+    """spec 完成判定（7058f2e1）：连登记三场（甲、乙、丙），再把选区切回甲一次；
+    清单应答里甲在最前、丙其次、乙最后——连读两次，次序一致。
+
+    时钟钉住（秒精度下连着几次登记可能落进同一秒，并列会掉目录字典序兜底），
+    「甲因最近被切换而排最前」这件事才测得稳——这里测的是「最近在用」本身。
+    """
+    from meeting.service.runtime_catalog import workspace as catalog_workspace
+
+    stamps = iter([
+        "2026-09-21T21:00:01+08:00",  # 登记甲
+        "2026-09-21T21:00:02+08:00",  # 登记乙
+        "2026-09-21T21:00:03+08:00",  # 登记丙
+        "2026-09-21T21:00:04+08:00",  # 切回甲
+    ])
+    monkeypatch.setattr(catalog_workspace, "now_iso", lambda: next(stamps))
+
+    client, _home, _out_root = api
+    places = tmp_path / "places"
+    places.mkdir()
+    jia, yi, bing = (places / name for name in ("甲", "乙", "丙"))
+    for d in (jia, yi, bing):
+        d.mkdir()
+    for d in (jia, yi, bing):
+        assert post(client, "workspace_open", {"dir": str(d)}).status_code == 200
+    # 选区切回甲一次（已登记的路径只更新 last_opened_at）
+    assert post(client, "workspace_open", {"dir": str(jia)}).status_code == 200
+
+    order1 = [row["dir"] for row in client.get("/api/sessions").json()["sessions"]]
+    order2 = [row["dir"] for row in client.get("/api/sessions").json()["sessions"]]
+    # 甲在最前、丙其次、乙最后；连读两次，次序一致
+    assert order1 == order2 == [str(jia), str(bing), str(yi)]
+    listed = client.get("/api/sessions").json()
+    assert listed["recent"] == str(jia)
+    # 清单内容只换次序：还是那三行，一个不多一个不少
+    assert set(order1) == {str(jia), str(yi), str(bing)}
+
+
+def test_api_sessions_same_second_reads_stable_order(api, tmp_path, monkeypatch):
+    """同一秒登记的两条（7058f2e1）：连读两次给出同一次序——兜底链钉死，不随刷新变样。"""
+    from meeting.service.runtime_catalog import workspace as catalog_workspace
+
+    monkeypatch.setattr(
+        catalog_workspace, "now_iso", lambda: "2026-09-21T21:00:00+08:00"
+    )
+    client, _home, _out_root = api
+    places = tmp_path / "places"
+    places.mkdir()
+    yi, jia = places / "乙", places / "甲"
+    yi.mkdir()
+    jia.mkdir()
+    assert post(client, "workspace_open", {"dir": str(yi)}).status_code == 200
+    assert post(client, "workspace_open", {"dir": str(jia)}).status_code == 200
+
+    order1 = [row["dir"] for row in client.get("/api/sessions").json()["sessions"]]
+    order2 = [row["dir"] for row in client.get("/api/sessions").json()["sessions"]]
+    assert order1 == order2
+    # 两个时刻并列到底：倒序取大，目录字典序收尾（甲 > 乙），答案唯一
+    assert order1 == [str(jia), str(yi)]
+    assert client.get("/api/sessions").json()["recent"] == str(jia)
 
 
 def test_a_session_killed_mid_recording_reads_ended(api, tmp_path: Path):

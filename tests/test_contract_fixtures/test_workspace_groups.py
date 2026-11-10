@@ -36,16 +36,28 @@ pytestmark = pytest.mark.slow
 # ---------------------------------------------------------------------------
 
 
-def test_capture_workspace_group(tmp_path, make_client, contract_regen):
+def test_capture_workspace_group(tmp_path, make_client, monkeypatch, contract_regen):
     """`GET /api/sessions` 两份 + `workspace_open` / `workspace_remove` 两份成功体。
 
     注册表在 `~/.config/meeting/workspaces.json`（按路径去重）；每行的现场读数
     （`dir_exists` / `kind` / `suspected` / 盘上 `session.json` 的 `state`）由服务判，
     样本记的是**形状**：三个目的目录在采集用的临时根下造好（空目录 / 带 `session.json`
     的会议目录 / 有音频归档名没有 `session.json` 的疑似会议目录），路径与目录名一律
-    掩成 `<path>` / `<session-id>`。
+    掩成 `<path>` / `<session-id>`。清单按「最近在用」倒序给出（7058f2e1）——时间戳
+    是判据，秒精度的墙钟连着三次登记可能落进同一秒，两次再生成的清单次序就会在
+    「照登记倒序」与「目录字典序兜底」之间翻转（幂等硬要求红）；采集把登记时钟
+    钉成三拍递增的固定值，样本里的清单次序因此永远确定。
     """
     client = make_client({"capture.backend": "dev"})
+
+    from meeting.service.runtime_catalog import workspace as catalog_workspace
+
+    stamps = iter([
+        "2026-09-21T21:00:01+08:00",
+        "2026-09-21T21:00:02+08:00",
+        "2026-09-21T21:00:03+08:00",
+    ])
+    monkeypatch.setattr(catalog_workspace, "now_iso", lambda: next(stamps))
 
     # 空注册表的那一份（顶层第三格 `post_jobs`：此刻没有活儿在飞 → 空数组）
     listed = client.get("/api/sessions")

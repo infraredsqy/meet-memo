@@ -148,6 +148,17 @@ def _find_key(meetings: dict[str, Any], norm_key: str) -> str | None:
     return None
 
 
+def _recency_key(entry: dict[str, Any]) -> tuple[str, str, str]:
+    """「最近在用」次序判据的唯一住家：`(last_opened_at, added_at, dir)`。
+
+    主判据是 `last_opened_at`（最近一次被打开/切换）；同秒（并列）时按 `added_at`，
+    再按目录字典序——并列判据只为了让次序有唯一的答案（同一份注册表两次读取给出
+    同一次序），语义仍是最近操作的时间戳。清单端点（`GET /api/sessions`）的排序与
+    顶层 `recent` 读的是这同一条链（工作区清单节点 7058f2e1）。
+    """
+    return (entry["last_opened_at"], entry["added_at"], entry["dir"])
+
+
 class WorkspaceRegistry:
     """`workspaces.json` 的内存视图与原子写（按路径去重的最小增删查）。"""
 
@@ -213,19 +224,22 @@ class WorkspaceRegistry:
             )
         return entries
 
+    def ordered(self) -> list[dict[str, Any]]:
+        """全部条目按「最近在用」倒序：最近一次被打开/切换的那一条排最前。
+
+        排序判据就是 `_recency_key()` 这一条（与 `recent()` 同源）——清单端点
+        （`GET /api/sessions`）按它出清单，界面照应答次序渲染、自己不重排
+        （次序的口径正本在 `docs/contract.md` 4.8）。
+        """
+        return sorted(self.entries(), key=_recency_key, reverse=True)
+
     def recent(self) -> dict[str, Any] | None:
         """最近一次被打开/切换的那一条（**只从注册表读，不扫任何目录**）。
 
-        次序判据：`last_opened_at` 大者在前；同秒（并列）时按 `added_at`，再按目录
-        字典序——两条并列判据只是让「谁算最近」有唯一的答案，语义仍是最近操作的时间戳。
+        判据与 `ordered()` 同一条链（`_recency_key()`）：倒序的头一条就是它。
         """
-        entries = self.entries()
-        if not entries:
-            return None
-        return max(
-            entries,
-            key=lambda item: (item["last_opened_at"], item["added_at"], item["dir"]),
-        )
+        entries = self.ordered()
+        return entries[0] if entries else None
 
     def open(self, value: Any, *, now: str | None = None) -> dict[str, Any]:
         """「打开目录」的一条登记：新路径加一条，老路径只更新 `last_opened_at`。

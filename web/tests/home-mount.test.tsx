@@ -223,6 +223,29 @@ describe('挂载即取列表（review-2 C1/m2）', () => {
     ).toBe(true);
   });
 
+  it('清单行按应答给的次序渲染：喂乱序的应答，界面不许自己重排（7058f2e1）', async () => {
+    // 服务端按「最近在用」倒序排好才给（契约 4.8）：应答次序故意与每种常见重排都错开
+    // ——拼音 localeCompare 升序得 [丙,甲,乙]、码点序得 [丙,乙,甲]、reverse 得
+    // [甲,丙,乙]，全都 ≠ 应答序 [乙,丙,甲]——界面若自作主张重排，这条必红。
+    const first = row({ dir: 'C:\\会\\乙', session_id: '乙' });
+    const order = [
+      first,
+      row({ dir: 'C:\\会\\丙', session_id: '丙' }),
+      row({ dir: 'C:\\会\\甲', session_id: '甲' }),
+    ];
+    fetchSessionsMock.mockResolvedValue(list({ sessions: order, recent: first.dir }));
+    const renderer = await mountHome();
+
+    const names = optionsOf(renderer).map(
+      (node) =>
+        node.props.children.find(
+          (child: { props?: { className?: string } }) =>
+            child?.props?.className === 'wslist__name',
+        )?.props.children,
+    );
+    expect(names).toEqual(['乙', '丙', '甲']);
+  });
+
   it('空注册表：出的是空态（logo + 添加工作区指引），不再是卡死的「正在取列表…」', async () => {
     fetchSessionsMock.mockResolvedValue(list());
     const renderer = await mountHome();

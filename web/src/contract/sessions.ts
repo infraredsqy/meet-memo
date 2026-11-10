@@ -72,7 +72,9 @@ export const postJobCellSchema = z
   })
   .strict();
 
-/** `GET /api/sessions` 的应答体。`recent` = 最近一次被打开/切换那条的目录（或 `null`）；
+/** `GET /api/sessions` 的应答体。`sessions` 按「最近在用」倒序——**服务排好给出**
+ *  （判据与 `recent` 同一条链，契约 4.8），界面照应答次序渲染、自己不重排。
+ *  `recent` = 最近一次被打开/切换那条的目录（或 `null`）；
  *  `post_jobs` = 此刻在飞的那几趟活（多槽登记，空数组 = 没有在跑的）。 */
 export const sessionsResponseSchema = z
   .object({
