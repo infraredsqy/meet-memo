@@ -66,11 +66,15 @@ PYTHONPATH_BASELINE = os.environ.get("PYTHONPATH")
 
 #: 本服务的全部环境变量（子进程 env 一律先剔除它们）
 #:
-#: **从 `meeting.config` 的公开常量派生**（`ENV_KEYS` 的**键**加 `ENV_NO_BROWSER`），
-#: 不再手抄一份：将来给 `ENV_KEYS` 加键时这里自动跟上，不会漏剔（手抄的副本一旦漏掉
-#: 新键，宿主设过同名变量就会让用例红得莫名其妙）。派生结果与契约 §3.11 的五个变量名
-#: 逐名一致，由 `tests/test_config.py` 里那一条 pin 住。
-SERVICE_ENV_NAMES = tuple(config_module.ENV_KEYS) + (config_module.ENV_NO_BROWSER,)
+#: **从 `meeting.config` 的公开常量派生**（`ENV_KEYS` 的**键**加 `ENV_NO_BROWSER`
+#: 与 `ENV_CONFIG_DIR` 这两个 env-only 变量——后者设了会把 `config_dir()` 整组
+#: 拐走，子进程用例的家目录重定向因此必须剔它），不再手抄一份：将来给 `ENV_KEYS`
+#: 加键时这里自动跟上，不会漏剔（手抄的副本一旦漏掉新键，宿主设过同名变量就会
+#: 让用例红得莫名其妙）。派生结果由 `tests/test_config.py` 里那一条 pin 住。
+SERVICE_ENV_NAMES = (
+    tuple(config_module.ENV_KEYS)
+    + (config_module.ENV_NO_BROWSER, config_module.ENV_CONFIG_DIR)
+)
 
 #: 子进程启动命令的动作词（R15 的两个词）
 ACTION_WEB = "web"

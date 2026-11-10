@@ -1,7 +1,9 @@
 """配置层（phase1 §3.11，B11 的正确边界）。
 
 `~/.config/meeting/config.json`：点号扁平键名的单层映射（嵌套形状不合法），
-不迁移 V1 的 `~/.config/meeting_notes/`。优先级：环境变量 > `config.json` > 代码默认值（B11）。
+不迁移 V1 的 `~/.config/meeting_notes/`。配置目录整组可被 `MEETING_CONFIG_DIR`
+指到别处（`config_dir()` 一处生效：注册表、配置文件、会后任务记录与日志默认
+落点跟着搬；空串按没设）。优先级：环境变量 > `config.json` > 代码默认值（B11）。
 热读键见 `HOT_KEYS`（写盘即生效），其余键启动时读一次；环境变量一律在 import / 启动时求值
 （B11 的坑）。`alert.*` 是判定阈值，`alarm.*` 只管出声；`heartbeat.interval_seconds` 是界面
 心跳（管失联横幅），与服务侧采集帧心跳（`max(2.0s, 3 × frame_interval)`，管 `recording_alive`）
@@ -234,6 +236,13 @@ ENV_SUMMARY_API_KEY = "MEETING_SUMMARY_API_KEY"
 #: 值为 `1` 时关掉浏览器打开（测试与无头场景）
 ENV_NO_BROWSER = "MEETING_NO_BROWSER"
 
+#: 配置目录整组重定向（探针与手工跑的隔离入口，pytest 之外也要能一行隔离）：
+#: 设了它，`config_dir()` 整组跟着走——`config.json`、`workspaces.json`、会后任务
+#: 记录与日志默认落点全从那一个函数推出，一处设、整组搬。**不指向任何配置键**
+#: （与 `ENV_NO_BROWSER` 同档，不进 `ENV_KEYS` 冻结表），空串按没设；显式
+#: `log.dir`（config.json 或 `MEETING_LOG_DIR`）仍以显式值为准。
+ENV_CONFIG_DIR = "MEETING_CONFIG_DIR"
+
 # `settings_update` 的键态三分表（phase2 §3.5.5）：只有逐条列出的字面键名合法，
 # 不按前缀归组、没有前缀白名单，表外一律 `invalid_setting`(400)。设备键位是点号
 # 字面键名，快照里才收成子键；嵌套形状不合法。
@@ -431,7 +440,15 @@ def home_dir() -> str:
 
 
 def config_dir() -> str:
-    """配置与日志的根目录：`~/.config/meeting`。"""
+    """配置与日志的根目录：`MEETING_CONFIG_DIR` 设了用它（空串按没设），没设 `~/.config/meeting`。
+
+    重定向是给 pytest 之外的探针与手工跑的隔离入口；取值口径与字符串配置键同档
+    （strip 后为空按没设，非空原样用、不归一）。注册表、`config.json`、会后任务
+    记录与 `default_log_dir()` 全部从本函数推出——一处设、整组搬。
+    """
+    raw = os.environ.get(ENV_CONFIG_DIR, "")
+    if raw.strip():
+        return raw
     return os.path.join(home_dir(), *CONFIG_DIR_NAME)
 
 
@@ -859,6 +876,7 @@ __all__ = [
     "DEFAULT_VALUES",
     "DEVICE_KEYS",
     "DEVICE_SETTING_KEYS",
+    "ENV_CONFIG_DIR",
     "ENV_KEYS",
     "ENV_NO_BROWSER",
     "ENV_SUMMARY_API_KEY",

@@ -1140,10 +1140,17 @@ def _isolated_home(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     「没读过配置」在进程内是同一件事（`config.get()` 无生效配置时退回 `DEFAULT_VALUES`），
     写一份测试层缺省进去反而会把「入口有没有真的读配置」这一类断言搅浑
     （`tests/test_cli_post_config.py` 的用例自己写它要的那一份）。
+
+    **`MEETING_CONFIG_DIR` 在这里一并摘掉**：它整组改写 `config_dir()`（注册表、
+    `config.json`、日志默认落点全跟着走），机主环境里设了它，家目录重定向就被整组
+    拐去那个目录——隔离与真家目录守卫盯的落点都会落空。
     """
     home = Path(tempfile.mkdtemp(prefix="pytest-isolated-home-"))
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
+    from meeting import config as config_module
+
+    monkeypatch.delenv(config_module.ENV_CONFIG_DIR, raising=False)
     try:
         yield home
     finally:

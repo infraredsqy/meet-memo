@@ -161,10 +161,12 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 `SETTING_KEY_GROUPS` 为准，口径见 `docs/service.md`。**没有 `output.root` 键**：
 一场会放哪由它的工作区目录给（start 显式传 `args.dir`），配置清空也照样能开会。
 
-**环境变量一律在启动时求值**，改了不会热生效。本服务的环境变量一共四个：
+**环境变量一律在启动时求值**，改了不会热生效。本服务的环境变量一共五个：
 `MEETING_PORT` / `MEETING_LOG_DIR` / `MEETING_CAPTURE` /
-`MEETING_NO_BROWSER`；另有 `MEETING_SUMMARY_API_KEY` 单独映射会中总结那一格的密钥
+`MEETING_NO_BROWSER` / `MEETING_CONFIG_DIR`；另有 `MEETING_SUMMARY_API_KEY` 单独映射会中总结那一格的密钥
 （给 `summary.api_key` 供一个不进配置文件的来源；预设模式走预设里那一格密钥，这一格不参与）。
+`MEETING_CONFIG_DIR` 是探针与手工跑的整组隔离入口：设了它，配置文件、工作区注册表、
+会后任务记录与日志默认落点都落到它指定的目录，取值口径见 `docs/service.md` 的环境变量表。
 
 ---
 

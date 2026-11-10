@@ -476,14 +476,17 @@ def test_env_mapping_is_the_four_frozen_names_plus_the_summary_key():
     }
     assert config_module.ENV_NO_BROWSER == "MEETING_NO_BROWSER"
     assert config_module.ENV_SUMMARY_API_KEY == "MEETING_SUMMARY_API_KEY"
+    # env-only 的整组重定向入口（不指向配置键，与 `ENV_NO_BROWSER` 同档）也在这里钉名
+    assert config_module.ENV_CONFIG_DIR == "MEETING_CONFIG_DIR"
 
 
 def test_helpers_service_env_names_derive_from_the_frozen_names():
-    """测试层的剔除清单由这张表派生，与 §3.11 的清单逐名对齐（密钥那一格排在最后）。
+    """测试层的剔除清单由这张表派生，与 §3.11 的清单逐名对齐（env-only 的排最后）。
 
     `_helpers.SERVICE_ENV_NAMES` 原先手抄了一份副本；改成派生之后，这一条同时钉住两边：
-    派生结果**必须**恰好等于契约里那四个名字（顺序也照 §3.11）加新增的密钥那一格，
-    因此手抄副本不再有漏剔的余地，`ENV_KEYS` 将来多出键时这里会先红。
+    派生结果**必须**恰好等于契约里那四个名字（顺序也照 §3.11）加密钥那一格、再加两个
+    env-only 变量（`MEETING_NO_BROWSER` / `MEETING_CONFIG_DIR`），因此手抄副本不再有
+    漏剔的余地，`ENV_KEYS` 将来多出键时这里会先红。
     （`MEETING_OUT_ROOT` 随 `output.root` 退场，不再出现在清单里。）
     """
     assert helpers.SERVICE_ENV_NAMES == (
@@ -492,6 +495,7 @@ def test_helpers_service_env_names_derive_from_the_frozen_names():
         "MEETING_CAPTURE",
         "MEETING_SUMMARY_API_KEY",
         "MEETING_NO_BROWSER",
+        "MEETING_CONFIG_DIR",
     )
 
 

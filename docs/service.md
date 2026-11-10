@@ -44,7 +44,7 @@
 
 ## 2. 配置
 
-- **位置**：`~/.config/meeting/config.json`（Windows 上即 `%USERPROFILE%\.config\meeting\config.json`）。V1 的 `~/.config/meeting_notes/` 不迁移。
+- **位置**：`~/.config/meeting/config.json`（Windows 上即 `%USERPROFILE%\.config\meeting\config.json`）。V1 的 `~/.config/meeting_notes/` 不迁移。设 `MEETING_CONFIG_DIR` 时配置目录整组跟着走（取值口径见下方环境变量表）。
 - **形状**：点号扁平键名的单层映射，例如 `{"web.port": 8766}`。嵌套对象不合法；写了键表里没有的键也不合法。
 - **优先级**：环境变量 > `config.json` > 代码默认值。文件不存在 → 用默认值照常起。
 - **`settings_update` 会写这个文件**（原子写：同目录临时文件 + `os.replace`），只写文件里已有的键 + 这次改动的键，不落默认值。
@@ -58,7 +58,7 @@
 | `web.port` | `8765` | 服务绑定端口 | 重启 |
 | `web.dist_dir` | `web/dist` | `GET /` 挂的构建产物目录 | 重启 |
 | `log.level` | `INFO` | 日志级别 | 重启 |
-| `log.dir` | `~/.config/meeting/logs` | 服务级 log 的目录 | 重启 |
+| `log.dir` | `<配置目录>/logs`（未设 `MEETING_CONFIG_DIR` 时即 `~/.config/meeting/logs`） | 服务级 log 的目录 | 重启 |
 | `log.max_bytes` | `5 MiB` | 日志轮转上限 | 重启 |
 | `log.backup_count` | `3` | 轮转保留的备份份数 | 重启 |
 | `alert.silence_dbfs` | `-60` | 低于此值算这一路在静默（判定阈值） | 重启 |
@@ -110,6 +110,7 @@
 | `MEETING_LOG_DIR` | → `log.dir` |
 | `MEETING_CAPTURE` | → `capture.backend` |
 | `MEETING_NO_BROWSER=1` | 关掉自动打开浏览器（不指向配置键） |
+| `MEETING_CONFIG_DIR` | 配置目录整组重定向：`config.json`、`workspaces.json`、会后任务记录与日志默认落点都落到它指定的目录（pytest 之外的探针与手工跑一行隔离）；空串按没设；显式 `log.dir`（config.json 或 `MEETING_LOG_DIR`）仍以显式值为准。不指向配置键 |
 | `MEETING_SUMMARY_API_KEY` | → `summary.api_key`（给密钥一个不进配置文件的来源；预设模式走预设里那一格，平铺键不参与） |
 
 环境变量一律在启动时求值，改了不会热生效。
