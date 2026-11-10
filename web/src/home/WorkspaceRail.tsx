@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 
 import { probeDecision } from '../api/sessions';
 import { ConfirmDialog, DialogFrame } from '../dialogs';
@@ -11,6 +11,25 @@ import { rowStatusView } from './progress';
 import { failureFrom, type ActionFailureView } from '../failure';
 import type { GpuBusyView } from './progress';
 import type { PostJobCell, SessionsResponse } from '../contract';
+import {
+  applyRailWidth,
+  clampRailWidth,
+  railGripAllowedNow,
+  railWidthBoundsPx,
+  RAIL_GRIP_MEDIA_QUERY,
+  RAIL_WIDTH_STORAGE_KEY,
+  remPixelSize,
+  storedRailWidth,
+} from './railWidth';
+
+/** 浏览器存档的读法：隐私模式等存不进的场合按没存过算。 */
+function readStoredRailWidth(): string | null {
+  try {
+    return window.localStorage.getItem(RAIL_WIDTH_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
 
 /**
  * 「显卡忙不忙」那一格（R31）：读法与判据在 `home/progress.ts` 的 `gpuBusyView()`，
@@ -42,6 +61,10 @@ export function GpuCell({ gpu }: { gpu: GpuBusyView }): ReactNode {
  *
  * `detail` 是会中屏塞进来的那一小块（选中工作区的读数 + 那颗开始录音钮）；
  * 工作台不给 —— 它的详情是右栏那整块 `wspane`。
+ *
+ * 栏宽可拖（`./railWidth`）：拖柄是右沿那条分隔线本身，两屏共用同一条宽度
+ * （读根节点上的 `--rail-w`）、上下限夹住、拖完记住（只记宽度这一件事）、
+ * 双击回默认；窄屏那一档不摆拖柄。
  */
 export function WorkspaceRail({
   sessions,
@@ -77,6 +100,97 @@ export function WorkspaceRail({
   /** 这条栏自己动作的忙（与调用方的忙取或，按钮才不会两边各按各的）。 */
   const [railBusy, setRailBusy] = useState(false);
   const busyOr = busy || railBusy;
+
+  // -- 栏宽（可拖，两屏共用一条） -------------------------------------------
+  /**
+   * 这条栏的宽度：存档说了算，没存过按默认档。宽度是界面偏好，只记这一件事 ——
+   * 写盘只有 `RAIL_WIDTH_STORAGE_KEY` 一格，不记任何会话状态；两屏各自挂载都读
+   * 同一份存档，所以在哪一屏拖完另一屏也是那一档。三档与夹法在 `./railWidth`。
+   */
+  const [railWidth, setRailWidth] = useState<number>(
+    () => storedRailWidth(readStoredRailWidth, remPixelSize()) ?? railWidthBoundsPx(remPixelSize()).def,
+  );
+  /** 拖动 listeners 要拿「此刻的宽度」，走 ref 转手，闭包不握旧值。 */
+  const railWidthRef = useRef(railWidth);
+  railWidthRef.current = railWidth;
+  /** 拖柄的出身：宽屏分栏那档才有；窄屏（左栏摞到内容上面）没有可拖的两栏。 */
+  const [gripAllowed, setGripAllowed] = useState(railGripAllowedNow);
+  /** 拖动的起点（按下那一刻的指针位置与栏宽）。 */
+  const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
+
+  // 宽度落到根节点的 `--rail-w` 上：工作台 `.home` 与会中 `.wsbar-page` 两处 grid
+  // 列宽都读这一个变量（live.css），两屏天然同一条宽度。
+  useEffect(() => {
+    const rootEl = typeof document !== 'undefined' ? document.documentElement : null;
+    if (!rootEl) return; // node 侧挂载用例没有真 DOM（document 是个空壳）
+    applyRailWidth(railWidth, rootEl.style);
+  }, [railWidth]);
+
+  // 窄档 ↔ 宽档跨越时拖柄跟着出没（matchMedia 的 change 一拍就翻，不必重挂载）。
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    let mql: MediaQueryList;
+    try {
+      mql = window.matchMedia(RAIL_GRIP_MEDIA_QUERY);
+    } catch {
+      return;
+    }
+    const update = (): void => setGripAllowed(!mql.matches);
+    update();
+    if (typeof mql.addEventListener !== 'function') return;
+    mql.addEventListener('change', update);
+    return () => mql.removeEventListener('change', update);
+  }, []);
+
+  const onGripPointerDown = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    if (event.button !== 0) return; // 主键才拖
+    event.preventDefault(); // 不起文本选区、不触发拖拽
+    dragRef.current = { startX: event.clientX, startWidth: railWidthRef.current };
+    setDragging(true);
+    const target = event.currentTarget;
+    if (typeof target.setPointerCapture === 'function') {
+      target.setPointerCapture(event.pointerId);
+    }
+  };
+
+  // 拖动中：指针横移多少，栏宽就在存档那档上跟着走多少，越界夹住；松手才写盘
+  // （写盘只在拖完那一刻，拖动过程不折腾 localStorage）。
+  useEffect(() => {
+    if (!dragging) return;
+    const start = dragRef.current;
+    if (start === null) return;
+    const remPx = remPixelSize();
+    const move = (event: PointerEvent): void => {
+      setRailWidth(clampRailWidth(start.startWidth + (event.clientX - start.startX), remPx));
+    };
+    const finish = (): void => {
+      try {
+        window.localStorage.setItem(RAIL_WIDTH_STORAGE_KEY, String(Math.round(railWidthRef.current)));
+      } catch {
+        // 存不进就只活这一页，宽度照常生效
+      }
+      setDragging(false);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', finish);
+    window.addEventListener('pointercancel', finish);
+    return () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', finish);
+      window.removeEventListener('pointercancel', finish);
+    };
+  }, [dragging]);
+
+  /** 双击拖柄回到默认档：退路。存档清掉，宽度回到缺省那一档。 */
+  const onGripDoubleClick = (): void => {
+    try {
+      window.localStorage.removeItem(RAIL_WIDTH_STORAGE_KEY);
+    } catch {
+      // 存档清不掉也无碍：宽度先回默认
+    }
+    setRailWidth(railWidthBoundsPx(remPixelSize()).def);
+  };
 
   /** 登记本体（`workspace_open` 动作 + 失败块 + 重取；骨架在 `./dispatch`）。 */
   const openDirNow = (dir: string): void => {
@@ -194,6 +308,22 @@ export function WorkspaceRail({
           <GpuCell gpu={gpu} />
         </div>
       </aside>
+
+      {/* 拖柄 = 左栏右沿那条分隔线本身：1px 的线不长大，把手是线上一层透明的
+          命中区（`live.css` 的 `.railgrip`，7px 一档），光标左右箭头；拖动改宽度
+          （两屏共用、上下限夹住、松手记住），双击回到默认档。它是这条栏的兄弟
+          而不是子元素：挂在两屏的 grid 容器上（`.home` / `.wsbar-page`），贴着
+          `--rail-w` 那条分界整高铺开，窄屏摞成一栏的那档不出（gripAllowed）。 */}
+      {gripAllowed && (
+        <div
+          className="railgrip"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="拖动调整左栏宽度；双击回到默认宽度"
+          onPointerDown={onGripPointerDown}
+          onDoubleClick={onGripDoubleClick}
+        />
+      )}
 
       {picker && (
         <DirPicker

@@ -1697,10 +1697,13 @@ input[type="checkbox"] {
   color: var(--t-ink);
 }
 
-/* 2. 首页主体：左边一条 17rem 的工作区列，右边整块留给选中的那个工作区。 */
+/* 2. 首页主体：左边一条工作区列，右边整块留给选中的那个工作区。
+   列宽可拖（`.railgrip`）：读根节点上的 `--rail-w`，没存过按缺省 17rem ——
+   会中屏那条栏读同一个变量，两屏共用同一条宽度（`home/railWidth.ts` 写根节点）。 */
 .home {
+  position: relative;
   display: grid;
-  grid-template-columns: 17rem minmax(0, 1fr);
+  grid-template-columns: var(--rail-w, 17rem) minmax(0, 1fr);
   min-height: 0;
   flex: 1;
 }
@@ -2378,10 +2381,13 @@ input[type="checkbox"] {
 
 /* 6.6 会中屏的常驻工作区栏（d61829f1）：与工作台同一条左栏（`home__list`），grid
    两栏摆法 —— 左边那条栏、右边整格留给会中自己的内容（居中的 1440 单列，`.shell`
-   的宽度上限在这一格照旧成立）。左栏吸顶自滚，会中内容的长短不牵动它。 */
+   的宽度上限在这一格照旧成立）。左栏吸顶自滚，会中内容的长短不牵动它。
+   列宽可拖：两屏共用同一条宽度（读根节点 `--rail-w`，缺省 17rem），上下限夹住、
+   拖完记住、双击回默认（`home/railWidth.ts`）；窄屏（≤840）两栏摞一栏，拖柄不摆。 */
 .wsbar-page {
+  position: relative;
   display: grid;
-  grid-template-columns: 17rem minmax(0, 1fr);
+  grid-template-columns: var(--rail-w, 17rem) minmax(0, 1fr);
   align-items: start;
 }
 
@@ -2394,6 +2400,21 @@ input[type="checkbox"] {
 
 .wsbar-main {
   min-width: 0;
+}
+
+/* 拖柄就是左栏右沿那条分隔线本身：1px 的线不长大，把手是线上的一层透明命中区
+   （7px 一档，比线宽），光标在此变左右箭头；双击回到默认档。把手不带自己的
+   底色与边线 —— 页面还是线与字两种笔画，不多出第三种。左栏右沿贴着哪一格，
+   由 `--rail-w` 现算（`home/railWidth.ts` 夹好的那档）。 */
+.railgrip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--rail-w, 17rem) - 3px);
+  width: 7px;
+  z-index: var(--z-sticky);
+  cursor: col-resize;
+  touch-action: none;
 }
 
 /* 栏里那块选中工作区的小详情（会中屏给 `detail` 这一格）：清单点哪行说哪场。
@@ -2932,6 +2953,12 @@ button.mat__name:focus-visible {
   .wsbar-page > .home__list {
     position: static;
     max-height: 40vh;
+  }
+
+  /* 摞成一栏之后没有可拖的分界，拖柄不摆（`home/railWidth.ts` 的同一档断点）；
+     从窄回到宽屏时，记住的那一档宽度照旧生效 */
+  .railgrip {
+    display: none;
   }
 
   .home__aside {
