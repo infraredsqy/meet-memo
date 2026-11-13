@@ -1,4 +1,4 @@
-"""**假 `webbrowser` 模块 —— 测试专用**（phase1 §3.5 第 5 条 / §5 第 1 条的测试隔离设施）。
+"""**假 `webbrowser` 模块 —— 测试专用**（设计口径第 5 条 / §5 第 1 条的测试隔离设施）。
 
 它的角色是**测试隔离设施**：被测的是 `meeting` 包，这里提供的是子进程里顶替标准库的那一份
 同名声明的替身。它由 `tests/_helpers.py` 的 `fake_browser_module()` 通过 `PYTHONPATH`

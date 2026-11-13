@@ -134,7 +134,7 @@ describe('可用性与禁用原因', () => {
     expect(summaryAvailable(availability({ topState: 'ended' }))).toBe(false);
     expect(summaryWhy(availability({ topState: 'ended' }))).toBe(
       '本场已结束，仅录音中可用',
-    );
+);
   });
 
   it('转写健康位是「停」→ 禁用，原因用设计章 4.5 那一句', () => {
@@ -221,7 +221,7 @@ describe('五档失败各画一遍（按 code + detail 的键，不看 message�
     const view = summaryFailureView(
       failure('not_recording', {}, '现在没有在录的场次，总结动作无效'),
       0.2,
-    );
+);
     expect(view.text).toBe('现在没有在录的场次，总结动作无效');
     expect(view.lines).toEqual([]);
   });
@@ -234,7 +234,7 @@ describe('五档失败各画一遍（按 code + detail 的键，不看 message�
         legal: ['5m', '15m', '30m', 'full'],
       }),
       0.1,
-    );
+);
     expect(view.text).toBe('窗口档位不合法。');
     expect(view.lines.join(' ')).toContain('90m');
     expect(view.lines.join(' ')).toContain('5m / 15m / 30m / full');
@@ -250,7 +250,7 @@ describe('五档失败各画一遍（按 code + detail 的键，不看 message�
     const view = summaryFailureView(
       failure('summary_failed', { missing: ['summary.base_url', 'summary.api_key'] }),
       0.1,
-    );
+);
     expect(view.text).toContain('模型端点没配齐');
     expect(view.lines.join(' ')).toContain('summary.base_url、summary.api_key');
   });
@@ -259,16 +259,16 @@ describe('五档失败各画一遍（按 code + detail 的键，不看 message�
     const view = summaryFailureView(
       failure('summary_failed', { elapsed_seconds: 25.0, attempts: 3 }),
       0.1,
-    );
+);
     expect(view.text).toBe('超时了，等待 25 秒仍未返回结果，请重试。');
     expect(view.lines).toEqual([]);
     // 四舍五入：24.6 → 25、24.4 → 24
     expect(
       summaryFailureView(failure('summary_failed', { elapsed_seconds: 24.6 }), 0).text,
-    ).toBe('超时了，等待 25 秒仍未返回结果，请重试。');
+).toBe('超时了，等待 25 秒仍未返回结果，请重试。');
     expect(
       summaryFailureView(failure('summary_failed', { elapsed_seconds: 24.4 }), 0).text,
-    ).toBe('超时了，等待 24 秒仍未返回结果，请重试。');
+).toBe('超时了，等待 24 秒仍未返回结果，请重试。');
   });
 
   it('画法与 `message` 无关：换成一句无关的话，五档一个字都不变', () => {
@@ -301,7 +301,7 @@ describe('五档失败各画一遍（按 code + detail 的键，不看 message�
     const view = summaryFailureView(
       { code: SUMMARY_CLIENT_TIMEOUT, message: '', fields: { elapsed_seconds: 30.4 } },
       30.4,
-    );
+);
     expect(view.text).toBe('超时了，等待 30 秒仍未返回结果，请重试。');
   });
 
@@ -309,7 +309,7 @@ describe('五档失败各画一遍（按 code + detail 的键，不看 message�
     const view = summaryFailureView(
       { code: '', message: '', fields: { subject: '动作应答形状不符合契约' } },
       null,
-    );
+);
     expect(view.text).toContain('动作应答形状不符合契约');
   });
 });

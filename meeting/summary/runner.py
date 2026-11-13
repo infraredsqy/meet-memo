@@ -44,7 +44,7 @@ WINDOW_LABELS_BY_CHOICE = WINDOW_LABELS
 
 @dataclass(frozen=True)
 class SummaryOutcome:
-    """一次会中总结的收场（形状由 `phase1/task.md` 的接口契约冻结，phase2 照它回应答体）。"""
+    """一次会中总结的收场（形状由设计口径的接口契约冻结，设计照它回应答体）。"""
 
     ok: bool
     window: str
@@ -235,7 +235,7 @@ def run_summary(
 
 
 def sections_for(outcome: SummaryOutcome) -> dict[str, list[str]]:
-    """收场 → 三小段的可变列表形状（phase2 往应答体里放时用）。"""
+    """收场 → 三小段的可变列表形状（设计往应答体里放时用）。"""
     return {name: list(getattr(outcome, name)) for name in SECTION_ORDER}
 
 

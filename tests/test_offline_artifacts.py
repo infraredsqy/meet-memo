@@ -768,7 +768,7 @@ def test_status_file_carries_the_silent_spans_of_the_whole_session(tmp_path) -> 
 
 def test_status_file_rejects_an_unknown_state(tmp_path) -> None:
     """状态只认五档（`running` / `done` / `partial` / `failed` / `interrupted`），写别的一律抛
-    （不许在盘上留下一版读不懂的状态）。`interrupted` 是「打断会后」节点（b1c6a58e）加的
+    （不许在盘上留下一版读不懂的状态）。`interrupted` 是「打断会后」节点加的
     那一档：跑到块边界被人停的终态。"""
     artifacts.write_status(
         tmp_path / "status.json",

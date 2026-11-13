@@ -1,4 +1,4 @@
-"""`tests/test_alerts.py` —— 告警判定与阈值（phase2 §5.1 第三行；§3.3）。
+"""`tests/test_alerts.py` —— 告警判定与阈值（设计口径第三行；§3.3）。
 
 **这一层是纯判定、进程内单测**（`AlertJudge` 不持有快照、不写状态、不广播）：
 逐帧累计、分级、抑制窗口与 `muted` 都由它算出，`ServiceRuntime` 只把结论落到快照上。

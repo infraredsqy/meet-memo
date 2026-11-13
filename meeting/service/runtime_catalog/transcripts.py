@@ -1,6 +1,6 @@
-"""``RuntimeCatalogMixin`` 的「稿子正文」域分片：``GET /api/sessions/{id}/transcripts``。
+"""RuntimeCatalogMixin 的「稿子正文」域分片：GET /api/sessions/{id}/transcripts。
 
-方法与方法间注释均自拆分前的 ``runtime_catalog.py`` 单文件 mixin 一字不改复制；
+方法与方法间注释均自拆分前的 runtime_catalog.py 单文件 mixin 一字不改复制；
 本文件自写内容只有模块 docstring、import 与类声明行（模块级的缺稿判读小函数一并在此）。
 """
 from __future__ import annotations

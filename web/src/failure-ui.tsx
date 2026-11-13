@@ -37,9 +37,9 @@ export function FailureBlock({
           <div className="fail__log">
             这一档没有失败信封、也没有 code —— 服务在中间件那一道就把它挡回去了。
           </div>
-        )}
+)}
       </div>
-    );
+);
   }
   if (failure.kind === 'unclassified') {
     // 兜底档：没有失败信封、也没有 code —— 界面不替它编一个。形状照 forbidden 那条。
@@ -48,7 +48,7 @@ export function FailureBlock({
         <div className="fail__why">{failure.text}</div>
         <div className="fail__log">这一档没有失败信封、也没有 code。</div>
       </div>
-    );
+);
   }
   return (
     <div className="fail">
@@ -59,22 +59,22 @@ export function FailureBlock({
         <ul className="fail__next">
           {failure.detail.map((line) => (
             <li key={line}>{line}</li>
-          ))}
+))}
         </ul>
-      )}
+)}
       {extraUnique.length > 0 && (
         <ul className="fail__next">
           {extraUnique.map((line) => (
             <li key={line}>{line}</li>
-          ))}
+))}
         </ul>
-      )}
+)}
       {logPath !== null && (
         <>
           <code className="codeblock">{logPath}</code>
           <div className="fail__log">log：{logPath}</div>
         </>
-      )}
+)}
     </div>
-  );
+);
 }

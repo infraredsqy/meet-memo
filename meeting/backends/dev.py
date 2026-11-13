@@ -163,7 +163,7 @@ class DevCaptureBackend:
         self._thread = None
 
     def finalize(self) -> None:
-        """**只登记**（不写真实音频）：音频字节的写入归 `dca4539b`。"""
+        """**只登记**（不写真实音频）：音频字节的写入归。"""
         self.finalize_calls += 1
         _log.info("dev 替身 finalize()：只登记，不写真实音频（session=%s）", self._session_dir)
 

@@ -1,8 +1,8 @@
-"""配置隔离的回归用例（`65dd3e4c` phase3 **critical-2** 的钉子）。
+"""配置隔离的回归用例（设计 **critical-2** 的钉子）。
 
 ## 要钉住的现象（本轮复审复算出来的现场）
 
-`65dd3e4c` phase3 给 `meeting post` 的入口加了一步配置前奏：
+ 设计给 `meeting post` 的入口加了一步配置前奏：
 `meeting/cli.py::post()` → `_load_config_or_exit()`（`config.load()` + 值级校验）→
 `cli.py:250 config_module.set_current(loaded)`。这条前奏本身是本单元要的东西，副作用是
 **在进程内走真入口的用例会去读 `~/.config/meeting/config.json`**：
@@ -15,7 +15,7 @@
     `minutes_hook_selector()`（`config.get("minutes.hook")`，**无视用例对
     `registry.resolve_minutes_hook` 的打桩**），于是 `launch_module.configured_branch("null")`
     当场抛 `LaunchError`：24 条用例（`test_minutes_runner.py` 18、
-    `test_post_idempotency.py` 4、`test_minutes_evidence.py` 2）被串档打红。
+    `test_post_idempotency.py` 4、`test_summary_action.py` 2）被串档打红。
 
 ## 本文件钉的四件事
 

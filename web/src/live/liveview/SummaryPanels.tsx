@@ -38,7 +38,7 @@ function SummaryCard({
       </div>
       <div id="summary-card-body">{children}</div>
     </div>
-  );
+);
 }
 
 /** 三小段：段标题 + 那几条（结果面板与记录回看两处共用同一种摆法）。 */
@@ -59,11 +59,11 @@ function SummarySections({
             <p className="summary-card__item" key={`${section.title}-${index}`}>
               {item}
             </p>
-          ))}
+))}
         </div>
-      ))}
+))}
     </>
-  );
+);
 }
 
 /** 失败面板：一句原因 +（有就有的）补充行，右上角同样是 `关闭`。 */
@@ -81,9 +81,9 @@ function SummaryFailureCard({
         <p className="summary-card__item" key={line}>
           {line}
         </p>
-      ))}
+))}
     </SummaryCard>
-  );
+);
 }
 
 /**
@@ -130,13 +130,13 @@ export function SummaryPanels({
             />
           </SummaryCard>
         </section>
-      )}
+)}
 
       {summaryFailureText !== null && (
         <section className="band band--quiet">
           <SummaryFailureCard view={summaryFailureText} onClose={() => summary.close()} />
         </section>
-      )}
+)}
 
       {/* 本场总结记录：入口在采集带右侧，展开的内容跟到这里（与结果面板同一处落位）。
 
@@ -153,9 +153,9 @@ export function SummaryPanels({
             {logError !== null && <p className="summary-card__item">{logError}</p>}
             {logView !== null && logView.emptyNote !== null && (
               <p className="summary-card__item">{logView.emptyNote}</p>
-            )}
+)}
             {/* 每一次一条：`[<HH:MM>] 取的「<窗口档位>」` 起一小段，下面按
-                讲什么 / 讲到哪 / 丢掉什么 的次序列那几条（`1987cb20/phase3/task.md`
+                讲什么 / 讲到哪 / 丢掉什么的次序列那几条（`/设计/task.md`
                 的「记录回看」那一节的排版；与设计稿把每条压成一句话的写法不一致，
                 这一处偏差记在交付报告里）。
 
@@ -174,12 +174,12 @@ export function SummaryPanels({
                       <SummarySections sections={entry.sections} emptyNote={entry.emptyNote} />
                     </div>
                   </div>
-                ))}
+))}
               </div>
-            )}
+)}
           </SummaryCard>
         </section>
-      )}
+)}
     </>
-  );
+);
 }

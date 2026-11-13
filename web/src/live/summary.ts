@@ -46,7 +46,7 @@ export function windowLabel(choice: SummaryWindowChoice | string): string {
 }
 
 /**
- * **客户端兜底超时**：超过它还没回就按超时那一句画（`1987cb20/phase3/task.md` 的「口径」）。
+ * **客户端兜底超时**：超过它还没回就按超时那一句画（`/设计/task.md` 的「口径」）。
  *
  * 它与服务侧那条墙钟预算（`summary.deadline_seconds`，默认 25 秒）是**两条线**：服务那条
  * 管「这一次调用等多久」，这一条管「界面等多久还没接到任何应答」。两条都留着 —— 服务真卡在
@@ -78,7 +78,7 @@ export interface SummaryResultView {
   elapsedSeconds: number;
   /** 窗口里的行数（应答体那一格；记录那一份没有它）。 */
   lines: number;
-  /** 三小段，次序恒为 讲什么 / 讲到哪 / 丢掉什么；**可能是空数组**（合法）。 */
+  /** 三小段，次序恒为讲什么 / 讲到哪 / 丢掉什么；**可能是空数组**（合法）。 */
   sections: SummarySection[];
   /** 三份都空时的空态那一句；只要有一段有内容就是 `null`。 */
   emptyNote: string | null;
@@ -307,7 +307,7 @@ function roundedSeconds(value: unknown): number | null {
 }
 
 /**
- * 五档失败各画一遍（`1987cb20/phase3/task.md` 的「失败分派」逐条）：
+ * 五档失败各画一遍（`/设计/task.md` 的「失败分派」逐条）：
  *
  * | `code` + `detail` 的键 | 画法 |
  * |---|---|
@@ -483,7 +483,7 @@ export interface SummaryLogEntry {
  * 服务给的一条记录 → 记列表里那一条。
  *
  * 时刻按**归档的精度**画（分钟级 `HH:MM`，设计章 8.10 门槛 10）；窗口那一格用服务给的
- * `window_label` 原文；三小段照 讲什么 / 讲到哪 / 丢掉什么 的次序摆。
+ * `window_label` 原文；三小段照讲什么 / 讲到哪 / 丢掉什么的次序摆。
  */
 export function summaryLogEntry(
   entry: {

@@ -154,7 +154,7 @@ def validate_transcript_health(value: Any) -> str:
 class SegmentTranscriber(Protocol):
     """worker 认的转写接口（**唯一**一个方法）。
 
-    生产实现是 phase1 的 `meeting.asr.glm.GlmAsrTranscriber`（`transcribe_segment(int16 数组)
+    生产实现是设计的 `meeting.asr.glm.GlmAsrTranscriber`（`transcribe_segment(int16 数组)
     -> TranscribeResult`）；测试注入自己的替身（假模型），**任何用例都不许加载真模型**。
     """
 
@@ -648,7 +648,7 @@ class TranscriptionPipeline:
             self._finish_failed(source, captured_at, waited, audio_seconds, text, reason, duration, tokens)
             return
 
-        # 文本级兜底剥离（phase1 内部已剥过一次，这里再兜一道）。
+        # 文本级兜底剥离（设计内部已剥过一次，这里再兜一道）。
         text = glm_module._strip_repeat_loops(
             str(getattr(result, "text", "") or ""),
             max_unit=config_module.get("asr.repeat_max_unit"),

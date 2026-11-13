@@ -46,11 +46,11 @@ export function GpuCell({ gpu }: { gpu: GpuBusyView }): ReactNode {
       <span className={`glyph ${gpu.mark}`} aria-hidden="true" />
       {gpu.label}
     </span>
-  );
+);
 }
 
 /**
- * 常驻工作区栏（左栏那条，`home__list`）：会中屏与工作台**共用同一条**（d61829f1）——
+ * 常驻工作区栏（左栏那条，`home__list`）：会中屏与工作台**共用同一条**——
  * 两屏读起来像同一个应用的两面。这一条里住着：铭牌、添加工作区、清单、（可选的）
  * 选中那一场的小详情、栏底那格忙闲；目录选择器与收编 / 移除两只确认弹窗也从这里走。
  *
@@ -109,7 +109,7 @@ export function WorkspaceRail({
    */
   const [railWidth, setRailWidth] = useState<number>(
     () => storedRailWidth(readStoredRailWidth, remPixelSize()) ?? railWidthBoundsPx(remPixelSize()).def,
-  );
+);
   /** 拖动 listeners 要拿「此刻的宽度」，走 ref 转手，闭包不握旧值。 */
   const railWidthRef = useRef(railWidth);
   railWidthRef.current = railWidth;
@@ -269,7 +269,7 @@ export function WorkspaceRail({
                     <span className="wslist__path num">{row.dir}</span>
                     {/* 盘上录到的总时长：清单里一眼看出这一场多长 */}
                     {dur !== null && <span className="wslist__dur num">{dur}</span>}
-                    {/* 行四档（d61829f1）：空白工作区 / 尚未开始 / 录音中 / 录音结束，
+                    {/* 行四档：空白工作区 / 尚未开始 / 录音中 / 录音结束，
                         另有「目录不存在」如实保留。字 + 图形两条通道并存，
                         颜色只是冗余的那一半。判据在 `home/progress.ts` 的 `rowStatusView()`。 */}
                     <span
@@ -293,11 +293,11 @@ export function WorkspaceRail({
                       删除
                     </button>
                   </div>
-                );
+);
               })}
             </div>
           </>
-        )}
+)}
 
         {/* 会中屏塞进来的那小块：选中工作区的读数与那颗开始录音钮（工作台不给） */}
         {detail}
@@ -323,7 +323,7 @@ export function WorkspaceRail({
           onPointerDown={onGripPointerDown}
           onDoubleClick={onGripDoubleClick}
         />
-      )}
+)}
 
       {picker && (
         <DirPicker
@@ -337,7 +337,7 @@ export function WorkspaceRail({
             dirBrowse.reset();
           }}
         />
-      )}
+)}
       {picker && dirBrowse.browseError !== null && (
         <DialogFrame
           title="目录浏览失败"
@@ -350,7 +350,7 @@ export function WorkspaceRail({
         >
           <div className="dlg__text">{dirBrowse.browseError}</div>
         </DialogFrame>
-      )}
+)}
 
       {confirm !== null && confirm.what === 'unknown' && (
         <ConfirmDialog
@@ -374,7 +374,7 @@ export function WorkspaceRail({
           }}
           onCancel={() => setConfirm(null)}
         />
-      )}
+)}
 
       {confirm !== null && confirm.what === 'remove' && (
         <ConfirmDialog
@@ -395,7 +395,7 @@ export function WorkspaceRail({
           }}
           onCancel={() => setConfirm(null)}
         />
-      )}
+)}
     </>
-  );
+);
 }

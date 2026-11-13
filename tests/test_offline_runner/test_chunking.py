@@ -44,7 +44,7 @@ from tests.test_offline_runner._common import (
     report_row,
 )
 
-#: 慢档标记（68927c27 收尾轮）：会后离线链的契约验收，归收尾跑。
+#: 慢档标记（收尾轮）：会后离线链的契约验收，归收尾跑。
 pytestmark = pytest.mark.slow
 
 # ---------------------------------------------------------------------------
@@ -60,7 +60,7 @@ def read_chunk_wav(path: Path) -> bytes:
 
 
 def test_write_chunk_wav_keeps_the_signal(tmp_path) -> None:
-    """`write_chunk_wav()` 的 float32 → int16 换算不把信号压成零（`phase3` 踩过的那个坑）。
+    """`write_chunk_wav()` 的 float32 → int16 换算不把信号压成零（`设计` 踩过的那个坑）。
 
     这一条**刻意不放进产品代码**：真正安静的块写出来就是零，拿「全零」当错误判据会把
     安静的会议误判成故障。这条换算的正确性因此由用例直接盯。

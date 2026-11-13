@@ -1,4 +1,4 @@
-"""按行切块 + 行号区间表（`41465462` spec「交付物形状」里的
+"""按行切块 + 行号区间表（spec「交付物形状」里的
 `working/<source>/<kind>/chunks/chunk_NN.md` 与 `working/<source>/<kind>/00_index.md`）。
 
 这个模块服务 spec 里这一条：主 agent 不读原始转写，由子 agent 分工读**块**；块与行号的对应
@@ -68,7 +68,7 @@ MAX_CHUNK_LINES = 1000
 class ChunkError(ValueError):
     """切块这一层自己的错误（行数不合法、转写在、读不动）。
 
-    继承 `ValueError`，与 `meeting` 里别的「值不对」错误同档：调用方（phase2 的 runner）
+    继承 `ValueError`，与 `meeting` 里别的「值不对」错误同档：调用方（设计的 runner）
     据此把这一趟记成 `failed` + 原因，读盘的人不必去猜异常类型。
     """
 
@@ -186,7 +186,7 @@ def _validate_chunk_lines(chunk_lines: int) -> int:
     if not (MIN_CHUNK_LINES <= chunk_lines <= MAX_CHUNK_LINES):
         raise ChunkError(
             f"chunk_lines 要落在 {MIN_CHUNK_LINES}-{MAX_CHUNK_LINES} 之间，收到 {chunk_lines}"
-        )
+)
     return chunk_lines
 
 
@@ -218,7 +218,7 @@ def build_index_text(
         rows.append(
             f"| {CHUNK_DIR_NAME}/{record.file} | {record.line_start}"
             f" | {record.line_end} | {record.lines} |"
-        )
+)
     return "\n".join(rows) + "\n"
 
 
@@ -267,15 +267,15 @@ def chunk_source(
                 line_start=start + 1,
                 line_end=start + len(block),
                 lines=len(block),
-            )
-        )
+)
+)
 
     index_text = build_index_text(
         transcript=target.name,
         total_lines=total,
         chunk_lines=size,
         chunks=records,
-    )
+)
     out.mkdir(parents=True, exist_ok=True)
     (out / INDEX_NAME).write_text(index_text, encoding="utf-8")
     return SourceChunks(
@@ -286,7 +286,7 @@ def chunk_source(
         chunk_lines=size,
         chunks=tuple(records),
         index_text=index_text,
-    )
+)
 
 
 def discover_inputs(session_dir: str | Path) -> tuple[InputSpec, ...]:
@@ -325,14 +325,14 @@ def classify(live: bool, offline: bool) -> str:
         return "offline_only"
     raise ValueError(
         f"live / offline 两份稿都不在：没有可判的稿型（live={live!r}, offline={offline!r}）"
-    )
+)
 
 
 def source_kind(spec: InputSpec | Mapping[str, object]) -> str:
     """这一条输入自己有哪几条稿：`both` / `live_only` / `offline_only`。
 
     **按输入的语义字段判**（`InputSpec.offline` / `InputSpec.live` 在不在）：文件名里有没有
-    `offline` 这个子串不是判据（`phase2` 第 0 节 M2 的定案）。两种输入形状都收，与
+    `offline` 这个子串不是判据（`设计` 第 0 节 M2 的定案）。两种输入形状都收，与
     `_transcript_of()` 同一套：`InputSpec` 直接读字段，`inputs.json` 的逐条映射按
     `live` / `offline` 两格在不在判。映射本体在 `classify()`（三处共用那一份）；
     两份都不在时照原话抛 `ChunkError`。
@@ -350,7 +350,7 @@ def source_kind(spec: InputSpec | Mapping[str, object]) -> str:
 def mode_for(inputs: Sequence[InputSpec]) -> str | None:
     """这份输入清单落在哪一档（**逐 source 判、再取两路合并后的公共档位**）。
 
-    规则（spec「只喂一条也退化工作」+ `phase2` 第 0 节 M1 的定案）：
+    规则（spec「只喂一条也退化工作」+ `设计` 第 0 节 M1 的定案）：
 
       - 每一条输入各自判它自己有哪几条稿（`source_kind()`）；
       - 整体档位取「两路合并后的公共档位」：两路都 `both` → `both`；只有会中稿 → `live_only`；
@@ -379,10 +379,10 @@ def chunk_session(
 
     落盘：`<场次目录>/working/<source>/<kind>/chunks/chunk_NN.md` 与
     `<场次目录>/working/<source>/<kind>/00_index.md`（`<kind>` 取 `live` / `offline`）。
-    **本函数不写 `inputs.json`**，那是 phase2 的活（它才判得出档位、才数得清两条各自的行数）。
+    **本函数不写 `inputs.json`**，那是设计的活（它才判得出档位、才数得清两条各自的行数）。
 
     `inputs` 既收 `InputSpec`，也收 `inputs.json` 里那种逐条映射（`{"source": …, "live": {"file": …}}`），
-    因此 phase2 可以直接把自己写下的那份清单交进来。
+    因此设计可以直接把自己写下的那份清单交进来。
 
     **两条稿都在时两份都切、都留在盘上**（R11 / `docs/design-intent.md` 第 11 条）：
     这一层不再挑「哪一份更可信」，挑了就等于替模型下结论，而实测并不保证某一份稳定更好。
@@ -399,7 +399,7 @@ def chunk_session(
                 working / source / kind,
                 chunk_lines=chunk_lines,
                 kind=kind,
-            )
+)
     return result
 
 
@@ -446,14 +446,14 @@ def main(argv: Sequence[str] | None = None, *, prog: str = "python -m meeting.mi
     parser = argparse.ArgumentParser(
         prog=prog,
         description="按行把场次目录里的转写切成块，并写出行号区间表。",
-    )
+)
     parser.add_argument("session_dir", help="场次目录（工作区目录，路径由人给）")
     parser.add_argument(
         "--chunk-lines",
         type=int,
         default=DEFAULT_CHUNK_LINES,
         help=f"每块行数（默认 {DEFAULT_CHUNK_LINES}）",
-    )
+)
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     session = Path(args.session_dir)
@@ -467,7 +467,7 @@ def main(argv: Sequence[str] | None = None, *, prog: str = "python -m meeting.mi
             f"{LIVE_TRANSCRIPT_TEMPLATE.format(source='<source>')} 与 "
             f"{OFFLINE_TRANSCRIPT_TEMPLATE.format(source='<source>')}）：{session}",
             file=sys.stderr,
-        )
+)
         return 1
     mode = mode_for(inputs)
     try:
@@ -481,7 +481,7 @@ def main(argv: Sequence[str] | None = None, *, prog: str = "python -m meeting.mi
                 f"{source}/{kind}: {report.transcript} {report.total_lines} 行 → "
                 f"{report.chunk_count} 块（每块 {report.chunk_lines} 行），"
                 f"区间表 {WORKING_DIR}/{source}/{kind}/{INDEX_NAME}"
-            )
+)
     print(f"档位：{mode}")
     return 0
 

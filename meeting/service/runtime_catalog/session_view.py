@@ -1,6 +1,6 @@
-"""``RuntimeCatalogMixin`` 的「单场状态」域分片：``GET /api/sessions/{id}`` 的进度区读数。
+"""RuntimeCatalogMixin 的「单场状态」域分片：GET /api/sessions/{id} 的进度区读数。
 
-方法与方法间注释均自拆分前的 ``runtime_catalog.py`` 单文件 mixin 一字不改复制；
+方法与方法间注释均自拆分前的 runtime_catalog.py 单文件 mixin 一字不改复制；
 本文件自写内容只有模块 docstring、import 与类声明行（模块级的会后现场读数小函数一并在此）。
 """
 from __future__ import annotations
@@ -72,7 +72,7 @@ def _offline_status_document(directory: str | Path) -> dict[str, Any] | None:
 
 
 class RuntimeCatalogSessionViewMixin:
-    """「单场状态」：这一场此刻跑到哪儿了（纯读，不提交、不涨 ``revision``、不广播）。"""
+    """「单场状态」：这一场此刻跑到哪儿了（纯读，不提交、不涨 revision、不广播）。"""
 
     # 单场状态（`GET /api/sessions/{id}`：会后视图的进度区）
 
@@ -99,7 +99,7 @@ class RuntimeCatalogSessionViewMixin:
         `segments` 那一格与清单端点同一来源（`_disk_segment_cells()`，盘上段记录原文），
         界面在详情区摆「各段的时长与时间」。
 
-        `speakers` 那一格是**这一场盘上的身份集**（人名节点 `91b6752e`）：每个身份一行
+        `speakers` 那一格是**这一场盘上的身份集**（人名节点）：每个身份一行
         （限定键 / 路 / 人话标签 / 现名或 `null` / 可得的次数读数），名字读这一场目录里
         的 `meeting_speaker_names.json`。它同样是**给人看的读数**：人名表读不出就如实
         当作「没有确认过的名字」（名字一格 `null`），不报错、不挡这只端点
@@ -180,7 +180,7 @@ class RuntimeCatalogSessionViewMixin:
 
         两块合起来才读得清崩在半路那一档：`state: "running"` 说的是盘上停着的那版状态，
         `in_process: false` 说的是此刻没有任何东西在跑。**`interrupted` 是盘上自己的
-        终态**（b1c6a58e 落地）：停掉的那一场照盘上答 `interrupted`，这一格照旧只透传、
+        终态**（落地）：停掉的那一场照盘上答 `interrupted`，这一格照旧只透传、
         不替它下结论，也**不参与任何判定**（进度是给人看的读数）。
         """
         ledger = _post_job_progress(
@@ -204,7 +204,7 @@ class RuntimeCatalogSessionViewMixin:
             snapshot["finished_at"] = read.get("finished_at")
             # 盘上有结论可读：状态文件落在哪一档就照它那一档答（`running` 也照实答，「此刻
             # 有没有在跑」由 `in_process` 那格回答）。这几档都不许折成 `done`——折了之后
-            # 读方看到的是失败的会后与跑成的同形；`interrupted` 尤其不许折（b1c6a58e）：
+            # 读方看到的是失败的会后与跑成的同形；`interrupted` 尤其不许折：
             # 折成 `running` 就把「人停的、可以重按」说回「还在跑」。
             mapped = str(read.get("state") or "")
             snapshot["state"] = (

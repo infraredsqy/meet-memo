@@ -68,7 +68,7 @@ function optionsOf(
 ): TestRenderer.ReactTestInstance[] {
   return renderer.root.findAll(
     (node) => node.props.role === 'option' && node.parent?.props['aria-label'] === '这一层的子目录',
-  );
+);
 }
 
 function buttonByText(
@@ -77,7 +77,7 @@ function buttonByText(
 ): TestRenderer.ReactTestInstance {
   return renderer.root.find(
     (node) => node.type === 'button' && textOf(node) === text,
-  );
+);
 }
 
 function inputByLabel(
@@ -86,7 +86,7 @@ function inputByLabel(
 ): TestRenderer.ReactTestInstance {
   return renderer.root.find(
     (node) => node.type === 'input' && node.props['aria-label'] === label,
-  );
+);
 }
 
 /** 马甲：hook + 弹窗同装，picked 落到一只读数格里供断言。 */
@@ -111,8 +111,8 @@ function Harness({ startAt }: { startAt: string | null }): ReactNode {
     createElement(
       'div',
       { 'data-picked': picked === null ? 'none' : JSON.stringify(picked) },
-    ),
-  );
+),
+);
 }
 
 async function mountPicker(startAt: string | null = 'C:\\会议'): Promise<TestRenderer.ReactTestRenderer> {
@@ -215,8 +215,8 @@ describe('「新建目录」一行（就地建一个，建完直接选中）', (
         'dir_exists',
         '这一层里已经有叫「旧文件夹」的目录或文件：C:\\会议\\旧文件夹；换个名字，或者双击进去直接用它',
         '',
-      ),
-    );
+),
+);
     const renderer = await mountPicker();
 
     const input = inputByLabel(renderer, '新目录的名字');

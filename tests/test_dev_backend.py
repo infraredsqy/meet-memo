@@ -1,9 +1,9 @@
-"""`tests/test_dev_backend.py` —— dev 采集替身（phase2 §5.1 第六行；§3.4）。
+"""`tests/test_dev_backend.py` —— dev 采集替身（设计口径第六行；§3.4）。
 
 **非产品路径**：dev 替身默认关闭，只有把 `capture.backend` 配成 `dev`（或 `MEETING_CAPTURE=dev`）
 才会被解析到。它提供确定性合成电平（种子 = 模块级常量 `DEV_LEVEL_SEED`）与三档可注入故障。
 
-覆盖（整文件慢档；`68927c27` 收尾轮按机主判尺删去时钟观察用例后，只剩这三条纯逻辑测试）：
+覆盖（整文件慢档； 收尾轮按机主判尺删去时钟观察用例后，只剩这三条纯逻辑测试）：
 
   - 确定性（构造两个 `DevCaptureBackend()`、取前若干帧逐项比对，电平序列**逐帧相同**）；
   - **不写真实音频、`finalize()` 只登记**（把真实存在的场次目录交给替身，
@@ -14,7 +14,7 @@
     `test_dev_inject_is_unavailable_on_a_non_dev_backend`。
 
 三档故障（`silence` / `stall` / `lost`）的窗口语义、`after_seconds` 到点生效 / 恢复、
-对同一路替换注入的时序行为**没有直测**（`68927c27` 收尾轮删除，机主裁决不恢复）。
+对同一路替换注入的时序行为**没有直测**（收尾轮删除，机主裁决不恢复）。
 """
 
 from __future__ import annotations

@@ -96,7 +96,7 @@ export const dirRowSchema = z
 
 /**
  * 目录选择器现场的一项**普通文件**（`?files=1` 才有，资料界面的选择器文件模式要的，
- * 160d1a78）。`dir` 是文件的绝对路径（选中它 = 把这份盘上文件拷进资料）；`size_bytes`
+ *）。`dir` 是文件的绝对路径（选中它 = 把这份盘上文件拷进资料）；`size_bytes`
  * 是现读的文件大小。不带那个参数时服务不摆这个键，旧应答体一个字节不动。
  */
 export const dirFileRowSchema = z
@@ -160,7 +160,7 @@ export const workspaceOkSchema = z
   .strict();
 
 // ---------------------------------------------------------------------------
-// 单场状态（`docs/contract.md` 4.9，会后进度界面节点 52b24392 接的取数）
+// 单场状态（`docs/contract.md` 4.9，会后进度界面节点 接的取数）
 // ---------------------------------------------------------------------------
 
 /**
@@ -204,7 +204,7 @@ export const offlineProgressSchema = z
   .object({
     /** 这一场那份逐块记录的文件名（`meeting_offline_progress.jsonl`）。 */
     ledger: z.string(),
-    /** `interrupted` 是「跑到块边界被人停」那一档的终态（b1c6a58e，R28）：照盘上如实答。 */
+    /** `interrupted` 是「跑到块边界被人停」那一档的终态（R28）：照盘上如实答。 */
     state: z.enum(['running', 'done', 'partial', 'failed', 'interrupted', 'idle', 'ledger']),
     in_process: z.boolean(),
     started_at: isoStringSchema.nullable(),
@@ -217,7 +217,7 @@ export const offlineProgressSchema = z
   .strict();
 
 /**
- * 这一场盘上的一个说话人身份（4.9 / 4.11，人名节点 `91b6752e` 接的取数）。
+ * 这一场盘上的一个说话人身份（4.9 / 4.11，人名节点  接的取数）。
  *
  * `key` 带着路（`mic:S01` 这种限定名，或没跑过聚类时的路本身），两路的「1 号」
  * 写不出同一个键；`name` 来自这一场目录里的人名表——没起过名或人名表读不出时
@@ -268,7 +268,7 @@ export const transcodeProgressSchema = z
   .strict();
 
 /**
- * 纪要那一层的盘上读数（4.9 的 `minutes` 格，38817ecf）：与 `transcode` 同一套读法 ——
+ * 纪要那一层的盘上读数（4.9 的 `minutes` 格）：与 `transcode` 同一套读法 ——
  * **判据读盘**（`meeting_minutes_status.json`，读方逐字段校验），服务重启之后照旧读得到。
  * 「本进程里此刻有没有这一趟」不另立一格：`post` 清单里 `kind: 'minutes'` 的那一项带着
  * `running`，两处合起来才分得清「真的在跑」与「盘上停着一版 `running`」。状态文件不在、

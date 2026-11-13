@@ -1,4 +1,4 @@
-"""配置层（phase1 §3.11，B11 的正确边界）。
+"""配置层（设计口径，B11 的正确边界）。
 
 `~/.config/meeting/config.json`：点号扁平键名的单层映射（嵌套形状不合法），
 不迁移 V1 的 `~/.config/meeting_notes/`。配置目录整组可被 `MEETING_CONFIG_DIR`
@@ -56,7 +56,7 @@ class ConfigValueError(ConfigError):
         super().__init__(message)
 
 
-# 默认值表（§3.11，键名与默认值都是跨 Phase 冻结项）
+# 默认值表（§3.11，键名与默认值都是跨层冻结项）
 
 CONFIG_DIR_NAME = (".config", "meeting")
 CONFIG_FILE_NAME = "config.json"
@@ -96,17 +96,17 @@ DEFAULT_VALUES: dict[str, Any] = {
     "capture.backend": "auto",
     "transcriber.backend": "auto",
     "post.hook": "auto",
-    # 会后离线转写（`7c6952e5` 定名，与 `capture.backend` 同形：接口在这里，值归选型节点）。
+    # 会后离线转写（定名，与 `capture.backend` 同形：接口在这里，值归选型节点）。
     # 模型默认 MOSSTD 的 HF 仓库 id（本机已有本地快照），档位取本机实测跑通的 bf16。
     "post.engine": "auto",
     "post.model": "OpenMOSS-Team/MOSS-Transcribe-Diarize",
     "post.dtype": "bfloat16",
     # 每块音频长度上限（秒），`0` = 显式关掉分块。默认 450 是对 spec「默认关闭」的有意偏离：
     # 本机实测 600 s → 11.6 GiB 峰值、900 s → 22.9 GiB（越界换页，墙钟劣化 5–12 倍）、
-    # 1500 s → OOM（16 GB 卡，phase3 报告 10.1），而验收素材 5943 s 整段必死；450 s 实测
+    # 1500 s → OOM（16 GB 卡，设计报告 10.1），而验收素材 5943 s 整段必死；450 s 实测
     # 峰值 7.5 GiB 是安全档。块数为 1 时不切块（短于 450 s 仍整段跑）。
     "post.chunk_seconds": 450,
-    # 两路各自用哪个设备（`dca4539b` 定名）：`None` = 按默认策略挑（见 capture/devices.py）
+    # 两路各自用哪个设备（定名）：`None` = 按默认策略挑（见 capture/devices.py）
     "devices.mic": None,
     "devices.loopback": None,
     "asr.max_segment_seconds": 10,
@@ -114,23 +114,23 @@ DEFAULT_VALUES: dict[str, Any] = {
     "asr.max_new_tokens": 400,
     "asr.repeat_max_unit": 40,
     "asr.repeat_min_coverage": 0.5,
-    # 会后纪要生成（`41465462` phase2 定名，与 `post.*` 同形）：
+    # 会后纪要生成（设计定名，与 `post.*` 同形）：
     #   - `minutes.hook`：`auto` = 跟离线链尾巴自动跑；JSON `null` = 不自动跑。
     #   - `minutes.chunk_lines`：每块行数，与 V1 切块口径一致（取值域同 chunk.MIN/MAX）。
     #   - `minutes.max_segments`：每条 source 的分段上限（取值域同 contract.DEFAULT_MAX_SEGMENTS）。
     #   - `minutes.timeout_seconds`：一次纪要生成的墙钟上限（R8：会后换质量，但要有上限）。
     #   - `minutes.dsh_url`：DSH web 服务端地址（不是 `dsh` 可执行文件）。在跑时经 `/api`
-    #     在场次工作区建会话交付（终态 `delivered`），没在跑才落回本进程 headless 子进程。
+    # 在场次工作区建会话交付（终态 `delivered`），没在跑才落回本进程 headless 子进程。
     "minutes.hook": "auto",
     "minutes.chunk_lines": 100,
     "minutes.max_segments": 8,
     "minutes.timeout_seconds": 14400,
     "minutes.dsh_url": "http://127.0.0.1:3080",
-    # 会中总结（`1987cb20` phase1 定名，与 `post.*` / `minutes.*` 同形）：
+    # 会中总结（设计定名，与 `post.*` / `minutes.*` 同形）：
     #   - `base_url` / `model`：OpenAI 兼容协议，默认本机实测跑通的 DeepSeek 端点，换厂商改这两个键。
     #   - `api_key`：可空键，密钥不进仓库——写配置文件或用 `MEETING_SUMMARY_API_KEY` 压住。
     #   - `extra_body_json`：厂商特有字段以一个 JSON 字符串键承载（配置层拒收 dict 值，
-    #     为这一个键放开硬约束不值得），空串 = 不并。
+    # 为这一个键放开硬约束不值得），空串 = 不并。
     #   - `deadline_seconds`：墙钟 deadline，换掉 V1「3 × 60 秒硬编码超时」最坏 180 秒的算法。
     #   - `max_attempts`：尝试次数上限，真正的刹车是 deadline。
     #   - `default_window`：`args.window` 省略时的缺省档（四档取值）。
@@ -243,7 +243,7 @@ ENV_NO_BROWSER = "MEETING_NO_BROWSER"
 #: `log.dir`（config.json 或 `MEETING_LOG_DIR`）仍以显式值为准。
 ENV_CONFIG_DIR = "MEETING_CONFIG_DIR"
 
-# `settings_update` 的键态三分表（phase2 §3.5.5）：只有逐条列出的字面键名合法，
+# `settings_update` 的键态三分表（设计口径）：只有逐条列出的字面键名合法，
 # 不按前缀归组、没有前缀白名单，表外一律 `invalid_setting`(400)。设备键位是点号
 # 字面键名，快照里才收成子键；嵌套形状不合法。
 
@@ -333,7 +333,7 @@ def validate_setting_changes(
         raise ConfigValueError(
             "settings_update", changes, "「点号扁平键名 → 值」的非空映射",
             "请求体 args 是「配置点号键名 → 值」的扁平映射，只有这一层、不按键前缀分组",
-        )
+)
 
     applied: dict[str, Any] = {}
     for key, value in changes.items():
@@ -343,12 +343,12 @@ def validate_setting_changes(
                 value,
                 "本服务定义过的键名",
                 "这个键名不在三分表里（表里没有这个字面键名）",
-            )
+)
         if isinstance(value, dict):
             raise ConfigValueError(
                 key, value, "标量值",
                 "嵌套形状不合法：args 是「配置点号键名 → 值」的扁平映射",
-            )
+)
         applied[key] = validate_value(key, value)
 
     def effective(key: str) -> Any:
@@ -375,8 +375,8 @@ def validate_setting_changes(
                 (
                     f"预设清单里没有叫 {active_name!r} 的那一套"
                     + (f"（清单里有的：{'、'.join(names)}）" if names else "（预设清单是空的）")
-                ),
-            )
+),
+)
     return applied
 
 
@@ -421,7 +421,7 @@ def write_config_values(
         target,
         json.dumps(merged, ensure_ascii=False, indent=2),
         fsync=True,
-    )
+)
     return target
 
 
@@ -483,7 +483,7 @@ def _legal_text(key: str) -> str:
         return (
             "空字符串，或一段 JSON 数组的文本：每套一个对象，"
             'name 必填（非空白、不重名），base_url / api_key / model / extra_body_json 可省'
-        )
+)
     if key == "summary.active_preset":
         return "空字符串（不选预设，用平铺四键），或某套预设的 name"
     if key == "summary.extra_body_json":
@@ -494,7 +494,7 @@ def _legal_text(key: str) -> str:
             "非空字符串"
             if allowed is None
             else "字符串，取值 " + " / ".join(allowed) + "（或 module:Class 这种显式写法）"
-        )
+)
         if key in NULLABLE_KEYS:
             return f"{text}，或 null（null = 没配，按默认策略挑）"
         if key in NULL_SENTINEL_KEYS:
@@ -530,11 +530,11 @@ def validate_value(key: str, value: Any) -> Any:
         except json.JSONDecodeError as exc:
             raise ConfigValueError(
                 key, value, _legal_text(key), f"这段文本不是合法 JSON：{exc.msg}"
-            ) from exc
+) from exc
         if not isinstance(parsed, list):
             raise ConfigValueError(
                 key, value, _legal_text(key), "这段 JSON 的顶层不是数组"
-            )
+)
         seen_names: set[str] = set()
         for index, item in enumerate(parsed, start=1):
             where = f"第 {index} 套预设"
@@ -542,19 +542,19 @@ def validate_value(key: str, value: Any) -> Any:
                 raise ConfigValueError(
                     key, value, _legal_text(key),
                     f"{where}不是对象（每套预设该是带 name 等五格的对象）",
-                )
+)
             name = item.get("name")
             if not isinstance(name, str) or not name.strip():
                 raise ConfigValueError(
                     key, value, _legal_text(key),
                     f"{where}缺一个非空白的 name（界面上当前用哪一套按名字挑）",
-                )
+)
             clean = name.strip()
             if clean in seen_names:
                 raise ConfigValueError(
                     key, value, _legal_text(key),
                     f"{where}的 name 与前面某套重复（{clean!r}）：重名的话指针没法按名字挑",
-                )
+)
             seen_names.add(clean)
             for field_name in ("base_url", "api_key", "model", "extra_body_json"):
                 field_value = item.get(field_name, "")
@@ -564,7 +564,7 @@ def validate_value(key: str, value: Any) -> Any:
                     raise ConfigValueError(
                         key, value, _legal_text(key),
                         f"{where}（{clean}）的 {field_name} 不是字符串",
-                    )
+)
                 if field_name == "extra_body_json" and field_value.strip():
                     try:
                         extra = json.loads(field_value)
@@ -572,19 +572,19 @@ def validate_value(key: str, value: Any) -> Any:
                         raise ConfigValueError(
                             key, value, _legal_text(key),
                             f"{where}（{clean}）的 extra_body_json 不是合法 JSON：{exc.msg}",
-                        ) from exc
+) from exc
                     if not isinstance(extra, dict):
                         raise ConfigValueError(
                             key, value, _legal_text(key),
                             f"{where}（{clean}）的 extra_body_json 顶层不是对象",
-                        )
+)
             unknown = set(item) - {"name", "base_url", "api_key", "model", "extra_body_json"}
             if unknown:
                 raise ConfigValueError(
                     key, value, _legal_text(key),
                     f"{where}（{clean}）带认不出的格：{'、'.join(sorted(str(u) for u in unknown))}"
                     "（每套只认 name / base_url / api_key / model / extra_body_json 这五格）",
-                )
+)
         return value
 
     if key == "summary.active_preset":
@@ -605,11 +605,11 @@ def validate_value(key: str, value: Any) -> Any:
         except json.JSONDecodeError as exc:
             raise ConfigValueError(
                 key, value, _legal_text(key), f"这段文本不是合法 JSON：{exc.msg}"
-            ) from exc
+) from exc
         if not isinstance(parsed, dict):
             raise ConfigValueError(
                 key, value, _legal_text(key), "这段 JSON 的顶层不是对象"
-            )
+)
         return value
 
     if key in NULLABLE_KEYS:
@@ -676,7 +676,7 @@ def _validate_timeout_exceeds_segment(segment: Any, timeout: Any) -> None:
             timeout,
             f"必须大于 asr.max_segment_seconds（当前 {segment}）",
             "键间规则不成立（超时必须大于段长）",
-        )
+)
 
 
 def _read_config_file(path: str) -> dict[str, Any]:
@@ -768,7 +768,7 @@ def load(
             logging.getLogger("meeting.config").warning(
                 "config.json 里的已退场键 %r 已被忽略（该键已不再生效，可从配置文件删掉）",
                 retired,
-            )
+)
             file_values = {k: v for k, v in file_values.items() if k != retired}
 
     applied: dict[str, Any] = {}
@@ -779,7 +779,7 @@ def load(
             raise ConfigValueError(
                 key, raw, "本服务定义过的键名",
                 "这个键名不在配置键表里（键名拼错或写了多余的键）",
-            )
+)
 
     for key in DEFAULT_VALUES:
         value = default_for(key)
@@ -791,7 +791,7 @@ def load(
                 raise ConfigValueError(
                     key, raw, _legal_text(key),
                     "嵌套形状不合法：config.json 是点号扁平键名的单层映射",
-                )
+)
             value = validate_value(key, raw)
             sources[key] = "config.json"
 
@@ -809,7 +809,7 @@ def load(
                 raise ConfigValueError(
                     key, raw_text, _legal_text(key),
                     f"环境变量 {env_name} 的值不是整数",
-                ) from None
+) from None
         else:
             raw = raw_text
         applied[key] = validate_value(key, raw)
@@ -817,7 +817,7 @@ def load(
 
     _validate_timeout_exceeds_segment(
         applied["asr.max_segment_seconds"], applied["asr.timeout_seconds"]
-    )
+)
 
     return Config(applied=applied, sources=sources, path=config_file)
 

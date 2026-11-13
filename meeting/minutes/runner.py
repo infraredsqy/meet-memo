@@ -1,4 +1,4 @@
-"""会后纪要生成的一次运行（`41465462` spec「自动跑挂在哪一步」那一层的编排）。
+"""会后纪要生成的一次运行（spec「自动跑挂在哪一步」那一层的编排）。
 
 一次 `run(session_dir)` 走完这些事：
 
@@ -134,7 +134,7 @@ def _status_document(
         error=error,
         artifacts=_STATUS_ARTIFACTS,
         dsh=result.as_dict() if (with_dsh and result is not None) else {},
-    )
+)
     document["session_dir"] = str(directory)
     document["status"] = status_module.STATUS_NAME
     return document
@@ -178,7 +178,7 @@ def run(
     started_at = status_module.now_iso()
     configured = launch_module.configured_branch(
         _config_value("minutes.hook", config, DEFAULT_HOOK)
-    )
+)
 
     # 再入闸：子会话里不再拉起 DSH，也不写状态文件（见模块头）
     if str(env.get(launch_module.ENV_CHILD_FLAG, "")).strip() == "1":
@@ -193,8 +193,8 @@ def run(
                 error=(
                     f"再入闸：环境里有 {launch_module.ENV_CHILD_FLAG}=1，"
                     "这一趟是 DSH 子会话自己，不再拉起 DSH、不写状态文件"
-                ),
-            ),
+),
+),
             "session_dir": str(directory),
             "status": status_module.STATUS_NAME,
         }
@@ -206,7 +206,7 @@ def run(
         raise status_module.DeliveryForbidden(
             f"minutes.runner.run 被拒：{status_module.ISOLATION_MESSAGE}"
             f"（{status_module.ISOLATION_GRANT}）"
-        )
+)
 
     # **探一次 DSH web 服务端**：在跑就把这一场交付给它，不在跑才是本进程自己起 headless
     # 子进程。`branch` 因此在这一步之后才是实际走的那一条（拉起方建线程之前落的那一版
@@ -233,7 +233,7 @@ def run(
         result: Any = None,
         mode: str = MODE_NONE,
         with_dsh: bool = False,
-    ) -> dict[str, Any]:
+) -> dict[str, Any]:
         """落一份终态状态文件并把它交回调用方（`_status_document()` 的终局入口）。"""
         return _status_document(
             directory,
@@ -244,7 +244,7 @@ def run(
             error=error,
             result=result,
             with_dsh=with_dsh,
-        )
+)
 
     # 零、拉起之前先落一份 `running`：这一趟最长 14400 秒，读方（`meeting post`、界面）
     # 在这期间要分得出「没跑」与「正在跑」。终局那一份随后覆盖它。
@@ -254,7 +254,7 @@ def run(
         mode=MODE_NONE,
         branch=branch,
         started_at=started_at,
-    )
+)
 
     # 一、找输入 → 写 inputs.json（**清单照落**：读方要看得见这一场查过了）
     entries: tuple[SourceEntry, ...] = entries_for_session(directory)
@@ -266,7 +266,7 @@ def run(
         message = (
             f"这一场的输入一条都没有（找的是 meeting_transcript_<source>.md 与 "
             f"meeting_offline_transcript_<source>.md），不启动 DSH、不出纪要：{directory}"
-        )
+)
         _log.error("会后纪要：%s", message)
         return settle(status_module.STATE_FAILED, error=message)
 
@@ -282,7 +282,7 @@ def run(
     try:
         prompt_text = render_session_prompt(
             directory, mode=mode, max_segments=int(max_segments)
-        )
+)
     except PromptTemplateError as exc:
         message = f"提示词渲染失败：{exc}"
         _log.error("会后纪要：%s", message)
@@ -295,7 +295,7 @@ def run(
         #（产物校验是 headless 那条路的事 —— 那是本进程自己起的子进程，等得起）。
         delivered = deliver_dsh(
             directory, prompt_text=prompt_text, url=dsh_url, timeout=timeout, allow_dsh=True
-        )
+)
         if not getattr(delivered, "ok", False):
             message = str(getattr(delivered, "error", "") or "交付这一步报告失败")
             _log.error("会后纪要交付失败：%s", message)
@@ -305,14 +305,14 @@ def run(
                 result=delivered,
                 mode=mode,
                 with_dsh=True,
-            ) | {"chunks": stem}
+) | {"chunks": stem}
         return settle(
             status_module.STATE_DELIVERED,
             error=None,
             result=delivered,
             mode=mode,
             with_dsh=True,
-        ) | {"chunks": stem}
+) | {"chunks": stem}
 
     # 五、拉起 headless 子进程（启动器自己写 working/run_prompt.md 并校验产物）
     result = spawn(
@@ -323,13 +323,13 @@ def run(
         config_selector=_config_value("minutes.hook", config, DEFAULT_HOOK),
         which=which,
         allow_dsh=True,
-    )
+)
     if not getattr(result, "ok", False):
         message = str(getattr(result, "error", "") or "启动器报告失败")
         _log.error("会后纪要：%s", message)
         return settle(
             status_module.STATE_FAILED, error=message, result=result, mode=mode, with_dsh=True
-        ) | {"chunks": stem}
+) | {"chunks": stem}
 
     # 六、终态（产物校验已经在启动器里过了：走到这里说明四条判据都成立）
     return settle(
@@ -338,7 +338,7 @@ def run(
         result=result,
         mode=mode,
         with_dsh=True,
-    ) | {"chunks": stem}
+) | {"chunks": stem}
 
 
 def _probe_web(

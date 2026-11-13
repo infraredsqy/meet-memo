@@ -1,8 +1,8 @@
-"""纯状态机与状态字段（phase2 §3.1 / §3.5.6）。
+"""纯状态机与状态字段（设计口径 / §3.5.6）。
 
 四态与迁移函数、`Snapshot` 与嵌套 dataclass、`to_dict()`（全应用唯一的状态 JSON 形态）、
 15 柱 × 2 秒包络的维护算法、收尾三函数都在这里；本模块无 IO（不开文件、不写 log、不广播）。
-三条边界（phase2 冻结）：顶层只有 `TOP_STATE` 四态，不新增第五个；迁移只能经本模块的
+三条边界（设计冻结）：顶层只有 `TOP_STATE` 四态，不新增第五个；迁移只能经本模块的
 迁移函数，出发态不匹配抛 `InvalidTransitionError`（被拒的迁移不改 `revision`、不写盘、
 不广播）；收尾三函数只改内存快照——落盘归 `ServiceRuntime`，`revision +1` 与广播归
 `ServiceRuntime.commit()`，终态判定只在 `finish_drain()` 一处。
@@ -59,7 +59,7 @@ SOURCE_HEALTH: tuple[str, ...] = (
 )
 
 # （`notice` 槽位已随「默认输出根」退场，见 `docs/design-intent.md` 第 4 条；
-#   "最近一场"由工作台收编节点（e2f6166b）落在工作区注册表里，不再扫场次目录。）
+#   "最近一场"由工作台收编节点落在工作区注册表里，不再扫场次目录。）
 
 #: 包络：一根柱的窗口（秒）与柱数（最近 30 秒 = 15 × 2 秒）
 ENVELOPE_BAR_SECONDS = 2.0
@@ -69,7 +69,7 @@ ENVELOPE_BAR_COUNT = 15
 #: 「存在、是 int、单调 +1、同一次事实处理合并递增」，不许把取值钉成常数。
 REVISION_START = 1
 
-#: 帧时钟窗口的两个配套常量（`recording_alive` 的判据，phase2 §3.5.4）
+#: 帧时钟窗口的两个配套常量（`recording_alive` 的判据，设计口径）
 HEARTBEAT_MIN_WINDOW_SECONDS = 2.0
 HEARTBEAT_WINDOW_FACTOR = 3.0
 
@@ -81,7 +81,7 @@ def frame_clock_window(frame_interval: float) -> float:
     """`recording_alive` 的判据窗口（秒）：`max(2.0s, 3 × frame_interval)`。
 
     协议默认 `0.5s` 与 dev 替身的 `0.1s` 都算成 2.0 秒；界面的 10 秒心跳周期
-    绝不参与这个计算（phase2 §3.5.4 / §6）。
+    绝不参与这个计算（设计口径 / §6）。
     """
     return max(HEARTBEAT_MIN_WINDOW_SECONDS, HEARTBEAT_WINDOW_FACTOR * float(frame_interval))
 
@@ -279,7 +279,7 @@ class AlertState:
 
 @dataclass
 class TranscriptState:
-    """快照 `transcript` 的四格（`9e5db89c` phase2 §7 起由转写后端供数）。
+    """快照 `transcript` 的四格（设计口径起由转写后端供数）。
 
     - `health`：`normal` / `behind` / `stopped`，读 `TranscriberBackend.health()`；
       真实现没起过场次时报 `stopped`，初值 `normal` 会被 `startup()` 就地覆盖（缺省替身恒报 `normal`）。
@@ -343,7 +343,7 @@ class EndedState:
 class SettingsView:
     """快照 `settings`（顶层七键；`asr` 五子键；`devices` 两子键 `mic` / `loopback`）。
 
-    `summary_default_window`（`311f84f5`）是快速总结的缺省档（四档取值）——
+    `summary_default_window`是快速总结的缺省档（四档取值）——
     服务是唯一来源，前端不自造第二份。`summary_preset_names` / `summary_active_preset`
     只给名字清单与当前指针：预设里的 `base_url` / `api_key` / `model` 是配置，
     密钥不进快照、不在界面回显；指针指向的名字不在清单里时报空串（那一档实际生效的
@@ -589,7 +589,7 @@ def end_session(snapshot: Snapshot) -> None:
         item.lost_since = None
 
 
-# 收尾三函数（签名由 phase2 冻结；只改内存快照、自己不碰 IO）。
+# 收尾三函数（签名由设计冻结；只改内存快照、自己不碰 IO）。
 # 作用在哪一份内存快照上由调用方指定（`ServiceRuntime` 在收尾编排里经 `snapshot=`
 # 关键字交进来），没有隐式回源：调用点显式给快照，是谁的现场就在谁身上改。
 # 落盘与提交不在这里：`session.json` 由 `ServiceRuntime` 一侧写，`revision +1`
@@ -616,7 +616,7 @@ def finish_drain_step(
 ) -> DrainStep:
     """落该步的登记（`status` 取 `done` / `failed` / `skipped`，外加 `post` 那一格的 `waiting`）。
 
-    `frozen_*` 是取消路径的登记约束（phase2 §3.5.6「三条不覆盖约束」，phase3 的强制打断
+    `frozen_*` 是取消路径的登记约束（设计口径「三条不覆盖约束」，设计的强制打断
     依赖它们），普通调用点一律不传：`frozen_ended=True` 不许改 `ended` 的 `phase` / `error`
     （先落盘写下的「收尾中 + 已打断」由此保住）；`frozen_interrupted=True` 已落定的步骤保持原样。
 

@@ -1,12 +1,12 @@
-"""三个后端协议与数据结构 —— 下游往这儿插（phase1 §3.9，方案 §7.1 / §7.2 / §7.3）。
+"""三个后端协议与数据结构 —— 下游往这儿插（设计口径，设计口径 §7.1 / §7.2 / §7.3）。
 
 本模块**只放协议与数据结构**，实现全在下游自己的模块里。
 
 约定导入路径（`auto` 按它们找）：
 
-    meeting.backends.capture:CaptureBackend      # dca4539b 实现
-    meeting.backends.transcribe:TranscriberBackend  # 9e5db89c 实现
-    meeting.backends.post:PostProcessHook        # 65dd3e4c 实现
+    meeting.backends.capture:CaptureBackend      # 实现
+    meeting.backends.transcribe:TranscriberBackend  # 实现
+    meeting.backends.post:PostProcessHook        # 实现
 
 注入与构造规则（本节点定，下游照这个接，落地时不改本节点一行代码）：
   - `registry` 读 `config.capture.backend`：`auto`（默认）按上面那条约定路径找，
@@ -19,7 +19,7 @@
 
 **导入顺序契约（C10，模型节点落地时仍然成立）**：先 `import transformers`，再
 `import speechbrain`；反过来会让 speechbrain 抢在 transformers 之前完成自己的
-依赖探测，出现难以定位的版本不匹配。本 Phase 不实现模型层，只把这条记在这里，
+依赖探测，出现难以定位的版本不匹配。本项目不实现模型层，只把这条记在这里，
 别等装了模型才想起来。
 
 **门限只有一处**（§3.12 第 2 条）：静默秒数由 `alerts.py` 按 `alert.silence_dbfs` 逐帧累计
@@ -136,7 +136,7 @@ class TranscriptLine:
 
 @runtime_checkable
 class CaptureBackend(Protocol):
-    """采集后端（`dca4539b` 实现，约定路径 `meeting.backends.capture:CaptureBackend`）。"""
+    """采集后端（实现，约定路径 `meeting.backends.capture:CaptureBackend`）。"""
 
     #: 帧间隔（秒）：后端在 `bind()` 里记下自己的帧间隔，缺省 `0.5s`。
     frame_interval: float
@@ -167,7 +167,7 @@ class CaptureBackend(Protocol):
 
 @runtime_checkable
 class TranscriberBackend(Protocol):
-    """转写后端（`9e5db89c` 实现，约定路径 `meeting.backends.transcribe:TranscriberBackend`）。
+    """转写后端（实现，约定路径 `meeting.backends.transcribe:TranscriberBackend`）。
 
     方向只有一条：**runtime 把 sink 交给后端，后端往里送**；后端不许反过来读 runtime 的状态。
     """
@@ -197,7 +197,7 @@ class TranscriberBackend(Protocol):
 
 @runtime_checkable
 class PostProcessHook(Protocol):
-    """会后流程钩子（`65dd3e4c` 实现，约定路径 `meeting.backends.post:PostProcessHook`）。"""
+    """会后流程钩子（实现，约定路径 `meeting.backends.post:PostProcessHook`）。"""
 
     def launch(self, session_dir: str) -> None:
         """**返回即算启动成功**（不等跑完）。

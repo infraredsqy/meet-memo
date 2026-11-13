@@ -89,8 +89,8 @@ function stubGlobals(): void {
             capture_gaps: { total_count: 0, total_seconds: 0, recent: [] },
           }),
       }),
-    ),
-  );
+),
+);
 }
 
 describe('唯一一条 SSE 连接（web-homegate-dual-sse 钉子）', () => {
@@ -200,7 +200,7 @@ describe('转手接线的行为不变（失联横幅 / onError 链）', () => {
     expect(
       classNames(renderer.root, 'transcript-block'),
       'recording 快照 → 会中那一屏有实时转写区',
-    ).toBeGreaterThan(0);
+).toBeGreaterThan(0);
 
     // onError（帧形状漂）→ 失败块走 unclassified 那一档（不是编出来的信封）。
     await act(async () => {

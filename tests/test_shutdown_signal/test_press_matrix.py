@@ -156,7 +156,7 @@ def test_degraded_state_read_tolerates_only_teardown_and_still_raises_on_bad_ans
 def test_idle_sigbreak_exits_zero(service_process, case_env):
     """空闲态按一次 `CTRL_BREAK_EVENT` → 空闲退出档退出码。
 
-    这一条与 phase1 在 `tests/test_port_policy.py` 里的那条空闲态 `Ctrl+C` 断言**同源**：
+    这一条与设计在 `tests/test_port_policy.py` 里的那条空闲态 `Ctrl+C` 断言**同源**：
     同一个退出码常量（`EXIT_OK`）、同一套子进程与信号辅助。
     """
     case_started = time.monotonic()
@@ -348,10 +348,10 @@ def test_recording_sigbreak_drains_and_exits_zero(service_process, case_env):
     # 两条路都算数、都不许只判谓词：
     #   1. `source == "/api/state"` —— 直接读到了运行期快照（首选，抓得到就是它）；
     #   2. `source == "session.json"` —— 服务已经答不上（监听 socket 先关、进程还在收尾），
-    #      这时要求服务级 log 里**已经有**「收尾终态已落盘：ended.phase=done」那一行：
-    #      它由运行期在 `finish_drain()` 判完终态之后写，而请求关停要等 `_wait_drain_settled()`
-    #      下一次轮询才发生（`DRAIN_SETTLE_POLL_SECONDS`）—— 于是「退出前运行期快照已经是
-    #      终态」这件事在任何时序下都有可核对的读数，判据不再靠一次采样去赌。
+    # 这时要求服务级 log 里**已经有**「收尾终态已落盘：ended.phase=done」那一行：
+    # 它由运行期在 `finish_drain()` 判完终态之后写，而请求关停要等 `_wait_drain_settled()`
+    # 下一次轮询才发生（`DRAIN_SETTLE_POLL_SECONDS`）—— 于是「退出前运行期快照已经是
+    # 终态」这件事在任何时序下都有可核对的读数，判据不再靠一次采样去赌。
     if terminal["source"] != "/api/state":
         landed = _terminal_landed_line(proc)
         assert landed is not None and "ended.phase=done" in landed, (

@@ -55,7 +55,7 @@ describe('hintLines：提示级细条', () => {
           }),
         ],
       }),
-    );
+);
     expect(lines).toEqual([{ since: '21:10', text: '实时转写落后了 · 约 2 分钟' }]);
   });
 
@@ -67,7 +67,7 @@ describe('hintLines：提示级细条', () => {
         since: T('21:1' + i + ':00'),
         message: `第 ${i} 条`,
       }),
-    );
+);
     const lines = hintLines(makeAlerts({ hints: many }));
     expect(lines).toHaveLength(HINT_LIMIT);
     expect(lines.map((l) => l.text)).toEqual(['第 0 条', '第 1 条', '第 2 条']);
@@ -140,7 +140,7 @@ describe('alertIdentity', () => {
     const alert = makeAlert();
     expect(alertIdentity(alert)).toBe(
       `loopback\u0000${alert.message}\u0000${alert.since}\u0000false`,
-    );
+);
     expect(alertIdentity(null)).toBeNull();
   });
 });

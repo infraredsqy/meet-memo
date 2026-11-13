@@ -1,12 +1,12 @@
-"""输入清单（`41465462` spec「交付物形状」里的 `working/inputs.json`）。
+"""输入清单（spec「交付物形状」里的 `working/inputs.json`）。
 
 这一层回答一个问题：**这一场会有哪几条转写、每条几行、走的是哪一档**。名字按 spec 那张
 上游冻结的表找（会中 `meeting_transcript_<source>.md`、会后
 `meeting_offline_transcript_<source>.md`，`<source> ∈ mic / loopback`），**不猜**；两条都
 不在的 `<source>` 不进清单。
 
-产出那份 `inputs.json` 的读者有两类：程序（phase2 的 runner 拿它判「要不要启动 DSH」、
-phase3 的验收脚本拿它核「这一轮喂了几条」）与人（打开场次目录想知道这一场到底有什么）。
+产出那份 `inputs.json` 的读者有两类：程序（设计的 runner 拿它判「要不要启动 DSH」、
+设计的验收脚本拿它核「这一轮喂了几条」）与人（打开场次目录想知道这一场到底有什么）。
 因此形状是**两份都在一份文件里**说清的：`mode` 那一格说明整场走的是哪一档，
 `sources[*].live` / `sources[*].offline` 两格分别说明每一条转写在不在、几行。
 
@@ -63,7 +63,7 @@ INPUTS_NAME = "inputs.json"
 class InputsError(ValueError):
     """输入清单这一层自己的错误（输入清单坏掉、写盘失败）。
 
-    继承 `ValueError`，与 `meeting` 里别的「值不对」错误同档：调用方（phase2 的 runner）
+    继承 `ValueError`，与 `meeting` 里别的「值不对」错误同档：调用方（设计的 runner）
     据此把这一趟记成 `failed` + 原因。
     """
 
@@ -122,8 +122,8 @@ def entries_for_session(session_dir: str | Path) -> tuple[SourceEntry, ...]:
                 source=spec.source,
                 live=_entry_of(session, spec.live),
                 offline=_entry_of(session, spec.offline),
-            )
-        )
+)
+)
     return tuple(entries)
 
 
@@ -152,9 +152,9 @@ def build_inputs_document(
             source=item.source,
             live=item.live.file if item.live else None,
             offline=item.offline.file if item.offline else None,
-        )
+)
         for item in entries
-    )
+)
     resolved = mode or mode_for(specs) or MODE_NONE
     if resolved not in INPUT_MODES:
         raise InputsError(f"档位只认 {INPUT_MODES}，收到 {resolved!r}")
@@ -172,7 +172,7 @@ def write_inputs(path: str | Path, document: Mapping[str, Any]) -> Path:
     """落一份 `inputs.json`（原子替换），返回落点。"""
     return write_text_atomic(
         path, json.dumps(dict(document), ensure_ascii=False, indent=2) + "\n"
-    )
+)
 
 
 def read_inputs(path: str | Path) -> dict[str, Any]:
@@ -199,7 +199,7 @@ def parse_inputs_document(document: Any) -> dict[str, Any]:
     if version != KNOWN_SCHEMA_MAJOR:
         raise InputsError(
             f"输入清单的主版本号不认识：{version}（本实现只认 {KNOWN_SCHEMA_MAJOR}）"
-        )
+)
     if document.get("mode") not in INPUT_MODES:
         raise InputsError(f"输入清单的 mode 只认 {INPUT_MODES}，收到 {document.get('mode')!r}")
     sources = document.get("sources")

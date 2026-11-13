@@ -1,4 +1,4 @@
-"""会后离线转写与说话人聚类（`7c6952e5` 的引擎内核与产物）。
+"""会后离线转写与说话人聚类（的引擎内核与产物）。
 
 七个模块各管一段：
 
@@ -10,7 +10,7 @@
   - `meeting.offline.artifacts`：三份产物 + 状态文件的写入与字段契约；
   - `meeting.offline.runner`（子包：编排主模块 + `runner/pcm.py` 的字节门与
     `runner/session_info.py` 的场次元信息）：把上面这些串成 `run_session(session_dir)`；
-  - `meeting.offline.replay`：重放验证工具（`a3b684bd`）：截断复制素材、
+  - `meeting.offline.replay`：重放验证工具：截断复制素材、
     直调同一条 `run_session(minutes=False)`、出逐块读数——只验证，不是第二条生产路径。
 
 **本包不 import 任何重依赖**：`torch` / `transformers` / `av` / `webrtcvad` 一律在函数体内

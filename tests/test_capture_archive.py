@@ -378,7 +378,7 @@ def test_from_raw_gets_the_frozen_pcm_shape(tmp_path: Path, monkeypatch: pytest.
 def test_transcode_never_unlinks_the_pcm(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """**转码这一路一次都不 `unlink`**（V1 在结尾与空文件两处各删一次）。
 
-    「转完不删 PCM」是 `dca4539b` §3 里预先批准的那一处有意改动：`session.json` 的
+    「转完不删 PCM」是 §3 里预先批准的那一处有意改动：`session.json` 的
     `sources[*].archive` 声明的是那份 `.pcm`。这里把 `Path.unlink` 全程换成一个记录器，
     转码走完一遍之后它必须是空的 —— 空文件那一档同理。
     """

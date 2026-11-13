@@ -401,7 +401,7 @@ describe('订阅', () => {
   });
 });
 
-describe('缺省档随快照走（applyDefaultWindow，311f84f5）', () => {
+describe('缺省档随快照走（applyDefaultWindow）', () => {
   it('闲档时铺快照给的缺省档', () => {
     const controller = createSummaryController({
       request: async () => answer(),

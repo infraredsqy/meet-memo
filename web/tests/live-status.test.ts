@@ -90,7 +90,7 @@ describe('healthView：七取值逐档', () => {
   it('lost：整行写出从何时起，并且标成「死了」', () => {
     const view = healthView(
       makeSource('loopback', { health: 'lost', lost_since: T('20:57:00') }),
-    );
+);
     expect(view.text).toBe('信号丢失，从 20:57 起');
     expect(view.chip).toBe('远端 · 信号丢失，从 20:57 起');
     expect(view.glyph).toBe('glyph--cross');
@@ -126,13 +126,13 @@ describe('restoredText：缺哪个数就少说哪个，一个都不编', () => {
   it('三个数齐：完整的括号', () => {
     expect(
       restoredText({ everLost: true, lostSince: T('20:57:00'), restoredAt: T('21:10:00') }),
-    ).toBe('已恢复（20:57–21:10 丢过 13 分钟）');
+).toBe('已恢复（20:57–21:10 丢过 13 分钟）');
   });
 
   it('只记得丢的那一刻（刷新过、恢复时刻没看着）', () => {
     expect(restoredText({ everLost: true, lostSince: T('20:57:00'), restoredAt: null })).toBe(
       '已恢复（从 20:57 起丢过一段）',
-    );
+);
   });
 
   it('什么都没记下（新开的窗口直接看到「已恢复」）', () => {
@@ -144,7 +144,7 @@ describe('lostSeconds', () => {
   it('两个时刻之差', () => {
     expect(
       lostSeconds({ everLost: true, lostSince: T('20:57:00'), restoredAt: T('21:10:23') }),
-    ).toBe(803);
+).toBe(803);
   });
 
   it('缺一个时刻、或没丢过：null', () => {

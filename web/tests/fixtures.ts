@@ -106,17 +106,17 @@ export const SUMMARY_FIXTURES = [
 /** 本场总结记录那一份样本的名字（`GET /api/summaries`）。 */
 export const SUMMARIES_FIXTURES = ['after-one'] as const;
 
-/** 四个心跳样本（`no-first-frame` 是「还没有第一帧」的未知档，de899128；
+/** 四个心跳样本（`no-first-frame` 是「还没有第一帧」的未知档，；
  *  `capture-gap` 是帧空洞留痕那一档，gil-stall-hole）。 */
 export const HEARTBEAT_FIXTURES = ['capture-gap', 'idle', 'no-first-frame', 'recording'] as const;
 
-/** 设备清单那一份样本（`GET /api/devices`，设置抽屉节点 `311f84f5`）。 */
+/** 设备清单那一份样本（`GET /api/devices`，设置抽屉节点 ``）。 */
 export const DEVICES_FIXTURES = ['all'] as const;
 
 /**
  * 工作区样本（4.8 / 4.9 / 4.13）：空注册表、登记三档目录之后的清单 + `recent`、
  * 单场状态（两路逐块进度记录 + 状态文件落好之后的那一读）、单场状态的**被打断档**
- * （b1c6a58e：盘上落 `interrupted` 的那一读）、稿子正文的四档样本（4.13，38817ecf：
+ * （：盘上落 `interrupted` 的那一读）、稿子正文的四档样本（4.13，：
  * 两路都有 / 缺一路 / 两路都缺 / 目录不在）。
  */
 export const SESSIONS_FIXTURES = [
@@ -131,14 +131,14 @@ export const SESSIONS_FIXTURES = [
 ] as const;
 
 /**
- * 会议资料四份样本（4.12，资料节点 285bf58c）：上传成功体（通用信封 + `material`
+ * 会议资料四份样本（4.12，资料节点 ）：上传成功体（通用信封 + `material`
  * 三格）、上传之后的清单（目录就是清单）、删除成功体（`material` 一格）、取不到 /
  * 删不到那一档（`material_missing`，4.12 那片自己的 `code`）。
  *
  * 样本的请求侧是**两件套**（`method` + `name`）—— 资料四条不走 `/api/actions`；
  * `name` 是打过去的那份请求名（`after-upload` 里那个穿越加非法字符的脏名字原样进样本，
  * 清洗前后的对照正是契约要看的东西）。web 侧的对齐用例在 `contract.test.ts` 的
- * 「会议资料样本」那一组（160d1a78 接的线）。
+ * 「会议资料样本」那一组（ 接的线）。
  */
 export const MATERIALS_FIXTURES = [
   'after-upload',

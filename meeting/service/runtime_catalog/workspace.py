@@ -1,7 +1,7 @@
-"""``RuntimeCatalogMixin`` 的「工作区注册表」域分片：登记 / 移除 / 清单读数与三档状态口径。
+"""RuntimeCatalogMixin 的「工作区注册表」域分片：登记 / 移除 / 清单读数与三档状态口径。
 
-方法与方法间注释均自拆分前的 ``runtime_catalog.py`` 单文件 mixin 一字不改复制；
-本文件自写内容只有模块 docstring、import、``_log`` 一行与类声明行。
+方法与方法间注释均自拆分前的 runtime_catalog.py 单文件 mixin 一字不改复制；
+本文件自写内容只有模块 docstring、import、_log 一行与类声明行。
 """
 from __future__ import annotations
 
@@ -18,9 +18,9 @@ _log = logging.getLogger("meeting.service.runtime")
 
 
 class RuntimeCatalogWorkspaceMixin:
-    """「工作区注册表」：开 / 移 / 清单读数，三档 ``state`` 口径的唯一住家。"""
+    """「工作区注册表」：开 / 移 / 清单读数，三档 state 口径的唯一住家。"""
 
-    # 工作区注册表（工作台收编节点 e2f6166b）
+    # 工作区注册表（工作台收编节点）
 
     def _is_actively_recording(self, path: str | Path) -> bool:
         """`path` 这一场是不是**本进程此刻在录**的那一场（三档口径里 `recording` 的判据）。
@@ -167,7 +167,7 @@ class RuntimeCatalogWorkspaceMixin:
         `recent` 是最近一次被打开/切换的那一条的目录（**只从注册表读**，不扫任何场次
         目录 —— 启动序列对它的口径见 `docs/state.md`「重启自洽」）。
         清单本身也按「最近在用」倒序给出（`registry.ordered()`）：最近一次被打开/切换
-        的那一场排最前，判据与 `recent` 同一条链（7058f2e1）——界面照应答次序渲染、
+        的那一场排最前，判据与 `recent` 同一条链——界面照应答次序渲染、
         自己不重排，次序的口径正本在 `docs/contract.md` 4.8。
 
         `has_offline` 是「这一场有没有会后精细稿」那一格（R29）：判据是场次目录里在不在

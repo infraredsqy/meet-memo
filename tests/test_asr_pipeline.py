@@ -1,6 +1,6 @@
 """`tests/test_asr_pipeline.py` —— 实时转写流水线（进程内、无真实模型、无真实声卡）。
 
-`9e5db89c` phase2 的落地口径 1–6 在这里逐条落到用例上：
+ 设计的落地口径 1–6 在这里逐条落到用例上：
 
   - **时间戳是采集时刻**：每一行的时间戳落在「那段音频写进归档的墙钟窗口」之内
     （照 `tests/test_capture_accounting.py` 的口径记下写入时刻，不靠固定 sleep 凑时序）；
@@ -82,7 +82,7 @@ WAIT_RE = re.compile(r"wait=([\d.]+)s")
 #: `spk` 组仍是 `None`、`text` 仍是占位符本身（`review3.md` 的 m7 另用 A7 原件复核过同一结论）。
 LINE_RE = re.compile(r"^\[(\d{2}:\d{2})\]\s*(?:\*\*(?P<spk>[^*]+)\*\*:\s*)?(?P<text>.+)$")
 
-#: 落盘行的开头（`phase2/task.md` 完成判定 2）
+#: 落盘行的开头（设计口径完成判定 2）
 STAMPED_LINE_RE = re.compile(r"^\[\d{2}:\d{2}\] ")
 
 #: 噪声预筛与文本兜底的替身（打在 `meeting.asr.pipeline.glm_module` 那份模块对象上）

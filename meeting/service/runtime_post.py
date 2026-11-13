@@ -121,7 +121,7 @@ class RuntimePostMixin:
         `claimed_minutes=True` 表示纪要那一层的 claim 已经在动作本体里同步认过（m2），
         线程体那一趟因此直接起线程、不再认第二次。
 
-        **`cancel` 是打断那一趟的接缝**（b1c6a58e）：offline 档起一条 `threading.Event`
+        **`cancel` 是打断那一趟的接缝**：offline 档起一条 `threading.Event`
         塞进登记，线程体把它以 `is_set` 的形状递给 `run_session(cancel=…)` ——
         旗标立起后线程在**下一块开跑前**收场，盘上状态由 `run_session` 写成
         `interrupted`。minutes 档没有这格（`None`）。转码档的 `cancel` 是**暂停旗标**
@@ -215,7 +215,7 @@ class RuntimePostMixin:
         场次目录里那份 `meeting_offline_progress.jsonl` 上补一行，同一份现场读数由
         `GET /api/sessions/{id}` 随取随用（见 `session_status_dict()`）。
 
-        `cancel` 是打断接缝（b1c6a58e）：以 `is_set` 的 callable 形状递进
+        `cancel` 是打断接缝：以 `is_set` 的 callable 形状递进
         `run_session(cancel=…)` —— 旗标立起后线程在下一块开跑前收场，终态
         `interrupted` 由 `run_session` 自己落。`None` = 现行为（不插任何检查）。
         """
@@ -459,7 +459,7 @@ class RuntimePostMixin:
         return receipt
 
     def post_stop(self, args: dict[str, Any] | None = None) -> dict[str, Any]:
-        """`post_stop` 动作：停掉正在跑的「生成会后精细稿」那一趟（b1c6a58e，R28）。
+        """`post_stop` 动作：停掉正在跑的「生成会后精细稿」那一趟（R28）。
 
         **受理即回，不等块边界**：立起取消旗标就交回执 —— 线程在
         下一块开跑前收场（正在跑的那一块不掐：引擎是同步推理），盘上状态由

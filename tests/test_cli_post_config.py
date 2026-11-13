@@ -1,4 +1,4 @@
-"""`meeting post` 这条入口把**配置层**读进来并生效（`65dd3e4c` phase3 的补齐）。
+"""`meeting post` 这条入口把**配置层**读进来并生效（设计的补齐）。
 
 要盯住的那一件事：`meeting post <场次目录>` 走的是**产品入口**，因此这一趟里每一个取值都
 必须来自「用户写的那份 `config.json`」，而不是 `meeting/config.py` 的默认值表。

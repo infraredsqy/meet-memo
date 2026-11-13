@@ -1,4 +1,4 @@
-"""`tests/test_multi_client.py` —— 多开 / 关闭 / 刷新（phase2 §5.1 第九行；§3.10）。
+"""`tests/test_multi_client.py` —— 多开 / 关闭 / 刷新（设计口径第九行；§3.10）。
 
 覆盖（逐条对 §5.1 的 ①–⑤ 与 §4.4 的五条）：
 
@@ -24,7 +24,7 @@ from tests import _helpers as helpers
 from tests._helpers import wait_until
 from tests._service import SseClient
 
-#: 慢档标记（68927c27 收尾轮）：真流式/真后端的收尾验收，不进每次迭代圈。
+#: 慢档标记（收尾轮）：真流式/真后端的收尾验收，不进每次迭代圈。
 pytestmark = pytest.mark.slow
 
 #: 用例的显式等待上限（秒）

@@ -1,4 +1,4 @@
-"""`tests/test_contract_fixtures/` —— `contract/fixtures/` 的采集与漂移比对（c62dec56 phase1）。
+"""`tests/test_contract_fixtures/` —— `contract/fixtures/` 的采集与漂移比对（设计）。
 
 两个模式（开关注册在 `tests/conftest.py` 的 `pytest_addoption`）：
 

@@ -1,4 +1,4 @@
-"""并行档两道安全网的适配（`68927c27` 节点）：看门阈值的环境变量覆盖、xdist 收场复查搬运。
+"""并行档两道安全网的适配（节点）：看门阈值的环境变量覆盖、xdist 收场复查搬运。
 
 被测逻辑全部住在 `tests/conftest.py`：`case_wall_clock_limit()`（并行档放宽口径，缺省 5.0）、
 `_xdist_report_worker_violations()`（worker 把违例记录写成上报文件）、

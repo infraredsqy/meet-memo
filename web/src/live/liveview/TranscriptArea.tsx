@@ -58,7 +58,7 @@ export function TranscriptArea({
           <span className="tag">草稿 · 会后重建</span>
           {(health === 'behind' || health === 'stopped') && (
             <span className="tag">{health === 'behind' ? '延迟' : '已停止'}</span>
-          )}
+)}
         </div>
         {!started && <p className="empty">开录后，两路的转写逐行显示在这里。</p>}
         {started && (
@@ -69,8 +69,8 @@ export function TranscriptArea({
               ref={transcriptRef}
               onScroll={onTranscriptScroll}
             >
-              {/* 断口行就是普通 transcript__line + transcript__gap（设计稿
-                  `docs/ui/live.html` 里同一条用法）：不挂自造的修饰类，视觉与语义都归契约类名 */}
+              {/* 断口行就是普通 transcript__line + transcript__gap（设计口径里同一条用法）：
+                  不挂自造的修饰类，视觉与语义都归契约类名 */}
               {rows.map((row, index) => (
                 <div
                   className="transcript__line"
@@ -84,11 +84,11 @@ export function TranscriptArea({
                   <span className="transcript__route">{row.route}</span>
                   {row.gap ? (
                     <span className="transcript__gap">{row.text}</span>
-                  ) : (
+) : (
                     <span className="transcript__text">{row.text}</span>
-                  )}
+)}
                 </div>
-              ))}
+))}
             </div>
             {/* 「回到最新」在滚动区外面：滚动区自己滚起来时它不该跟着跑掉 */}
             {jumpVisible && (
@@ -97,7 +97,7 @@ export function TranscriptArea({
                   回到最新
                 </button>
               </div>
-            )}
+)}
             {/* 窄屏（720 以下）把转写折成一行「最近一句」，靠这个钮展开；桌面宽度下
                 这一格由 CSS 收着（转写本来就在页面上） */}
             <div className="band__foot">
@@ -113,8 +113,8 @@ export function TranscriptArea({
               </button>
             </div>
           </>
-        )}
+)}
       </div>
     </section>
-  );
+);
 }

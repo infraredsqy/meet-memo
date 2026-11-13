@@ -21,7 +21,7 @@ import type { OfflineSourceProgress, PostJobCell, SessionRow, SessionStatus } fr
  * `live-fixtures.ts` 同一姿态）。形状的权威在 `docs/contract.md` 4.9，逐键对着写。
  *
  * 四组：
- * 1. 列表行四档（d61829f1：空白工作区 / 尚未开始 / 录音中 / 录音结束 + 目录不存在；
+ * 1. 列表行四档（：空白工作区 / 尚未开始 / 录音中 / 录音结束 + 目录不存在；
  *    会后工序的进度不进行状态）；
  * 2. 进度读数（真在跑 / 停着一版 running / 终态 / 没跑过；分母按路各算各的）；
  * 3. 逐块行（每跑完一块落一行；四档归属靠计数差值）与记录重置检出（review-2 m2：
@@ -58,7 +58,7 @@ function job(over: Partial<PostJobCell> = {}): PostJobCell[] {
   ];
 }
 
-/** 一格「没跑过」的纪要读数（`minutes` 格的空档形状，38817ecf）。 */
+/** 一格「没跑过」的纪要读数（`minutes` 格的空档形状）。 */
 function minutesIdle(): SessionStatus['minutes'] {
   return { state: 'idle', started_at: null, finished_at: null, error: null };
 }
@@ -121,10 +121,10 @@ function status(
 }
 
 // ---------------------------------------------------------------------------
-// 1. 列表行四档（d61829f1：只说录音，会后工序的进度不进这一格）
+// 1. 列表行四档（：只说录音，会后工序的进度不进这一格）
 // ---------------------------------------------------------------------------
 
-describe('列表行四档（d61829f1，字与图形并存）', () => {
+describe('列表行四档（字与图形并存）', () => {
   it('空白工作区 / 尚未开始：按名目 kind 分档，形状是空心框（颜色不是唯一通道）', () => {
     expect(rowStatusView(row({ kind: 'empty' }), [])).toEqual({
       tone: 'blank', label: '空白工作区', mark: 'glyph--idle', dim: false,
@@ -151,7 +151,7 @@ describe('列表行四档（d61829f1，字与图形并存）', () => {
   });
 
   it('会后任务在飞不改这一行：post_jobs 只喂忙闲格与进度区，行四档看不见它', () => {
-    // 旧口径这里翻「会后任务运行中」；d61829f1 起那一档从行上摘除
+    // 旧口径这里翻「会后任务运行中」； 起那一档从行上摘除
     const view = rowStatusView(row({ state: 'ended', kind: 'meeting' }), job());
     expect(view.tone).toBe('ended');
     expect(view.label).toBe('录音结束');
@@ -227,7 +227,7 @@ describe('进度读数（offline 那份 → 每路一条）', () => {
     expect(view.inProcess).toBe(false);
   });
 
-  it('已中断（b1c6a58e）：自成一相，明说「停了、可以重跑」，不许掉进「跑完了」', () => {
+  it('已中断：自成一相，明说「停了、可以重跑」，不许掉进「跑完了」', () => {
     const view = progressView(status({}, {
       state: 'interrupted',
       in_process: false,
@@ -377,7 +377,7 @@ describe('记录重置检出（review-2 m2：重跑一场逐块行要整段重�
     expect(chunkLedgerReset(
       before,
       status({}, { started_at: NEW_RUN, sources: [road({ done: 2, total: 10 })] }),
-    )).toBe(true);
+)).toBe(true);
     // 四档合计回落（done 相同、记录被换过）
     expect(chunkLedgerReset(
       before,
@@ -385,7 +385,7 @@ describe('记录重置检出（review-2 m2：重跑一场逐块行要整段重�
         started_at: NEW_RUN,
         sources: [road({ done: 4, total: 10, counts: { transcribed: 2, silent: 0, failed: 0, unjudged: 0 } })],
       }),
-    )).toBe(true);
+)).toBe(true);
     // 同一趟里正常推进：started_at 不变、done 只增 —— 不重播，走差值
     expect(chunkLedgerReset(
       before,
@@ -393,7 +393,7 @@ describe('记录重置检出（review-2 m2：重跑一场逐块行要整段重�
         started_at: NEW_RUN,
         sources: [road({ done: 5, total: 10, counts: { transcribed: 4, silent: 1, failed: 0, unjudged: 0 } })],
       }),
-    )).toBe(false);
+)).toBe(false);
   });
 
   it('换场不检出（跨场重置由换选中清零负责）；没开跑过（两边 started_at 都 null）也不检出', () => {
@@ -401,7 +401,7 @@ describe('记录重置检出（review-2 m2：重跑一场逐块行要整段重�
     expect(chunkLedgerReset(
       before,
       status({ dir: 'C:\\会议\\另一场' }, { started_at: OLD_RUN, sources: [road({ done: 9, total: 10 })] }),
-    )).toBe(false);
+)).toBe(false);
     expect(chunkLedgerReset(status({}), status({}))).toBe(false);
   });
 });
@@ -438,7 +438,7 @@ describe('要不要轮询（有活动才问）', () => {
     expect(shouldWatch(selected, job(), status({ dir: 'C:\\会议\\另一场' }))).toBe(true);
     expect(
       shouldWatch(selected, job(), status({}, { state: 'running', in_process: true })),
-    ).toBe(true);
+).toBe(true);
     expect(shouldWatch(selected, [], status({}, { state: 'running', in_process: true }))).toBe(true);
     expect(shouldWatch(selected, [], status({}, { state: 'running', in_process: false }))).toBe(true);
   });
@@ -447,24 +447,24 @@ describe('要不要轮询（有活动才问）', () => {
     const selected = row({ state: 'ended', kind: 'meeting' });
     expect(shouldWatch(selected, job(), status({}, { state: 'done', in_process: false }))).toBe(false);
     expect(shouldWatch(selected, job(), status({}, { state: 'idle' }))).toBe(false);
-    // 已中断也是终态（b1c6a58e）：重按按钮才再跑，轮询照样收尾
+    // 已中断也是终态：重按按钮才再跑，轮询照样收尾
     expect(shouldWatch(selected, job(), status({}, { state: 'interrupted', in_process: false }))).toBe(false);
   });
 
-  it('转码在飞 / 纪要在飞也要问（38817ecf：工序链那两段要跟着翻面）', () => {
+  it('转码在飞 / 纪要在飞也要问（：工序链那两段要跟着翻面）', () => {
     const selected = row({ state: 'ended', kind: 'meeting' });
     // 转码那道工序在本进程里飞（transcode.in_process）
     expect(
       shouldWatch(selected, [], status({ transcode: { ...transcodeIdle(), in_process: true } })),
-    ).toBe(true);
+).toBe(true);
     // 纪要在飞（post 清单里 minutes 那一项 running）
     expect(
       shouldWatch(
         selected,
         [],
         status({ post: [{ running: true, kind: 'minutes', dir: selected.dir, started_at: '2026-09-21T22:10:00+08:00', finished_at: null }] }),
-      ),
-    ).toBe(true);
+),
+).toBe(true);
   });
 
   it('终态、没跑过、没选中：不问', () => {

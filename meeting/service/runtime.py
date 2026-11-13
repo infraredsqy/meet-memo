@@ -1,10 +1,10 @@
-"""`ServiceRuntime`——唯一状态权威（phase2 §3.5；从 `app.py` 整体搬来）。
+"""`ServiceRuntime`——唯一状态权威（设计口径；从 `app.py` 整体搬来）。
 
-搬迁边界（phase2 §3.5.1）：本模块承载 `ServiceRuntime`（类名、构造语义、方法名与语义
+搬迁边界（设计口径）：本模块承载 `ServiceRuntime`（类名、构造语义、方法名与语义
 一字不改）；工厂入口 `build_runtime()` 仍在 `app.py`；信号处理那四样常驻 `app.py`，
 本模块不复制；写进 `_shutdown_target` 的对象仍由 `startup()` 在这一侧写入。
 
-并发模型（phase2 §3.5.3）：全部状态收在本对象一处、只在 asyncio 事件循环里改、不加锁；
+并发模型（设计口径）：全部状态收在本对象一处、只在 asyncio 事件循环里改、不加锁；
 后端把事实送进来的唯一入口是 `loop.call_soon_threadsafe(...)`；`to_dict()` 与 `commit()`
 配合：状态变更后经 `commit()` 一次完成「`revision +1` + 广播一次全量 `state`」，别处一律
 不自己改 `revision`、不自己发 `state`。唯一例外是「等待一条同步调用」：收尾三步与会中
@@ -136,7 +136,7 @@ class ServiceRuntime(
         self.frame_interval: float = 0.5
         self.last_frame_ts: float | None = None
         self.last_fact_at: float | None = None
-        #: 本场 start 的单调钟基准（`recording_alive` 的开场窗口自它起算，de899128）：
+        #: 本场 start 的单调钟基准（`recording_alive` 的开场窗口自它起算）：
         #: 「还没有第一帧」在窗口内报 `None`（未知）、超窗报 `False`（=停）。
         #: 与 `last_frame_ts` 同点写、同点清（`start_session()` 起场 / `__init__` 起步）。
         self.session_start_mono: float | None = None
@@ -191,7 +191,7 @@ class ServiceRuntime(
         #: 转写健康度节拍（低频、只写快照；见 `_transcriber_health_loop()`）
         self._transcriber_ticker: asyncio.Task | None = None
 
-        # -- 会中总结（`1987cb20` phase2 §3.6）：两样都是内存里的、会话级的、不落文件
+        # -- 会中总结（设计口径）：两样都是内存里的、会话级的、不落文件
         # （设计章 2.3 / 5.1：会中总结做完就该消失）。
         # `summary_buffer`：内存里那条追加中的实时转写——盘上的会中临时稿只有分钟级
         # `[HH:MM]`（秒被丢掉、同一分钟撞成一个戳），切不了窗口；这份带完整墙钟浮点 `ts`
@@ -281,7 +281,7 @@ class ServiceRuntime(
     ) -> None:
         """把这一刻与上一次落过 log 的那一版之间的每一路 `health` 变化落成一条 log。
 
-        契约把「每一路健康迁移（含原因与阈值）」列为必须落 log 的事件（phase1 §3.13、
+        契约把「每一路健康迁移（含原因与阈值）」列为必须落 log 的事件（设计口径、
         `index.md` §7 的 G6 要求场次 log 结束标记之前逐类可查）。本方法只加日志、不改任何
         状态语义：`health` 的值仍由 `meeting/state.py` 的迁移函数写。
 

@@ -38,13 +38,13 @@ export function DialogFrame({
         <div className="dlg__acts">{acts}</div>
       </div>
     </div>
-  );
+);
 }
 
 /**
  * 一只确认弹窗（`dlg` 体系的最小那只）：一句话标题、一段正文、取消 + 确认两颗。
  *
- * 从工作台首页（`home/WorkspaceHome/`）搬出共用（160d1a78）：非空目录收编 / 从列表移除 /
+ * 从工作台首页（`home/WorkspaceHome/`）搬出共用：非空目录收编 / 从列表移除 /
  * 「新会议会打断」三问之外，资料区的删除确认与大文件确认也是同一副骨架。
  */
 export function ConfirmDialog({
@@ -79,5 +79,5 @@ export function ConfirmDialog({
     >
       <div className="dlg__text">{text}</div>
     </DialogFrame>
-  );
+);
 }

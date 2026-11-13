@@ -1,4 +1,4 @@
-"""真实适配层——`sounddevice` / `soundcard`，函数体内惰性 import（`dca4539b`）。
+"""真实适配层——`sounddevice` / `soundcard`，函数体内惰性 import。
 
 本模块是唯一碰声卡库的地方：`meeting/capture/devices.py` 拿这里的端点表与试开结果做挑选
 （纯逻辑，可单测）；这里负责问系统有哪些端点、以 16k 试开一次并量出样本，以及持续采集的
@@ -345,7 +345,7 @@ class _QueueReader:
 
 
 class SounddeviceMicSource:
-    """mic 的持续采集：`sd.InputStream` 的回调把块投进队列（`dca4539b` §3 的 `mic` 源）。
+    """mic 的持续采集：`sd.InputStream` 的回调把块投进队列（§3 的 `mic` 源）。
 
     搬自 V1 `_open_mic`（`recorder.py:415-426`）与 `_mic_callback`（`:488-493`）；
     接口层替换：`self.mic_device` → 构造时收到的 `endpoint`；`self.recording` → `stop()`；

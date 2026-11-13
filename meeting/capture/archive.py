@@ -1,4 +1,4 @@
-"""音频归档——raw PCM 边采边写 / 收尾 PCM→MP3（`dca4539b` phase2 §3）。
+"""音频归档——raw PCM 边采边写 / 收尾 PCM→MP3（设计口径）。
 
 从 V1 `mnotes_core/media.py` 搬过来，函数体逐字来自对照源，三处按 V2 接口层改过：
 `open_pcm()` 无缓冲（`buffering=0`）；`convert_to_mp3()` 去掉 `prepend_mp3`（V1 的续接
@@ -49,7 +49,7 @@ def convert_to_mp3(pcm_path: Path | str, mp3_path: Path | str, bitrate: str = MP
     """把 raw PCM（int16 mono）归档转成 MP3。返回是否真的产出了 MP3。
 
     搬自 V1 `media.py:24-44`，函数体逐字来自对照源（pydub `AudioSegment.from_raw` →
-    `export(format="mp3", bitrate=...)`）。与 V1 的差别（有意，见 `dca4539b` §3）：
+    `export(format="mp3", bitrate=...)`）。与 V1 的差别（有意，见 §3）：
     转完不删 PCM——`session.json` 的 `sources[*].archives` 声明的是那些段 `.pcm`，删掉它
     记录就指向空气；空文件那一档同理不再 `unlink`（留 0 字节文件与记录对齐）。去掉
     `prepend_mp3`（续接拼接本节点不做，§5「不做」清单）。

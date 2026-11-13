@@ -51,14 +51,14 @@ TRANSCRIPT_NOTE_SUFFIX = "-->"
 
 #: 合法状态。`partial` 是**一路整条没交回、另一路跑成了**那一档（见 `write_status()`）：
 #: 从前这一档与「两路都成」在顶层这一格上都写 `done`，读方只看 `state` 分不开。
-#: `interrupted` 是**跑到块边界被人停**那一档（「打断会后」节点 b1c6a58e）：它也是终态
+#: `interrupted` 是**跑到块边界被人停**那一档（「打断会后」节点）：它也是终态
 #: （这一趟不会再自己往下跑了），与 `running`（还有东西在跑）分开写 —— 「杀了进程就
 #: 永远停在在跑」那种状态里，「被打断」这一格是治它的那一半。
 STATES = ("running", "done", "partial", "failed", "interrupted")
 
 #: 「盘上停着一版已落定的记录」的三档（`mark_failed_if_unset()` 的沿用判据；与
 #: `meeting/backends/post.py` 的 `STATE_FAILED` / `STATE_PARTIAL` / `STATE_INTERRUPTED`
-#: 同值）：`interrupted`（人停的）也算 —— 后来逃出来的异常不许把它盖成 `failed`（b1c6a58e）。
+#: 同值）：`interrupted`（人停的）也算 —— 后来逃出来的异常不许把它盖成 `failed`。
 _SETTLED_STATES = ("failed", "partial", "interrupted")
 
 #: 失败原因词表（报告与状态文件都用这几个名字，下游按它分档）
@@ -74,7 +74,7 @@ REASON_NOT_RUN = "not_run"
 REASON_NO_SEGMENTS = "no_segments"
 #: 分块下每一块都失败：一段都没留下来（与「一块坏、别的块还在」的 `partial` 分开）
 REASON_ALL_CHUNKS_FAILED = "all_chunks_failed"
-#: 跑到块边界被取消旗标停（b1c6a58e）：已跑块保留，未跑块进 `missing_spans`
+#: 跑到块边界被取消旗标停：已跑块保留，未跑块进 `missing_spans`
 #: （缺口只供人读，不进任何判定——design-intent 第 6 条）。
 REASON_INTERRUPTED = "interrupted"
 #: 数字静音门跳过的块。不是失败：只进 `reasons` 分布，不进缺失区间。
@@ -693,7 +693,7 @@ def write_report(
         lines.append(
             "下面这几段音频的样本**全为零**（实测那一档是 `volumedetect` 读 `-91.0 dB` 的"
             "全零样本），因此一**次引擎调用都没发生**：引擎在这种输入上有编出整段假正文的"
-            "实测记录（见节点 `7c6952e5` 的 `phase3/fullrun-250906.md`）。跳过之后转写里"
+            "实测记录（见节点 的 `设计/fullrun-250906.md`）。跳过之后转写里"
             "没有这几段，那是如实的结果；对照表的 `audio.silent_spans`、转写第一行的注释、"
             "状态文件的 `silent` 三处记的是同一件事。**这一档与 `partial` 分得开**："
             "`partial` 说的是「有块没跑成」，`silent` 说的是「那块本来就没有音频」。"
@@ -796,7 +796,7 @@ def write_status(
     `state = "partial"` 看「哪一路整条没交回」（至少一路跑成、也至少一路整条没交回；
     缺哪路看 `artifacts.<source>.state/reason/error`），`partial = true` 看「某一路缺了
     区间」（某块没成，产物照落、该路仍 done——少了这个键，少 450 秒与完整转写同形）。
-    `interrupted` 也是终态（b1c6a58e）：取消旗标块边界命中收场，缺口注记进 `error`
+    `interrupted` 也是终态：取消旗标块边界命中收场，缺口注记进 `error`
     只供人读；重按按钮不用 force 就能从头再跑（幂等闸只拦 running）。
     `silent` / `silent_spans` 记没声跳过（state 照样 done、partial 照样 false）；
     `gate` 记闸自己做成没做成判断，缺了它没门可用的运行与健康运行同形。
@@ -849,7 +849,7 @@ def mark_failed_if_unset(session_dir: Path | str, error: str) -> Path:
     """把状态文件补成 `failed` + 原因；盘上停着一版已落定的记录（failed / partial /
     interrupted，判据 `_SETTLED_STATES`）时沿用那一版字段——`engine_load_error` 这类词档
     只在 runner 现场写的版本里、比调用方手里的通用串准，`interrupted`（人停的）不许被
-    后来逃出的异常盖成 `failed`（b1c6a58e）。补记录口径只能有这一处：幂等闸、启动核对
+    后来逃出的异常盖成 `failed`。补记录口径只能有这一处：幂等闸、启动核对
     与读回侧都读这份文件。读不动盘上那一版按空记录补；写不下去异常原样抛给调用方记 log。
     """
     directory = Path(session_dir)

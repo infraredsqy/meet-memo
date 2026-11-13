@@ -1,4 +1,4 @@
-"""web 分支：把这一场会后纪要**交付**给 DSH web 服务端（`41465462` 的后续增量）。
+"""web 分支：把这一场会后纪要**交付**给 DSH web 服务端（的后续增量）。
 
 ## 为什么要有这一层
 
@@ -208,12 +208,12 @@ def load_signing_secret(path: str | Path | None = None) -> bytes:
     if not credentials.exists():
         raise WebHandoffError(
             f"读不到 DSH 凭据文件 {credentials} —— 确认 dsh web 至少成功启动过一次"
-        )
+)
     match = SECRET_PATTERN.search(credentials.read_text(encoding="utf-8"))
     if match is None:
         raise WebHandoffError(
             f"凭据文件里没有 {SECRET_RECORD} 记录（{credentials}）"
-        )
+)
     secret = _b64url_decode(match.group(1))
     if len(secret) != 32:
         raise WebHandoffError(f"签名密钥长度异常（{len(secret)} 字节，应为 32）")
@@ -233,7 +233,7 @@ def signing_cookie(
     key = load_signing_secret(credentials) if secret is None else secret
     name = "dsh-auth-" + _b64url_encode(
         hashlib.sha256(authority.encode("utf-8")).digest()
-    )
+)
     now = int(time.time() * 1000)
     payload = {
         "version": 1,
@@ -244,7 +244,7 @@ def signing_cookie(
     body = _b64url_encode(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
     signature = _b64url_encode(
         hmac.new(key, body.encode("ascii"), hashlib.sha256).digest()
-    )
+)
     return f"{name}=v1.{body}.{signature}"
 
 
@@ -267,7 +267,7 @@ def _post_json(
             "Cookie": cookie,
         },
         method="POST",
-    )
+)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return int(response.status), response.read().decode("utf-8", errors="replace")
@@ -320,12 +320,12 @@ def rpc_call(
                 raise WebHandoffError(
                     f"{method} 鉴权被拒（HTTP {status}）：{_short(text)}"
                     "——凭据文件里那枚签名密钥与 DSH 服务端对不上（或它重启时换了密钥）"
-                )
+)
             if status == 404:
                 raise WebHandoffError(
                     f"{method} 端点不存在（HTTP 404）：{_short(text)}"
                     "——DSH 的方法名或端点写法变了"
-                )
+)
             if status >= 500:
                 last = f"{method} 服务端出错（HTTP {status}）：{_short(text)}"
             else:
@@ -334,7 +334,7 @@ def rpc_call(
                 except ValueError as exc:
                     raise WebHandoffError(
                         f"{method} 的应答不是 JSON（HTTP {status}）：{_short(text)}"
-                    ) from exc
+) from exc
                 if envelope.get("type") != "server-response":
                     raise WebHandoffError(f"{method} 的应答信封异常：{_short(text)}")
                 result = envelope.get("result") or {}
@@ -342,7 +342,7 @@ def rpc_call(
                     error = result.get("error") or {}
                     raise WebHandoffError(
                         f"{method} 失败：{error.get('code')}: {error.get('message')}"
-                    )
+)
                 return dict(result)
         if attempt < attempts:
             _sleep(RETRY_BASE_DELAY_SECONDS * attempt)
@@ -406,7 +406,7 @@ def probe(
             timeout=timeout,
             attempts=1,
             post=post,
-        )
+)
     except WebHandoffError as exc:
         return False, f"只读探针 {LIVENESS_METHOD} 没通过：{exc}"
     return True, ""
@@ -474,7 +474,7 @@ def handoff(
                 seconds=elapsed(),
                 workspace=f"{workspace_title} {workspace_id}".strip(),
                 session_id=session_id,
-            )
+)
         return HandoffResult(
             ok=False,
             url=url,
@@ -485,7 +485,7 @@ def handoff(
             failure=failure,
             error=error,
             steps=tuple(steps),
-        )
+)
 
     try:
         cookie = signing_cookie(url, credentials=credentials)
@@ -495,7 +495,7 @@ def handoff(
     if write_log:
         write_text_atomic(
             directory / WORKING_DIR / RUN_PROMPT_NAME, prompt_text
-        )
+)
 
     # 一、工作区（幂等：同一目录返回已有工作区）
     if remaining() <= 0.0:
@@ -508,7 +508,7 @@ def handoff(
             cookie=cookie,
             timeout=min(RPC_TIMEOUT_SECONDS, remaining()),
             post=post,
-        )
+)
     except WebHandoffError as exc:
         return fail(FAILURE_WORKSPACE, f"{WORKSPACE_CREATE} 失败：{exc}")
     steps.append(WORKSPACE_CREATE)
@@ -530,7 +530,7 @@ def handoff(
             cookie=cookie,
             timeout=min(RPC_TIMEOUT_SECONDS, remaining()),
             post=post,
-        )
+)
     except WebHandoffError as exc:
         return fail(FAILURE_SESSION, f"{SESSION_CREATE} 失败：{exc}")
     steps.append(SESSION_CREATE)
@@ -556,7 +556,7 @@ def handoff(
             cookie=cookie,
             timeout=min(RPC_TIMEOUT_SECONDS, remaining()),
             post=post,
-        )
+)
     except WebHandoffError as exc:
         return fail(FAILURE_PROMPT, f"{SESSION_PROMPT} 失败：{exc}")
     steps.append(SESSION_PROMPT)
@@ -572,14 +572,14 @@ def handoff(
             seconds=elapsed(),
             workspace=f"{workspace_title} {workspace_id}".strip(),
             session_id=session_id,
-        )
+)
     _log.info(
         "会后纪要已交付 DSH web：工作区 %s（%s）、会话 %s、耗时 %.3fs",
         workspace_title or "?",
         workspace_id,
         session_id,
         elapsed(),
-    )
+)
     return HandoffResult(
         ok=True,
         url=url,
@@ -588,7 +588,7 @@ def handoff(
         workspace_title=workspace_title,
         session_id=session_id,
         steps=tuple(steps),
-    )
+)
 
 
 def _handoff_budget(timeout: float | None) -> float:
@@ -638,14 +638,14 @@ def _write_log(
         (WORKSPACE_CREATE, "workspace"),
         (SESSION_CREATE, "session"),
         (SESSION_PROMPT, "prompt"),
-    )
+)
     write_run_log(
         directory / WORKING_DIR / MINUTES_RUN_LOG_NAME,
         header=header,
         sections=tuple(
             (step, record.get(key, "（没走到这一步）")) for step, key in step_keys
-        ),
-    )
+),
+)
 
 
 __all__ = [

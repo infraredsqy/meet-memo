@@ -160,7 +160,7 @@ describe('快照样本', () => {
     expect(snap.settings.summary_preset_names).toEqual([]);
     expect(snap.settings.summary_active_preset).toBe('');
     expect(snap.settings.devices).toEqual({ mic: null, loopback: null });
-    // 心跳周期的唯一来源就是这一个键；缺省档的来源也是快照这一格（311f84f5）。
+    // 心跳周期的唯一来源就是这一个键；缺省档的来源也是快照这一格。
     // 会中切模型的两格（本节点）：只有名字与当前指针，端点与密钥不进快照。
     expect(Object.keys(snap.settings)).toEqual([
       'alarm_sound',
@@ -187,7 +187,7 @@ describe('快照样本', () => {
         'ended',
         'settings',
       ].sort(),
-    );
+);
     expect(snap).not.toHaveProperty('summary');
     expect(snap).not.toHaveProperty('notice');
     const extra = { ...snap, summary: null, notice: null };
@@ -418,7 +418,7 @@ describe('动作样本', () => {
 
     const unknown = actionFixtureSchema.parse(
       readFixture('actions', 'fail-invalid-setting-unknown-action'),
-    );
+);
     if (unknown.body.ok) throw new Error('样本该是失败档');
     expect(unknown.body.detail.action).toBe('definitely_not_an_action');
     // 会中总结那一个已经落地，`known` 数组里就有它（次序与服务回的一致）
@@ -429,7 +429,7 @@ describe('动作样本', () => {
   it('transcript_unavailable 档：detail 恰好 {health}', () => {
     const fixture = actionFixtureSchema.parse(
       readFixture('actions', 'fail-transcript-unavailable'),
-    );
+);
     expect(fixture.status).toBe(503);
     expect(fixture.action).toBe('summarize');
     if (fixture.body.ok) throw new Error('样本该是失败档');
@@ -440,7 +440,7 @@ describe('动作样本', () => {
   it('summary_failed 缺键档：detail 恰好 {missing}，点名的键是那一串配置键', () => {
     const fixture = actionFixtureSchema.parse(
       readFixture('actions', 'fail-summary-failed-missing'),
-    );
+);
     expect(fixture.status).toBe(502);
     if (fixture.body.ok) throw new Error('样本该是失败档');
     expect(fixture.body.code).toBe('summary_failed');
@@ -553,7 +553,7 @@ describe('心跳样本', () => {
     expect(beat.capture_gaps).toEqual({ total_count: 0, total_seconds: 0, recent: [] });
   });
 
-  it('no-first-frame 档（还没有第一帧，de899128）：录音态而两字段都是 null，不再等同于停止', () => {
+  it('no-first-frame 档（还没有第一帧）：录音态而两字段都是 null，不再等同于停止', () => {
     const beat = heartbeatSchema.parse(readFixture('heartbeat', 'no-first-frame'));
     expect(beat.top_state).toBe('recording');
     expect(beat.recording_alive).toBeNull();
@@ -631,7 +631,7 @@ describe('设备清单样本', () => {
   });
 });
 
-describe('工作区样本（4.8 / 4.9 / 4.13，会后进度界面节点 52b24392 接的对齐用例）', () => {
+describe('工作区样本（4.8 / 4.9 / 4.13，会后进度界面节点 接的对齐用例）', () => {
   it.each(SESSIONS_FIXTURES)('sessions/%s.json 过对应的 schema', (name) => {
     if (name === 'status-after-run') {
       const parsed = sessionStatusSchema.parse(readFixture('sessions', name));
@@ -682,7 +682,7 @@ describe('工作区样本（4.8 / 4.9 / 4.13，会后进度界面节点 52b24392
 
     const afterOpen = structuredClone(
       readFixture('sessions', 'after-open') as Record<string, unknown>,
-    );
+);
     (afterOpen['sessions'] as Array<Record<string, unknown>>)[0]!['post_job'] = null;
     expect(sessionsResponseSchema.safeParse(afterOpen).success).toBe(false);
   });
@@ -736,7 +736,7 @@ describe('工作区样本（4.8 / 4.9 / 4.13，会后进度界面节点 52b24392
     ]);
   });
 
-  it('单场状态被打断档（b1c6a58e）：offline.state 照盘答 interrupted、不折成 running', () => {
+  it('单场状态被打断档：offline.state 照盘答 interrupted、不折成 running', () => {
     const parsed = sessionStatusSchema.parse(readFixture('sessions', 'status-interrupted'));
     expect(parsed.offline.state).toBe('interrupted');
     expect(parsed.offline.in_process).toBe(false);
@@ -750,7 +750,7 @@ describe('工作区样本（4.8 / 4.9 / 4.13，会后进度界面节点 52b24392
     expect(loopback?.total).toBeNull();
   });
 
-  it('稿子正文四档样本（4.13，38817ecf）：两路都有 / 缺一路 / 两路都缺 / 目录不在', () => {
+  it('稿子正文四档样本（4.13）：两路都有 / 缺一路 / 两路都缺 / 目录不在', () => {
     const bodyOf = (name: string): unknown =>
       (readFixture('sessions', name) as Record<string, unknown>).body;
 
@@ -765,14 +765,14 @@ describe('工作区样本（4.8 / 4.9 / 4.13，会后进度界面节点 52b24392
     const live = both.kinds.find((item) => item.kind === 'live');
     expect(live?.sources.find((road) => road.source === 'mic')?.text).toContain(
       '大家先过一下上周的结论',
-    );
+);
 
     // 档 2「缺一路」：mode 只采 mic → loopback 的缺稿是 unrecorded；会后稿 mic 没跑过 → absent
     const one = sessionTranscriptsSchema.parse(bodyOf('transcripts-one-missing'));
     const oneCells = (kind: 'live' | 'offline'): Map<string, (typeof one.kinds)[number]['sources'][number]> =>
       new Map(
         (one.kinds.find((item) => item.kind === kind)?.sources ?? []).map((road) => [road.source, road]),
-      );
+);
     expect(oneCells('live').get('mic')?.text).toBeTruthy();
     expect(oneCells('live').get('loopback')).toEqual({ source: 'loopback', reason: 'unrecorded' });
     expect(oneCells('offline').get('mic')).toEqual({ source: 'mic', reason: 'absent' });
@@ -816,7 +816,7 @@ describe('工作区样本（4.8 / 4.9 / 4.13，会后进度界面节点 52b24392
   });
 });
 
-describe('会议资料样本（4.12，资料面板节点 160d1a78 接的对齐用例）', () => {
+describe('会议资料样本（4.12，资料面板节点 接的对齐用例）', () => {
   /** 请求两件套（资料四条不走 `/api/actions`）：`method` + `name` + `status` + `body`。 */
   function materialsFixture(name: string): { method: string; name: string; status: number; body: unknown } {
     const raw = readFixture('materials', name) as Record<string, unknown>;
@@ -895,12 +895,12 @@ describe('会议资料样本（4.12，资料面板节点 160d1a78 接的对齐�
     expect(
       materialDeleteOkSchema.safeParse({ ok: true, revision: 1, material: upload.material })
         .success,
-    ).toBe(false);
+).toBe(false);
     // 删除体少两格，上传 schema 同样要拒
     expect(
       materialUploadOkSchema.safeParse({ ok: true, revision: 1, material: del.material })
         .success,
-    ).toBe(false);
+).toBe(false);
   });
 
   it('清单条目多一格 / 少一格、顶层多一格都不符合契约（封闭形状）', () => {

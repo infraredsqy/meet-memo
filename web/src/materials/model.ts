@@ -5,7 +5,7 @@ import {
 } from '../api/materials';
 
 /**
- * 会议资料区那份纯逻辑（节点 160d1a78）：类型判读、大小口径、提交文字的落盘名、
+ * 会议资料区那份纯逻辑（节点）：类型判读、大小口径、提交文字的落盘名、
  * 粘贴与拖拽那两把筛子、逐文件失败的那几句人话。组件里不夹这些判断 —— 手法照
  * `live/alarm.ts` 与 `home/names.ts` 的先例：纯函数、逐档可验。
  */
@@ -105,7 +105,7 @@ export function textMaterialName(title: string, at: Date): string {
   return (
     `${at.getFullYear()}${pad(at.getMonth() + 1)}${pad(at.getDate())}` +
     `-${pad(at.getHours())}${pad(at.getMinutes())}${pad(at.getSeconds())}.md`
-  );
+);
 }
 
 /** 剪贴板里的一项（结构式：`DataTransferItemList` 的成员长这样）。 */
@@ -117,7 +117,7 @@ export interface ClipboardFileItem {
 
 /**
  * 剪贴板里能收的图片文件：**只有图片项才收**，纯文本不收（spec 口径）。
- * 顺序保持剪贴板给的次序；取不出 `File` 的项（ Rare，但可能）跳过。
+ * 顺序保持剪贴板给的次序；取不出 `File` 的项（Rare，但可能）跳过。
  */
 export function pasteImageFiles(
   items: readonly ClipboardFileItem[] | null | undefined,
@@ -198,5 +198,5 @@ export function materialTimeLabel(iso: string): string {
   return (
     `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ` +
     `${pad(at.getHours())}:${pad(at.getMinutes())}`
-  );
+);
 }

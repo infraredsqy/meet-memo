@@ -35,7 +35,7 @@ HEARTBEAT_KEYS = {
     "recording_alive", "seconds_since_last_tick", "capture_gaps",
 }
 TRANSCRIPT_LINE_KEYS = {"ts", "source", "text", "kind"}
-#: 快照 `settings` 的键全集（`311f84f5` 加了 `summary_default_window`；
+#: 快照 `settings` 的键全集（加了 `summary_default_window`；
 #: 会中切模型节点加了 `summary_preset_names` / `summary_active_preset`，共七键）
 SETTINGS_KEYS = {
     "alarm_sound", "heartbeat_interval_seconds", "summary_default_window",

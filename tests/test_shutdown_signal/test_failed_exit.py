@@ -46,7 +46,7 @@ def test_failed_drain_exits_one_and_prints_log_path(service_process, case_env):
     """收尾有步骤 `failed` → 收尾失败档退出码，且终端上出现 log 路径与 `meeting post`。
 
     同一趟顺带断言**服务级 log** 里可查到启动与端口 / URL、以及退出原因与退出码
-    （方案 §6.3 行 304 清单的服务级那半边）。失败手段是共用支持模块里的
+    （设计口径 §6.3 行 304 清单的服务级那半边）。失败手段是共用支持模块里的
     `FakeCaptureBackend`（`finalize()` 抛错 → 第 1 步 `flush` 落 `failed`，
     经 `PYTHONPATH` + `capture.backend` 配进子进程），`dev_inject` 那三档故障
     只改事实流、造不出收尾失败。

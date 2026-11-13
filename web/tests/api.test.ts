@@ -62,7 +62,7 @@ describe('postAction 的请求头', () => {
   it('两个必需头一起带上，body 是 {action, args}', async () => {
     const fetchImpl = vi.fn(async () =>
       jsonResponse(200, { ok: true, revision: 2 }),
-    ) as unknown as typeof fetch;
+) as unknown as typeof fetch;
 
     const result = await postAction('start', { mode: 'both' }, { fetchImpl });
 
@@ -82,7 +82,7 @@ describe('postAction 的请求头', () => {
   it('省略 args 时按空对象发出去', async () => {
     const fetchImpl = vi.fn(async () =>
       jsonResponse(200, { ok: true, revision: 3 }),
-    ) as unknown as typeof fetch;
+) as unknown as typeof fetch;
 
     await postAction('stop', undefined, { fetchImpl });
 
@@ -153,7 +153,7 @@ describe('postAction 的信封解析', () => {
     for (const { post } of shapes) {
       const fetchImpl = vi.fn(async () =>
         jsonResponse(200, { ok: true, revision: 9, post }),
-      ) as unknown as typeof fetch;
+) as unknown as typeof fetch;
 
       const result = await postAction('post_minutes', { dir: '<path>' }, { fetchImpl });
 
@@ -185,12 +185,12 @@ describe('postAction 的信封解析', () => {
       };
       const fetchImpl = vi.fn(async () =>
         jsonResponse(fixture.status, fixture.body),
-      ) as unknown as typeof fetch;
+) as unknown as typeof fetch;
 
       const error = await postAction(fixture.action, {}, { fetchImpl }).then(
         () => null,
         (caught: unknown) => caught,
-      );
+);
 
       expect(error, name).toBeInstanceOf(ActionFailedError);
       const failed = error as ActionFailedError;
@@ -204,12 +204,12 @@ describe('postAction 的信封解析', () => {
   it('403 走中间件那条出口：抛 ActionForbiddenError，不当失败信封解', async () => {
     const fetchImpl = vi.fn(async () =>
       fakeResponse(403, '缺少必需请求头'),
-    ) as unknown as typeof fetch;
+) as unknown as typeof fetch;
 
     const error = await postAction('start', {}, { fetchImpl }).then(
       () => null,
       (caught: unknown) => caught,
-    );
+);
 
     expect(error).toBeInstanceOf(ActionForbiddenError);
     expect((error as ActionForbiddenError).status).toBe(403);
@@ -219,12 +219,12 @@ describe('postAction 的信封解析', () => {
   it('应答既不是成功体也不是失败信封时抛 ActionProtocolError', async () => {
     const fetchImpl = vi.fn(async () =>
       jsonResponse(200, { ok: true, revision: 2, message: '多出来的字段' }),
-    ) as unknown as typeof fetch;
+) as unknown as typeof fetch;
 
     const error = await postAction('start', {}, { fetchImpl }).then(
       () => null,
       (caught: unknown) => caught,
-    );
+);
 
     expect(error).toBeInstanceOf(ActionProtocolError);
   });
@@ -232,11 +232,11 @@ describe('postAction 的信封解析', () => {
   it('非 JSON 应答也抛 ActionProtocolError', async () => {
     const fetchImpl = vi.fn(async () =>
       fakeResponse(500, '<html>oops</html>'),
-    ) as unknown as typeof fetch;
+) as unknown as typeof fetch;
 
     await expect(postAction('start', {}, { fetchImpl })).rejects.toBeInstanceOf(
       ActionProtocolError,
-    );
+);
   });
 });
 
@@ -270,7 +270,7 @@ describe('fetchSummaries 的读法', () => {
   it('空记录那一档：session_id 为 null、entries 空数组也照收', async () => {
     const fetchImpl = vi.fn(async () =>
       jsonResponse(200, { session_id: null, entries: [] }),
-    ) as unknown as typeof fetch;
+) as unknown as typeof fetch;
 
     const listing = await fetchSummaries({ fetchImpl });
     expect(listing.session_id).toBeNull();
@@ -281,7 +281,7 @@ describe('fetchSummaries 的读法', () => {
     const payload = readFixture('summaries', 'after-one') as Record<string, unknown>;
     const fetchImpl = vi.fn(async () =>
       jsonResponse(200, { ...payload, extra: 1 }),
-    ) as unknown as typeof fetch;
+) as unknown as typeof fetch;
 
     await expect(fetchSummaries({ fetchImpl })).rejects.toBeInstanceOf(SummariesProtocolError);
   });
@@ -289,12 +289,12 @@ describe('fetchSummaries 的读法', () => {
   it('非 2xx 也抛 SummariesProtocolError：取不到不冒充空记录', async () => {
     const fetchImpl = vi.fn(async () =>
       fakeResponse(500, 'Not Found'),
-    ) as unknown as typeof fetch;
+) as unknown as typeof fetch;
 
     const error = await fetchSummaries({ fetchImpl }).then(
       () => null,
       (caught: unknown) => caught,
-    );
+);
     expect(error).toBeInstanceOf(SummariesProtocolError);
     expect((error as SummariesProtocolError).status).toBe(500);
   });
@@ -306,11 +306,11 @@ describe('fetchSummaries 的读法', () => {
 
     await expect(fetchSummaries({ fetchImpl })).rejects.toBeInstanceOf(
       SummariesUnavailableError,
-    );
+);
   });
 });
 
-describe('fetchSessionStatus 的读法（会后进度界面节点 52b24392）', () => {
+describe('fetchSessionStatus 的读法（会后进度界面节点 ）', () => {
   it('取单场那一条：dir URL 编码后进路径、GET、应答体逐键交回来', async () => {
     const payload = readFixture('sessions', 'status-after-run');
     const fetchImpl = vi.fn(async () => jsonResponse(200, payload)) as unknown as typeof fetch;
@@ -332,12 +332,12 @@ describe('fetchSessionStatus 的读法（会后进度界面节点 52b24392）', 
     offline['extra'] = 1;
     const fetchImpl = vi.fn(async () =>
       jsonResponse(200, { ...payload, offline }),
-    ) as unknown as typeof fetch;
+) as unknown as typeof fetch;
 
     const error = await fetchSessionStatus('C:\\x', { fetchImpl }).then(
       () => null,
       (caught: unknown) => caught,
-    );
+);
     expect(error).toBeInstanceOf(SessionsProtocolError);
     expect((error as SessionsProtocolError).message).toContain('单场状态');
   });
@@ -350,12 +350,12 @@ describe('fetchSessionStatus 的读法（会后进度界面节点 52b24392）', 
         message: '这一场的目录已不在原地',
         detail: { dir: '<path>', kind: 'missing' },
       }),
-    ) as unknown as typeof fetch;
+) as unknown as typeof fetch;
 
     const error = await fetchSessionStatus('C:\\x', { fetchImpl }).then(
       () => null,
       (caught: unknown) => caught,
-    );
+);
     expect(error).toBeInstanceOf(SessionStatusHttpError);
     expect((error as SessionStatusHttpError).status).toBe(404);
     expect((error as SessionStatusHttpError).code).toBe('session_dir_missing');
@@ -368,11 +368,11 @@ describe('fetchSessionStatus 的读法（会后进度界面节点 52b24392）', 
 
     await expect(fetchSessionStatus('C:\\x', { fetchImpl })).rejects.toBeInstanceOf(
       SessionsUnavailableError,
-    );
+);
   });
 });
 
-describe('fetchSessionTranscripts 的读法（稿子正文，38817ecf）', () => {
+describe('fetchSessionTranscripts 的读法（稿子正文）', () => {
   it('取稿子那一条：dir URL 编码后进路径（带 /transcripts 层）、GET、应答体逐键交回来', async () => {
     const sample = readFixture('sessions', 'transcripts-both') as { body: unknown };
     const fetchImpl = vi.fn(async () => jsonResponse(200, sample.body)) as unknown as typeof fetch;
@@ -394,12 +394,12 @@ describe('fetchSessionTranscripts 的读法（稿子正文，38817ecf）', () =>
         message: '这一场的目录已不在原地',
         detail: { dir: '<path>', kind: 'missing' },
       }),
-    ) as unknown as typeof fetch;
+) as unknown as typeof fetch;
 
     const error = await fetchSessionTranscripts('C:\\x', { fetchImpl }).then(
       () => null,
       (caught: unknown) => caught,
-    );
+);
     expect(error).toBeInstanceOf(SessionTranscriptsHttpError);
     expect((error as SessionTranscriptsHttpError).status).toBe(404);
     expect((error as SessionTranscriptsHttpError).code).toBe('session_dir_missing');
@@ -408,12 +408,12 @@ describe('fetchSessionTranscripts 的读法（稿子正文，38817ecf）', () =>
   it('形状不对抛 SessionsProtocolError', async () => {
     const fetchImpl = vi.fn(async () =>
       jsonResponse(200, { dir: 'C:\\x', kinds: '不对' }),
-    ) as unknown as typeof fetch;
+) as unknown as typeof fetch;
 
     const error = await fetchSessionTranscripts('C:\\x', { fetchImpl }).then(
       () => null,
       (caught: unknown) => caught,
-    );
+);
     expect(error).toBeInstanceOf(SessionsProtocolError);
     expect((error as SessionsProtocolError).message).toContain('这一场的稿子');
   });
@@ -425,18 +425,18 @@ describe('fetchSessionTranscripts 的读法（稿子正文，38817ecf）', () =>
 
     await expect(fetchSessionTranscripts('C:\\x', { fetchImpl })).rejects.toBeInstanceOf(
       SessionsUnavailableError,
-    );
+);
   });
 });
 
-describe('browseDirs 的读法（目录选择器 57ab5255）', () => {
+describe('browseDirs 的读法（目录选择器 ）', () => {
   it('dir 进查询串、GET、应答体逐键交回来', async () => {
     const payload = {
       home: 'C:\\Users\\<user>',
       cwd: 'C:\\会议',
       up: 'C:\\Users\\<user>',
       here: { name: '会议', dir: 'C:\\会议', kind: 'unknown', suspected: false },
-      dirs: [{ name: '新场', dir: 'C:\\会议\\新场', kind: 'empty', suspected: false }],
+      dirs: [{ name: '新场', dir: 'C:\\meeting\\新场', kind: 'empty', suspected: false }],
     };
     const fetchImpl = vi.fn(async () => jsonResponse(200, payload)) as unknown as typeof fetch;
 
@@ -456,12 +456,12 @@ describe('browseDirs 的读法（目录选择器 57ab5255）', () => {
         message: '要浏览的目录不存在：C:\\不存在',
         detail: { key: 'dir' },
       }),
-    ) as unknown as typeof fetch;
+) as unknown as typeof fetch;
 
     const error = await browseDirs('C:\\不存在', { fetchImpl }).then(
       () => null,
       (caught: unknown) => caught,
-    );
+);
     expect(error).toBeInstanceOf(DirsHttpError);
     expect((error as DirsHttpError).status).toBe(400);
     expect((error as DirsHttpError).code).toBe('invalid_setting');
@@ -474,7 +474,7 @@ describe('browseDirs 的读法（目录选择器 57ab5255）', () => {
     const error = await browseDirs('C:\\x', { fetchImpl }).then(
       () => null,
       (caught: unknown) => caught,
-    );
+);
     expect(error).toBeInstanceOf(DirsHttpError);
     expect((error as DirsHttpError).note).toBeNull();
     expect((error as DirsHttpError).message).toContain('HTTP 500');
@@ -509,12 +509,12 @@ describe('createDir 的读法（新建目录，目录选择器节点）', () => 
         message: '这一层里已经有叫「新会」的目录或文件：C:\\会议\\新会；换个名字，或者双击进去直接用它',
         detail: { dir: 'C:\\会议', name: '新会' },
       }),
-    ) as unknown as typeof fetch;
+) as unknown as typeof fetch;
 
     const error = await createDir('C:\\会议', '新会', { fetchImpl }).then(
       () => null,
       (caught: unknown) => caught,
-    );
+);
     expect(error).toBeInstanceOf(DirCreateHttpError);
     expect((error as DirCreateHttpError).status).toBe(409);
     expect((error as DirCreateHttpError).code).toBe('dir_exists');
@@ -527,7 +527,7 @@ describe('createDir 的读法（新建目录，目录选择器节点）', () => 
     const error = await createDir('C:\\x', 'y', { fetchImpl }).then(
       () => null,
       (caught: unknown) => caught,
-    );
+);
     expect(error).toBeInstanceOf(DirCreateHttpError);
     expect((error as DirCreateHttpError).note).toBeNull();
     expect((error as DirCreateHttpError).message).toContain('HTTP 500');
@@ -623,7 +623,7 @@ describe('单场轮询器（心跳的样板：setTimeout 自排、周期可换�
   });
 });
 
-describe('fetchDevices 的读法（设置抽屉节点 311f84f5）', () => {
+describe('fetchDevices 的读法（设置抽屉节点 ）', () => {
   it('取清单那一条：GET、不带必需头、两路各一份原文', async () => {
     const payload = readFixture('devices', 'all');
     const fetchImpl = vi.fn(async () => jsonResponse(200, payload)) as unknown as typeof fetch;
@@ -645,7 +645,7 @@ describe('fetchDevices 的读法（设置抽屉节点 311f84f5）', () => {
     const payload = readFixture('devices', 'all') as Record<string, unknown>;
     const fetchImpl = vi.fn(async () =>
       jsonResponse(200, { ...payload, extra: 1 }),
-    ) as unknown as typeof fetch;
+) as unknown as typeof fetch;
 
     await expect(fetchDevices({ fetchImpl })).rejects.toBeInstanceOf(DevicesProtocolError);
   });
@@ -653,12 +653,12 @@ describe('fetchDevices 的读法（设置抽屉节点 311f84f5）', () => {
   it('非 2xx 也抛 DevicesProtocolError：取不到不冒充空清单', async () => {
     const fetchImpl = vi.fn(async () =>
       fakeResponse(503, '{"ok": false}'),
-    ) as unknown as typeof fetch;
+) as unknown as typeof fetch;
 
     const error = await fetchDevices({ fetchImpl }).then(
       () => null,
       (caught: unknown) => caught,
-    );
+);
     expect(error).toBeInstanceOf(DevicesProtocolError);
     expect((error as DevicesProtocolError).status).toBe(503);
   });
@@ -875,7 +875,7 @@ describe('心跳轮询', () => {
 
     const badImpl = vi.fn(async () =>
       jsonResponse(200, { service: 'meeting' }),
-    ) as unknown as typeof fetch;
+) as unknown as typeof fetch;
     const bad = createHeartbeatClient(() => undefined, { fetchImpl: badImpl, now: () => t0 });
     const badTick = await bad.tick();
     expect(badTick.kind).toBe('error');
@@ -899,7 +899,7 @@ describe('心跳轮询', () => {
           seconds_since_last_tick: null,
           capture_gaps: { total_count: 0, total_seconds: 0, recent: [] },
         }),
-      ) as unknown as typeof fetch;
+) as unknown as typeof fetch;
 
       const client = createHeartbeatClient((tick) => ticks.push(tick), { fetchImpl });
       client.setIntervalFromSnapshot(1); // 周期 1 秒，省得推 60 秒的假时钟
@@ -934,7 +934,7 @@ describe('心跳轮询', () => {
           seconds_since_last_tick: null,
           capture_gaps: { total_count: 0, total_seconds: 0, recent: [] },
         }),
-      ) as unknown as typeof fetch;
+) as unknown as typeof fetch;
 
       const client = createHeartbeatClient((tick) => ticks.push(tick), { fetchImpl });
       expect(client.running()).toBe(false);

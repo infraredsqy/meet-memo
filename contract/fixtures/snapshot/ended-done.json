@@ -89,7 +89,7 @@
       {
         "id": "flush",
         "status": "skipped",
-        "detail": "这一场没有真实归档要落（采集替身不写真实音频；finalize 归 dca4539b）",
+        "detail": "这一场没有真实归档要落（采集替身不写真实音频；finalize 归）",
         "error": null
       },
       {

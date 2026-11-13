@@ -28,11 +28,11 @@ from tests.test_contract_fixtures._common import (
     make_client,
 )
 
-#: 慢档标记（68927c27 收尾轮）：真服务/真样本采集的收尾验收，不进每次迭代圈。
+#: 慢档标记（收尾轮）：真服务/真样本采集的收尾验收，不进每次迭代圈。
 pytestmark = pytest.mark.slow
 
 # ---------------------------------------------------------------------------
-# 工作区注册表与目录选择器（工作台收编节点 e2f6166b）
+# 工作区注册表与目录选择器（工作台收编节点）
 # ---------------------------------------------------------------------------
 
 
@@ -43,7 +43,7 @@ def test_capture_workspace_group(tmp_path, make_client, monkeypatch, contract_re
     （`dir_exists` / `kind` / `suspected` / 盘上 `session.json` 的 `state`）由服务判，
     样本记的是**形状**：三个目的目录在采集用的临时根下造好（空目录 / 带 `session.json`
     的会议目录 / 有音频归档名没有 `session.json` 的疑似会议目录），路径与目录名一律
-    掩成 `<path>` / `<session-id>`。清单按「最近在用」倒序给出（7058f2e1）——时间戳
+    掩成 `<path>` / `<session-id>`。清单按「最近在用」倒序给出——时间戳
     是判据，秒精度的墙钟连着三次登记可能落进同一秒，两次再生成的清单次序就会在
     「照登记倒序」与「目录字典序兜底」之间翻转（幂等硬要求红）；采集把登记时钟
     钉成三拍递增的固定值，样本里的清单次序因此永远确定。
@@ -234,7 +234,7 @@ def test_capture_dirs_group(tmp_path, make_client, contract_regen):
 
 
 def test_capture_devices_group(tmp_path, make_client, monkeypatch, contract_regen) -> None:
-    """`GET /api/devices` 那一份（设置抽屉的两个设备下拉，节点 `311f84f5`）。
+    """`GET /api/devices` 那一份（设置抽屉的两个设备下拉，节点）。
 
     设备枚举在样本采集里**一律走假件**（`tests/conftest.py` 的看门只挡「真开设备」，
     清单端点的确定性靠这里把 `sources.py` 的两个枚举函数换成固定端点表）：名字与
@@ -274,7 +274,7 @@ def test_capture_devices_group(tmp_path, make_client, monkeypatch, contract_rege
 
 
 def test_capture_session_status_group(tmp_path, make_client, contract_regen) -> None:
-    """`GET /api/sessions/{id}` 那一份（会后视图的进度区，节点 `a9affaa8`）。
+    """`GET /api/sessions/{id}` 那一份（会后视图的进度区，节点）。
 
     这一份的**来源是真实服务路径上的只读端点**：场次目录里先按真实形状落下那份逐块
     进度记录（`meeting_offline_progress.jsonl`，两路各两块，含一块静音、一块失败）与
@@ -368,7 +368,7 @@ def test_capture_session_status_group(tmp_path, make_client, contract_regen) -> 
 
 
 def test_capture_session_status_interrupted_group(tmp_path, make_client, contract_regen) -> None:
-    """`GET /api/sessions/{id}` 的**被打断档**（b1c6a58e）：`offline.state` 照盘上答
+    """`GET /api/sessions/{id}` 的**被打断档**：`offline.state` 照盘上答
     `interrupted`。
 
     采集形状与 `status-after-run` 同一条路：场次目录里落一份逐块记录（mic 两块里跑了
@@ -572,7 +572,7 @@ def test_capture_session_transcripts_group(tmp_path, make_client, contract_regen
 
 
 def test_capture_materials_group(tmp_path, make_client, contract_regen) -> None:
-    """会议资料四条端点的样本（资料节点 285bf58c）：上传 / 清单 / 删除 / 取不到。
+    """会议资料四条端点的样本（资料节点）：上传 / 清单 / 删除 / 取不到。
 
     采样路径是**真实服务路径**：往临时根下造一个目的目录、经 `workspace_open` 登记，
     然后打 `/api/sessions/{id}/materials` 那四条端点。样本记的是**形状**：

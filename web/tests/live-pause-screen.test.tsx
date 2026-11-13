@@ -31,7 +31,7 @@ import { makeSnapshot, makeSource, T } from './live-fixtures';
 
 /**
  * 会中那一屏的**渲染层**断言：暂停横带照旧极其显眼，收音的四组合直切
- * （`c9f5d04d`）收在顶栏一处 —— 旧的两颗入口（顶栏暂停按钮、电平卡上的
+ * （``）收在顶栏一处 —— 旧的两颗入口（顶栏暂停按钮、电平卡上的
  * 「关掉 / 打开」）不再以原形出现，按下组合的受理反馈即时点亮。
  *
  * 手法照 `settings-drawer.test.tsx` / `home-mount.test.tsx`：`react-test-renderer`
@@ -63,7 +63,7 @@ vi.mock('../src/api/sessions', async (importOriginal) => {
   return { ...actual, fetchSessions: vi.fn() };
 });
 
-// 会议资料区（160d1a78）：会中那块面板挂上即取清单 —— 替身给空清单，这个文件不连网。
+// 会议资料区：会中那块面板挂上即取清单 —— 替身给空清单，这个文件不连网。
 vi.mock('../src/api/materials', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/api/materials')>();
   return {
@@ -141,7 +141,7 @@ async function mountLive(snapshot: Snapshot): Promise<TestRenderer.ReactTestRend
   await act(async () => {
     renderer = TestRenderer.create(
       createElement(LiveView, { snapshot, events: source as never }),
-    );
+);
   });
   mounted = renderer;
   return renderer;
@@ -176,7 +176,7 @@ function comboGroup(
 ): TestRenderer.ReactTestInstance {
   const groups = renderer.root.findAll(
     (node) => node.props.role === 'group' && node.props['aria-label'] === '收音组合',
-  );
+);
   expect(groups, '顶栏该有一组「收音组合」').toHaveLength(1);
   return groups[0] as TestRenderer.ReactTestInstance;
 }
@@ -309,12 +309,12 @@ describe('录音态那一屏（渲染层）', () => {
 
     const cards = renderer.root.findAll((node) =>
       `${node.props.className ?? ''}`.split(' ').includes('m-ch'),
-    );
+);
     expect(cards, '两路各一张通道卡').toHaveLength(2);
     for (const card of cards) {
       const buttons = (card as TestRenderer.ReactTestInstance).findAll(
         (node) => node.type === 'button',
-      );
+);
       expect(buttons, '通道卡里不该有任何按钮（开关收进了顶栏四组合）').toHaveLength(0);
     }
     // 快照自己仍然是「仅本地」的那一档：健康位照旧从快照读
@@ -325,7 +325,7 @@ describe('录音态那一屏（渲染层）', () => {
 
 describe('全局一格的会后一半（review-1 m2）：post 在飞读的是 GET /api/sessions', () => {
   /**
-   * d61829f1 起「收尾窗口」不再挂在会中这一屏（ended 任意相都回工作台，
+   *  起「收尾窗口」不再挂在会中这一屏（ended 任意相都回工作台，
    * 落盘的进度归工作台详情里那一小块）—— 这一屏上 gpucell 的忙闲判据照旧：
    * 录着（含告警）就是忙，`post_jobs` 的在飞趟补上会后那一半读数；
    * 常驻工作区栏的栏底还有一只同款（两处读同一条 `GET /api/sessions`）。
@@ -340,13 +340,13 @@ describe('全局一格的会后一半（review-1 m2）：post 在飞读的是 GE
 
     const cells = renderer.root.findAll((node) =>
       `${node.props.className ?? ''}`.startsWith('gpucell'),
-    );
+);
     expect(cells, '顶栏一只 + 常驻工作区栏栏底一只').toHaveLength(2);
     for (const cell of cells) {
       expect((cell as TestRenderer.ReactTestInstance).props['data-busy']).toBe('true');
       expect(String((cell as TestRenderer.ReactTestInstance).props.title)).toContain(
         '会后那趟在跑',
-      );
+);
     }
   });
 });

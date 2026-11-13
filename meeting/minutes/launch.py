@@ -1,4 +1,4 @@
-"""headless 启动器（`41465462` spec「启动方式」一节）。
+"""headless 启动器（spec「启动方式」一节）。
 
 一件事：**把一个 DSH headless 子进程拉起来，然后校验它到底交没交出纪要**。
 
@@ -265,7 +265,7 @@ def _has_appendix_data_row(text: str) -> bool:
     header_index = next(
         (index for index, line in enumerate(lines) if _row_cell_count(line) >= MIN_TABLE_CELLS),
         None,
-    )
+)
     if header_index is None:
         return False
     for line in lines[header_index + 1 :]:
@@ -332,7 +332,7 @@ def launch_headless(
     if not allow_dsh:
         raise DeliveryForbidden(
             f"launch_headless() 被拒：{ISOLATION_MESSAGE}（{ISOLATION_GRANT}）"
-        )
+)
     directory = Path(session_dir)
     if not str(directory):
         raise LaunchError("launch_headless 需要场次目录（收到空值）")
@@ -349,7 +349,7 @@ def launch_headless(
         message = (
             f"解析不到 DSH 可执行文件（找的是 dsh）：{MISSING_EXECUTABLE_HINT}"
             f"；提示词已写在 {relative_prompt}"
-        )
+)
         _write_log(
             log_path,
             command=("dsh", "--profile", HEADLESS_PROFILE, PROMPT_POINTER),
@@ -358,7 +358,7 @@ def launch_headless(
             error=message,
             stdout="",
             stderr="",
-        )
+)
         return LaunchResult(
             ok=False,
             branch=branch,
@@ -370,7 +370,7 @@ def launch_headless(
             failure=FAILURE_EXECUTABLE_MISSING,
             error=message,
             command=("dsh",),
-        )
+)
 
     command = render_command(exe)
     child_env = build_child_env(env)
@@ -389,12 +389,12 @@ def launch_headless(
             timeout=float(timeout),
             env=child_env,
             creationflags=_NO_WINDOW,
-        )
+)
     except subprocess.TimeoutExpired as exc:
         timeout_error = (
             f"DSH 子进程超时：{float(timeout)} 秒（提示词 {relative_prompt}）——"
             f"按失败处理，这一趟没有可用的纪要"
-        )
+)
         completed = exc
     seconds = time.monotonic() - begun
 
@@ -410,7 +410,7 @@ def launch_headless(
         stdout=stdout,
         stderr=stderr,
         seconds=seconds,
-    )
+)
 
     if timeout_error is not None:
         return LaunchResult(
@@ -424,13 +424,13 @@ def launch_headless(
             failure=FAILURE_TIMEOUT,
             error=timeout_error,
             command=command,
-        )
+)
 
     if exit_code != 0:
         message = (
             f"DSH 子进程退出码非 0：{exit_code}（命令 {_command_text(command)}；"
             f"cwd {directory}；stdout/stderr 见 {ARTIFACT_LOG}）"
-        )
+)
         return LaunchResult(
             ok=False,
             branch=branch,
@@ -442,14 +442,14 @@ def launch_headless(
             failure=FAILURE_EXIT_CODE,
             error=message,
             command=command,
-        )
+)
 
     checks = check_final_artifact(directory)
     if checks:
         message = (
             f"DSH 子进程退出码 0，但产物没落盘 / 不合判据：{'；'.join(checks)}"
             f"（提示词 {relative_prompt}；stdout/stderr 见 {ARTIFACT_LOG}）"
-        )
+)
         return LaunchResult(
             ok=False,
             branch=branch,
@@ -462,7 +462,7 @@ def launch_headless(
             failure=FAILURE_ARTIFACT_MISSING,
             error=message,
             command=command,
-        )
+)
 
     return LaunchResult(
         ok=True,
@@ -473,7 +473,7 @@ def launch_headless(
         log=ARTIFACT_LOG,
         prompt=relative_prompt,
         command=command,
-    )
+)
 
 
 def _text_of(value: Any) -> str:
@@ -518,7 +518,7 @@ def _write_log(
         path,
         header=header,
         sections=(("stdout", stdout.rstrip("\n")), ("stderr", stderr.rstrip("\n"))),
-    )
+)
 
 
 def interpreter() -> str:

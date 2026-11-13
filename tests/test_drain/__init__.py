@@ -1,9 +1,9 @@
-"""收尾三步、自适应预算与失败出路的黑盒用例（phase3 §5.1 / §3.8 的 12 条 + 审查修复追加的几条）。
+"""收尾三步、自适应预算与失败出路的黑盒用例（设计口径 / §3.8 的 12 条 + 审查修复追加的几条）。
 
 **用例计数（照实登记，数目可核对）**
 
   - **契约点名的 12 个函数，逐字在位、各自独立**（§3.8 的 `tests/test_drain.py` 行逐条列出；
-    正文与 `phase3.md` 的用例数据此对齐）：`test_drain_step_order_and_terminal_states`（①）/
+    正文与 `设计.md` 的用例数据此对齐）：`test_drain_step_order_and_terminal_states`（①）/
     `test_drain_reaches_done_when_no_step_failed`（②）/
     `test_skipped_and_failed_follow_registry_resolution_without_exception_swallowing`（③）/
     `test_drain_budget_formula_and_bounds`（④）/ `test_drain_wait_limit_follows_backlog_budget`（⑤）/
@@ -66,7 +66,7 @@
 **测试层级（本文件写死的那一种）**：
 
   - 凡**通过服务可观测**的判据（① ② ③ ⑦ ⑧ ⑨ ⑩ ⑪ ⑫）统一走**真服务子进程**，一律复用
-    phase2 的 `service_process` 夹具与 `tests/_service.py` 的 `ServiceProcess` ——
+    设计的 `service_process` 夹具与 `tests/_service.py` 的 `ServiceProcess` ——
     **本文件不另起一套子进程管理、不自带子进程起停**；
   - **假件一律从 `tests/_drain_fakes.py` 取，本文件只 import、不自行定义、不各写一份**
     （§3.8 的共享通道与命名分工）：③ 的「有实现却抛错」、⑤ / ⑤b2 的「某一步可控拖长」、
@@ -95,7 +95,7 @@
 
 **每一路健康迁移与告警起止由谁造出来**：由 `MEETING_CAPTURE=dev` 的两路合成电平与
 `dev_inject` 三档故障在**真服务子进程**里造出来（⑫ 条据此断言）；「收尾每一步的开始 / 结束 /
-耗时与 `budget` / `backlog`」由 phase3 的编排在同一个子进程里落；③ 的「有实现却抛错」与
+耗时与 `budget` / `backlog`」由设计的编排在同一个子进程里落；③ 的「有实现却抛错」与
 ⑤ 的「某一步可控拖长」由注入子进程的共享假件（`FakeCaptureBackend` / `FakePostHook`）
 造出来。**「服务级 log」与「场次 log」是两个不同的文件**：⑫ 条断的是**场次 log**
 （`<场次目录>/meeting.log`）；服务级 log 那半边由 `tests/test_shutdown_signal.py` 第 ⑤ 条负责。

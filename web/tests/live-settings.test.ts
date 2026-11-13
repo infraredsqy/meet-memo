@@ -13,7 +13,7 @@ import {
 import { makeSettings } from './live-fixtures';
 
 /**
- * 设置抽屉那份纯逻辑的用例（`311f84f5`）。
+ * 设置抽屉那份纯逻辑的用例（``）。
  *
  * 三条边界各有一条判据钉在这里：ASR 五参数一个都不进抽屉（`DRAWER_ROW_IDS` 的穷举）、
  * 心跳 1–60 越界当场拒（不发请求）、会中两路设备格禁用（`docs/contract.md` 第 7 章）。
@@ -132,7 +132,7 @@ describe('总结模型预设那一格（会中切模型，本节点）', () => {
   it('「不选预设」恒在第一档，其后按快照里名字的次序；选项里只有名字没有端点', () => {
     const options = presetOptionsOf(
       makeSettings({ summary_preset_names: ['主力', '备用（必败）'] }),
-    );
+);
     expect(options[0]).toEqual({ value: '', label: NO_PRESET_LABEL });
     expect(options.map((item) => item.value)).toEqual(['', '主力', '备用（必败）']);
     for (const option of options) {
@@ -152,8 +152,8 @@ describe('总结模型预设那一格（会中切模型，本节点）', () => {
     expect(
       normalizeActivePreset(
         makeSettings({ summary_preset_names: ['主力'], summary_active_preset: '已删掉' }),
-      ),
-    ).toBe('');
+),
+).toBe('');
   });
 });
 

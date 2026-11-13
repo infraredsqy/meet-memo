@@ -1,13 +1,13 @@
-"""测试层的共用辅助模块（**测试支持模块**，phase1 §4.3）。
+"""测试层的共用辅助模块（**测试支持模块**，设计口径）。
 
 **定位**：本文件是测试支持模块 —— 文件名不以 `test_` 开头，pytest **不收集**它，
 它只在四个测试文件里被 `import _helpers` 使用；它也不是 `conftest.py`，因此**不提供 fixture**
-（fixture 写在各自用到它的测试文件里）。phase2 新增 `tests/conftest.py` / `tests/_service.py`
+（fixture 写在各自用到它的测试文件里）。设计新增 `tests/conftest.py` / `tests/_service.py`
 时**按需吸收**这里的辅助（helper 与它们职责重叠的部分随那时一起收拢），本文件不预先替它们
 定义任何东西。
 
-本 Phase 的契约冻结项 24 把测试文件清单定死为四个（`test_config.py` / `test_logging_setup.py`
-/ `test_port_policy.py` / `test_static.py`），且 `tests/conftest.py` 属于 phase2（phase1 明写
+本项目的契约冻结项 24 把测试文件清单定死为四个（`test_config.py` / `test_logging_setup.py`
+/ `test_port_policy.py` / `test_static.py`），且 `tests/conftest.py` 属于设计（设计明写
 「不创建 `tests/conftest.py`」）。
 
 测试写的规矩（§4.3，全部来自契约）：
@@ -15,7 +15,7 @@
     不引 `pytest-asyncio`。
   - 子进程启动命令只有一种形态：`[sys.executable, "-m", "meeting", <动作词>]`，`cwd` 显式给仓库根。
   - 子进程 env 从「**剔除全部本服务环境变量后的宿主环境副本**」出发，
-    `MEETING_NO_BROWSER` 是本 Phase 的用例唯一允许出现的本服务环境变量。
+    `MEETING_NO_BROWSER` 是本项目的用例唯一允许出现的本服务环境变量。
   - **绝不许有任何一条用例在测试里触达真浏览器**（一次事故的收口）：验「打开浏览器失败只警告」
     那一支时，用 `fake_browser_module()` 把 `tests/_fake_webbrowser/webbrowser.py` 经 `PYTHONPATH`
     前置注入子进程，子进程里的 `webbrowser.open()` 因此是那份假替身；曾用过的
@@ -26,7 +26,7 @@
     加 `ENV_NO_BROWSER` 派生（`meeting.config` 加键时这里自动跟上）。
   - **不允许任何用例直接调 `webbrowser.open(...)`**：进程内用例必须自己替换
     `meeting.service.app.webbrowser.open`，子进程一律走 `fake_browser_module()` 注入；
-    pytest 父进程**没有**全局兜底（`tests/conftest.py` 归 phase2）。这条风险与将来的落点
+    pytest 父进程**没有**全局兜底（`tests/conftest.py` 归设计）。这条风险与将来的落点
     在 `app_client()` 的 docstring 里写得更细，写新用例前先读那一段。
 """
 
@@ -310,7 +310,7 @@ def start_args(action: str, args: dict[str, Any] | None, root: Path) -> dict[str
 #: `meeting.backends.capture:CaptureBackend` —— 那个后端在 `probe()` 里真的枚举声卡端点、
 #: 真的以 16k 试开一遍并读回样本（`meeting/capture/sources.py`）。换句话说，**一条忘了写这
 #: 个键的用例，会在服务 startup 那一步走到真实采集入口上**：有声卡的机器上就是打开机主的
-#: 输入设备（隐私硬约束，任务书 §0.1），无声卡的机器上则是另一条路径（用例的结论随「这台
+#: 输入设备（隐私硬约束，设计口径 §0.1），无声卡的机器上则是另一条路径（用例的结论随「这台
 #: 机器有没有声卡」而变）。测试层的共用辅助因此统一把缺省值收成 `dev` 替身：它不碰任何设备，
 #: 两路如实报 `ready` + `dev-<source>`。
 #:
@@ -564,7 +564,7 @@ def spawn_service(
     *,
     env_extra: dict[str, str] | None = None,
 ) -> ServiceProcess:
-    """起一个真服务子进程（默认带 `MEETING_NO_BROWSER=1`，本 Phase 唯一允许的服务变量）。
+    """起一个真服务子进程（默认带 `MEETING_NO_BROWSER=1`，本项目唯一允许的服务变量）。
 
     **后端在这里补上共用缺省**（`apply_backend_defaults(home)`）：本用例的 `config.json`
     里没写 `capture.backend` 时补 `dev` 替身（不补的话产品缺省 `auto` 会让子进程 startup
@@ -688,7 +688,7 @@ def app_client(
     `BROWSER=no-such-browser` 在 Windows 上无效：`register_standard_browsers()` 会补上
     `windows-default` 并真的开窗，见 `tests/_fake_webbrowser/webbrowser.py` 的说明）。
 
-    因此本 Phase 的硬要求（**任何用例都不得例外**）：
+    因此本项目的硬要求（**任何用例都不得例外**）：
       - 进程内：用例**自己**在调用前把 `meeting.service.app.webbrowser.open` 换成抛错型或
         记录型假替身（`monkeypatch.setattr(service_app.webbrowser, "open", ...)`，
         参考 `tests/test_static.py` 里 `launch_browser()` 那几条直接断言）；
@@ -697,10 +697,10 @@ def app_client(
         里的看门断言会拦下漏注入的用例）；
       - **绝对不许**直接调用 `webbrowser.open(...)`，也不许拿 `BROWSER` 环境变量当唯一保护。
 
-    **硬保护的落点（phase2 的活，本 Phase 不做）**：phase2 新增 `tests/conftest.py` 时，
+    **硬保护的落点（设计的活，本项目不做）**：设计新增 `tests/conftest.py` 时，
     应当在那里装一个 **autouse fixture**，默认把 `meeting.service.app.webbrowser.open`
     换成「抛错 / 只记录」的假替身（需要真行为的用例再在自己的用例里显式覆盖它）。
-    本 Phase 契约明令不创建 `tests/conftest.py`（§1.2 / §4.1），因此这条保护**此刻只在
+    本项目契约明令不创建 `tests/conftest.py`（§1.2 / §4.1），因此这条保护**此刻只在
     各用例与 `app_client()` 里各自落地**，没有全局兜底 —— 写新用例时别指望有人替你挡住。
     ============================================================================
     """

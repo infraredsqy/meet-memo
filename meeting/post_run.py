@@ -53,7 +53,7 @@ LAYER_UNKNOWN = "unknown"
 #: 与 `done` 分开写，好让读方在一格上就看出「有一路整条没有」（`artifacts.STATES` 同值）。
 LAYER_PARTIAL = "partial"
 
-#: 离线那一层的**被打断**档（「打断会后」节点 b1c6a58e，`artifacts.STATES` 同值）：
+#: 离线那一层的**被打断**档（「打断会后」节点，`artifacts.STATES` 同值）：
 #: 跑到块边界被人停的**终态**。补记录判据把它算进「已落定」（打断之后逃出来的异常不许把
 #: 它盖成 `failed`），幂等闸**不**把它当 `running` —— 打断之后重按按钮 / 再敲
 #: `meeting post` 从头再跑，不需要 `--force`。
@@ -214,7 +214,7 @@ def run_post(
     minutes_complete = _minutes_layer_done(directory, minutes_status)
     offline_done = bool(offline_complete and not force)
     minutes_done = bool(minutes_complete and not force)
-    # 「这一趟没有待办」的前置是「音频已归档」（任务书「关键决定 4」）：归档有一路转不动
+    # 「这一趟没有待办」的前置是「音频已归档」（设计口径「关键决定 4」）：归档有一路转不动
     # 时不许走这一档——既不能报 `EXIT_OK`，也不能打一句「音频已归档」。
     if offline_done and minutes_done and result["archive"]["state"] != ARCHIVE_FAILED:
         # 两层都到终态、产物齐、音频已归档：一个引擎调用、一个子进程都不产生。

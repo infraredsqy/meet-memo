@@ -1,6 +1,6 @@
 """`meeting/minutes/launch.py` 的契约用例：产物四条判据、三档失败、argv 只有短指针。
 
-要盯的六条（对应任务书 phase2 的完成判定与自检项）：
+要盯的六条（对应设计口径2 的完成判定与自检项）：
 
   1. **产物四条判据逐条可触发**：文件不在 / 空文件 / 缺 `## 说话人附录` / 缺 `### 猜不出的` /
      附录里没有数据行，五种坏形状都判失败；一份完整纪要判通过；
@@ -138,7 +138,7 @@ def write_fake_dsh(root: Path) -> tuple[Path, Path]:
     shim.write_text(
         "@echo off\r\n" f'"{sys.executable}" "%~dp0fake_dsh.py" %*\r\n',
         encoding="ascii",
-    )
+)
     return shim, script
 
 
@@ -232,7 +232,7 @@ def test_a_final_without_the_appendix_heading_is_rejected(tmp_path: Path) -> Non
     session = _session(tmp_path)
     (session / FINAL_NAME).write_text(
         GOOD_FINAL.replace(APPENDIX_HEADING, "## 附录"), encoding="utf-8"
-    )
+)
 
     assert CHECK_APPENDIX_HEADING in check_final_artifact(session)
 
@@ -242,7 +242,7 @@ def test_a_final_without_the_unknown_heading_is_rejected(tmp_path: Path) -> None
     session = _session(tmp_path)
     (session / FINAL_NAME).write_text(
         GOOD_FINAL.replace(UNKNOWN_HEADING, "### 其它"), encoding="utf-8"
-    )
+)
 
     assert CHECK_UNKNOWN_HEADING in check_final_artifact(session)
 
@@ -268,7 +268,7 @@ def test_an_appendix_with_only_a_header_is_rejected(tmp_path: Path) -> None:
             "- 一个名字都推不出来",
             "",
         ]
-    )
+)
     (session / FINAL_NAME).write_text(bare, encoding="utf-8")
 
     assert check_final_artifact(session) == (CHECK_APPENDIX_ROW,)
@@ -279,7 +279,7 @@ def test_a_table_outside_the_appendix_does_not_count(tmp_path: Path) -> None:
     session = _session(tmp_path)
     text = GOOD_FINAL.replace(
         "| loopback | S01 | 张三 | 中 | 会上自称负责部署 |", ""
-    ).replace("## 会议概要", "## 会议概要\n\n| a | b |\n| --- | --- |\n| 1 | 2 |")
+).replace("## 会议概要", "## 会议概要\n\n| a | b |\n| --- | --- |\n| 1 | 2 |")
     (session / FINAL_NAME).write_text(text, encoding="utf-8")
 
     assert check_final_artifact(session) == (CHECK_APPENDIX_ROW,)
@@ -317,7 +317,7 @@ def _final_with(table: str) -> str:
             "- 一个名字都推不出来",
             "",
         ]
-    )
+)
 
 
 @pytest.mark.parametrize("header", EMPTY_TABLES_WITH_A_CHANGED_HEADER)
@@ -334,11 +334,11 @@ def test_an_empty_appendix_table_is_rejected_whatever_the_first_header_cell_says
     session = _session(tmp_path)
     (session / FINAL_NAME).write_text(
         _final_with(f"{header}\n{separator}"), encoding="utf-8"
-    )
+)
 
     assert check_final_artifact(session) == (CHECK_APPENDIX_ROW,), (
         f"空附录（表头「{header}」+ 分隔行「{separator}」）该判失败"
-    )
+)
 
 
 def test_a_table_with_a_header_and_a_data_row_still_passes(tmp_path: Path) -> None:
@@ -349,9 +349,9 @@ def test_a_table_with_a_header_and_a_data_row_still_passes(tmp_path: Path) -> No
             "| 路 | 编号 | 人名 | 把握 | 依据 |\n"
             "| --- | --- | --- | --- | --- |\n"
             "| loopback | S01 | 张三 | 中 | 依据：会上自称负责部署 |"
-        ),
+),
         encoding="utf-8",
-    )
+)
 
     assert check_final_artifact(session) == ()
 
@@ -368,9 +368,9 @@ def test_the_this_route_has_no_speaker_numbers_row_still_passes(tmp_path: Path) 
             "| 路 | 编号 | 人名 | 把握 | 依据 |\n"
             "| --- | --- | --- | --- | --- |\n"
             "| mic | — | — | — | 这一路没有说话人编号，分不出个人 |"
-        ),
+),
         encoding="utf-8",
-    )
+)
 
     assert check_final_artifact(session) == ()
 
@@ -392,9 +392,9 @@ def test_a_narrow_row_is_not_a_data_row(tmp_path: Path) -> None:
             "| --- | --- | --- | --- | --- |\n"
             "| — | — |\n"
             "| mic | — |"
-        ),
+),
         encoding="utf-8",
-    )
+)
 
     assert check_final_artifact(session) == (CHECK_APPENDIX_ROW,)
 
@@ -406,9 +406,9 @@ def test_a_filled_three_cell_row_passes_without_a_header(tmp_path: Path) -> None
         _final_with(
             "| --- | --- | --- |\n"
             "| mic | — | 这一路分不出个人 |"
-        ),
+),
         encoding="utf-8",
-    )
+)
 
     assert check_final_artifact(session) == ()
 
@@ -421,9 +421,9 @@ def test_a_written_data_row_counts_when_the_header_is_three_cells_wide(tmp_path:
             "| 路 | 编号 | 人名 |\n"
             "| --- | --- | --- |\n"
             "| mic | — | 这一路分不出个人 |"
-        ),
+),
         encoding="utf-8",
-    )
+)
 
     assert check_final_artifact(session) == ()
 
@@ -441,9 +441,9 @@ def test_a_second_table_in_the_appendix_does_not_rescue_the_first_one(tmp_path: 
             "| 来源 | 编号 | 人名 |\n"
             "| --- | --- | --- |\n"
             "| loopback | S01 | 张三 |"
-        ),
+),
         encoding="utf-8",
-    )
+)
 
     assert check_final_artifact(session) == ()
 
@@ -552,7 +552,7 @@ def test_a_fake_dsh_that_writes_a_final_is_a_success(tmp_path: Path) -> None:
 
     result = launch_headless(
         session, prompt_text="正文在这里。", executable=str(shim), allow_dsh=True
-    )
+)
 
     assert result.ok is True, result.error
     assert result.failure is None
@@ -575,7 +575,7 @@ def test_a_fake_dsh_that_exits_zero_without_the_final_is_a_failure(tmp_path: Pat
         executable=str(script),
         runner=fake,
         allow_dsh=True,
-    )
+)
 
     assert result.ok is False
     assert result.failure == FAILURE_ARTIFACT_MISSING
@@ -595,7 +595,7 @@ def test_a_fake_dsh_that_exits_nonzero_is_a_failure(tmp_path: Path) -> None:
         executable=str(script),
         runner=FakeSubprocess(SCENARIO_EXIT_1),
         allow_dsh=True,
-    )
+)
 
     assert result.ok is False
     assert result.failure == FAILURE_EXIT_CODE
@@ -614,7 +614,7 @@ def test_a_timeout_is_a_failure_with_the_seconds_and_the_prompt(tmp_path: Path) 
         timeout=0.2,
         runner=ScriptRunner(script, SCENARIO_SLEEP),
         allow_dsh=True,
-    )
+)
 
     assert result.ok is False
     assert result.failure == FAILURE_TIMEOUT
@@ -628,7 +628,7 @@ def test_an_unresolvable_executable_says_npm_only_makes_shims(tmp_path: Path) ->
 
     result = launch_headless(
         session, prompt_text="正文在这里。", which=lambda name: None, allow_dsh=True
-    )
+)
 
     assert result.ok is False
     assert result.failure == FAILURE_EXECUTABLE_MISSING
@@ -649,7 +649,7 @@ def test_the_prompt_is_written_to_disk_and_the_argument_points_at_it(tmp_path: P
         executable=str(script),
         runner=fake,
         allow_dsh=True,
-    )
+)
 
     prompt_file = session / "working" / "run_prompt.md"
     assert prompt_file.read_text(encoding="utf-8") == "这是提示词正文。"
@@ -673,7 +673,7 @@ def test_every_launch_leaves_a_log_with_the_header(tmp_path: Path) -> None:
         executable=str(script),
         runner=FakeSubprocess(SCENARIO_OK),
         allow_dsh=True,
-    )
+)
 
     log = (session / launch_module.ARTIFACT_LOG).read_text(encoding="utf-8")
     assert log.startswith("# 命令：")
@@ -698,7 +698,7 @@ def test_a_real_subprocess_writes_the_final(tmp_path: Path) -> None:
         executable=sys.executable,
         runner=ScriptRunner(script, SCENARIO_OK),
         allow_dsh=True,
-    )
+)
 
     assert result.ok is True, result.error
     assert (session / FINAL_NAME).read_text(encoding="utf-8").strip()
@@ -716,7 +716,7 @@ def test_a_real_subprocess_reports_a_nonzero_exit(tmp_path: Path) -> None:
         executable=sys.executable,
         runner=ScriptRunner(script, SCENARIO_EXIT_1),
         allow_dsh=True,
-    )
+)
 
     assert result.ok is False
     assert result.failure == FAILURE_EXIT_CODE
@@ -733,6 +733,6 @@ def test_a_cmd_shim_resolves_through_which(tmp_path: Path) -> None:
     shim, _script = write_fake_dsh(tmp_path / "bin")
     found = find_executable(
         "dsh", which=lambda name: shim if name == "dsh" else None
-    )
+)
 
     assert Path(found) == shim

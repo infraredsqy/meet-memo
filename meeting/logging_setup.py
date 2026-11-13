@@ -1,4 +1,4 @@
-"""日志（phase1 §3.13，R16）。
+"""日志（设计口径，R16）。
 
 服务级 `~/.config/meeting/logs/meeting.log`（`log.dir` / `MEETING_LOG_DIR` 可改）；
 场次级 `<场次目录>/meeting.log`，`start` 时挂上、收尾 `log` 步 flush 后摘掉（R16 的 log
@@ -283,7 +283,7 @@ def detach_session_log() -> None:
     """flush 后摘掉场次级 handler。
 
     写失败时**不许静默吞异常**：抛出 `OSError` 及其子类，**不返回错误对象、不返回布尔值**
-    （phase2 的收尾 `log` 步靠 `except OSError` 登记）。无论成败，handler 都已从 logger 上摘掉。
+    （设计的收尾 `log` 步靠 `except OSError` 登记）。无论成败，handler 都已从 logger 上摘掉。
     """
     handler = _state["session_handler"]
     _state["session_handler"] = None
@@ -316,7 +316,7 @@ def session_log_dir() -> str | None:
     return _state["session_dir"]
 
 
-# 收尾 `log` 步：flush -> 写这一场的结束标记 -> 摘掉（phase3 §3.7）
+# 收尾 `log` 步：flush -> 写这一场的结束标记 -> 摘掉（设计口径）
 
 #: 这一场的结束标记（场次 log 的最后一行，测试照这条断言）。
 #: 占位符：`{state}`（`session.json` 的 `state`）、`{steps}`（收尾各步 `status` 概要）、

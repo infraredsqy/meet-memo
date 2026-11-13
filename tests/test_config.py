@@ -1,4 +1,4 @@
-"""`tests/test_config.py` —— 配置层（phase1 §5 第 5 条 / §4.1 文件清单第 14 行）。
+"""`tests/test_config.py` —— 配置层（设计口径第 5 条 / §4.1 文件清单第 14 行）。
 
 覆盖：
   - 优先级 env > config.json > 默认；
@@ -77,13 +77,13 @@ def test_default_values_match_the_frozen_table(tmp_path, monkeypatch):
         "capture.backend": "auto",
         "transcriber.backend": "auto",
         "post.hook": "auto",
-        # 会后离线这一层的四个开关（`7c6952e5` 定名）：缺省值取本机实测跑通的那一档
+        # 会后离线这一层的四个开关（定名）：缺省值取本机实测跑通的那一档
         "post.engine": "auto",
         "post.model": "OpenMOSS-Team/MOSS-Transcribe-Diarize",
         "post.dtype": "bfloat16",
         # 分块块长取实测的安全档 450 秒（`0` = 显式关掉分块、整段一次跑）
         "post.chunk_seconds": 450,
-        # 两个设备键位（`dca4539b` 定名）：没配就是 `None`
+        # 两个设备键位（定名）：没配就是 `None`
         "devices.mic": None,
         "devices.loopback": None,
         "asr.max_segment_seconds": 10,
@@ -91,7 +91,7 @@ def test_default_values_match_the_frozen_table(tmp_path, monkeypatch):
         "asr.max_new_tokens": 400,
         "asr.repeat_max_unit": 40,
         "asr.repeat_min_coverage": 0.5,
-        # 会后纪要这一层的五个开关（`41465462` phase2 定名 + web 分支那一个）：钩子默认
+        # 会后纪要这一层的五个开关（设计定名 + web 分支那一个）：钩子默认
         # `auto`（跟着离线那一趟的尾巴跑）、每块 100 行、每条 source 最多 8 段、一次运行最多
         # 四小时、DSH web 服务端取 `dsh web` 的默认监听地址
         "minutes.hook": "auto",
@@ -99,7 +99,7 @@ def test_default_values_match_the_frozen_table(tmp_path, monkeypatch):
         "minutes.max_segments": 8,
         "minutes.timeout_seconds": 14400,
         "minutes.dsh_url": "http://127.0.0.1:3080",
-        # 会中总结这一层的七个键（`1987cb20` phase1 定名）：端点四件套 + 预算三件套。
+        # 会中总结这一层的七个键（设计定名）：端点四件套 + 预算三件套。
         # 密钥那一格默认 `None`（没配）—— 它是**可空键**，与两个设备键同一档。
         "summary.base_url": "https://api.deepseek.com/v1",
         "summary.api_key": None,
@@ -238,7 +238,7 @@ def test_post_layer_keys_come_from_config_json(tmp_path, monkeypatch):
             "post.model": r"C:\models\mosstd-snapshot",
             "post.dtype": "float16",
         },
-    )
+)
 
     loaded = _load_with_env(monkeypatch, home, {})
 
@@ -270,7 +270,7 @@ def test_missing_config_json_falls_back_to_defaults(tmp_path, monkeypatch):
 def test_isolated_config_dir_and_app_client_share_one_home(
     tmp_path: Path, isolated_config_dir: Path, app_client: Any
 ):
-    """两个夹具同时使用时指向**同一个**本用例临时家目录（phase2 §5.4 的家目录硬约束）。
+    """两个夹具同时使用时指向**同一个**本用例临时家目录（设计口径的家目录硬约束）。
 
     同时请求两个夹具：`isolated_config_dir` 归属的那个家目录（它的上一级目录），
     与 `HOME` / `USERPROFILE` 两个环境变量、以及 `app_client` 实际落配置的那条路径，
@@ -287,17 +287,17 @@ def test_isolated_config_dir_and_app_client_share_one_home(
     assert os.environ["USERPROFILE"] == str(home)
     assert helpers.config_path_of(home).exists(), (
         "app_client 的配置文件该落在同一个家目录下"
-    )
+)
     assert isolated_config_dir.parent.parent == home, (
         "isolated_config_dir 归属的家目录与 app_client 落配置的那个家目录该是同一个："
         f"{isolated_config_dir.parent.parent} != {home}"
-    )
+)
 
 
 def test_hot_keys_are_the_asr_five_plus_the_alarm_switch(tmp_path, monkeypatch):
     """热读键 = `asr.*` 五个 + `alarm.sound` + 设置抽屉那四项 + 会中切模型两键
     （出声开关勾选那一刻生效；设备写完 `reprobe` 按新值挑，心跳与总结缺省档写盘即可见
-    —— `311f84f5`；换一套预设当场生效 —— 本节点）。"""
+    ——；换一套预设当场生效 —— 本节点）。"""
     home = tmp_path / "home"
     home.mkdir()
     loaded = _load_with_env(monkeypatch, home, {})
@@ -322,14 +322,14 @@ def test_hot_keys_are_the_asr_five_plus_the_alarm_switch(tmp_path, monkeypatch):
         "max_new_tokens",
         "repeat_max_unit",
         "repeat_min_coverage",
-    )
+)
     # 会中切模型的两键也不许混进快照那两份子键清单（它们进的是 `settings` 顶层那两格）
     assert not any(
         key.startswith("summary.") for key in config_module.ASR_SETTING_KEYS
-    )
+)
     assert not any(
         key.startswith("summary.") for key in config_module.DEVICE_SETTING_KEYS
-    )
+)
 
 
 def test_summary_preset_keys_defaults_validation_and_cross_rule(tmp_path, monkeypatch):
@@ -355,7 +355,7 @@ def test_summary_preset_keys_defaults_validation_and_cross_rule(tmp_path, monkey
             {"name": "备用（必败）", "base_url": "http://127.0.0.1:1/v1"},
         ],
         ensure_ascii=False,
-    )
+)
     # 合法值原样放行；空串 = 没配
     assert config_module.validate_value("summary.presets_json", good) == good
     assert config_module.validate_value("summary.presets_json", "  ") == ""
@@ -371,7 +371,7 @@ def test_summary_preset_keys_defaults_validation_and_cross_rule(tmp_path, monkey
         ('[{"name": "a", "base_url": 5}]', "不是字符串"),
         ('[{"name": "a", "extra_body_json": "[1]"}]', "顶层不是对象"),
         ('[{"name": "a", "unknown": 1}]', "认不出的格"),
-    ):
+):
         try:
             config_module.validate_value("summary.presets_json", text)
         except config_module.ConfigValueError as exc:
@@ -399,7 +399,7 @@ def test_summary_preset_keys_defaults_validation_and_cross_rule(tmp_path, monkey
     try:
         config_module.validate_setting_changes(
             {"summary.active_preset": "不存在的"}, current=_Current()
-        )
+)
     except config_module.ConfigValueError as exc:
         assert exc.key == "summary.active_preset"
         assert "不存在的" in str(exc)
@@ -411,12 +411,12 @@ def test_summary_preset_keys_defaults_validation_and_cross_rule(tmp_path, monkey
     applied = config_module.validate_setting_changes(
         {"summary.presets_json": good, "summary.active_preset": "备用（必败）"},
         current=_Current(),
-    )
+)
     assert set(applied) == {"summary.presets_json", "summary.active_preset"}
     # 空指针照常放行（= 不选预设，用平铺四键）
     assert config_module.validate_setting_changes(
         {"summary.active_preset": ""}, current=_Current()
-    ) == {"summary.active_preset": ""}
+) == {"summary.active_preset": ""}
 
 
 def test_priority_environment_beats_json_beats_default(tmp_path, monkeypatch):
@@ -432,7 +432,7 @@ def test_priority_environment_beats_json_beats_default(tmp_path, monkeypatch):
             "log.dir": str(log_dir),
             "web.dist_dir": "somewhere/dist",
         },
-    )
+)
 
     # ① 只有 config.json：json 层生效
     loaded = _load_with_env(monkeypatch, home, {})
@@ -453,7 +453,7 @@ def test_priority_environment_beats_json_beats_default(tmp_path, monkeypatch):
             "MEETING_PORT": "9123",
             "MEETING_LOG_DIR": str(env_log),
         },
-    )
+)
     assert loaded.get("web.port") == 9123
     assert loaded.get("log.dir") == str(env_log)
     assert loaded.source_of("web.port") == "环境变量 MEETING_PORT"
@@ -463,7 +463,7 @@ def test_priority_environment_beats_json_beats_default(tmp_path, monkeypatch):
 def test_env_mapping_is_the_four_frozen_names_plus_the_summary_key():
     """环境变量映射：契约 §3.11 的那四个 + 会中总结的密钥那一格。
 
-    `MEETING_SUMMARY_API_KEY`（`1987cb20` phase1 定名）是第五个。它是密钥，因此唯一的
+    `MEETING_SUMMARY_API_KEY`（设计定名）是第五个。它是密钥，因此唯一的
     用法就是环境变量 —— 这一条钉住它走的是与另外四个**同一条**通路（同一个表、同一档
     优先级），顺带钉住测试层的剔除清单会把它一起剔掉（那条派生见下一条用例）。
     「输出根」那一条（`MEETING_OUT_ROOT` → `output.root`）已随默认落点退场。
@@ -496,11 +496,11 @@ def test_helpers_service_env_names_derive_from_the_frozen_names():
         "MEETING_SUMMARY_API_KEY",
         "MEETING_NO_BROWSER",
         "MEETING_CONFIG_DIR",
-    )
+)
 
 
 def test_meeting_capture_env_maps_to_capture_backend(tmp_path, monkeypatch):
-    """`MEETING_CAPTURE=dev` → `capture.backend = dev`（本 Phase 只需认这个键名）。"""
+    """`MEETING_CAPTURE=dev` → `capture.backend = dev`（本项目只需认这个键名）。"""
     home = tmp_path / "home"
     home.mkdir()
     loaded = _load_with_env(monkeypatch, home, {"MEETING_CAPTURE": "dev"})
@@ -524,7 +524,7 @@ def test_cross_key_rule_timeout_must_exceed_segment(tmp_path, monkeypatch):
     home.mkdir()
     helpers.write_config_json(
         home, {"asr.max_segment_seconds": 30, "asr.timeout_seconds": 20}
-    )
+)
 
     with pytest.raises(config_module.ConfigValueError) as info:
         _load_with_env(monkeypatch, home, {})
@@ -649,7 +649,7 @@ def test_retired_output_root_key_is_ignored(tmp_path, monkeypatch):
         (
             {"asr.max_segment_seconds": 30, "asr.timeout_seconds": 20},
             ["asr.timeout_seconds", "asr.max_segment_seconds"],
-        ),
+),
     ],
 )
 def test_illegal_value_exits_rejected_in_subprocess(tmp_path, values, expected_in_output):

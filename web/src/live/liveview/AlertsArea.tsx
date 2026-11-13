@@ -65,7 +65,7 @@ export function AlertsArea({
             </button>
           </div>
         </div>
-      )}
+)}
       {view.fatal !== null && view.critical !== null && (
         <div className="alert alert--fatal">
           <div className="alert__head">
@@ -104,7 +104,7 @@ export function AlertsArea({
           </div>
           {logShown && logPath !== null && <code className="codeblock">{logPath}</code>}
         </div>
-      )}
+)}
 
       {stalled !== null && view.fatal === null && (
         <div className="alert alert--fatal">
@@ -118,7 +118,7 @@ export function AlertsArea({
             那一段在报什么{logPath === null ? '' : `；日志在 ${logPath}`}。
           </div>
         </div>
-      )}
+)}
 
       {view.hints.map((hint) => (
         <div className="alert alert--hint" key={`${hint.since}-${hint.text}`}>
@@ -128,7 +128,7 @@ export function AlertsArea({
           <span className="alert__since">{hint.since}</span>
           <span>{hint.text}</span>
         </div>
-      ))}
+))}
 
       {/* 「本场曾中断」提示行（gil-stall-hole）：帧空洞记录是历史事实（录中冻结解冻后
           发帧线程报上来的），提示级 —— 只上一行字，不出声、不弹红横幅、不进两拍计数。
@@ -141,12 +141,12 @@ export function AlertsArea({
           </span>
           <span>{view.gapNote}</span>
         </div>
-      )}
+)}
 
       {/* 心跳迟到：一行弱提示，不出声、无横幅 */}
       {heartbeat.level === '迟到' && heartbeat.lateText !== null && (
         <div className="heartbeat heartbeat--inline">{heartbeat.lateText}</div>
-      )}
+)}
     </section>
-  );
+);
 }

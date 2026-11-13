@@ -1,6 +1,6 @@
-"""`tests/test_state_machine.py` —— 四态状态机、快照形状、包络与收尾闭环（phase2 §5.1 第一行）。
+"""`tests/test_state_machine.py` —— 四态状态机、快照形状、包络与收尾闭环（设计口径第一行）。
 
-覆盖（逐条对 phase2 §5.1 的判据）：
+覆盖（逐条对设计口径的判据）：
 
   - 四态取值与**全部合法迁移**；非法迁移**抛错而不是静默 no-op**，且被拒绝的请求
     **不涨 `revision`、不写 `session.json`、不广播**；
@@ -283,7 +283,7 @@ def test_illegal_transitions_raise_instead_of_no_op():
 
 
 def test_rejected_request_does_not_grow_revision_or_touch_disk(tmp_path):
-    """被拒绝的迁移不涨 `revision`、不写 `session.json`、不广播（phase2 §3.1.1）。"""
+    """被拒绝的迁移不涨 `revision`、不写 `session.json`、不广播（设计口径）。"""
     stack, client, runtime = build_live_client(tmp_path)
     try:
         before = snapshot_of(client)["revision"]
@@ -774,7 +774,7 @@ def test_cancelled_drain_keeps_the_same_face_without_done(tmp_path):
         assert second_dir != session_dir
 
         class PinRelease:
-            """把第 4 步钉在 `running` 上，直到用例放行（phase3 §3.8 的同一手法）。
+            """把第 4 步钉在 `running` 上，直到用例放行（设计口径的同一手法）。
 
             这一步现在只做一件事：让会中模型退出显存（会后归两个按钮，R26）。堵点因此落在
             `release_gpu()` 上 —— **同步调用不落在事件循环上**：收尾的这一步由 `_drain_wait()`
@@ -805,10 +805,10 @@ def test_cancelled_drain_keeps_the_same_face_without_done(tmp_path):
             # 确定同步点（三步走，缺一步都会撞上「收尾几乎瞬间跑完」这条偶发）：
             #   ① 这一步先被置成 `running`（收尾确实还在跑）；
             #   ② 它的调用随后经运行时的**收尾专用执行器**交到工作线程（`_drain_wait()` 里
-            #      那一句 `loop.run_in_executor(...)`），工作线程一进去就置 `hook.started`
+            # 那一句 `loop.run_in_executor(...)`），工作线程一进去就置 `hook.started`
             #      —— 等这个事件，就是把「调用真的开始了」等实；
             #   ③ 此时 `release_gpu()` 还堵在 `hook.release` 上（上限 CANCEL_PIN_SECONDS），
-            #      于是取消一定落在「post 停在 running」这一格上。
+            # 于是取消一定落在「post 停在 running」这一格上。
             # 收尾的这一步一定经 `_drain_wait()` 的等待层（`invoke=True`）交到工作线程，
             # 因此②一定会发生；这里等它，而不是抢在它之前断言。
             deadline = time.monotonic() + STATE_POLL_TIMEOUT_SECONDS

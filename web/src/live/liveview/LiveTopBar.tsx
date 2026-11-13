@@ -44,7 +44,7 @@ export function LiveTopBar({
   onSetting: (key: string, value: unknown) => void;
   onReprobe: () => void;
 }): ReactNode {
-  /** 设置抽屉开着没有（R32：一个设置按钮 → 网页内小窗；`311f84f5`）。 */
+  /** 设置抽屉开着没有（R32：一个设置按钮 → 网页内小窗；）。 */
   const [settingsOpen, setSettingsOpen] = useState(false);
   const showStart = snapshot.top_state === 'idle';
   const showEnd = snapshot.top_state === 'recording' || snapshot.top_state === 'alert';
@@ -67,7 +67,7 @@ export function LiveTopBar({
           </div>
           {recoveredGapSeconds !== null && (
             <span className="recovered-note">{recoveredNoteText(recoveredGapSeconds)}</span>
-          )}
+)}
         </div>
 
         <div className="topbar__main">
@@ -92,9 +92,9 @@ export function LiveTopBar({
             >
               开始录音
             </button>
-          )}
+)}
           {showEnd && (
-            /* 会中收音的四组合直切（`c9f5d04d`）：暂停与两路开关收成这一处集中控制，
+            /* 会中收音的四组合直切：暂停与两路开关收成这一处集中控制，
                 一次只处在四档之一，切换即到位。半途（`pendingCombo` 有值）高亮跟着
                 按下去的那一档走，受理即有反馈；「全停」选中那一格是硫红实心
                 （live.css 按 `data-combo` 换色），与「在录」的青色分得开 */
@@ -110,9 +110,9 @@ export function LiveTopBar({
                 >
                   {COMBO_LABELS[combo]}
                 </button>
-              ))}
+))}
             </div>
-          )}
+)}
           {showEnd && (
             <button
               className="btn btn--primary btn--end"
@@ -122,7 +122,7 @@ export function LiveTopBar({
             >
               停止录音
             </button>
-          )}
+)}
         </div>
 
         <div className="topbar__right">
@@ -152,7 +152,7 @@ export function LiveTopBar({
           onSetting={onSetting}
           onReprobe={onReprobe}
         />
-      )}
+)}
     </>
-  );
+);
 }

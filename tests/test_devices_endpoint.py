@@ -1,4 +1,4 @@
-"""`tests/test_devices_endpoint.py` —— 设置抽屉节点的服务面（`311f84f5`，快档）。
+"""`tests/test_devices_endpoint.py` —— 设置抽屉节点的服务面（快档）。
 
 覆盖三块，全部**不碰真实音频硬件**（设备枚举一律走假件，`tests/conftest.py` 的
 `_no_real_audio_capture` 那道看门照旧在岗）：

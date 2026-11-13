@@ -1,7 +1,7 @@
-"""``ServiceRuntime`` 的「后端接线与探测」mixin：绑定 / 解析 / 探测 / 起停。
+"""ServiceRuntime 的「后端接线与探测」mixin：绑定 / 解析 / 探测 / 起停。
 
-方法与方法间注释均自 ``meeting/service/runtime.py`` 第 644-1167 行一字不改复制；
-本文件自写内容只有模块 docstring、import 与 ``_log`` 一行、类声明行。
+方法与方法间注释均自 meeting/service/runtime.py 第 644-1167 行一字不改复制；
+本文件自写内容只有模块 docstring、import 与 _log 一行、类声明行。
 """
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ _log = logging.getLogger("meeting.service.runtime")
 
 
 class RuntimeBackendsMixin:
-    """「后端接线与探测」：``revision`` 等只读小接口、绑定地址、startup/shutdown、后端解析与设备探测。"""
+    """「后端接线与探测」：revision 等只读小接口、绑定地址、startup/shutdown、后端解析与设备探测。"""
 
     # 只读小接口
 
@@ -157,7 +157,7 @@ class RuntimeBackendsMixin:
         # ④ 解析三个后端（唯一入口是 registry；失败回退替身 + warning）
         self._resolve_backends()
 
-        # ④b 会后在飞记录的核对（b1c6a58e 的 d5）：上一趟会后被进程死掉截断时，盘上停着
+        # ④b 会后在飞记录的核对（的 d5）：上一趟会后被进程死掉截断时，盘上停着
         # running、记录还写着 —— 这里把它补成 `interrupted`（治「杀了进程就永远停在在跑」
         # 那条病）。这是「启动序列不读场次目录」那条口径的**定向例外**：只读记录里点名的
         # 那一场，不扫任何目录；核对的任何意外只警告，不阻塞启动。
@@ -180,7 +180,7 @@ class RuntimeBackendsMixin:
         self._open_browser()
 
     def _reconcile_interrupted_post_jobs(self) -> None:
-        """启动时对一遍「在飞」记录（b1c6a58e 的 d5；记录按 `(种类, 场次)` 一格一条，
+        """启动时对一遍「在飞」记录（的 d5；记录按 `(种类, 场次)` 一格一条，
         这里逐条走）：记录里点名的、盘上仍 `running` 的那一场 offline 会后，补成
         `interrupted`，然后清记录。
 
@@ -248,11 +248,11 @@ class RuntimeBackendsMixin:
             )
 
     async def shutdown(self) -> None:
-        """关停动作：停 ticker、停采集、**停转写**、清关停目标（本 Phase 不做收尾，收尾归 phase3）。
+        """关停动作：停 ticker、停采集、**停转写**、清关停目标（本项目不做收尾，收尾归设计）。
 
-        `transcriber_backend.stop()` 在关停路径上一直缺一个调用点：协议里这个方法从 phase1
+        `transcriber_backend.stop()` 在关停路径上一直缺一个调用点：协议里这个方法从设计
         就冻结着，而在此之前没有任何一处调它 —— 于是转写的读线程与 worker 会一直挂到进程退出
-        （`9e5db89c` phase2 §7 的那条接线）。它与采集一样**失败只登记、不抛**：关停路径上
+        （设计口径的那条接线）。它与采集一样**失败只登记、不抛**：关停路径上
         任何一步出事都不许把进程卡住。
         """
         if self._ticker is not None:
@@ -391,7 +391,7 @@ class RuntimeBackendsMixin:
     def bind_transcriber(self, backend: Any) -> Callable[[Any], None]:
         """转写后端的 `line_sink` 同样只经 `call_soon_threadsafe` 进循环。
 
-        **顺路把这一行收进会中总结那条内存缓冲**（`1987cb20` phase2）：缓冲只在这一个 sink 里
+        **顺路把这一行收进会中总结那条内存缓冲**（设计）：缓冲只在这一个 sink 里
         喂，`bind()` 被调两次也**只装一层**（两次都返回本方法包出来的 sink，收行的那一步在
         sink 内部、与装了几层无关，于是同一行不会进缓冲两遍）。收行**先于**
         `_call_soon_threadsafe`：缓冲自己是线程安全的，事件循环没起来 / 已经关掉时那一支
@@ -459,7 +459,7 @@ class RuntimeBackendsMixin:
         )
 
     def reprobe(self) -> None:
-        """`reprobe`：重新枚举并试开设备，更新快照两路（`dca4539b` phase1 §2）。
+        """`reprobe`：重新枚举并试开设备，更新快照两路（设计口径）。
 
         **只在没有场次在跑的时候可用**：`recording` / `alert` 态下这两路设备是开场前定下来的，
         会中换设备属于明文不做的那一档（`docs/contract.md` 第 7 章），因此这两态一律拒绝，
@@ -485,7 +485,7 @@ class RuntimeBackendsMixin:
         return self.probes
 
     def _apply_probe_results(self, *, reason: str, threshold: str) -> None:
-        """把 `self.probes` 按 `source` 落进快照两路（`dca4539b` phase1 §3 的落点）。
+        """把 `self.probes` 按 `source` 落进快照两路（设计口径的落点）。
 
         越界取值（后端返回第四个探针状态这类）记 warning 并把该路落 `probe_failed`：
         服务照常起、`top_state` 不动。

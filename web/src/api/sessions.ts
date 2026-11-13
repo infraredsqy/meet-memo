@@ -73,7 +73,7 @@ export async function fetchSessions(
 export interface BrowseDirsOptions {
   fetchImpl?: typeof fetch;
   url?: string;
-  /** `?files=1`（资料界面的选择器文件模式要的，160d1a78）：应答体多一个 `files` 键。 */
+  /** `?files=1`（资料界面的选择器文件模式要的）：应答体多一个 `files` 键。 */
   withFiles?: boolean;
 }
 
@@ -85,7 +85,7 @@ export interface BrowseDirsOptions {
 /**
  * `GET /api/dirs` 的 HTTP 拒答（400：要浏览的目录不存在 / 读不动）。信封读得出时
  * `message` 就是信封 `message` 的原话（「要浏览的目录不存在：…」）——地址栏跳层
- * 失败要当场说清人话（57ab5255），协议话术不顶到选择器上。
+ * 失败要当场说清人话，协议话术不顶到选择器上。
  */
 export class DirsHttpError extends HttpRejectError {
   constructor(status: number, code: string | null, note: string | null, raw: string) {
@@ -95,7 +95,7 @@ export class DirsHttpError extends HttpRejectError {
       code,
       note,
       raw,
-    );
+);
     this.name = 'DirsHttpError';
   }
 }
@@ -157,7 +157,7 @@ export class DirCreateHttpError extends HttpRejectError {
       code,
       note,
       raw,
-    );
+);
     this.name = 'DirCreateHttpError';
   }
 }
@@ -193,7 +193,7 @@ export async function createDir(
     // 连接层失败：不走 SessionsUnavailableError（那句固定话术是「取不到…」，读端点的口吻）
     throw new Error(
       `新建目录发不出去：${cause instanceof Error ? cause.message : String(cause)}`,
-    );
+);
   }
   const text = await response.text();
   if (!response.ok) {
@@ -214,7 +214,7 @@ export async function createDir(
 }
 
 // ---------------------------------------------------------------------------
-// 单场状态（4.9）：进度区的取数与轮询（会后进度界面节点 52b24392）
+// 单场状态（4.9）：进度区的取数与轮询（会后进度界面节点）
 // ---------------------------------------------------------------------------
 
 /** 单场状态那一档服务回的错误（404：目录不在原地 / 不在清单里；失败体是通用信封）。 */
@@ -228,7 +228,7 @@ export class SessionStatusHttpError extends HttpRejectError {
       code,
       null,
       raw,
-    );
+);
     this.name = 'SessionStatusHttpError';
   }
 }
@@ -268,7 +268,7 @@ export type SessionStatusTick =
   | { kind: 'error'; dir: string; error: Error };
 
 // ---------------------------------------------------------------------------
-// 稿子正文（4.13）：会后区两份稿的取数（38817ecf）
+// 稿子正文（4.13）：会后区两份稿的取数
 // ---------------------------------------------------------------------------
 
 /** 稿子正文那一档服务回的错误（404 两档：目录不在原地 / 不在清单里；失败体是通用信封）。 */
@@ -282,7 +282,7 @@ export class SessionTranscriptsHttpError extends HttpRejectError {
       code,
       null,
       raw,
-    );
+);
     this.name = 'SessionTranscriptsHttpError';
   }
 }

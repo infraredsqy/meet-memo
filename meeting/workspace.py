@@ -1,4 +1,4 @@
-"""工作区注册表与目录判别（工作台收编节点 e2f6166b）。
+"""工作区注册表与目录判别（工作台收编节点）。
 
 口径（`docs/design-intent.md` 第 2–5 条，`docs/requirements.md` R18–R21）：注册表
 `workspaces.json` 住在配置目录里（不塞进 `config.json`——那边表外键严格拒绝），
@@ -154,7 +154,7 @@ def _recency_key(entry: dict[str, Any]) -> tuple[str, str, str]:
     主判据是 `last_opened_at`（最近一次被打开/切换）；同秒（并列）时按 `added_at`，
     再按目录字典序——并列判据只为了让次序有唯一的答案（同一份注册表两次读取给出
     同一次序），语义仍是最近操作的时间戳。清单端点（`GET /api/sessions`）的排序与
-    顶层 `recent` 读的是这同一条链（工作区清单节点 7058f2e1）。
+    顶层 `recent` 读的是这同一条链（工作区清单节点）。
     """
     return (entry["last_opened_at"], entry["added_at"], entry["dir"])
 

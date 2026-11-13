@@ -111,7 +111,7 @@ export function useWorkspaceActions({
     void loadList().then(
       () => setBusy(false),
       () => setBusy(false),
-    );
+);
   };
 
   // -- 动作 ----------------------------------------------------------------
@@ -123,7 +123,7 @@ export function useWorkspaceActions({
    */
 
   /**
-   * 停掉正在跑的「生成会后精细稿」（R28 / b1c6a58e）：打一只 `post_stop`，受理即回。
+   * 停掉正在跑的「生成会后精细稿」（R28 /）：打一只 `post_stop`，受理即回。
    * 界面随即靠轮询看到状态翻成「被打断」、按钮回到可按。（派发骨架在 `../dispatch`。）
    */
   const stopPost = (): void => {
@@ -238,7 +238,7 @@ export function useWorkspaceActions({
         ? postAction(POST_STOP_ACTION, { dir: flying.dir }).then(
             () => undefined,
             (error) => setFailure(failureFrom(error)),
-          )
+)
         : Promise.resolve();
     void stopFirst.then(() => {
       setBusy(false);

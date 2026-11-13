@@ -50,7 +50,7 @@ export function runAction(io: {
       io.onFail(failure);
       if (io.rethrow) throw error;
     },
-  ).then((fallthrough) => {
+).then((fallthrough) => {
     if (fallthrough === TAIL_SKIP) return;
     io.setBusy?.(false);
     io.settle?.();

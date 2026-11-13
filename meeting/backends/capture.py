@@ -1,4 +1,4 @@
-"""采集后端 —— 设备层 + 采集引擎（`dca4539b`）。
+"""采集后端 —— 设备层 + 采集引擎。
 
 约定导入路径就是这个模块的 `CaptureBackend`（`meeting/backends/registry.py` 的
 `DEFAULT_PATHS["capture.backend"]`）：`capture.backend` 取默认值 `auto` 时解析到的就是它。

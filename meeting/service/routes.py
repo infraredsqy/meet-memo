@@ -8,7 +8,7 @@
 - `GET /api/summaries`（本场成功的会中总结，读内存不落文件）；
 - `GET /api/sessions`（工作区注册表）、`GET /api/sessions/{id}`（单场状态，
   形状见 `docs/contract.md` 4.9）、`GET /api/sessions/{id}/transcripts`（稿子正文）；
-- 会议资料四条（资料节点 285bf58c，语义见 `docs/contract.md` 4.12）：清单 / 上传 /
+- 会议资料四条（资料节点，语义见 `docs/contract.md` 4.12）：清单 / 上传 /
   取原文件 / 删除——上传是唯一不走 `/api/actions` 的写端点（二进制正文装不进 JSON 信封），
   头哨由中间件按端点扩过去；
 - `GET /api/dirs` / `POST /api/dirs`（目录选择器：现场判读 + 新建目录，REST 写入口）、
@@ -156,7 +156,7 @@ async def _api_heartbeat(request: Request) -> Response:
     return JSONResponse(runtime.heartbeat_dict())
 
 
-# GET /api/summaries（`1987cb20` phase2：本场按过的那些次会中总结）
+# GET /api/summaries（设计：本场按过的那些次会中总结）
 
 
 @_needs_runtime
@@ -188,7 +188,7 @@ async def _api_events(request: Request) -> Response:
     )
 
 
-# GET /api/sessions · GET /api/dirs（工作台收编节点 e2f6166b：两只读端点）
+# GET /api/sessions · GET /api/dirs（工作台收编节点：两只读端点）
 
 
 # 这几个处理器是同步 def（不走协程）：它们只是调 runtime 的纯读读取器（盘上 stat 与
@@ -249,7 +249,7 @@ def _api_dirs(request: Request) -> Response:
     （用户主目录不再是天花板，盘根那一档界面按它把「向上一层」置灰）；`here` 是
     正在浏览这一层自己的名目判读——选择器里这一层本身可选。
 
-    `?files=1`（资料界面的选择器文件模式要的，160d1a78）：应答体**多一个 `files` 键**
+    `?files=1`（资料界面的选择器文件模式要的）：应答体**多一个 `files` 键**
     ——这一层里的普通文件每项 `{name, dir, size_bytes}`，与 `dirs` 分开两列。不带这个
     参数时没有这个键。
     """
@@ -291,7 +291,7 @@ def _api_dirs_create(request: Request) -> Response:
 async def _api_devices(request: Request) -> Response:
     """两路各自的候选设备端点表：`{mic: [...], loopback: [...]}`（**200**，任何状态下都给）。
 
-    设置抽屉的两个设备下拉读它（`311f84f5`）。与 `GET /api/dirs` 同一档**纯读**：
+    设置抽屉的两个设备下拉读它。与 `GET /api/dirs` 同一档**纯读**：
     只枚举端点表、**不开任何设备**（`probe()` 会短暂试开，清单不走它）；
     不提交、不涨 `revision`、不广播。
     """
@@ -302,7 +302,7 @@ async def _api_devices(request: Request) -> Response:
         return _error_response(exc)
 
 
-# 会议资料四条（资料节点 285bf58c）：清单 / 上传 / 取原文件 / 删除
+# 会议资料四条（资料节点）：清单 / 上传 / 取原文件 / 删除
 
 
 def _materials_missing_error(name: str) -> ActionError:
@@ -339,7 +339,7 @@ async def _api_materials_upload(request: Request) -> Response:
       （`runtime_materials.sanitize_material_name()` 与 `materials_reserve()`）；
     - **不转码、不压缩、不限类型、大小不设服务端硬顶**；请求的 `Content-Type` 只是
       发送方的说法，服务不读它也不校验它；
-    - `from=<路径>`（选择器文件模式要的，160d1a78）：字节不从请求正文来，从盘上那个
+    - `from=<路径>`（选择器文件模式要的）：字节不从请求正文来，从盘上那个
       **已有文件流式拷入**——同样原样字节、不整段进内存；`from` 给到不存在的文件回
       **400 `invalid_setting`**（`detail = {key: "from", value, legal}`），此时盘上
       什么都不落；给了 `from` 时请求正文被忽略。清洗 / 重名让位 / 头哨与正文上传
@@ -521,7 +521,7 @@ async def _act_speaker_rename(runtime: ServiceRuntime, args: dict[str, Any]) -> 
     return {"speaker": runtime.speaker_rename(args)}
 
 
-#: 会后的两个按钮（R26）与 `post_stop`（b1c6a58e，R28）共用同一条成功体规矩：
+#: 会后的两个按钮（R26）与 `post_stop`（R28）共用同一条成功体规矩：
 #: 起一条后台线程即算启动成功 / 立起取消旗标即算受理成功，成功体多一个 `post` 键，
 #: 停没停成由盘上的状态文件回答（`post_stop` 的回执多一格 `stopping: true`）。
 _ACTION_HANDLERS: dict[str, _ActionHandler] = {

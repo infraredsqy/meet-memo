@@ -3,7 +3,7 @@
 定位与挂件方式照 `tests/_drain_fakes.py`（跨文件共用假件的唯一落点、旋钮走环境变量、
 经既有配置键挂进真运行时），有两处按本单元的实际用法收窄：
 
-  - **挂进进程内真 `ServiceRuntime`，不起子进程**（任务书 §5 的验证口径与本单元的时间预算
+  - **挂进进程内真 `ServiceRuntime`，不起子进程**（设计口径 §5 的验证口径与本单元的时间预算
     共同裁定）：配置键写 `capture.backend = "tests._capture_faulty:FaultyCaptureBackend"`
     —— `module:Class` 是 `meeting/backends/registry.py` 的既有取值口径，pytest 进程的
     `sys.path` 里有仓库根，`tests._capture_faulty` 因此可直接导入。`tests/_drain_fakes.py`

@@ -1,6 +1,6 @@
-"""`tests/test_summary_buffer.py` —— 会中总结那条内存缓冲的接线（`1987cb20` phase2）。
+"""`tests/test_summary_buffer.py` —— 会中总结那条内存缓冲的接线（设计）。
 
-这一份盯的是 `phase2/task.md` 的「缓冲与生命周期」那一节，逐条对着完成判定第 3 条：
+这一份盯的是设计口径的「缓冲与生命周期」那一节，逐条对着完成判定第 3 条：
 
   1. **转写行经 `bind_transcriber()` 那个 sink 进缓冲**：假转写后端喂 N 行，
      `summarize` 拿到的窗口行数对得上，喂进去的正文原样在消息里；

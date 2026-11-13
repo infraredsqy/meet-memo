@@ -68,7 +68,7 @@ export interface LiveView {
   alertsHidden: boolean;
   /** 这一场此刻是不是暂停中（读快照的 `session.paused`，界面不自己记）。 */
   paused: boolean;
-  /** 此刻处在四个收音组合中的哪一个（`c9f5d04d`：收音状态只有这一处出口）。 */
+  /** 此刻处在四个收音组合中的哪一个（：收音状态只有这一处出口）。 */
   combo: CaptureCombo;
   /** 「本场已暂停」那条横幅；不在这一档时是 `null`。 */
   pause: PauseBannerView | null;
@@ -136,7 +136,7 @@ export function liveView(
    * 它与失联**互斥**（HTTP 不通才是失联），两句话不得同屏的约束因此照旧：上面那条
    * `lost` 管「界面看不见服务」，这条管「服务看得见、采集停了」。
    *
-   * 判「停」要**连续两次读数**（de899128）：连续计数住在 `heartbeat.stalledBeats`
+   * 判「停」要**连续两次读数**：连续计数住在 `heartbeat.stalledBeats`
    * 一处（`applyHeartbeatReading()` 登记），这里只读它 —— 开场「还没有第一帧」
    * 服务报 `null`、单次 `false` 都不进这一档，横幅不再被开场竞态误弹。
    *
@@ -162,7 +162,7 @@ export function liveView(
   const paused = snapshot.session?.paused ?? false;
 
   /**
-   * 此刻的收音组合（`c9f5d04d`）：暂停一格 + 两路各自的 `stopped`，照 `comboOf`
+   * 此刻的收音组合：暂停一格 + 两路各自的 `stopped`，照 `comboOf`
    * 的表落到四档之一。四组合控件用它点亮当前档；「切换已落地没落地」也用它判。
    */
   const combo = comboOf(snapshotComboState(snapshot));
@@ -204,7 +204,7 @@ export function liveView(
   /**
    * 「通道失效」那条致命横幅只在「录音还在跑、某一路没了」的两态渲染
    * （设计章 4.2 二；会中状态表）。服务在 `ended` 保留 `alerts.critical`
-   * 是契约事实（phase1 的行为，界面不改服务端），但结束态的「出事了」
+   * 是契约事实（设计的行为，界面不改服务端），但结束态的「出事了」
    * 只由收尾横幅与三步明细回答 —— 再摆一条「远端这一路采不到了」就是两处
    * 说同一件事的横幅。收尾中若之前有过提示级条，`hints` 照旧保留结束时的
    * 状态（设计章 2.5），收的只有致命级这一条。

@@ -404,7 +404,7 @@ def test_a_pause_window_still_reaches_no_recognizer_across_the_release_and_reacq
     assert first.calls == 1, "旧的那一份不该再收到音频"
 
     # ⑤ 交到识别器手上的音频里，最长的一截静音只有 VAD 自己的收尾窗口那么大：
-    #    暂停窗那 1.2 秒连续零整截都没进去
+    # 暂停窗那 1.2 秒连续零整截都没进去
     for index, pcm in enumerate(feed.handed):
         longest = _longest_zero_run(pcm)
         assert longest <= RECOGNIZER_SILENCE_BOUND_SECONDS, (

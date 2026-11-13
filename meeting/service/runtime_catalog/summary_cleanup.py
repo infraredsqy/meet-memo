@@ -1,7 +1,7 @@
-"""``RuntimeCatalogMixin`` 的「会中总结清理」域分片：缓冲与本场记录表的清理。
+"""RuntimeCatalogMixin 的「会中总结清理」域分片：缓冲与本场记录表的清理。
 
-方法与方法间注释均自拆分前的 ``runtime_catalog.py`` 单文件 mixin 一字不改复制；
-本文件自写内容只有模块 docstring、import、``_log`` 一行与类声明行。
+方法与方法间注释均自拆分前的 runtime_catalog.py 单文件 mixin 一字不改复制；
+本文件自写内容只有模块 docstring、import、_log 一行与类声明行。
 """
 from __future__ import annotations
 
@@ -11,9 +11,9 @@ _log = logging.getLogger("meeting.service.runtime")
 
 
 class RuntimeCatalogSummaryCleanupMixin:
-    """「会中总结清理」：``summary_buffer`` 与 ``summary_records`` 的同进同退清理。"""
+    """「会中总结清理」：summary_buffer 与 summary_records 的同进同退清理。"""
 
-    # 会中总结（`1987cb20` phase2：动作、记录表、缓冲的清理）
+    # 会中总结（设计：动作、记录表、缓冲的清理）
 
     def _clear_session_summary(self, *, reason: str) -> None:
         """把会中总结那两样**一起**清成空：内存缓冲（`summary_buffer`）与本场记录表

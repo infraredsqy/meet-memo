@@ -35,7 +35,7 @@ describe('动作失败的画法分档（6.4：403 与失败块分开）', () => 
         dir: 'C:\\out\\260921',
         elapsed_seconds: 12,
       } as never),
-    );
+);
     expect(view.kind).toBe('envelope');
     if (view.kind !== 'envelope') throw new Error('分支错了');
     expect(view.code).toBe('already_recording');
@@ -50,7 +50,7 @@ describe('动作失败的画法分档（6.4：403 与失败块分开）', () => 
       new ActionFailedError(409, 'draining', '还在收尾', {
         failed_steps: [{ id: 'post', error: '钩子抛错' }],
       } as never),
-    );
+);
     if (view.kind !== 'envelope') throw new Error('分支错了');
     expect(view.detail).toEqual(['failed_steps.post：钩子抛错']);
   });
@@ -92,7 +92,7 @@ vi.mock('../src/api/sessions', async (importOriginal) => {
   return { ...actual, fetchSessions: vi.fn() };
 });
 
-// 会议资料区（160d1a78）：会中那块面板挂上即取清单 —— 替身给空清单，这条文件不连网。
+// 会议资料区：会中那块面板挂上即取清单 —— 替身给空清单，这条文件不连网。
 vi.mock('../src/api/materials', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/api/materials')>();
   return {
@@ -132,7 +132,7 @@ describe('SSE onError 的失败块（渲染层转手）', () => {
           stop: () => undefined,
           running: () => false,
         }) as unknown as import('../src/api').HeartbeatClient,
-    );
+);
     (globalThis as unknown as { window: unknown }).window = {
       addEventListener: () => undefined,
       removeEventListener: () => undefined,
@@ -157,7 +157,7 @@ describe('SSE onError 的失败块（渲染层转手）', () => {
     await act(async () => {
       renderer = TestRenderer.create(
         createElement(LiveView, { snapshot, events: source as never }),
-      );
+);
     });
     await act(async () => {
       captured.handlers?.onError?.(new Error('通道「levels」的帧形状不符合契约：别这样'));
@@ -165,7 +165,7 @@ describe('SSE onError 的失败块（渲染层转手）', () => {
 
     const fails = renderer.root.findAll(
       (node) => `${node.props.className ?? ''}` === 'fail',
-    );
+);
     expect(fails.length).toBeGreaterThan(0);
     const walk = (current: TestRenderer.ReactTestInstance): string => {
       const parts: string[] = [];
@@ -198,7 +198,7 @@ describe('SSE onError 的失败块（渲染层转手）', () => {
  * 失败块的 extraLines 先对 detail 去重（web-drain-failure-double-lines）：
  * 每一行在失败块里**恰出现一次**（去重口径 = 字符串精确相等，行序保持）。
  * 直给 `FailureBlock` 钉口径，不经过任何一屏。
- * （`kind: 'drain'` 那一档已随 d61829f1 的收尾带退场一起删掉：ActionFailureView
+ * （`kind: 'drain'` 那一档已随 的收尾带退场一起删掉：ActionFailureView
  * 只剩 forbidden / unclassified / envelope 三档，去重口径由 envelope 档钉住。）
  */
 describe('失败块的去重口径（envelope 档同一把尺）', () => {
@@ -225,17 +225,17 @@ describe('失败块的去重口径（envelope 档同一把尺）', () => {
         logPath: null,
         extraLines: ['failed_steps.post：钩子抛错', '收尾第 post 步失败：钩子抛错'],
       }),
-    );
+);
     const envelopeNode = envelope.root.findAll(
       (node) => `${node.props.className ?? ''}` === 'fail',
-    )[0] as TestRenderer.ReactTestInstance;
+)[0] as TestRenderer.ReactTestInstance;
     const envelopeText = walk(envelopeNode);
     expect(envelopeText.split('failed_steps.post：钩子抛错').length - 1).toBe(1);
     expect(envelopeText).toContain('收尾第 post 步失败：钩子抛错');
     // 行序保持：独有 extra 行排在 detail 行之后。
     expect(envelopeText.indexOf('收尾第 post 步失败：钩子抛错')).toBeGreaterThan(
       envelopeText.indexOf('failed_steps.post：钩子抛错'),
-    );
+);
 
     envelope.unmount();
   });

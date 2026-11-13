@@ -22,7 +22,7 @@ export const captureGapsSchema = z
             seconds: z.number().nonnegative(),
           })
           .strict(),
-      )
+)
       .max(10),
   })
   .strict();
@@ -57,7 +57,7 @@ export const heartbeatSchema = z
     top_state: topStateSchema,
     /**
      * 采集还活着吗。`idle` / `ended` 态给 `null`（没有在录的场次，问这个没有意义）；
-     * `recording` / `alert` 态给 bool，**开场那一拍除外**（de899128）：自本场 start
+     * `recording` / `alert` 态给 bool，**开场那一拍除外**：自本场 start
      * 起算的帧时钟窗口（`max(2.0s, 3 × frame_interval)`）内还没收到第一帧时报
      * `null`（未知），超窗仍无首帧才报 `false`。
      *

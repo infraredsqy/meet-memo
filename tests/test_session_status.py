@@ -266,7 +266,7 @@ def test_a_stale_running_status_file_is_answered_as_it_is_on_disk(
     盘上停着上一次落的那版 `running`、记录里只有 mic 的第一块，而这一趟谁都没在跑
     （进程重启过、命令行跑完退出了）。读数如实分两层：`state` 就是盘上那个 `running`
     （不在这里替它二选一），`in_process` 答 `false` 把「此刻没有东西在跑」说破 ——
-    两块合起来读得出「盘上写着在跑、其实没在跑」。被打断是另一档（`b1c6a58e` 落地）：
+    两块合起来读得出「盘上写着在跑、其实没在跑」。被打断是另一档（落地）：
     那一场照盘答 `interrupted`，与这一档分得开。
     """
     runtime, previous = _runtime(tmp_path, monkeypatch, **{"post.chunk_seconds": CHUNK_SECONDS})
@@ -335,7 +335,7 @@ def test_an_interrupted_status_file_is_answered_as_interrupted(
 ) -> None:
     """盘上落 `interrupted`（人停在块边界）的那一场：这一格答 `interrupted`，**不许折成 running**。
 
-    折档行（b1c6a58e 之前）只认 `done` / `partial` / `failed` 三档，`interrupted` 会掉进
+    折档行（之前）只认 `done` / `partial` / `failed` 三档，`interrupted` 会掉进
     「别的档一律折 running」的兜底 —— 被人停下的那一场就在读数上永远「在跑」了。加进
     白名单之后它与那三档同一个姿态：盘上写什么就答什么。
     """
@@ -499,7 +499,7 @@ def test_the_list_carries_the_post_job_cell_at_the_top_level(
 
 
 # ---------------------------------------------------------------------------
-# `minutes` 那一格（38817ecf）：纪要那一层的盘上读数（判据读盘，重启后照旧）
+# `minutes` 那一格：纪要那一层的盘上读数（判据读盘，重启后照旧）
 # ---------------------------------------------------------------------------
 
 

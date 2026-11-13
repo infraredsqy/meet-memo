@@ -1,4 +1,4 @@
-"""`contract/fixtures/` 的采集、掩码与落盘比对（c62dec56 phase1；pytest 不收集本文件）。
+"""`contract/fixtures/` 的采集、掩码与落盘比对（设计；pytest 不收集本文件）。
 
 **定位**：测试支持模块 —— 文件名不以 `test_` 开头，pytest 不收集；不是 `conftest.py`，
 不提供 fixture。三样职责（与 `tests/_service.py` / `tests/_drain_fakes.py` 同形的分工）：
@@ -15,7 +15,7 @@
 电平值每次都不同；掩码之后，同一份代码连跑两次 `--regen-contract` 落盘的字节必须逐字相同
 （`revision` 保留真实值 —— 它由固定的迁移与提交次数决定，同样确定）。
 
-**占位符要形状诚实**（phase2 复审的那一格）：`session.id` 与失败 `detail.session_id` 在真服务
+**占位符要形状诚实**（设计复审的那一格）：`session.id` 与失败 `detail.session_id` 在真服务
 里是**裸场次目录名**（`260921`），它的形状落在目录名字上 —— 早先它们与 `dir` 同掩成 `<path>`，
 于是「掩码通过」冒充了「真值通过」（前端 schema 曾按路径形状写，真值两半都过不了）。现在这一格
 掩成 `<session-id>`，占位符自己就说明「这里放的是目录名」。
@@ -64,7 +64,7 @@ _ISO_RE = re.compile(
 #: 前两条 `_INLINE_PATH_RE` 的判据与 `web/src/contract/primitives.ts` 的 `pathStringSchema`
 #: 因此只在「盘符 / 反斜杠 UNC / POSIX 根」这几种开端上对齐，见那一处的说明。
 _INLINE_PATH_RE = re.compile(
-    r"(?<![A-Za-z0-9])[A-Za-z]:[/\\][^\s，。；！？：、「」『』（）【】《》\"']+"
+    r"(?<![A-Za-z0-9])[A-Za-z]:[/\\][^\s，。；！？：、「」『』【】《》\"']+"
 )
 
 #: 这些键的秒数一律落 0（走秒的量，fixtures 里不留具体值）
@@ -75,7 +75,7 @@ ZERO_KEYS = frozenset(
 #: 这些键是电平（dBFS），值换占位
 LEVEL_KEYS = frozenset({"level_dbfs", "peak_dbfs", "dbfs", "peak", "bar"})
 #: 这些键是路径 / 场次目录路径（`session_id` **不在其中**：它是目录名，见 `SESSION_ID_KEYS`；
-#: `materials_dir` 是会议资料那一片的资料目录，资料节点 285bf58c）
+#: `materials_dir` 是会议资料那一片的资料目录，资料节点）
 PATH_KEYS = frozenset({"log_path", "dir", "session_dir", "materials_dir"})
 #: 这些键是**场次目录名**（裸 `YYMMDD` / `YYMMDD-N`）：`session.id` 的键名是 `id`、靠键路径判，
 #: 而动作失败 `detail.session_id` 直接以键名出现，两者掩成同一个形状诚实的占位符 `<session-id>`。

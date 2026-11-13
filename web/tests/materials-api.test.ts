@@ -14,7 +14,7 @@ import {
 import { MATERIALS_FIXTURES, readFixture, readFixtureText } from './fixtures';
 
 /**
- * 资料四条端点的客户端读法（160d1a78）：URL 怎么拼、写端点的头哨带没带、失败
+ * 资料四条端点的客户端读法：URL 怎么拼、写端点的头哨带没带、失败
  * 分几档、golden 样本过得了过不了 schema。`fetch` 全部注入，不起服务、不发真请求。
  */
 
@@ -43,10 +43,10 @@ describe('地址拼法', () => {
   it('场次与文件名各按段编码；文件地址就是清单地址再补一段', () => {
     expect(materialsUrl(DIR)).toBe(
       `/api/sessions/${encodeURIComponent(DIR)}/materials`,
-    );
+);
     expect(materialFileUrl(DIR, '报告 (2).pdf')).toBe(
       `${materialsUrl(DIR)}/${encodeURIComponent('报告 (2).pdf')}`,
-    );
+);
   });
 });
 
@@ -74,7 +74,7 @@ describe('清单（GET，纯读不带头）', () => {
     const error = await fetchMaterials(DIR, { fetchImpl }).then(
       () => null,
       (cause: unknown) => cause,
-    );
+);
     expect(error).toBeInstanceOf(MaterialsHttpError);
     if (!(error instanceof MaterialsHttpError)) throw new Error('档错了');
     expect(error.status).toBe(404);
@@ -88,12 +88,12 @@ describe('清单（GET，纯读不带头）', () => {
     }) as unknown as typeof fetch;
     await expect(fetchMaterials(DIR, { fetchImpl: broken })).rejects.toBeInstanceOf(
       MaterialsUnavailableError,
-    );
+);
 
     const { fetch: fetchImpl } = makeFetch({ status: 200, text: '{"dir": 1}' });
     await expect(fetchMaterials(DIR, { fetchImpl })).rejects.toBeInstanceOf(
       MaterialsProtocolError,
-    );
+);
   });
 });
 
@@ -127,8 +127,8 @@ describe('上传（POST，带头哨）', () => {
     expect(calls[0]?.url).toBe(
       `${materialsUrl(DIR)}?name=${encodeURIComponent('报告.pdf')}&from=${encodeURIComponent(
         'C:\\资料\\报告.pdf',
-      )}`,
-    );
+)}`,
+);
     expect((calls[0]?.init.headers as Record<string, string>)['X-Meeting-Service']).toBe('1');
   });
 
@@ -137,7 +137,7 @@ describe('上传（POST，带头哨）', () => {
     const error = await uploadMaterial(DIR, 'x.txt', 'x', { fetchImpl }).then(
       () => null,
       (cause: unknown) => cause,
-    );
+);
     expect(error).toBeInstanceOf(MaterialsForbiddenError);
   });
 
@@ -154,7 +154,7 @@ describe('上传（POST，带头哨）', () => {
     const error = await uploadMaterialFromDisk(DIR, 'x', 'C:\\没有.pdf', { fetchImpl }).then(
       () => null,
       (cause: unknown) => cause,
-    );
+);
     expect(error).toBeInstanceOf(MaterialsHttpError);
     if (!(error instanceof MaterialsHttpError)) throw new Error('档错了');
     expect(error.code).toBe('invalid_setting');
@@ -167,7 +167,7 @@ describe('上传（POST，带头哨）', () => {
     });
     await expect(uploadMaterial(DIR, 'x', 'x', { fetchImpl })).rejects.toBeInstanceOf(
       MaterialsProtocolError,
-    );
+);
   });
 });
 
@@ -193,7 +193,7 @@ describe('删除（DELETE，带头哨）', () => {
     });
     await expect(deleteMaterial(DIR, '报告 (2).pdf', { fetchImpl })).rejects.toBeInstanceOf(
       MaterialsHttpError,
-    );
+);
   });
 });
 

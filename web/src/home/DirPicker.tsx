@@ -5,8 +5,8 @@ import { formatBytes } from '../materials/model';
 import type { DirRow, DirsResponse } from '../contract';
 
 /**
- * 目录选择器弹窗（节点 57ab5255 定的「选中再确认」形状；从工作台首页（`home/WorkspaceHome/`）
- * 原样搬出，160d1a78 起多一种**文件模式**给资料区用；目录选择器节点起目录模式
+ * 目录选择器弹窗（节点 定的「选中再确认」形状；从工作台首页（`home/WorkspaceHome/`）
+ * 原样搬出， 起多一种**文件模式**给资料区用；目录选择器节点起目录模式
  * 多出**当前这一层**与**新建目录**两样）。
  *
  * 两种模式、一套交互与视觉语言：
@@ -85,13 +85,13 @@ export function useDirBrowse(withFiles: boolean): {
           const view = failureFrom(error);
           setBrowseError(view.kind === 'envelope' ? view.message : view.text);
         },
-      );
+);
     },
     [withFiles],
-  );
+);
 
   /**
-   * 地址栏跳层（57ab5255）：**不清当前层**地取新层。跳不过去把服务回的那句原话带上
+   * 地址栏跳层：**不清当前层**地取新层。跳不过去把服务回的那句原话带上
    * 「跳不过去」resolve 回弹窗，层原地不动：输入不存在的路径不许静默，也不许把
    * 正在看的层顶掉。
    */
@@ -107,9 +107,9 @@ export function useDirBrowse(withFiles: boolean): {
           const message = view.kind === 'envelope' ? view.message : view.text;
           return `跳不过去：${message}`;
         },
-      ),
+),
     [withFiles],
-  );
+);
 
   /**
    * 就地新建（目录选择器节点）：打 `POST /api/dirs`，成功把新那一行按服务同一条
@@ -125,13 +125,13 @@ export function useDirBrowse(withFiles: boolean): {
             current !== null && current.cwd === parent
               ? { ...current, dirs: insertSorted(current.dirs, row) }
               : current,
-          );
+);
           return row;
         },
         (error) => (error instanceof Error ? error.message : String(error)),
-      ),
+),
     [],
-  );
+);
 
   return { browse, browseError, browseInto, jumpTo, createIn, reset };
 }
@@ -203,7 +203,7 @@ export function DirPicker({
         setNewName('');
         setPicked({ what: 'dir', dir: result.dir, kind: result.kind });
       },
-    );
+);
   };
 
   const confirmLabel = fileMode ? '加入资料' : '选定这个目录';
@@ -270,7 +270,7 @@ export function DirPicker({
               新建目录
             </button>
           </div>
-        )}
+)}
         {createError !== null && <p className="picker__newerr">{createError}</p>}
         <div
           className="picker__list"
@@ -280,7 +280,7 @@ export function DirPicker({
           {browse === null && <p className="empty">正在取目录…</p>}
           {browse !== null && browse.dirs.length === 0 && !fileMode && (
             <p className="empty">这一层没有子目录。</p>
-          )}
+)}
           {browse !== null && !fileMode && browse.here.kind !== 'missing' && (
             (() => {
               const here = browse.here;
@@ -302,9 +302,9 @@ export function DirPicker({
                   <span className="picker__name">{here.name}</span>
                   <span className="picker__kind">当前这一层 · {kindLabel(here)}</span>
                 </div>
-              );
+);
             })()
-          )}
+)}
           {browse !== null &&
             browse.dirs.map((item) => (
               <div
@@ -330,7 +330,7 @@ export function DirPicker({
                 <span className="picker__name">{item.name}</span>
                 <span className="picker__kind">{kindLabel(item)}</span>
               </div>
-            ))}
+))}
           {browse !== null &&
             fileMode &&
             (browse.files ?? []).map((file) => {
@@ -359,7 +359,7 @@ export function DirPicker({
                   <span className="picker__name">{file.name}</span>
                   <span className="picker__kind num">{formatBytes(file.size_bytes)}</span>
                 </div>
-              );
+);
             })}
           {browse !== null &&
             fileMode &&
@@ -382,5 +382,5 @@ export function DirPicker({
         </div>
       </div>
     </div>
-  );
+);
 }

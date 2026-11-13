@@ -6,7 +6,7 @@ import { initialHeartbeatState } from '../src/live/heartbeat';
 import { makeSnapshot, makeSource, T } from './live-fixtures';
 
 /**
- * 「暂停中」那条横幅与会中收音四组合的派生（`10770b41` 起，`c9f5d04d` 收编）。
+ * 「暂停中」那条横幅与会中收音四组合的派生（`` 起，`` 收编）。
  *
  * 判据三条：
  *
@@ -102,7 +102,7 @@ describe('liveView：暂停、组合与逐路关闭都从快照读', () => {
       null,
       null,
       T('20:57:31'),
-    );
+);
     expect(view.paused).toBe(false);
     expect(view.combo).toBe('both');
   });

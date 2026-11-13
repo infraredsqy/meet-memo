@@ -190,7 +190,7 @@ def test_setting_keys_lists_the_seven_names() -> None:
 def test_the_seven_keys_are_registered_in_the_config_layer() -> None:
     """七个键在配置层四处都有登记：默认值、三分表、取值域、环境变量那一格。
 
-    `summary.default_window` 原与同组键一起归 `pending_restart`；设置抽屉节点（`311f84f5`）
+    `summary.default_window` 原与同组键一起归 `pending_restart`；设置抽屉节点
     把它改收热读档（界面的缺省预选随快照走），同组其余六键不动。
     """
     for key in SETTING_KEYS:

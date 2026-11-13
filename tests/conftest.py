@@ -1,4 +1,4 @@
-"""`tests/conftest.py` —— **夹具与 pytest hook**（phase2 §4 / §5.4 的五个夹具名在本 Phase 冻结）。
+"""`tests/conftest.py` —— **夹具与 pytest hook**（设计口径 / §5.4 的五个夹具名在本项目冻结）。
 
 **跑测试的三条命令与快慢分档（哪些用例算慢、为什么按文件分档）见 `docs/service.md`。**
 本文件里那道 5 秒看门是分档能落在**文件粒度**上的前提：没有任何一条用例能超过 5 秒，所以
@@ -17,7 +17,7 @@
 conftest / 插件里的 `pytest_addoption`（写进测试模块会被静默忽略），详见下文各自那一段。
 **本文件里没有一条用例**。
 
-七个夹具由 phase2 定义并冻结、phase3 只复用，不得重定义同名 fixture：
+七个夹具由设计定义并冻结、设计只复用，不得重定义同名 fixture：
 
   - `service_process`：**真服务子进程夹具**（内部包 `tests/_service.py` 的 `ServiceProcess`，
     起进程即传环境变量覆盖、家目录 `HOME` 与 `USERPROFILE` 两项都设）；
@@ -26,7 +26,7 @@ conftest / 插件里的 `pytest_addoption`（写进测试模块会被静默忽�
   - `tmp_out_root`：**临时场次放置根**（给 `start` 的 `args.dir` 预建目录用）；
   - `isolated_config_dir`：**隔离的临时配置目录**（连同隔离的临时日志目录）。
 
-phase3 追加两个夹具（名字固定，与上面五个不重名）：
+设计追加两个夹具（名字固定，与上面五个不重名）：
 
   - `meeting_env`：**本用例的一套隔离环境**（临时场次放置根 + 临时 log 目录 + **家目录重定向**
     + 本服务的环境变量：`MEETING_NO_BROWSER` / `MEETING_PORT` / `MEETING_LOG_DIR`）——
@@ -145,7 +145,7 @@ from tests._service import ServiceProcess, SseClient
 
 
 # ---------------------------------------------------------------------------
-# `--regen-contract`：重写 `contract/fixtures/`（c62dec56 phase1 的 golden 再生成开关）
+# `--regen-contract`：重写 `contract/fixtures/`（设计的 golden 再生成开关）
 #
 # 这条 hook 只能注册在 conftest / 插件里（测试模块里写 `pytest_addoption` 会被 pytest
 # 静默忽略），因此它落在本文件 —— 与夹具放在一起，但它不承载任何夹具语义：
@@ -522,7 +522,7 @@ def allow_real_dsh_resolution() -> Iterator[None]:
 # 与上面五道同一族的**结构性**守卫：会话开工记录机主真实家目录下 `~/.config/meeting/` 的
 # 文件集合与逐个 sha256，用例级与 `pytest_sessionfinish` 两级复查 —— 被创建 / 被改动就把
 # 结果判红，并打印是哪条路径、从什么变成了什么。它挡的是「用例没重定向家目录，于是把
-# 配置或日志写进了机主家目录」这一档（`65dd3e4c` phase3 的 `post()` 接配置层之后就真实发生过：
+# 配置或日志写进了机主家目录」这一档（设计的 `post()` 接配置层之后就真实发生过：
 # 一条不做隔离的用例读了机主那份 `config.json`，把 `minutes.hook = "null"` 设成模块级生效
 # 配置且不还，24 条用例因此被串档打红）。
 # ---------------------------------------------------------------------------
@@ -1091,7 +1091,7 @@ CASE_HOME_DIR_NAME = "home"
 def case_home(tmp_path: Path) -> Path:
     """本用例的临时家目录（两个夹具都从这里取，谁先来谁建）。
 
-    家目录隔离的硬约束（phase2 §5.4）：`HOME` 与 `USERPROFILE` 两个变量都指向它。
+    家目录隔离的硬约束（设计口径）：`HOME` 与 `USERPROFILE` 两个变量都指向它。
     两个夹具同时使用时必须指向**同一个**目录，否则「隔离」这件事在其中一个夹具的视角下就
     落到另一个目录上了（配置与日志读写的落点会与断言的落点错开）。
     """
@@ -1104,7 +1104,7 @@ def case_home(tmp_path: Path) -> Path:
 def isolated_config_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """**隔离的临时配置目录**：家目录重定向 + 隔离的临时日志目录。
 
-    隔离手法照 phase2 §5.4 的硬约束：**重定向家目录**（`HOME` 与 `USERPROFILE` 两项都设），
+    隔离手法照设计口径的硬约束：**重定向家目录**（`HOME` 与 `USERPROFILE` 两项都设），
     再叠加临时 log 目录；**不新增任何 `MEETING_*` 变量**。家目录取 `case_home()`，与
     `app_client` 用的是同一个。
     """
@@ -1123,7 +1123,7 @@ def isolated_config_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path
 def _isolated_home(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     """**autouse**：每一条用例的 `HOME` / `USERPROFILE` 都指到本用例自己的临时家目录。
 
-    为什么必须**每一条用例**都做（而不是只给「自己写了隔离」的用例做）：`65dd3e4c` phase3
+    为什么必须**每一条用例**都做（而不是只给「自己写了隔离」的用例做）： 设计
     给 `meeting post` 的入口加了一步配置前奏（`post()` → `config_module.load()` +
     `set_current()`），于是**任何**在进程内走真入口的用例都会去读 `~/.config/meeting/config.json`
     —— 没做隔离的那些读的是**机主真实那一份**，机主的取值（例如 `minutes.hook = "null"`）
@@ -1215,10 +1215,10 @@ def _restore_effective_config() -> Iterator[None]:
 def service_process(tmp_path: Path) -> Iterator[Any]:
     """**真服务子进程夹具**：给出一个「起一个 `meeting web` 子进程」的工厂。
 
-    用法：``proc = service_process(home=meeting_env.home, extra_env=meeting_env.env)``
+    用法：proc = service_process(home=meeting_env.home, extra_env=meeting_env.env)
     （工厂自己注册收场，用例不必写 `finally`）。
 
-    能力（phase2 冻结）：`base_url`（`MEETING_PORT=0` + 子进程启动输出解析）、
+    能力（设计冻结）：`base_url`（`MEETING_PORT=0` + 子进程启动输出解析）、
     向子进程发中断信号（`send_interrupt()` / `send_ctrl_c()`）、读退出码（`returncode` /
     `wait()`）、**传完整的环境变量覆盖**（`env=` 给全一份映射；`PYTHONPATH` 默认 = 仓库根，
     需要假件时由调用方把「仓库根 + 临时假件目录」拼好传进来）。
@@ -1294,7 +1294,7 @@ def dev_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# phase3 追加的两个夹具（名字固定：`meeting_env` / `sse_client`）
+# 设计追加的两个夹具（名字固定：`meeting_env` / `sse_client`）
 # ---------------------------------------------------------------------------
 
 
@@ -1372,7 +1372,7 @@ def meeting_env(tmp_path: Path) -> MeetingEnv:
 def sse_client(service_process: Callable[..., Any]) -> Iterator[Callable[..., SseClient]]:
     """**在 `service_process` 上开一条 SSE 订阅并保证关闭**。
 
-    用法：``client = sse_client(proc)``（夹具自己记下来，用例结束时统一 `close()`；
+    用法：client = sse_client(proc)（夹具自己记下来，用例结束时统一 `close()`；
     用例也可以自己 `client.close()` 提前断开 —— 重复关闭是幂等的）。
 
     订阅者本身的读写助手在 `tests/_service.py` 的 `SseClient` 上：

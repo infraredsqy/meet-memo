@@ -2,7 +2,7 @@
 
 被验的是 `meeting/capture/devices.py` 里那两段**从 V1 拷过来的内核**
 （`mnotes_core/recorder.py:371-413` 与 `:444-465`）在换成「端点表 + 假试开函数」之后
-行为是否还认得出原样（两处收尾按 `phase1/task.md` §3 的裁定改过，见下面最后两条）：
+行为是否还认得出原样（两处收尾按设计口径 §3 的裁定改过，见下面最后两条）：
 
   - V1 的候选筛选：同名 + `max_input_channels > 0`；
   - V1 的 `host_rank`：`WASAPI → DirectSound → MME → 其它(9)`；
@@ -10,7 +10,7 @@
   - V1 的 loopback 三级：精确名 → `CABLE Input` 且不含 `16ch` → `default_speaker()`；
   - V2 补的四件事：没配名字时也挑（好让快照报得出真设备名）、抓取型虚拟端点不进候选、
     试开时读回样本判「有没有真实波形」、名字的**精确优先落到候选集合上**；
-  - V2 按任务书 §3 第 5、6 条改的收尾**两档收敛**：在打开了的那几条里挑（先要有波形的，
+  - V2 按设计口径 §3 第 5、6 条改的收尾**两档收敛**：在打开了的那几条里挑（先要有波形的，
     一条都没有就取第一条打开了）；**一条都没打开**时落 `probe_failed`、`endpoint=None`
     （V1 那两条短路口 —— 单候选直接返回、全失败回落首个候选 —— 都不再照搬）。
 
@@ -201,7 +201,7 @@ def test_pseudo_capture_recognises_the_wdm_ks_point_spelling():
     """本机真表里那条 WDM-KS 的 `CABLE Output (VB-Audio Point)`（#25, ch=16）也算抓取型。
 
     它的名字里**没有** "virtual"：牌子标记只取 `vb-audio`，取长写法会把这条漏掉，于是同一块
-    VB-Cable 的抓取侧在这一档上照进候选（任务书 §3.1 要求这类端点「一律不进候选」）。
+    VB-Cable 的抓取侧在这一档上照进候选（设计口径 §3.1 要求这类端点「一律不进候选」）。
     表里另有三条带 "Virtual" 的抓取侧（MME #2 / DirectSound #11 / WASAPI #21）作为对照。
     """
     assert devices_module.PSEUDO_CAPTURE_MARKER == "vb-audio"
@@ -289,7 +289,7 @@ def test_loopback_tokens_are_v1_literal_substrings():
 
 
 def test_pseudo_capture_endpoints_stay_out_of_the_mic_candidates():
-    """抓取型虚拟端点不进候选（任务书 §3.1：不挡就会把远端声音当成麦克风录一遍）。"""
+    """抓取型虚拟端点不进候选（设计口径 §3.1：不挡就会把远端声音当成麦克风录一遍）。"""
     # 显式点名那条虚拟线：候选收窄到它，并标记成「显式配的抓取型端点」
     candidates, explicit_pseudo, matched_prefix = devices_module.mic_candidates(
         MACHINE_INPUTS, "CABLE Output (VB-Audio Virtual Cable)"
@@ -406,7 +406,7 @@ def test_all_candidates_silent_takes_the_first_one_that_opened():
 def test_no_candidate_opens_reports_probe_failed():
     """**一条都没打开** → `probe_failed` + `endpoint=None`，`detail` 逐条写清各自为什么没成。
 
-    这就是任务书 §3 第 6 条与两态裁定的那一条：V1 在这里返回 `cands[0]`，V2 有 `probe_failed`
+    这就是设计口径 §3 第 6 条与两态裁定的那一条：V1 在这里返回 `cands[0]`，V2 有 `probe_failed`
     这一档可报，**不许**把一个从没打开过的端点当 `ready` 报上去（那会先显示就绪、真开录立刻
     掉线）。
     """
@@ -488,7 +488,7 @@ def test_default_seed_is_the_marked_endpoint_not_the_lowest_index():
 def test_pseudo_default_input_falls_back_to_the_first_real_candidate():
     """系统默认输入端点本身是抓取型（`CABLE Output` 这类）时，它不进候选、也不当种子。
 
-    退回按 host API 排序的第一条非抓取型候选（任务书 §3.1 的落点：默认输入一旦是它，
+    退回按 host API 排序的第一条非抓取型候选（设计口径 §3.1 的落点：默认输入一旦是它，
     mic 与 loopback 就会录同一路）。
     """
     endpoints = (

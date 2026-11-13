@@ -4,7 +4,7 @@ import type { SessionRow, Snapshot } from '../../contract';
 import { startButtonLabel } from '../../home/model';
 
 /**
- * 会中屏左栏里那块**选中工作区的小详情**（d61829f1）：清单里点哪一行，这里说哪一场 ——
+ * 会中屏左栏里那块**选中工作区的小详情**：清单里点哪一行，这里说哪一场 ——
  * 「切到别的工作区看详情」就落在这小块上（工作台的同位详情是右栏那整块 `wspane`）。
  *
  * 「开始录音」是这一屏唯一受单场硬限制的动作：**在录时按下不发起、当场如实拒**
@@ -71,9 +71,9 @@ export function WsBarDetail({
             <button className="btn btn--small btn--ghost" type="button" onClick={onOpenSession}>
               打开那一场 →
             </button>
-          )}
+)}
         </div>
-      )}
+)}
     </div>
-  );
+);
 }

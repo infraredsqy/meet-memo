@@ -34,7 +34,7 @@ from tests.test_contract_fixtures._common import (
     make_client,
 )
 
-#: 慢档标记（68927c27 收尾轮）：真服务/真样本采集的收尾验收，不进每次迭代圈。
+#: 慢档标记（收尾轮）：真服务/真样本采集的收尾验收，不进每次迭代圈。
 pytestmark = pytest.mark.slow
 
 # ---------------------------------------------------------------------------
@@ -239,7 +239,7 @@ def test_capture_recording_group(tmp_path, make_client, contract_regen):
 
 
 def test_capture_heartbeat_no_first_frame(tmp_path, make_client, contract_regen):
-    """「还没有第一帧」的心跳样本（de899128）：录音态而 `recording_alive` 为 `null`。
+    """「还没有第一帧」的心跳样本：录音态而 `recording_alive` 为 `null`。
 
     采样办法：进程内直调 dev 替身的 `inject_fault()` 把 `stall` 挂上**再** start
     （`dev_inject` 动作要有在录场次才挂得上，开场前的那段只能进程内直挂）——合成线程

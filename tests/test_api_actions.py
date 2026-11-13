@@ -1,4 +1,4 @@
-"""`tests/test_api_actions.py` —— `POST /api/actions` 的信封、动作与 `code` 表（phase2 §5.1 第四行）。
+"""`tests/test_api_actions.py` —— `POST /api/actions` 的信封、动作与 `code` 表（设计口径第四行）。
 
 覆盖（逐条对 §5.1 与 §3.6.2 的可用性表）：
 
@@ -79,12 +79,12 @@ PENDING_KEYS = {
 
 
 def test_action_names_and_codes_are_the_frozen_ones():
-    """动作名清单与 `code` 表逐字冻结（`reprobe` 是 `dca4539b` 加的那一名、`summarize` 与它那两个
-    `code` 是 `1987cb20` phase2 加的那一档，其余不动）。`workspace_open` / `workspace_remove`
-    两只是工作台收编节点 `e2f6166b` 加的；`post_offline` / `post_minutes` 是会后两个按钮
-    （`05a48b6a`）；`pause` / `resume` / `set_source` 是暂停与会中开关某一路那三个动作
-    （`10770b41`）；`speaker_rename` 是人名节点（`91b6752e`）加的那一只；
-    `post_stop` 是打断会后那个节点（`b1c6a58e`）加的；`transcode_run` / `transcode_pause` /
+    """动作名清单与 `code` 表逐字冻结（`reprobe` 是 加的那一名、`summarize` 与它那两个
+    `code` 是 设计加的那一档，其余不动）。`workspace_open` / `workspace_remove`
+    两只是工作台收编节点 加的；`post_offline` / `post_minutes` 是会后两个按钮
+    ；`pause` / `resume` / `set_source` 是暂停与会中开关某一路那三个动作
+    ；`speaker_rename` 是人名节点加的那一只；
+    `post_stop` 是打断会后那个节点加的；`transcode_run` / `transcode_pause` /
     `transcode_resume` 是转码独立工序这一棒加的三只。"""
     assert ACTION_NAMES == (
         "start", "stop", "mute_session", "settings_update", "reprobe", "dev_inject",
@@ -154,7 +154,7 @@ def test_success_and_failure_envelope_shapes(tmp_path):
 
 
 def test_middleware_still_forbids_bare_action_requests(tmp_path):
-    """缺 `X-Meeting-Service: 1` 或 `Content-Type` → 403（phase1 的中间件口径不变）。"""
+    """缺 `X-Meeting-Service: 1` 或 `Content-Type` → 403（设计的中间件口径不变）。"""
     with live(tmp_path) as (client, _runtime, _home, _out):
         assert client.post("/api/actions", json={"action": "start"}).status_code == 403
         assert client.post(
@@ -686,7 +686,7 @@ def test_settings_snapshot_shape_stays_frozen(tmp_path):
             "repeat_max_unit", "repeat_min_coverage",
         }
         assert settings["asr"]["timeout_seconds"] == config_module.default_for("asr.timeout_seconds")
-        # 两个设备键位没配时都是 `null`（`dca4539b` 定名；空值形状两端一致）
+        # 两个设备键位没配时都是 `null`（定名；空值形状两端一致）
         assert settings["devices"] == {
             "mic": config_module.default_for("devices.mic"),
             "loopback": config_module.default_for("devices.loopback"),
@@ -841,7 +841,7 @@ def test_dev_inject_works_on_the_dev_backend(tmp_path):
 
 
 def test_pause_action_flips_session_paused_and_back(tmp_path):
-    """`pause` / `resume` 动作入口的接线（`68927c27` 收编自 test_pause_actions 的快测部分）。
+    """`pause` / `resume` 动作入口的接线（收编自 test_pause_actions 的快测部分）。
 
     引擎层的暂停语义（暂停窗逐样本静音、段不切、权威时长不含暂停）由
     `tests/test_capture_engine.py` 的引擎直测覆盖；这里只钉动作入口这一格：

@@ -9,7 +9,7 @@ import {
 import { SUMMARY_WINDOWS } from './summary';
 
 /**
- * 设置抽屉那份**纯逻辑**（设置抽屉节点 `311f84f5`，`docs/design-intent.md` 第 15 条）。
+ * 设置抽屉那份**纯逻辑**（设置抽屉节点，`docs/design-intent.md` 第 15 条）。
  *
  * 这一层不碰 DOM、不碰 React、不持有权威状态：它认**服务推来的那份快照**（抽屉里每一格
  * 的当前值都从 `settings` 上读）与**服务给的那份设备清单**（`GET /api/devices` 的原文），
@@ -56,7 +56,7 @@ export function parseHeartbeatInput(text: string): HeartbeatInput {
   if (
     value < HEARTBEAT_INTERVAL_MIN_SECONDS ||
     value > HEARTBEAT_INTERVAL_MAX_SECONDS
-  ) {
+) {
     return { kind: 'invalid', reason: HEARTBEAT_RANGE_HINT };
   }
   return { kind: 'ok', value };

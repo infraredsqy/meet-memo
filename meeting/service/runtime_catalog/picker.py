@@ -1,7 +1,7 @@
-"""``RuntimeCatalogMixin`` 的「目录选择器」域分片：``GET /api/dirs`` 与 ``POST /api/dirs``。
+"""RuntimeCatalogMixin 的「目录选择器」域分片：GET /api/dirs 与 POST /api/dirs。
 
-方法与方法间注释均自拆分前的 ``runtime_catalog.py`` 单文件 mixin 一字不改复制；
-本文件自写内容只有模块 docstring、import、``_log`` 一行与类声明行（新建目录名的
+方法与方法间注释均自拆分前的 runtime_catalog.py 单文件 mixin 一字不改复制；
+本文件自写内容只有模块 docstring、import、_log 一行与类声明行（新建目录名的
 拒绝式校验与长度上限一并在此）。
 """
 from __future__ import annotations

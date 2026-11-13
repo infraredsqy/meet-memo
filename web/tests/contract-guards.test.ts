@@ -86,7 +86,7 @@ describe('掩码串 schema 咬得住（C1）', () => {
         '2025-09-06T12:00:00.123Z',
         '2025-09-06T12:00:00',
       ],
-    );
+);
   });
 
   it('路径：绝对路径与 <path> 过，无路径形状的串与空串被拒', () => {
@@ -100,7 +100,7 @@ describe('掩码串 schema 咬得住（C1）', () => {
         '\\\\server\\share\\session',
         '/var/log/meeting.log',
       ],
-    );
+);
   });
 
   it('URL：http(s) 形态与 <url> 过，别的串与空串被拒', () => {
@@ -108,7 +108,7 @@ describe('掩码串 schema 咬得住（C1）', () => {
       urlSchema,
       ['lolwut', '', 'not-a-url', 'ftp://127.0.0.1', '<session-id>'],
       ['<url>', 'http://127.0.0.1:8765', 'https://127.0.0.1:8765/'],
-    );
+);
   });
 
   it('每一条真值分支都留着 —— 数值型掩码没被这条修法碰过', () => {
@@ -141,7 +141,7 @@ describe('掩码串 schema 咬得住（C1）', () => {
         '会议-2026-09-21',
         'ws1',
       ],
-    );
+);
   });
 
   it('真服务产出的 session.id 真的过得了快照：不靠占位符冒充', () => {
@@ -159,19 +159,19 @@ describe('掩码串 schema 咬得住（C1）', () => {
     (withBad['session'] as Record<string, unknown>)['id'] = '';
     expect(
       sseFrameSchema.safeParse({ event: 'state', id: '2', data: withBad }).success,
-    ).toBe(false);
+).toBe(false);
     const withPathish = structuredClone(snap);
     (withPathish['session'] as Record<string, unknown>)['id'] = 'out\\260921';
     expect(
       sseFrameSchema.safeParse({ event: 'state', id: '2', data: withPathish }).success,
-    ).toBe(false);
+).toBe(false);
 
     // `dir` 那一格照旧走绝对路径判据 —— 两条 schema 各管各的。
     const withBadDir = structuredClone(snap);
     (withBadDir['session'] as Record<string, unknown>)['dir'] = '260921';
     expect(
       sseFrameSchema.safeParse({ event: 'state', id: '2', data: withBadDir }).success,
-    ).toBe(false);
+).toBe(false);
   });
 
   it('placeholder 只在占位符那半放行：串里的别的 <xxx> 不被顺带收下', () => {
@@ -187,19 +187,19 @@ describe('掩码串 schema 咬得住（C1）', () => {
     (withBadUrl['service'] as Record<string, unknown>)['url'] = 'lolwut';
     expect(
       sseFrameSchema.safeParse({ event: 'state', id: '2', data: withBadUrl }).success,
-    ).toBe(false);
+).toBe(false);
 
     const withBadIso = structuredClone(snap);
     (withBadIso['service'] as Record<string, unknown>)['started_at'] = 'not-a-timestamp';
     expect(
       sseFrameSchema.safeParse({ event: 'state', id: '2', data: withBadIso }).success,
-    ).toBe(false);
+).toBe(false);
 
     const withBadPath = structuredClone(snap);
     (withBadPath['session'] as Record<string, unknown>)['dir'] = 'hello';
     expect(
       sseFrameSchema.safeParse({ event: 'state', id: '2', data: withBadPath }).success,
-    ).toBe(false);
+).toBe(false);
 
     // 同一份快照原样是过的 —— 上面三条红的是被改坏的那一格。
     expect(sseFrameSchema.safeParse({ event: 'state', id: '2', data: snap }).success).toBe(true);
@@ -221,7 +221,7 @@ describe('嵌套契约对象逐层收严（N1）', () => {
   function snapshotAccepts(mutate: (snap: Record<string, unknown>) => void): boolean {
     const snap = structuredClone(
       readFixture('snapshot', 'recording') as Record<string, unknown>,
-    );
+);
     mutate(snap);
     return snapshotSchema.safeParse(snap).success;
   }
@@ -252,7 +252,7 @@ describe('嵌套契约对象逐层收严（N1）', () => {
   });
 
   it('settings.devices 的两个子键已定名 —— 加进来的键照收，取值不挑形状', () => {
-    // 子键此刻是 `{"mic": null, "loopback": null}`（`dca4539b` 定的名，契约正文见
+    // 子键此刻是 `{"mic": null, "loopback": null}`（`` 定的名，契约正文见
     // `docs/contract.md`），`mic` 的值是设备名字符串、没配就是 `null`。这一格有意**不收严
     // 取值的形状**：`z.record(z.string(), z.unknown())` 只保证键是字符串，服务把某个子键
     // 换成对象 / 数字 / 数组都属于加性变更，前端不该在那一刻开始拒收整份快照。这里把这条
@@ -265,7 +265,7 @@ describe('嵌套契约对象逐层收严（N1）', () => {
         >;
         devices['mic'] = { name: '麦克风', index: 0 };
       }),
-    ).toBe(true);
+).toBe(true);
   });
 
   it('sources[*] / alerts / transcript 逐层收严', () => {
@@ -294,13 +294,13 @@ describe('嵌套契约对象逐层收严（N1）', () => {
     // 这里拿 ended-done 样本改 ended 与它的 drainStep。
     const endedSnap = structuredClone(
       readFixture('snapshot', 'ended-done') as Record<string, unknown>,
-    );
+);
     injectExtra(endedSnap['ended'] as Record<string, unknown>);
     expect(snapshotSchema.safeParse(endedSnap).success, 'ended 多一个键该被拒').toBe(false);
 
     const stepSnap = structuredClone(
       readFixture('snapshot', 'ended-done') as Record<string, unknown>,
-    );
+);
     const steps = (stepSnap['ended'] as Record<string, unknown>)['steps'] as Array<
       Record<string, unknown>
     >;
@@ -311,7 +311,7 @@ describe('嵌套契约对象逐层收严（N1）', () => {
   it('alert 六字段那一层也收严（critical 与 hints 各试一次）', () => {
     const alertSnap = structuredClone(
       readFixture('snapshot', 'alert') as Record<string, unknown>,
-    );
+);
     const alerts = alertSnap['alerts'] as Record<string, unknown>;
     const critical = alerts['critical'] as Record<string, unknown> | null;
     // 告警态样本必带 critical 那一条（提示级 hints 可能空着）。
@@ -345,7 +345,7 @@ describe('describeFailure 的收放按契约来（M2）', () => {
         { missing: ['summary.base_url', 'summary.api_key'] },
         { elapsed_seconds: 25, attempts: 3 },
       ],
-    );
+);
   });
 
   it('契约之外的键原样放行：服务将来补一个 detail 键不会打断前端', () => {
@@ -438,7 +438,7 @@ describe('detail 键集合与 4.4 表逐条相等（M1，样本层精确）', ()
       // 逐键精确相等：多一个键、少一个键都红（顺序无关）。
       expect(Object.keys(detail).sort(), `${code} 的 detail 键集合`).toEqual(
         [...(expected ?? [])].sort(),
-      );
+);
     }
   });
 
@@ -486,7 +486,7 @@ describe('detail 键集合与 4.4 表逐条相等（M1，样本层精确）', ()
       const keys = Object.keys(detail).sort();
       const matched = variants.some(
         (variant) => variant.slice().sort().join(',') === keys.join(','),
-      );
+);
       expect(matched, `${name} 的键 ${keys.join(',')} 不在 4.4 的四档里`).toBe(true);
     }
 
@@ -511,7 +511,7 @@ describe('detail 键集合与 4.4 表逐条相等（M1，样本层精确）', ()
     const keys = Object.keys(detail).sort();
     const matched = variants.some(
       (variant) => variant.slice().sort().join(',') === keys.join(','),
-    );
+);
     expect(matched, `summary_failed 样本的键 ${keys.join(',')} 不在 4.4 的两档里`).toBe(true);
 
     // 两档的键并集就是 4.4 表里列出来的那三个（`elapsed_seconds` / `attempts` 那一档要一个
@@ -582,13 +582,13 @@ describe('动作名清单与样本里的 known 对齐（看守）', () => {
       actionNameSchema,
       ['PAUSE', 'START', 'Summarize', 'setSource', ''],
       [...ACTION_NAMES],
-    );
+);
   });
 
   it('样本 `known` 的每一个名字都在本层枚举里：清单少一名就红', () => {
     const unknown = actionFixtureSchema.parse(
       readFixture('actions', 'fail-invalid-setting-unknown-action'),
-    );
+);
     if (unknown.body.ok) throw new Error('样本该是失败档');
     const known = unknown.body.detail.known ?? [];
     // 服务报的每一个名字逐个必须是本层认得的动作名（少一名当场红）。
@@ -623,7 +623,7 @@ describe('postOkSchema 收真回执、咬假回执（看守）', () => {
           },
         },
       ],
-    );
+);
   });
 
   it('inputs 四档之外的取值与 post 格里的多余键都拒（.strict() 照旧咬人）', () => {
@@ -635,7 +635,7 @@ describe('postOkSchema 收真回执、咬假回执（看守）', () => {
         { ...base, post: { kind: 'offline', dir: '<path>', started: true } },
       ],
       [],
-    );
+);
   });
 });
 
@@ -663,23 +663,23 @@ describe('levels 帧的结构不变量（M4）', () => {
     // 复审实测的那一帧：长度 3 的包络原本直接通过。
     expect(levelsFrameSchema.safeParse(levelsFrame({ envelope: [1, 2, 3], bar: 3 })).success).toBe(
       false,
-    );
+);
     expect(levelsDataSchema.safeParse(levelsData({ envelope: [1, 2, 3], bar: 3 })).success).toBe(
       false,
-    );
+);
   });
 
   it('长度多一根、少一根都不行', () => {
     const fifteen = Array.from({ length: ENVELOPE_BAR_COUNT }, () => -3);
     expect(levelsFrameSchema.safeParse(levelsFrame({ envelope: fifteen, bar: -3 })).success).toBe(
       true,
-    );
+);
     expect(
       levelsFrameSchema.safeParse(levelsFrame({ envelope: [...fifteen, -3], bar: -3 })).success,
-    ).toBe(false);
+).toBe(false);
     expect(
       levelsFrameSchema.safeParse(levelsFrame({ envelope: fifteen.slice(1), bar: -3 })).success,
-    ).toBe(false);
+).toBe(false);
   });
 
   it('bar == envelope[-1]：对不上要红，对上才过', () => {
@@ -691,10 +691,10 @@ describe('levels 帧的结构不变量（M4）', () => {
     const masked = Array.from({ length: ENVELOPE_BAR_COUNT }, () => '<dbfs>');
     expect(levelsFrameSchema.safeParse(levelsFrame({ envelope: masked, bar: '<dbfs>' })).success).toBe(
       true,
-    );
+);
     expect(levelsFrameSchema.safeParse(levelsFrame({ envelope: masked, bar: -6 })).success).toBe(
       false,
-    );
+);
   });
 
   it('两条不变量合起来咬住复审给的那一帧', () => {
@@ -705,7 +705,7 @@ describe('levels 帧的结构不变量（M4）', () => {
     expect(
       levelsFrameSchema.safeParse({ ...frame, envelope: fixed, bar: fixed[fixed.length - 1] })
         .success,
-    ).toBe(true);
+).toBe(true);
   });
 
   it('isFullEnvelope 是长度判据的唯一出处，而且真的被 schema 用着', () => {
@@ -715,12 +715,12 @@ describe('levels 帧的结构不变量（M4）', () => {
     expect(
       levelsFrameSchema.safeParse(levelsFrame({ envelope: Array(ENVELOPE_BAR_COUNT).fill(0), bar: 0 }))
         .success,
-    ).toBe(true);
+).toBe(true);
     expect(
       levelsFrameSchema.safeParse(
         levelsFrame({ envelope: Array(ENVELOPE_BAR_COUNT - 1).fill(0), bar: 0 }),
-      ).success,
-    ).toBe(false);
+).success,
+).toBe(false);
   });
 
   it('只对 levels 帧收紧：快照侧的空包络（空闲态）照旧合法', () => {
@@ -785,8 +785,8 @@ describe('会中总结那两套 schema 咬得住（S1）', () => {
     expect(
       summarizeOkSchema.safeParse(
         okBody({ what: [], where: [], lost: [], lines: 0 }),
-      ).success,
-    ).toBe(true);
+).success,
+).toBe(true);
   });
 
   it('八格一格都不能少、多一格也拒（`.strict()`）', () => {
@@ -806,7 +806,7 @@ describe('会中总结那两套 schema 咬得住（S1）', () => {
       delete summary[key];
       expect(summarizeOkSchema.safeParse(bodyWithSummary(summary)).success, `少 ${key}`).toBe(
         false,
-      );
+);
     }
     expect(summarizeOkSchema.safeParse(okBody({ 契约外的键: 1 })).success).toBe(false);
     // 顶层也收严：多一个键就红
@@ -857,7 +857,7 @@ describe('会中总结那两套 schema 咬得住（S1）', () => {
 });
 
 /**
- * 会中总结这一轮**把那道快照硬门留在原处**（`1987cb20/phase3/task.md` 的边界第 3 条）。
+ * 会中总结这一轮**把那道快照硬门留在原处**（`/phase3/task.md` 的边界第 3 条）。
  *
  * 结果走动作的应答体、记录走 `GET`，快照里一个 `summary` 键都没有 —— 这条断言在
  * `contract.test.ts` 里（顶层恰好十键、不许多 `summary`），这里补的是**反向**那一半：

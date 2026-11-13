@@ -1,4 +1,4 @@
-"""`meeting/offline/replay.py` 与 `meeting replay` 入口的契约用例（节点 `a3b684bd`）。
+"""`meeting/offline/replay.py` 与 `meeting replay` 入口的契约用例（节点）。
 
 要盯住的几条：
 
@@ -321,7 +321,7 @@ def test_replay_stages_mp3_material_as_pcm(tmp_path: Path, monkeypatch: pytest.M
 def test_replay_stages_legacy_unsegmented_names_as_segment_one(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """旧素材（`9063d8b` 之前的无段号命名）退认旧名，拷贝落成现行命名（段 001）。"""
+    """旧素材（之前的无段号命名）退认旧名，拷贝落成现行命名（段 001）。"""
     source = tmp_path / "250906"
     source.mkdir()
     (source / "meeting_audio_mic.mp3").write_bytes(b"\x00" * 16)

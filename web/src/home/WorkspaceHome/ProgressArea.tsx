@@ -5,7 +5,7 @@ import { chunkRowLabel, phaseMark } from '../progress';
 import type { PostStopView } from '../post';
 
 /**
- * 会后进度区（R27，节点 52b24392）：可展开收缩；展开是逐块行往下刷 + 每路一条的进度条。
+ * 会后进度区（R27，节点）：可展开收缩；展开是逐块行往下刷 + 每路一条的进度条。
  * 读数是 `GET /api/sessions/{id}` 那只纯读端点的原文，轮询只在有活动时开（轮询与取数
  * 归主组件）；「停着一版 running」按 `in_process` 分层如实画，不替盘上的话下结论。
  * 展开与收起是纯界面偏好，状态住在这里（不落本地存储）。
@@ -22,7 +22,7 @@ export function ProgressArea({
   prog: ProgressView | null;
   /** 轮询/取数失败那一行（如实画在进度区里，不顶掉首页的失败块）。 */
   statusError: string | null;
-  /** 停止入口（R28 / b1c6a58e）：这一场的 offline 在飞时出现在进度区头行。 */
+  /** 停止入口（R28 /）：这一场的 offline 在飞时出现在进度区头行。 */
   stop: PostStopView;
   busy: boolean;
   /** 逐块行（每跑完一块落一行；第一次读到时把已跑过的补成 `observed` 行）。 */
@@ -42,13 +42,13 @@ export function ProgressArea({
           <span className="wsprog__phase" data-phase={prog.phase}>
             {progMark === null ? (
               <span className="spinner" aria-hidden="true" />
-            ) : (
+) : (
               <span className={`glyph ${progMark}`} aria-hidden="true" />
-            )}
+)}
             {prog.phaseLabel}
           </span>
-        )}
-        {/* 停止入口（R28 / b1c6a58e）：只在这一场的 offline 在飞时出现。
+)}
+        {/* 停止入口（R28 /）：只在这一场的 offline 在飞时出现。
             受理即回——当前块收尾之后停，盘上状态记为「已中断」。 */}
         {stop.visible && (
           <button
@@ -60,7 +60,7 @@ export function ProgressArea({
           >
             停止
           </button>
-        )}
+)}
         <button
           className="btn btn--small btn--ghost wsprog__toggle"
           type="button"
@@ -98,19 +98,19 @@ export function ProgressArea({
                       {road.total === null ? `${road.done}/?` : `${road.done}/${road.total}`}
                     </span>
                   </div>
-                ))}
+))}
               </div>
               <div className="wsprog__rows" role="list" aria-label="逐块记录">
                 {chunkRows.length === 0 && (
                   <p className="wsprog__row wsprog__row--empty">
                     暂无逐块记录。
                   </p>
-                )}
+)}
                 {chunkRows.map((item) => (
                   <p className="wsprog__row" role="listitem" key={item.key}>
                     {chunkRowLabel(item)}
                   </p>
-                ))}
+))}
               </div>
               {/* 四档合计与已运行秒数：给人看的读数（设计意图第 6、7 条那句话
                   是给维护者的口径，不摆到界面上） */}
@@ -123,9 +123,9 @@ export function ProgressArea({
                 未判定 {prog.counts.unjudged}
               </p>
             </>
-          )}
+)}
         </div>
-      )}
+)}
     </div>
-  );
+);
 }

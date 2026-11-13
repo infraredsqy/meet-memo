@@ -1,4 +1,4 @@
-"""`tests/test_capture_e2e.py` —— 端到端（假源）：录下的东西能不能信（`dca4539b` phase3 §1）。
+"""`tests/test_capture_e2e.py` —— 端到端（假源）：录下的东西能不能信（设计口径）。
 
 形态照 `tests/test_capture_backend.py` 那两条端到端：**进程内真 `ServiceRuntime`** +
 真采集路径，唯一换掉的是最外面那层声卡库——配置键
@@ -20,9 +20,9 @@ registry 的既有口径）把假端点表与带剧本的假源挂进真后端�
      `top_state` 进 `alert`；mic 的归档字节数在掉线前后**都在增长**；收尾照常
      `done`、mic 的 MP3 照样出得来；loopback 留下恰好那 10 块、逐字节可对。
   3. **转码吞吐**：10 分钟合成 PCM 量一次真 `transcode()` 的秒数，线性外推两小时，
-     对 30 秒收尾预算说话（任务书 §3 给了开工前基线 1.69 秒，两个数摆在一起比）。
+     对 30 秒收尾预算说话（设计口径 §3 给了开工前基线 1.69 秒，两个数摆在一起比）。
 
-任务书 §3 写「loopback 在 3 秒后抛错」；为守住「单条用例 ≤ 5 秒」的看门红线
+设计口径 §3 写「loopback 在 3 秒后抛错」；为守住「单条用例 ≤ 5 秒」的看门红线
 （`tests/conftest.py`），第 2 场改成「喂满 10 块（1.0 秒）后抛错」——语义同一档：
 那一路真的起来、真的在采之后才死（`fed == 10` 当场断言），而非启动失败。
 """
@@ -66,7 +66,7 @@ RECORD_CHUNKS = 16
 SOURCE_ORDER = ("mic", "loopback")
 
 #: MP3 与 PCM 的时长容差（秒）。MP3 按帧编解码（16k 下一帧 576 样本 ≈ 36ms），编码器
-#: 首尾各垫小半帧 —— 实测差距见 `phase3/evidence/`（本机 8.1 的 lame 对 1.6 秒素材差 0）。
+#: 首尾各垫小半帧 —— 实测差距见 `设计/evidence/`（本机 8.1 的 lame 对 1.6 秒素材差 0）。
 MP3_DURATION_TOLERANCE_SECONDS = 0.1
 
 
@@ -141,7 +141,7 @@ def test_a_full_session_reconciles_frame_by_frame(tmp_path: Path, monkeypatch):
     monkeypatch.setenv(DELIVER_LOOPBACK_ENV, str(RECORD_CHUNKS))
     # 这一场只验采集侧的记录：`transcriber.backend` 显式取 `null` 替身。
     # 不写这一项的话产品缺省 `auto` 会解析到 `meeting.backends.transcribe:TranscriberBackend`
-    # （`9e5db89c` phase2 落地之后它就在场了），而这一场喂进去的是**真音频**——
+    # （设计落地之后它就在场了），而这一场喂进去的是**真音频**——
     # 于是那条流水线会真的去加载 GLM 权重（实测把本用例拖到 7 秒，越过单条用例的 5 秒看门，
     # 也违背「任何用例都不许加载真模型」这条硬要求）。
     #
@@ -357,7 +357,7 @@ def test_a_route_dying_midrun_leaves_the_other_route_intact(tmp_path: Path, monk
 # ③ 转码吞吐：10 分钟合成 PCM 实测一次，线性外推两小时
 # ---------------------------------------------------------------------------
 
-#: 吞吐素材的长度（分钟）。任务书 §3 的基线量的是 10 分钟 / 19.2MB，同规格复量才可比
+#: 吞吐素材的长度（分钟）。设计口径 §3 的基线量的是 10 分钟 / 19.2MB，同规格复量才可比
 THROUGHPUT_MINUTES = 10
 
 #: 一分钟多少块（一块 0.1 秒）

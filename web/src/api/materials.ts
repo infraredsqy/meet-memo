@@ -9,8 +9,8 @@ import {
 import { HttpRejectError, ProtocolError, UnavailableError, getJsonOk, readFailureEnvelope } from './common';
 
 /**
- * 会议资料的四条端点（`docs/contract.md` 4.12，资料节点 285bf58c）与选择器文件模式
- * 的盘上拷入（`?from=`，160d1a78）。
+ * 会议资料的四条端点（`docs/contract.md` 4.12，资料节点）与选择器文件模式
+ * 的盘上拷入（`?from=`）。
  *
  * **两条写端点必须带 `X-Meeting-Service: 1`**（契约第 6 章第 4 条）：缺了服务回 403
  * 且**不带失败信封**（中间件那一道就挡回去了，请求没走到端点）——这一档自成一
@@ -150,7 +150,7 @@ export async function uploadMaterial(
     url,
     { method: 'POST', body },
     options,
-  );
+);
   const parsed = materialUploadOkSchema.safeParse(json);
   if (!parsed.success) {
     throw new MaterialsProtocolError('资料上传', 200, JSON.stringify(json), parsed.error);
@@ -159,7 +159,7 @@ export async function uploadMaterial(
 }
 
 /**
- * 从盘上拷一份进资料（选择器文件模式，160d1a78）：`from` 是选择器给的那个文件
+ * 从盘上拷一份进资料（选择器文件模式）：`from` 是选择器给的那个文件
  * 绝对路径，字节由服务从盘上流式拷入——界面上没有那些字节。成功体与正文上传同一形状。
  */
 export async function uploadMaterialFromDisk(
@@ -190,7 +190,7 @@ export async function deleteMaterial(
     materialFileUrl(dir, name),
     { method: 'DELETE' },
     options,
-  );
+);
   const parsed = materialDeleteOkSchema.safeParse(json);
   if (!parsed.success) {
     throw new MaterialsProtocolError('资料删除', 200, JSON.stringify(json), parsed.error);

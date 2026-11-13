@@ -1,6 +1,6 @@
-"""``RuntimeCatalogMixin`` 的「设备清单」域分片：``GET /api/devices``。
+"""RuntimeCatalogMixin 的「设备清单」域分片：GET /api/devices。
 
-方法与方法间注释均自拆分前的 ``runtime_catalog.py`` 单文件 mixin 一字不改复制；
+方法与方法间注释均自拆分前的 runtime_catalog.py 单文件 mixin 一字不改复制；
 本文件自写内容只有模块 docstring、import 与类声明行。
 """
 from __future__ import annotations
@@ -16,7 +16,7 @@ class RuntimeCatalogDevicesMixin:
     def devices_listing(self) -> dict[str, Any]:
         """`GET /api/devices` 的应答体：两路各自的候选端点表（**只读、纯枚举、不开设备**）。
 
-        设置抽屉的两个设备下拉用它（`311f84f5`）。枚举走 `meeting/capture/sources.py` 的
+        设置抽屉的两个设备下拉用它。枚举走 `meeting/capture/sources.py` 的
         `list_input_endpoints()` / `list_render_endpoints()` —— **只读端点表**，不试开、
         不采集（`probe()` 会短暂试开，因此**不能**拿它当清单来源）。与 `GET /api/dirs`
         同一档纯读：不提交、不涨 `revision`、不广播；**任何状态下都 200**（会中打开抽屉

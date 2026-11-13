@@ -1,7 +1,7 @@
-"""命令行入口（phase1 §3.3 / §3.4 / R15）。
+"""命令行入口（设计口径 / §3.4 / R15）。
 
 命令词三个：`meeting web` / `meeting post` / `meeting replay`——每条仍是 `meeting <动词>`
-的两词命令形（R15）。`replay` 是重放验证工具（`a3b684bd`），只验证、不是第二条生产路径。
+的两词命令形（R15）。`replay` 是重放验证工具，只验证、不是第二条生产路径。
 
 参数面走 argparse（`_Parser`）：三个动作词各有一个解析器，`-h` / `--help` 打印说明后按
 `EXIT_OK` 收场；用法错不由 argparse 直接退（它默认打英文模板），而是抛 `ValueError`
@@ -634,7 +634,7 @@ def _report_post_outcome(outcome: dict[str, Any], exit_code: int) -> None:
         )
 
 
-# `meeting replay` —— 重放验证工具（a3b684bd：只读素材、产物写自己的落地、绝不拉纪要）
+# `meeting replay` —— 重放验证工具（：只读素材、产物写自己的落地、绝不拉纪要）
 
 
 def _parse_replay_args(argv: Sequence[str]) -> dict[str, Any]:

@@ -214,7 +214,7 @@ def test_drain_whole_pass_upper_bound_grows_with_the_backlog(tmp_path, monkeypat
     for backlog, sample in samples.items():
         budget = compute_drain_budget(backlog, segment_timeout)
         # 这一档的收尾**确实还在跑**（在飞的那一步停在 `running`）：读数因此落在
-        # 「本次那笔预算」那一格（§3.3 的「等待上限 = 这条 deadline 的剩余时间 加 log 步最小预算」）
+        # 「本次那笔预算」那一格（§3.3 的「等待上限 = 这条 deadline 的剩余时间加 log 步最小预算」）
         assert sample["running_when_sampled"], (
             f"backlog={backlog} 那一档的读数落在「收尾还在跑」之外：{sample}"
         )
@@ -413,7 +413,7 @@ def test_cancelled_drain_routes_through_the_frozen_accounting(tmp_path, monkeypa
 # `draining` **覆盖掉**——于是「强制打断 + 前面有失败步」这一格盘上留的是 `state: "failed"`，
 # 与契约要求的那三件套对不上。
 #
-# **收口的位置在 phase3 这条路径上**：`state_for()` 的四档映射是 phase2 冻结的跨 Phase 契约
+# **收口的位置在设计这条路径上**：`state_for()` 的四档映射是设计冻结的跨层契约
 # （取值域与优先级一个字都不动），改的是**取消路径的写值** —— `_settle_step(..., cancelled=True)`
 # 落盘时显式把 `state="draining"` 传下去（见 `ServiceRuntime._write_session()` 的 `state=` 参数），
 # 不让映射在这一格上接管。这一条把该行为钉住。

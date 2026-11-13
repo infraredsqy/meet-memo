@@ -27,7 +27,7 @@ from meeting.backends.base import SOURCE_IDS
 
 _log = logging.getLogger("meeting.backends.transcribe")
 
-#: `asr.timeout_seconds` 读不出来时的缺省（与 `meeting/config.py` 的默认值、与 phase1 的口径一致）
+#: `asr.timeout_seconds` 读不出来时的缺省（与 `meeting/config.py` 的默认值、与设计的口径一致）
 DEFAULT_SEGMENT_TIMEOUT_SECONDS = 20.0
 
 #: `stop()` 那条收尾线程 join 的额外余量（秒），加在收尾预算之上。余量要盖住**内层最坏耗时**：
@@ -54,7 +54,7 @@ class _SinkProxy:
     为什么需要它：runtime 在 `probe()` **之前**就 `bind()` 了一次（那时还没有会话），
     会话起来之后还会 `bind()` 第二次；流水线的 worker 线程则可能在后端被重新 `bind()` 之后
     才算出第一行。worker 每次经这里现取一次后端当前的 `line_sink`，于是「绑定时刻」与
-    「产出时刻」谁先谁后都不影响那一行被送出去（`phase2/task.md` §7 的接线要求）。
+    「产出时刻」谁先谁后都不影响那一行被送出去（设计口径 §7 的接线要求）。
     """
 
     def __init__(self, backend: "TranscriberBackend") -> None:
@@ -243,7 +243,7 @@ class TranscriberBackend:
     def release_gpu(self) -> bool:
         """**让出会中模型占的显存**：等干净在飞的推理，丢掉模型引用，然后清一次缓存。
 
-        生产调用点：收尾第 4 步（R26 之后它仅剩的活）与暂停动作（`10770b41` 起，
+        生产调用点：收尾第 4 步（R26 之后它仅剩的活）与暂停动作（起，
         `resume` 由配对的 `acquire_gpu()` 拉回；那一处经后台单线程执行器提交，不等做完）。
 
         - **没加载过就 no-op**（连 torch 都不 import）：`meeting post` 那个独立入口的进程里
@@ -532,7 +532,7 @@ class TranscriberBackend:
         sink(line)
 
     def _transcribe_segment(self, audio: Any) -> Any:
-        """调 phase1 的单段识别（**模型加载失败在这里如实留痕**）。
+        """调设计的单段识别（**模型加载失败在这里如实留痕**）。
 
         惰性加载的失败（依赖没装、权重不在缓存、显存不足）在这里抛：原因记进 `_model_error`
         （`health()` 落 `stopped`），异常原样上抛给流水线——那段落占位符，不静默丢段、

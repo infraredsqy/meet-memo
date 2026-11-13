@@ -1,4 +1,4 @@
-"""ASR 核心（`9e5db89c` phase1）—— 四层防护 + 噪声预筛 + GLM 单段识别。
+"""ASR 核心（设计）—— 四层防护 + 噪声预筛 + GLM 单段识别。
 
 分工（与 `meeting/capture/` 同一套口径：纯逻辑与重依赖分开住，各自能被单测）：
 
@@ -19,10 +19,10 @@
 
 参数一律从 `meeting.config` 的 `asr.*` 五个热读键读出（`asr.timeout_seconds` /
 `asr.max_new_tokens` / `asr.repeat_max_unit` / `asr.repeat_min_coverage`；`asr.max_segment_seconds`
-是 phase2 的 VAD 用的），本包**不自己存参数、也不碰 `config.json`**。
+是设计的 VAD 用的），本包**不自己存参数、也不碰 `config.json`**。
 
 本包只交付「一串 int16 样本进去，一段文本或一个失败原因出来」：**不建队列、不起线程、不写文件、
-不碰服务**（那是 phase2 的 `meeting/asr/pipeline.py` 与 `meeting/backends/transcribe.py`）。
+不碰服务**（那是设计的 `meeting/asr/pipeline.py` 与 `meeting/backends/transcribe.py`）。
 """
 
 from __future__ import annotations

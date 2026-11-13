@@ -1,4 +1,4 @@
-"""会后离线转写主链的**编排**：一次 `run_session(session_dir)` 走完 读场次元信息 → 逐路取音频
+"""会后离线转写主链的**编排**：一次 `run_session(session_dir)` 走完读场次元信息 → 逐路取音频
 → 逐块调引擎 → 逐路编号 → 落三份产物 → 状态文件从 `running` 落成终态。
 
 本模块是 `meeting.offline.runner` 包的主模块：编排（`run_session` 一族）住这里，
@@ -243,7 +243,7 @@ def read_chunk_seconds(config: Any = None) -> float:
 def plan_chunks(total_seconds: float, chunk_seconds: float) -> ChunkPlan:
     """把「总时长 + 块长」算成切法：**连续、不重叠、从头开始**。块长 `<= 0` 或总时长
     不超过块长时交回单块——单趟与分块共用同一条主循环，产物只在「标签带不带命名空间」
-    分叉。切点是固定间隔；切点附近找静默中点那条路未实现、未测，不假装做了（phase3 报告 10.2）。
+    分叉。切点是固定间隔；切点附近找静默中点那条路未实现、未测，不假装做了（设计报告 10.2）。
     """
     total = max(0.0, float(total_seconds))
     step_seconds = float(chunk_seconds)
@@ -354,7 +354,7 @@ def resolve_audio(
 
 
 def _audio_file_label(paths: "Sequence[str]") -> str:
-    """产物 `audio.file` 格式：恰好一段写文件名，多段写「第一段名 等 N 个段文件」
+    """产物 `audio.file` 格式：恰好一段写文件名，多段写「第一段名等 N 个段文件」
     （段清单的权威在 `session.json` 的 `segments` 与盘上的段文件，这一格是给人看的注脚）。"""
     names = [Path(path).name for path in paths]
     if len(names) == 1:
@@ -502,7 +502,7 @@ def run_session(
 
     failed = [item for item in metrics if item.state != "done" and not item.reasons.get(REASON_INTERRUPTED)]
     # 顶层三档：每路都没交回 failed / 至少一路整条没交回 partial / 全交回 done。
-    # 没声跳过那一路 state 仍 done（什么都没出错）；打断档在这三档之前（b1c6a58e）。
+    # 没声跳过那一路 state 仍 done（什么都没出错）；打断档在这三档之前。
     if interrupted:
         state = "interrupted"
     elif metrics and len(failed) == len(metrics):
@@ -633,7 +633,7 @@ def write_interrupted_status(
     reason: str,
 ) -> dict[str, Any] | None:
     """把盘上停在 `running` 的那版离线状态补成 `interrupted`（**服务启动核对**用，
-    b1c6a58e 的 d5）：从状态文件 + 逐块记录拼出同一形状的终态，缺口注记拼进 `error`。
+     的 d5）：从状态文件 + 逐块记录拼出同一形状的终态，缺口注记拼进 `error`。
     盘上不是 `running` 时**什么都不写**、交回 `None`——核对不许翻掉已落定的终态。
     """
     directory = Path(session_dir)
@@ -889,7 +889,7 @@ def _execute_chunks(
 ) -> tuple[list[OfflineSegment], list[ChunkRun], str | None, bool]:
     """按切法逐块调引擎，交回 `(拼回整场时间轴的分段, 逐块登记, 加载失败原话, 被打断没有)`。
 
-    第四个值是打断档（b1c6a58e）：`cancel` 在**逐块主循环顶**检查，当前块跑完、下一块
+    第四个值是打断档：`cancel` 在**逐块主循环顶**检查，当前块跑完、下一块
     开跑前收场——引擎是同步推理，外部掐不动正在跑的 CUDA 调用，块级 `except` 还会把
     异常吞成块失败，用异常表达取消行不通。单趟与分块共用主循环，打断不开特例。
 

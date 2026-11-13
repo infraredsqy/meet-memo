@@ -61,7 +61,7 @@ describe('applyHeartbeatReading：四级迁移', () => {
       initialHeartbeatState(),
       reply(T('20:56:52'), '迟到', 8),
       MS('20:57:00'),
-    );
+);
     expect(state.level).toBe('迟到');
     expect(state.lateText).toBe('心跳迟到 · 8 秒没收到应答');
     // 迟到这一档不出声、无横幅 —— 它连告警区都不碰
@@ -74,7 +74,7 @@ describe('applyHeartbeatReading：四级迁移', () => {
       first,
       { kind: 'error', error: new Error('HTTP 502'), status: '失联' },
       MS('20:58:05'),
-    );
+);
     expect(lost.level).toBe('失联');
     expect(lost.lostSinceMs).toBe(MS('20:58:05'));
     expect(lost.frozenAt).toBe(T('20:57:31'));
@@ -87,7 +87,7 @@ describe('applyHeartbeatReading：四级迁移', () => {
       initialHeartbeatState(),
       { kind: 'error', error: new Error('502'), status: '失联' },
       MS('20:57:40'),
-    );
+);
     expect(never.level).toBe('失联');
     expect(never.lastReplyAt).toBeNull();
     expect(lostPredicate(never)).toBe(false);
@@ -119,7 +119,7 @@ describe('applyHeartbeatReading：四级迁移', () => {
       back,
       reply(T('20:58:52'), '正常'),
       MS('20:58:22') + RECOVERED_NOTE_SECONDS * 1000,
-    );
+);
     expect(recoveredNoteVisible(after, MS('20:58:22') + RECOVERED_NOTE_SECONDS * 1000)).toBe(false);
     expect(after.level).toBe('正常');
   });
@@ -129,7 +129,7 @@ describe('applyHeartbeatReading：四级迁移', () => {
       initialHeartbeatState(),
       { kind: 'error', error: new Error('502'), status: '失联' },
       MS('20:57:40'),
-    );
+);
     const back = applyHeartbeatReading(lost, reply(T('20:58:10'), '迟到', 12), MS('20:58:22'));
     expect(back.level).toBe('已恢复');
     expect(back.gapSeconds).toBe(42);
@@ -160,11 +160,11 @@ describe('captureStalled：采集已停那一档', () => {
       makeHeartbeat({ server_time: T('20:57:31'), recording_alive: false, seconds_since_last_tick: 42.5 }),
       'recording',
       CAPTURE_STOP_CONFIRMATIONS,
-    );
+);
     expect(view).toEqual({ seconds: 42.5, lastFrameAt: '20:56' });
   });
 
-  it('两拍规则（de899128）：单次 false 不摆这一档，计数够两次才判停', () => {
+  it('两拍规则：单次 false 不摆这一档，计数够两次才判停', () => {
     const beat = makeHeartbeat({ recording_alive: false, seconds_since_last_tick: 42.5 });
     expect(captureStalled(beat, 'recording', 0)).toBeNull();
     expect(captureStalled(beat, 'recording', 1)).toBeNull();
@@ -181,7 +181,7 @@ describe('captureStalled：采集已停那一档', () => {
   it('recording_alive 为 null（还没有第一帧）：不在这一档', () => {
     expect(
       captureStalled(makeHeartbeat({ recording_alive: null, seconds_since_last_tick: null }), 'recording', CAPTURE_STOP_CONFIRMATIONS),
-    ).toBeNull();
+).toBeNull();
   });
 
   it('空闲与已结束不摆这一档（服务给的 recording_alive 本来就是 null）', () => {
@@ -194,7 +194,7 @@ describe('captureStalled：采集已停那一档', () => {
       makeHeartbeat({ recording_alive: false, seconds_since_last_tick: null }),
       'recording',
       CAPTURE_STOP_CONFIRMATIONS,
-    );
+);
     expect(view).toEqual({ seconds: 0, lastFrameAt: '—' });
   });
 
@@ -203,7 +203,7 @@ describe('captureStalled：采集已停那一档', () => {
   });
 });
 
-describe('两拍规则的连续计数（de899128，归并点在 applyHeartbeatReading）', () => {
+describe('两拍规则的连续计数（归并点在 applyHeartbeatReading）', () => {
   it('false 连着数：一拍 1、两拍 2', () => {
     const one = applyHeartbeatReading(initialHeartbeatState(), stoppedReply(T('20:57:10'), 3), MS('20:57:10'));
     expect(one.stalledBeats).toBe(1);
@@ -228,7 +228,7 @@ describe('两拍规则的连续计数（de899128，归并点在 applyHeartbeatRe
         lagSeconds: 0,
       },
       MS('20:57:20'),
-    );
+);
     expect(unknown.stalledBeats).toBe(0);
   });
 
@@ -238,7 +238,7 @@ describe('两拍规则的连续计数（de899128，归并点在 applyHeartbeatRe
       one,
       { kind: 'error', error: new Error('HTTP 502'), status: '失联' },
       MS('20:57:20'),
-    );
+);
     expect(lost.stalledBeats).toBe(0);
   });
 });
@@ -282,7 +282,7 @@ describe('captureGapNote：帧空洞记录的提示行（gil-stall-hole）', () 
     expect(captureGapNote(makeHeartbeat())).toBeNull();
     expect(
       captureGapNote(makeHeartbeat({ capture_gaps: { total_count: 0, total_seconds: 0, recent: [] } })),
-    ).toBeNull();
+).toBeNull();
   });
 
   it('空洞只在提示行说话：不弹红横幅、不进两拍计数', () => {
@@ -298,7 +298,7 @@ describe('captureGapNote：帧空洞记录的提示行（gil-stall-hole）', () 
       initialHeartbeatState(),
       { kind: 'reply', heartbeat: beat, status: '正常', lagSeconds: 0 },
       MS('21:03:30'),
-    );
+);
     expect(state.stalledBeats).toBe(0);
     // 现在时的判档不认历史事实：`captureStalled` 只看 `recording_alive`
     expect(captureStalled(beat, 'recording', state.stalledBeats)).toBeNull();

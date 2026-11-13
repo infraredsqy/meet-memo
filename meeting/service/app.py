@@ -1,4 +1,4 @@
-"""Starlette 应用组装、端口策略、三道防线（phase1 §3.5–§3.8；phase2 §3.12 的搬迁与接线）。
+"""Starlette 应用组装、端口策略、三道防线（设计口径–§3.8；设计口径的搬迁与接线）。
 
 `ServiceRuntime` 已搬到 `meeting/service/runtime.py`（名字与语义不改），本模块只导入；
 工厂入口 `build_runtime()` 仍在这里，`cli.py` 调用点不动。常驻本模块的四样（不搬、不在
@@ -67,7 +67,7 @@ class PortUnavailableError(RuntimeError):
 # 信号接管（常驻本模块：handle_shutdown_signal / install_shutdown_signal_handlers /
 # _shutdown_target / ServiceServer）
 
-#: 关停目标：`(loop, trigger)`，形态由 phase1 冻结。`trigger` 必须是可被
+#: 关停目标：`(loop, trigger)`，形态由设计冻结。`trigger` 必须是可被
 #: `call_soon_threadsafe` 直接调用的**同步 callable**：处理函数体把它当同步对象排进循环、
 #: 不 await 返回值。`trigger_shutdown` 本身是协程，换进去前必须由 `make_trigger_shutdown()`
 #: 包一层 `loop.create_task(...)`——直接交协程对象的话它只被创建、永不被 await，
@@ -89,7 +89,7 @@ _shutdown_press_count = 0
 #: `_shutdown_press_count` 的锁（见上面那段：计数要线程安全，但锁里不做事）
 _shutdown_press_lock = threading.Lock()
 
-#: 第二次按下时写进场次 log 的那行文案（phase3 §3.5 的表；名字由本 Phase 新起）。
+#: 第二次按下时写进场次 log 的那行文案（设计口径的表；名字由本项目新起）。
 #: 由 `ServiceRuntime.trigger_shutdown()` 在事件循环那一侧落 `meeting` logger。
 DRAIN_INTERRUPTED_MESSAGE = "收尾被强制打断（用户第二次 Ctrl+C）"
 
@@ -129,7 +129,7 @@ def shutdown_press_count() -> int:
 
 
 def make_trigger_shutdown(loop: asyncio.AbstractEventLoop, runtime: Any) -> Callable[[bool], None]:
-    """构造本 Phase 的关停目标：**先跑收尾、再请求关停**（phase3 §3.5）。
+    """构造本项目的关停目标：**先跑收尾、再请求关停**（设计口径）。
 
     返回的是**同步 callable**（可被 `loop.call_soon_threadsafe` 直接调用，见
     `_shutdown_target` 上的说明），它收**一个位置参数 `force`**：`handle_shutdown_signal`
@@ -361,7 +361,7 @@ def bind_http_socket(
     is_meeting = bool(probe_fn("127.0.0.1", port))
 
     if is_meeting:
-        # 文案形状（`…（<状态>）`）是 phase1 冻结的，括号里是字面写死的「当前空闲」：
+        # 文案形状（`…（<状态>）`）是设计冻结的，括号里是字面写死的「当前空闲」：
         # 探针没有取用「那一场已录多久」，也不区分在录还是空着。
         raise PortUnavailableError(
             f"已经有一个 meeting 服务在跑：http://127.0.0.1:{port}（当前空闲）",

@@ -1,7 +1,7 @@
-"""``RuntimeCatalogMixin`` 的「设置写盘」域分片：``settings_update`` 动作。
+"""RuntimeCatalogMixin 的「设置写盘」域分片：settings_update 动作。
 
-方法与方法间注释均自拆分前的 ``runtime_catalog.py`` 单文件 mixin 一字不改复制；
-本文件自写内容只有模块 docstring、import、``_log`` 一行与类声明行。
+方法与方法间注释均自拆分前的 runtime_catalog.py 单文件 mixin 一字不改复制；
+本文件自写内容只有模块 docstring、import、_log 一行与类声明行。
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ _log = logging.getLogger("meeting.service.runtime")
 
 
 class RuntimeCatalogSettingsMixin:
-    """「设置写盘」：``settings_update``（写 ``config.json``；可热读的键立刻生效，其余要重启）。"""
+    """「设置写盘」：settings_update（写 config.json；可热读的键立刻生效，其余要重启）。"""
 
     # 设置更新
 

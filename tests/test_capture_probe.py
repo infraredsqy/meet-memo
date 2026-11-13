@@ -231,7 +231,7 @@ def test_probe_picks_the_first_opened_endpoint_when_no_waveform_shows_up():
     """一条有波形的都没有（房间安静 / 远端没出声）：取**第一条打开了**的端点，仍报 `ready`。
 
     三条同名候选中 WASAPI 那条在 16k 开不了、DirectSound 与 MME 都能打开但交回全零 ——
-    中选的是排序后第一条**打开了**的 DirectSound（任务书 §3 第 5 条）。
+    中选的是排序后第一条**打开了**的 DirectSound（设计口径 §3 第 5 条）。
     """
     probes, fake, _backend = probe_with(
         input_attempts={
@@ -274,7 +274,7 @@ def test_probe_honours_an_explicitly_configured_device():
 
 
 def test_probe_mic_falls_back_while_loopback_reports_probe_failed():
-    """全都开不了时两路各走各的：mic 按任务书 §3 第 6 条落 `probe_failed`，loopback 同样如实落。
+    """全都开不了时两路各走各的：mic 按设计口径 §3 第 6 条落 `probe_failed`，loopback 同样如实落。
 
     mic 这一侧就是复审核定的那一条：同名三条候选一条都没打开 → **一个能打开的端点都没有**，
     `device_name` 为 `None`、`detail` 逐条写明试过哪几条、各自为什么没成（**不回落**一个从没
@@ -425,7 +425,7 @@ def test_settings_devices_shape_and_update_round_trip(tmp_path: Path):
         response = post(client, "settings_update", {"devices.mic": "Analogue 1 + 2 (2- Focusrite US"})
         assert response.status_code == 200, response.text
         body = response.json()
-        # 设备键位收在热读档（`311f84f5`）：写盘成功，快照当场换新值、revision 涨一格
+        # 设备键位收在热读档：写盘成功，快照当场换新值、revision 涨一格
         assert body["applied"] == ["devices.mic"]
         assert body["pending_restart"] == []
         assert snapshot_of(client)["settings"]["devices"]["mic"] == (
@@ -450,7 +450,7 @@ def test_settings_devices_shape_and_update_round_trip(tmp_path: Path):
 
 
 def test_devices_keys_land_in_the_applied_group():
-    """两个设备键位在三分表里归 `applied`（设置抽屉节点 `311f84f5` 改的热读档）。"""
+    """两个设备键位在三分表里归 `applied`（设置抽屉节点 改的热读档）。"""
     assert config_module.setting_group("devices.mic") == "applied"
     assert config_module.setting_group("devices.loopback") == "applied"
     assert config_module.DEVICE_SETTING_KEYS == ("mic", "loopback")
@@ -539,7 +539,7 @@ def test_reprobe_action_is_reachable_through_the_http_endpoint(tmp_path: Path):
 # `startup()` 里的 `probe()` 由**注入的假端点表 + 假试开函数**交回结论，于是「服务真把
 # 探测结果落进快照两路」这件事照样验得到，而一个音频流都不会被打开。
 # `.work` 下那两个侦察脚本（`_diag_devices.py` / `_diag_waveform.py`）是这条约束之前写的，
-# 已经删掉；任务书 §6 的命令 ② 因此作废（见 `phase1/report.md` 第 3 条）。
+# 已经删掉；设计口径 §6 的命令 ② 因此作废（见实测记录第 3 条）。
 
 
 def _install_fake_probe(monkeypatch: pytest.MonkeyPatch, fake: FakeSources) -> None:

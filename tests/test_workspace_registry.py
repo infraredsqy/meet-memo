@@ -1,5 +1,5 @@
 """`tests/test_workspace_registry.py` —— 工作区注册表与两只动作/两只读端点
-（工作台收编节点 e2f6166b：spec 的完成判定逐条落在这里）。
+（工作台收编节点：spec 的完成判定逐条落在这里）。
 
 覆盖：
 
@@ -107,7 +107,7 @@ def test_recent_reads_only_from_registry(registry: WorkspaceRegistry, tmp_path: 
 
 
 def test_ordered_most_recent_first(registry: WorkspaceRegistry, tmp_path: Path):
-    """清单次序 = 「最近在用」倒序（7058f2e1）：登记先后不作数，最近打开的排最前。
+    """清单次序 = 「最近在用」倒序：登记先后不作数，最近打开的排最前。
 
     `ordered()` 与 `recent()` 同一条判据链：倒序头一条就是最近那一条；切回最早
     登记的那一场，它翻到最前、其余相对次序不动。
@@ -118,7 +118,7 @@ def test_ordered_most_recent_first(registry: WorkspaceRegistry, tmp_path: Path):
     registry.open(jia, now="2026-09-21T21:00:01+08:00")
     registry.open(yi, now="2026-09-21T21:00:02+08:00")
     registry.open(bing, now="2026-09-21T21:00:03+08:00")
-    # 不是登记先后（甲乙丙）：最近在用倒序是 丙、乙、甲
+    # 不是登记先后（甲乙丙）：最近在用倒序是丙、乙、甲
     assert [e["dir"] for e in registry.ordered()] == [str(bing), str(yi), str(jia)]
     # 切回甲：甲翻到最前，丙其次、乙最后
     registry.open(jia, now="2026-09-21T21:00:04+08:00")
@@ -376,7 +376,7 @@ def test_api_dirs_browses_from_home(api, tmp_path: Path):
 
 
 def test_api_dirs_files_param_lists_files_only_when_asked(api, tmp_path: Path):
-    """`?files=1`（资料界面的选择器文件模式，160d1a78）：应答体多一个 `files` 键。
+    """`?files=1`（资料界面的选择器文件模式）：应答体多一个 `files` 键。
 
     不带这个参数时**没有**这个键——挑录音落点的老路径旧应答体一个字节不动；
     带上时这一层的普通文件每项 `{name, dir, size_bytes}`，与 `dirs` 分开两列
@@ -488,7 +488,7 @@ def test_start_notes_registry(api, tmp_path: Path):
 
 
 def test_api_sessions_list_most_recent_first(api, tmp_path, monkeypatch):
-    """spec 完成判定（7058f2e1）：连登记三场（甲、乙、丙），再把选区切回甲一次；
+    """spec 完成判定：连登记三场（甲、乙、丙），再把选区切回甲一次；
     清单应答里甲在最前、丙其次、乙最后——连读两次，次序一致。
 
     时钟钉住（秒精度下连着几次登记可能落进同一秒，并列会掉目录字典序兜底），
@@ -526,7 +526,7 @@ def test_api_sessions_list_most_recent_first(api, tmp_path, monkeypatch):
 
 
 def test_api_sessions_same_second_reads_stable_order(api, tmp_path, monkeypatch):
-    """同一秒登记的两条（7058f2e1）：连读两次给出同一次序——兜底链钉死，不随刷新变样。"""
+    """同一秒登记的两条：连读两次给出同一次序——兜底链钉死，不随刷新变样。"""
     from meeting.service.runtime_catalog import workspace as catalog_workspace
 
     monkeypatch.setattr(

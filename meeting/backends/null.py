@@ -1,12 +1,12 @@
-"""`null` 替身（phase1 §3.10，方案 §7.4 的一半）。
+"""`null` 替身（设计口径，设计口径 §7.4 的一半）。
 
 **显式配置时的采集替身，保证服务不假装能录**：
   - 只有把 `capture.backend` 配成 `null`（或解析失败回退）才会解析到这里；
     默认取值 `auto` 解析到真采集后端（`meeting.backends.capture:CaptureBackend`）。
     替身这一档下服务照常起来、界面照常发，`开始录音` 给出「采集后端未接入」
     的明确说明 —— 不假装能录。
-  - 本文件**不许**为了测试方便长出 `dev.py` 的合成逻辑（合成电平与故障注入归 phase2 的
-    `backends/dev.py`；`capture.backend = dev` 在 phase1 走「导入失败 → 回退 null + warning」）。
+  - 本文件**不许**为了测试方便长出 `dev.py` 的合成逻辑（合成电平与故障注入归设计的
+    `backends/dev.py`；`capture.backend = dev` 在设计里走「导入失败 → 回退 null + warning」）。
 """
 
 from __future__ import annotations

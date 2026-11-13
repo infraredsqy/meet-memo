@@ -2,13 +2,13 @@ import { z } from 'zod';
 import { isoStringSchema, pathStringSchema } from './snapshot';
 
 /**
- * 会议资料的四条端点（`docs/contract.md` 4.12，资料节点 285bf58c）。
+ * 会议资料的四条端点（`docs/contract.md` 4.12，资料节点）。
  *
  * - `GET /api/sessions/{id}/materials`：**目录就是清单**（没有 JSON 记录），每条三格
  *   ——名字、大小、贴上时刻（= 文件修改时间）；`meeting_materials/` 还不在时 `items`
  *   是空数组。任何状态下都 200（寻址失败 404）；
  * - `POST /api/sessions/{id}/materials?name=`：上传成功体 = 通用信封 + `material`
- *   三格；`?from=` 那一档（选择器文件模式的盘上拷入，160d1a78）成功体同形状；
+ *   三格；`?from=` 那一档（选择器文件模式的盘上拷入）成功体同形状；
  * - `DELETE /api/sessions/{id}/materials/{name}`：删除成功体 = 通用信封 + `material`
  *   一格（名字）。
  *

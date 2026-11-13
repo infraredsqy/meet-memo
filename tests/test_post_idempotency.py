@@ -1,6 +1,6 @@
-"""`meeting post` 的**幂等闸**（`65dd3e4c` phase2）。
+"""`meeting post` 的**幂等闸**（设计）。
 
-要盯住的六条（对应任务书「完成判定」与「验证口径」）：
+要盯住的六条（对应设计口径「完成判定」与「验证口径」）：
 
   1. **同一场连跑三遍**：第一遍引擎与启动器都动过，第二、三遍**两条计数一个都不涨**、
      退出码 `EXIT_OK`，PCM 的 sha256 三遍相同、MP3 的 `mtime` 不被刷新；
@@ -64,7 +64,7 @@ from meeting.cli import (
 )
 from meeting.post_run import run_post
 
-#: 慢档标记（`68927c27` 收尾轮）：`meeting post` 是收尾功能，整文件归收尾验收。
+#: 慢档标记（收尾轮）：`meeting post` 是收尾功能，整文件归收尾验收。
 pytestmark = pytest.mark.slow
 
 #: 离线那一层的状态文件名（按产物契约取，不重写一遍字面量）
@@ -553,7 +553,7 @@ def test_a_running_minutes_layer_rejects_the_run(
 def test_an_interrupted_offline_layer_reruns_from_scratch_without_force(
     tmp_path: Path,
 ) -> None:
-    """被打断的那一场（b1c6a58e）：不带 `--force` 也放行，离线段**从头再跑**。
+    """被打断的那一场：不带 `--force` 也放行，离线段**从头再跑**。
 
     打断落的是终态 `interrupted`：幂等闸只拦 `running`（interrupted 天然放行），
     「已完成」判据只认 `done`（interrupted 照样整段重跑）—— spec 的完成判定
@@ -972,7 +972,7 @@ def test_a_failed_archive_is_not_swallowed_by_the_no_pending_work_exit(
 ) -> None:
     """两层都 `done`、转码失败：退出码走失败档，且**不许**说「音频已归档」。
 
-    「这一趟没有待办」的前置是「音频已归档」（任务书「关键决定 4」）：归档这一层有一路
+    「这一趟没有待办」的前置是「音频已归档」（设计口径「关键决定 4」）：归档这一层有一路
     转不动时，那一档不许早退、结论不许写成 `EXIT_OK`，终端上也不许出现与现场不符的
     「音频已归档」。
     """

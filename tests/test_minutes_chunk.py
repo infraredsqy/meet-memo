@@ -256,7 +256,7 @@ def test_chunk_session_writes_under_working_per_source_and_kind(tmp_path: Path) 
 
 
 def test_chunk_session_accepts_the_inputs_json_shape(tmp_path: Path) -> None:
-    """`inputs.json` 里那种逐条映射也收（phase2 直接把自己写下的清单交进来）。"""
+    """`inputs.json` 里那种逐条映射也收（设计直接把自己写下的清单交进来）。"""
     session = tmp_path / "250919"
     _write_session(session, live=True, offline=True)
     payload = {
@@ -397,7 +397,7 @@ def test_main_answers_a_missing_session_dir(tmp_path: Path, capsys: pytest.Captu
 def test_minutes_package_never_touches_the_config_chain() -> None:
     """`meeting.minutes` 的源码里不 import 配置链（后端子命令自己站着）。
 
-    这条是**文字检查**（不 import 任何东西）：phase2 的 runner 才需要配置，文字机器这一层
+    这条是**文字检查**（不 import 任何东西）：设计的 runner 才需要配置，文字机器这一层
     不该为了几个默认值把家目录、日志、输出根那条链拉进来。
     """
     minutes_dir = Path(__file__).resolve().parents[1] / "meeting" / "minutes"

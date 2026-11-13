@@ -38,7 +38,7 @@
 
 内核是一批可注入、可独立调用的函数与类：**不注册路由、不碰快照、不起线程、不写文件**。
 服务接线（转写行的 sink 喂进缓冲、`summarize` 动作、`GET /api/summaries` 记录端点）
-归 phase2；界面归 phase3。
+归设计；界面归设计。
 """
 
 from __future__ import annotations

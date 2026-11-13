@@ -29,7 +29,7 @@ from tests.test_contract_fixtures._common import (
     contract_regen,
 )
 
-#: 慢档标记（68927c27 收尾轮）：真服务/真样本采集的收尾验收，不进每次迭代圈。
+#: 慢档标记（收尾轮）：真服务/真样本采集的收尾验收，不进每次迭代圈。
 pytestmark = pytest.mark.slow
 
 # ---------------------------------------------------------------------------

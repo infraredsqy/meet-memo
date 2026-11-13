@@ -114,7 +114,7 @@ async function mountRail(): Promise<TestRenderer.ReactTestRenderer> {
         onReload: () => undefined,
         onFailure: () => undefined,
       }),
-    );
+);
   });
   mounted = renderer;
   return renderer;

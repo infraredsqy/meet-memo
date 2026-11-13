@@ -73,10 +73,10 @@ def test_parse_transcript_reads_multiple_segments_and_label_switches() -> None:
 
 def test_parse_transcript_keeps_spaces_inside_the_body() -> None:
     """正文里的空格与英文原样留下，只有首尾空白被裁掉。"""
-    segments = parse_transcript("[1.0][S03]  hello world, 这里 有 空格  [2.5]")
+    segments = parse_transcript("[1.0][S03]  hello world, 这里有空格 [2.5]")
 
     assert len(segments) == 1
-    assert segments[0].text == "hello world, 这里 有 空格"
+    assert segments[0].text == "hello world, 这里有空格"
     assert segments[0].speaker == "S03"
 
 
@@ -587,7 +587,7 @@ def test_load_models_refuses_to_import_while_interpreter_is_finalizing(
 
 
 # ---------------------------------------------------------------------------
-# release_engine（b1c6a58e 的 d6）：丢引用 + 请 torch 把缓存还给系统
+# release_engine（的 d6）：丢引用 + 请 torch 把缓存还给系统
 # ---------------------------------------------------------------------------
 
 

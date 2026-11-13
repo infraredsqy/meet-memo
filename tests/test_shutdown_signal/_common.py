@@ -24,7 +24,7 @@ from tests._service import post_action, read_session_json
 # 本文件的具名常量（§3.8 末「测试侧常量」那张表；用例里不留裸秒数）
 #
 # **取值收口的授权说明（第七轮审查 m3，措辞在下游文件里一字不改地重复）**：
-# 「以上取值由指挥者授权收口（原契约表的值见 phase3.md §3.8 末表；红线：单条用例 ≤5s）」
+# 「以上取值由指挥者授权收口（原契约表的值见设计.md §3.8 末表；红线：单条用例 ≤5s）」
 # —— 本文件里被这一条覆盖的常量是 `SHUTDOWN_BLOCKING_STEP_SECONDS`、
 # `SIGBREAK_STATE_POLL_INTERVAL_SECONDS`、`SIGBREAK_TERMINAL_POLL_INTERVAL_SECONDS`
 # 与 `E2E_CASE_WALL_CLOCK_LIMIT_SECONDS`；
@@ -113,7 +113,7 @@ PROCESS_EXIT_TIMEOUT_SECONDS = 30
 #: 于是它每一趟都替我们守着一道活的判据。
 E2E_CASE_WALL_CLOCK_LIMIT_SECONDS = 5.0
 
-#: 服务级 log 里两行必断的字面（phase1 冻结，一处都不许改字面）
+#: 服务级 log 里两行必断的字面（设计冻结，一处都不许改字面）
 SELF_CHECK_LINE = "信号接管自检通过：SIGINT 与 SIGBREAK 指向本服务的处理函数"
 SIGBREAK_LINE = "收到 SIGBREAK，进入关停"
 SIGINT_LINE = "收到 SIGINT，进入关停"

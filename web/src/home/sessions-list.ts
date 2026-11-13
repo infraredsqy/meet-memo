@@ -30,5 +30,5 @@ export function loadSessionList(io: {
       io.onFail?.(error);
       return null;
     },
-  );
+);
 }

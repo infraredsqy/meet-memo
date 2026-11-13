@@ -1,6 +1,6 @@
-"""`meeting post` 真入口与「跑会后一套」那段编排（`65dd3e4c` phase1）。
+"""`meeting post` 真入口与「跑会后一套」那段编排（设计）。
 
-要盯住的五条（对应任务书「验证口径」那一节）：
+要盯住的五条（对应设计口径「验证口径」那一节）：
 
   1. **参数面**：不给位置参数 → 用法说明 + `EXIT_REJECTED`；指到不存在的目录 →
      原因里带上那条路径 + `EXIT_REJECTED`；`--force` 被认下（不报用法错误）；
@@ -68,7 +68,7 @@ from meeting.post_run import (
     sync_archive,
 )
 
-#: 慢档标记（`68927c27` 收尾轮）：`meeting post` 是收尾功能，整文件归收尾验收。
+#: 慢档标记（收尾轮）：`meeting post` 是收尾功能，整文件归收尾验收。
 pytestmark = pytest.mark.slow
 
 #: 假启动器那一档的秒数（假的纪要钩子不起任何东西）
@@ -901,7 +901,7 @@ def test_the_callers_ledger_keeps_a_partial_run_as_it_is(
 def test_the_callers_ledger_keeps_an_interrupted_run_as_it_is(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """盘上那一版是 `interrupted`（人停在块边界）时，补记录照它那一档留着（b1c6a58e）。
+    """盘上那一版是 `interrupted`（人停在块边界）时，补记录照它那一档留着。
 
     打断之后编排函数再接住一个异常（收尾的最后一口气），不许把「人停的」盖成
     「这一趟失败」—— 补记录判据把 `interrupted` 算进已落定的终态。

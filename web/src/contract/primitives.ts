@@ -41,11 +41,11 @@ export const TOP_STATES = ['idle', 'recording', 'alert', 'ended'] as const;
  * 十九个动作名，一个不多一个不少（`docs/contract.md` 4.3）。
  *
  * **次序就是服务回的次序**：`known` 数组（未知动作名那一档的 `detail`）逐个报的就是这一串，
- * 末尾那几个依次是：`workspace_open` / `workspace_remove`（工作台收编节点 e2f6166b，正文 4.8）、
- * `post_offline` / `post_minutes` / `post_stop`（会后两个按钮与停掉那一趟，R26 / R28，b1c6a58e）、
+ * 末尾那几个依次是：`workspace_open` / `workspace_remove`（工作台收编节点，正文 4.8）、
+ * `post_offline` / `post_minutes` / `post_stop`（会后两个按钮与停掉那一趟，R26 / R28）、
  * `transcode_run` / `transcode_pause` / `transcode_resume`（转码独立工序的补跑 / 暂停 / 继续，
  * 转码搬出收尾那一棒）、`pause` / `resume` / `set_source`
- * （暂停与会中开关某一路，`10770b41`）、`speaker_rename`（说话人改名，人名节点 `91b6752e`，正文 4.11）。
+ * （暂停与会中开关某一路）、`speaker_rename`（说话人改名，人名节点，正文 4.11）。
  */
 export const ACTION_NAMES = [
   'start',

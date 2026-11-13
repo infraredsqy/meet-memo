@@ -16,7 +16,7 @@ import {
 
 /**
  * 设置抽屉（`docs/ui-design.md` §7.10 的 `drawer` / `drawer--open` / `scrim`；
- * R32：一个设置按钮 → 网页内小窗 → 写进 config，节点 `311f84f5`）。
+ * R32：一个设置按钮 → 网页内小窗 → 写进 config，节点）。
  *
  * **抽屉里只有五项**（`DRAWER_ROW_IDS`，设计意图第 15 条「放」的那一半）：换设备
  * （两路各一个下拉，选完重新探测）、告警提示音、服务器心跳频率（1–60 秒）、快速总结
@@ -76,7 +76,7 @@ function Field({
       {hint !== undefined && <span className="field__hint">{hint}</span>}
       {error != null && error !== '' && <span className="field__error">{error}</span>}
     </div>
-  );
+);
 }
 
 export function SettingsDrawer({
@@ -106,7 +106,7 @@ export function SettingsDrawer({
           });
         }
       },
-    );
+);
     return () => {
       alive = false;
     };
@@ -115,7 +115,7 @@ export function SettingsDrawer({
   /** 心跳那一格的本地输入：合法值在 blur / Enter 那一刻落盘，越界值当场拒绝。 */
   const [heartbeatText, setHeartbeatText] = useState(() =>
     String(settings.heartbeat_interval_seconds),
-  );
+);
   const [heartbeatError, setHeartbeatError] = useState<string | null>(null);
   /** 用户改到一半的输入不动它；没在改的那一份跟着快照走（服务是唯一来源）。 */
   const heartbeatDirty = useRef(false);
@@ -143,7 +143,7 @@ export function SettingsDrawer({
   const loopbackOptions = deviceOptionsOf(
     devices.status === 'ready' ? devices.data : null,
     'loopback',
-  );
+);
 
   /** 快照里配的设备名（没配或形状不合就按空值 = 「按默认策略挑」读）。 */
   const configuredDevice = (key: 'mic' | 'loopback'): string => {
@@ -196,7 +196,7 @@ export function SettingsDrawer({
                 <option key={option.value} value={option.value}>
                   {option.label}
                 </option>
-              ))}
+))}
           </select>
         </Field>
         <Field
@@ -219,12 +219,12 @@ export function SettingsDrawer({
                 <option key={option.value} value={option.value}>
                   {option.label}
                 </option>
-              ))}
+))}
           </select>
         </Field>
         {devices.status === 'error' && (
           <p className="field__error">{devices.text}</p>
-        )}
+)}
 
         {/* 二、告警提示音：与主视图同一个设置 */}
         <Field label="告警提示音" hint="采不到的时候响一声（跨场次记住）。">
@@ -292,7 +292,7 @@ export function SettingsDrawer({
               >
                 {item.label}
               </button>
-            ))}
+))}
           </div>
         </Field>
 
@@ -314,10 +314,10 @@ export function SettingsDrawer({
               <option key={option.value} value={option.value}>
                 {option.label}
               </option>
-            ))}
+))}
           </select>
         </Field>
       </aside>
     </>
-  );
+);
 }

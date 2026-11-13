@@ -74,14 +74,14 @@ def test_parse_bullets_digs_out_a_multiline_object_wrapped_in_prose() -> None:
         "}\n"
         "```\n"
         "希望有用。"
-    )
+)
 
     assert parse_bullets(noisy) == ["【讲什么】跨行的第一条", "【讲到哪】跨行的第二条"]
 
 
 def test_parse_bullets_strips_each_element() -> None:
     """每个元素各自 `strip()`（照 V1 的 `[b.strip() for b in bullets]`）。"""
-    assert parse_bullets('{"bullets": ["  收尾的空格  ", "\\t制表符\\t"]}') == [
+    assert parse_bullets('{"bullets": ["  收尾的空格 ", "\\t制表符\\t"]}') == [
         "收尾的空格",
         "制表符",
     ]
@@ -125,7 +125,7 @@ def test_split_sections_sorts_the_three_labels() -> None:
             "【讲到哪】第三项的负责人还没定",
             "【丢掉什么】21:33 远端丢掉一句",
         ]
-    )
+)
 
     assert unlabeled == 0
     assert sections["what"] == ["在过排期"]
@@ -135,7 +135,7 @@ def test_split_sections_sorts_the_three_labels() -> None:
 
 def test_split_sections_tolerates_leading_whitespace() -> None:
     """标签是前缀，前后允许空白（模型偶尔会缩进）。"""
-    sections, unlabeled = split_sections(["  【讲什么】   缩进过的一句  "])
+    sections, unlabeled = split_sections(["  【讲什么】   缩进过的一句 "])
 
     assert unlabeled == 0
     assert sections["what"] == ["缩进过的一句"]

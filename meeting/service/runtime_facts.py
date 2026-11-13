@@ -1,7 +1,7 @@
-"""``ServiceRuntime`` 的事实摄取 mixin：心跳 / 电平 / 转写 / 告警 / 捕获缺口。
+"""ServiceRuntime 的事实摄取 mixin：心跳 / 电平 / 转写 / 告警 / 捕获缺口。
 
-模块级两个节拍常量与第 1298-1829 行的方法体自 ``meeting/service/runtime.py`` 一字不改复制；
-本文件自写内容只有模块 docstring、import 与 ``_log`` 一行、类声明行。
+模块级两个节拍常量与第 1298-1829 行的方法体自 meeting/service/runtime.py 一字不改复制；
+本文件自写内容只有模块 docstring、import 与 _log 一行、类声明行。
 """
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ class RuntimeFactsMixin:
     def recording_alive(self) -> bool | None:
         """`recording_alive`：`recording` / `alert` 态按帧时钟算；其余态为 `null`。
 
-        「还没有第一帧」单独一档（de899128，开场误报的修法）：首帧比 `start` 晚约 0.5s 才来，
+        「还没有第一帧」单独一档（开场误报的修法）：首帧比 `start` 晚约 0.5s 才来，
         旧口径把这段算成 `False`，10s 心跳落进竞态窗口就误弹「采集已停止」（约 1/6）。现在
         自本场 start 起算同一只帧时钟窗口（`max(2.0s, 3 × frame_interval)`）：窗口内没首帧
         → `None`（未知）；超窗仍无首帧 → `False`——「别把未知做成永不报」。`session_start_mono`
@@ -215,7 +215,7 @@ class RuntimeFactsMixin:
     async def _transcriber_health_loop(self) -> None:
         """转写健康度节拍：每 0.5 秒把 `transcript` 三格刷一遍，健康度迁移就 `commit()`。
 
-        为什么要有这一条（`phase2/task.md` §7「一行到来时与 worker 停摆时」）：刷新原先只挂
+        为什么要有这一条（设计口径 §7「一行到来时与 worker 停摆时」）：刷新原先只挂
         「一行到来」，而 worker 停摆恰恰不再有行到来——真「转写挂了」时快照会一直停在
         `normal`（`buffered_lines` 同理，停摆时积压只增不减）。起拍由 `start_session()` 起
         （空闲档初值与 `stopped -> normal` 那一跳由 `startup()` 的 ⑤b 与 `start_session()`
@@ -351,7 +351,7 @@ class RuntimeFactsMixin:
     def _apply_transcript_line(self, line: Any) -> None:
         """一行转写：进 `transcript` 字段并推 `transcript` 通道（不参与状态迁移）。
 
-        三格（`9e5db89c` phase2 §7）在一行到来时就地刷新（判定权收在
+        三格（设计口径）在一行到来时就地刷新（判定权收在
         `_refresh_transcript_snapshot()` 一处）；worker 停摆没有行可等，另有健康度节拍
         与 `startup()` ⑤b 两条不依赖行的刷新路径。读路径不刷（纯读）。提交资格只有
         `health` 一格（契约第 3.3 节：`transcript` 通道不参与状态迁移）——一行到来、
@@ -390,7 +390,7 @@ class RuntimeFactsMixin:
         `buffered_lines` 与 `failed_segments` 照样写进快照但不投票——「积压 5 段变 4 段」
         不是状态迁移；`duration_seconds` 的刷新同理（0.5 秒节拍每拍都发生）。
 
-        四个调用点（`phase2/task.md` §7「一行到来时与 worker 停摆时」）：`startup()` ⑤b
+        四个调用点（设计口径 §7「一行到来时与 worker 停摆时」）：`startup()` ⑤b
         取初值（否则空闲态要等节拍第一拍才翻成 `stopped`，带时序依赖，复审 m3）；
         `start_session()`（`stopped -> normal` 那一跳跟着本场自己的提交走）；
         `_apply_transcript_line()`（顺风路径的迁移不等下一拍）；`_transcriber_health_loop()`

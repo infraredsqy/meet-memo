@@ -1,4 +1,4 @@
-"""`tests/test_logging_setup.py` —— 日志（phase1 §5 第 4 / 5 / 9 条 / §4.1 文件清单第 15 行）。
+"""`tests/test_logging_setup.py` —— 日志（设计口径第 4 / 5 / 9 条 / §4.1 文件清单第 15 行）。
 
 覆盖：
   - 服务级 log 路径（家目录重定向到临时目录）与格式串；

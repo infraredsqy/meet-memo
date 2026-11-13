@@ -1,4 +1,4 @@
-"""`tests/test_port_policy.py` —— 端口策略、命令面与退出码（phase1 §5 第 1 / 2 / 6 / 7 条）。
+"""`tests/test_port_policy.py` —— 端口策略、命令面与退出码（设计口径第 1 / 2 / 6 / 7 条）。
 
 覆盖：
   - 默认 8765；`web.port` / `MEETING_PORT` 能改；`0` 让系统挑并打印 / 落 log 选中端口；
@@ -372,7 +372,7 @@ def test_exit_code_constants_match_the_frozen_table():
 def test_idle_ctrl_break_event_exits_ok(tmp_path):
     """空闲态发 `CTRL_BREAK_EVENT` → `EXIT_OK` + 两行 log（信号处理函数真的生效的证据）。
 
-    **与 phase3 的信号语义同源**（§4 落点表 `tests/test_port_policy.py` 行点名的同源替换，
+    **与设计的信号语义同源**（§4 落点表 `tests/test_port_policy.py` 行点名的同源替换，
     审查问题 M6）：子进程与信号辅助改用 `tests/_service.py` 的 `ServiceProcess`
     （`send_interrupt()` 发的同样是 `CTRL_BREAK_EVENT`，退出码走 `wait()` /
     `poll()`）—— 此前这里走的是 `tests/_helpers.py` 的 `spawn_service()` / `send_break()`，
@@ -380,8 +380,8 @@ def test_idle_ctrl_break_event_exits_ok(tmp_path):
     下面的断言与语义一个字没动（同一条退出码常量、同一行 log、同一条「输出根不凭空多目录」
     的自检）。
 
-    **授权来源（第七轮审查 m4）**：phase3 §4 落点表把这一处动作明写成「同源替换：只同步
-    断言、不改 phase1 的契约取值」；端口策略的两种占用文案、探针 1 秒超时、其余退出码档位
+    **授权来源（第七轮审查 m4）**：设计口径落点表把这一处动作明写成「同源替换：只同步
+    断言、不改设计的契约取值」；端口策略的两种占用文案、探针 1 秒超时、其余退出码档位
     取值与 `getsignal(SIGINT) is getsignal(SIGBREAK)` 那一条都不动。
     """
     home = tmp_path / "home"

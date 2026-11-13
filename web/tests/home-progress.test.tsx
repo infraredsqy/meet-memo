@@ -11,7 +11,7 @@ import {
 } from '../src/api/sessions';
 import type { OfflineSourceProgress, SessionRow, SessionStatus } from '../src/contract';
 
-/** 一格「没跑过」的纪要读数（`minutes` 格的空档形状，38817ecf）。 */
+/** 一格「没跑过」的纪要读数（`minutes` 格的空档形状）。 */
 function minutesIdle(): SessionStatus['minutes'] {
   return { state: 'idle', started_at: null, finished_at: null, error: null };
 }
@@ -58,7 +58,7 @@ vi.mock('../src/api/sessions', async (importOriginal) => {
     fetchSessions: vi.fn(),
     browseDirs: vi.fn(),
     fetchSessionStatus,
-    // 稿子那一跳（38817ecf）：本文件的用例核的是进度区与逐块行，替身给空应答、不摸真 fetch。
+    // 稿子那一跳：本文件的用例核的是进度区与逐块行，替身给空应答、不摸真 fetch。
     fetchSessionTranscripts: vi.fn(async () => ({ dir: '', kinds: [] })),
     // 每只轮询器都是新造的：替身的 start/stop 登记互不串场（用例各拿各的那只）。
     createSessionStatusPoller: vi.fn((registered: unknown) => {
@@ -76,7 +76,7 @@ vi.mock('../src/api/sessions', async (importOriginal) => {
             if (onTick !== null) onTick(result);
             return result;
           },
-        );
+);
       return {
         setIntervalFromSnapshot: vi.fn(),
         intervalSeconds: vi.fn(() => 10),
@@ -93,7 +93,7 @@ const fetchSessionsMock = vi.mocked(fetchSessions);
 const fetchSessionStatusMock = vi.mocked(fetchSessionStatus);
 const createPollerMock = vi.mocked(createSessionStatusPoller);
 
-// 会议资料区（160d1a78）：详情里那块面板挂载即取清单 —— 替身给空清单，这条文件不连网。
+// 会议资料区：详情里那块面板挂载即取清单 —— 替身给空清单，这条文件不连网。
 vi.mock('../src/api/materials', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/api/materials')>();
   return {
@@ -233,7 +233,7 @@ describe('会后进度区：换值渲染不塌', () => {
           road({ source: 'loopback' }),
         ],
       }),
-    );
+);
     const renderer = await mountHome();
     await feed(); // 用例自己再喂一跳（同一份替身读数）
 
@@ -261,7 +261,7 @@ describe('会后进度区：换值渲染不塌', () => {
           road({ source: 'loopback' }),
         ],
       }),
-    );
+);
     const renderer = await mountHome();
 
     fetchSessionStatusMock.mockImplementation(async () =>
@@ -276,7 +276,7 @@ describe('会后进度区：换值渲染不塌', () => {
             counts: { transcribed: 2, silent: 0, failed: 0, unjudged: 0 } }),
         ],
       }),
-    );
+);
     await feed();
 
     expect(textsOf(renderer, 'wsprog__phase').join(' ')).toContain('正在运行：本地 第 10/10 块');
@@ -300,14 +300,14 @@ describe('会后进度区：换值渲染不塌', () => {
           road({ source: 'loopback' }),
         ],
       }),
-    );
+);
     const renderer = await mountHome();
 
     expect(textsOf(renderer, 'wsprog__phase').join(' ')).toContain('磁盘记录为运行中，当前没有进程在运行');
     // 阶段格的形状通道画的是红叉（出事了那一档的形状），转圈留给真在跑的那一档
     const phase = renderer.root.find(
       (node) => `${node.props.className ?? ''}`.split(' ').includes('wsprog__phase'),
-    );
+);
     const marks = phase.findAll((node) => `${node.props.className ?? ''}`.startsWith('glyph'));
     expect(marks.map((node) => node.props.className)).toContain('glyph glyph--cross');
   });
@@ -321,7 +321,7 @@ describe('会后进度区：换值渲染不塌', () => {
         (node) =>
           node.type === 'button' &&
           `${node.props.className ?? ''}`.split(' ').includes('wsprog__toggle'),
-      );
+);
     expect(renderer.root.findAll((node) => node.props.className === 'wsprog__body')).toHaveLength(1);
     await act(async () => {
       toggle().props.onClick();
@@ -346,7 +346,7 @@ describe('行四档与全局一格：可识别、不塌', () => {
         row({ dir: 'C:\\会议\\没了', session_id: '没了', dir_exists: false }),
       ],
       recent: DIR,
-      // post_jobs 在飞的那一趟不再进行状态（d61829f1）：只喂忙闲格与进度区
+      // post_jobs 在飞的那一趟不再进行状态：只喂忙闲格与进度区
       post_jobs: [{ kind: 'offline', dir: 'C:\\会议\\结束', started_at: '2026-09-21T22:10:00+08:00' }],
     });
     fetchSessionStatusMock.mockImplementation(async (dir: string) => ({
@@ -358,7 +358,7 @@ describe('行四档与全局一格：可识别、不塌', () => {
 
     const cells = renderer.root.findAll(
       (node) => `${node.props.className ?? ''}`.startsWith('wslist__state wslist__state--'),
-    );
+);
     const joined = cells
       .map((node) => {
         const parts: string[] = [];
@@ -383,7 +383,7 @@ describe('行四档与全局一格：可识别、不塌', () => {
       (node.children as unknown[])
         .filter((child) => child !== null && typeof child === 'object')
         .map((child) => String((child as TestRenderer.ReactTestInstance).props.className)),
-    );
+);
     expect(marks[0]).toContain('glyph glyph--idle');
     expect(marks[1]).toContain('glyph glyph--rec');
     expect(marks[2]).toContain('glyph glyph--idle');
@@ -424,7 +424,7 @@ describe('行四档与全局一格：可识别、不塌', () => {
     fetchSessionsMock.mockResolvedValue({ sessions: [row()], recent: DIR, post_jobs: [] });
     fetchSessionStatusMock.mockImplementation(async () =>
       status({ state: 'running', in_process: true }),
-    );
+);
     await mountHome();
     expect(pollerOf().start).toHaveBeenCalledWith(DIR);
 
@@ -458,17 +458,17 @@ describe('联结档收敛（review-1 C1）：跑完那一跳之后界面要跟�
     });
     fetchSessionStatusMock.mockImplementation(async () =>
       status({ state: 'running', in_process: true }),
-    );
+);
     const renderer = await mountHome();
     expect(pollerOf().start).toHaveBeenCalledWith(DIR);
-    // 行不再联结 post_jobs（d61829f1）： ended 的行恒读「录音结束」，忙闲另说
+    // 行不再联结 post_jobs： ended 的行恒读「录音结束」，忙闲另说
     expect(rowStatesOf(renderer)).toContain('录音结束');
     expect(gpuCellOf(renderer).props['data-busy']).toBe('true');
 
     // 跑完：读数翻终态、服务把 post_job 翻 null —— 这一次读数翻新要全跟上（旧行为全部卡死）
     fetchSessionStatusMock.mockImplementation(async () =>
       status({ state: 'done', in_process: false }),
-    );
+);
     fetchSessionsMock.mockResolvedValue({
       sessions: [row({ state: 'ended' })],
       recent: DIR,
@@ -530,7 +530,7 @@ describe('错误跳的分档（review-1 m1）：与轮询器「失败跳照交�
     fetchSessionsMock.mockResolvedValue({ sessions: [row()], recent: DIR, post_jobs: [] });
     fetchSessionStatusMock.mockImplementation(async () =>
       status({ state: 'running', in_process: true }),
-    );
+);
     const renderer = await mountHome();
     expect(pollerOf().start).toHaveBeenCalledWith(DIR);
     // watch effect 的清理在依赖变化时也会喊 stop（组件既有行为），这里数的是
@@ -539,11 +539,11 @@ describe('错误跳的分档（review-1 m1）：与轮询器「失败跳照交�
 
     fetchSessionStatusMock.mockRejectedValueOnce(
       new SessionStatusHttpError(404, 'session_unknown', '{}'),
-    );
+);
     await feed();
     expect(
       (pollerOf().stop as ReturnType<typeof vi.fn>).mock.calls.length,
-    ).toBe(stopsBefore + 1);
+).toBe(stopsBefore + 1);
     expect(textsOf(renderer, 'wsprog__row--bad').join(' ')).toContain('HTTP 404');
   });
 
@@ -551,24 +551,24 @@ describe('错误跳的分档（review-1 m1）：与轮询器「失败跳照交�
     fetchSessionsMock.mockResolvedValue({ sessions: [row()], recent: DIR, post_jobs: [] });
     fetchSessionStatusMock.mockImplementation(async () =>
       status({ state: 'running', in_process: true }),
-    );
+);
     const renderer = await mountHome();
     expect(pollerOf().start).toHaveBeenCalledWith(DIR);
     const stopsBefore = (pollerOf().stop as ReturnType<typeof vi.fn>).mock.calls.length;
 
     fetchSessionStatusMock.mockRejectedValueOnce(
       new SessionsUnavailableError('单场状态', new Error('服务没应答')),
-    );
+);
     await feed();
     expect(
       (pollerOf().stop as ReturnType<typeof vi.fn>).mock.calls.length,
-    ).toBe(stopsBefore);
+).toBe(stopsBefore);
     // 收起也看得见（错误行不进 progOpen 那一半）
     const toggle = renderer.root.find(
       (node) =>
         node.type === 'button' &&
         `${node.props.className ?? ''}`.split(' ').includes('wsprog__toggle'),
-    );
+);
     await act(async () => {
       toggle.props.onClick();
     });
@@ -579,7 +579,7 @@ describe('错误跳的分档（review-1 m1）：与轮询器「失败跳照交�
     expect(textsOf(renderer, 'wsprog__row--bad')).toHaveLength(0);
     expect(
       (pollerOf().stop as ReturnType<typeof vi.fn>).mock.calls.length,
-    ).toBe(stopsBefore);
+).toBe(stopsBefore);
   });
 });
 
@@ -607,7 +607,7 @@ describe('按钮起跑档（review-2 C1）：post_job 出现在选中行上之�
             counts: { transcribed: 8, silent: 2, failed: 0, unjudged: 0 } }),
         ],
       }),
-    );
+);
     const renderer = await mountHome();
     expect(pollerOf().start).not.toHaveBeenCalled();
     // 旧趟的逐块行在手（挂载那一跳把已处理的补成 observed 行）
@@ -632,7 +632,7 @@ describe('按钮起跑档（review-2 C1）：post_job 出现在选中行上之�
           road({ source: 'loopback' }),
         ],
       }),
-    );
+);
     await act(async () => {
       renderer.root
         .find((node) => node.type === 'button' && node.props.children === '生成会后精细稿')
@@ -662,7 +662,7 @@ describe('按钮起跑档（review-2 C1）：post_job 出现在选中行上之�
           road({ source: 'loopback' }),
         ],
       }),
-    );
+);
     await feed();
     expect(textsOf(renderer, 'wsprog__row').join(' ')).toContain('本地 第 1/10 块 · 成功');
 
@@ -679,7 +679,7 @@ describe('按钮起跑档（review-2 C1）：post_job 出现在选中行上之�
             counts: { transcribed: 10, silent: 0, failed: 0, unjudged: 0 } }),
         ],
       }),
-    );
+);
     fetchSessionsMock.mockResolvedValue({
       sessions: [row({ state: 'ended', has_offline: true })],
       recent: DIR,
@@ -714,7 +714,7 @@ describe('重跑一场的逐块行（review-2 m2）：记录重置那一跳整�
             counts: { transcribed: 8, silent: 2, failed: 0, unjudged: 0 } }),
         ],
       }),
-    );
+);
     const renderer = await mountHome();
     expect(textsOf(renderer, 'wsprog__row').join(' ')).toContain('本地 第 10/10 块 · 已处理');
 
@@ -730,7 +730,7 @@ describe('重跑一场的逐块行（review-2 m2）：记录重置那一跳整�
           road({ source: 'loopback' }),
         ],
       }),
-    );
+);
     await feed();
     // 旧行整段换掉（不是「第 11/10 块」接着旧记录编）；新记录还没跑完一块 → 空态那句
     const rowsAfterReset = textsOf(renderer, 'wsprog__row').join(' ');
@@ -750,7 +750,7 @@ describe('重跑一场的逐块行（review-2 m2）：记录重置那一跳整�
           road({ source: 'loopback' }),
         ],
       }),
-    );
+);
     await feed();
     expect(textsOf(renderer, 'wsprog__row').join(' ')).toContain('本地 第 1/10 块 · 成功');
   });
@@ -788,7 +788,7 @@ async function mountWithPostJumpFailing(
           counts: { transcribed: 8, silent: 2, failed: 0, unjudged: 0 } }),
       ],
     }),
-  );
+);
   const renderer = await mountHome();
   expect(pollerOf().start).not.toHaveBeenCalled();
   const ticksBefore = tickCalls();
@@ -823,7 +823,7 @@ describe('补跳遇瞬态失败的自愈（review-3 m1）：失败后最多一�
   it('补跳抛瞬态错（错误行如实画出）→ 走一拍心跳：tick 重问、start 恢复、在飞读数喂入、阶段行跟走', async () => {
     const { renderer, ticksBefore } = await mountWithPostJumpFailing(
       new SessionsUnavailableError('单场状态', new Error('服务没应答')),
-    );
+);
 
     // 失败那一跳：错误行在收起态也看得见，start 没被喊、tick 只有补跳那一跳
     expect(tickCalls()).toBe(ticksBefore + 1);
@@ -842,7 +842,7 @@ describe('补跳遇瞬态失败的自愈（review-3 m1）：失败后最多一�
           road({ source: 'loopback' }),
         ],
       }),
-    );
+);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10_000);
     });
@@ -868,7 +868,7 @@ describe('补跳遇瞬态失败的自愈（review-3 m1）：失败后最多一�
   it('404 档同场景：心跳照走（列表重取不停），重问不发生 —— 停表语义维持', async () => {
     const { renderer, ticksBefore } = await mountWithPostJumpFailing(
       new SessionStatusHttpError(404, 'session_unknown', '{}'),
-    );
+);
 
     // 失败那一跳：404 档停表（review-1 m1 语义），错误行如实画出
     expect(tickCalls()).toBe(ticksBefore + 1);

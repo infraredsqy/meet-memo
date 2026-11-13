@@ -1,7 +1,7 @@
-"""``RuntimeCatalogMixin`` 的「说话人改名」域分片：``speaker_rename`` 动作。
+"""RuntimeCatalogMixin 的「说话人改名」域分片：speaker_rename 动作。
 
-方法与方法间注释均自拆分前的 ``runtime_catalog.py`` 单文件 mixin 一字不改复制；
-本文件自写内容只有模块 docstring、import、``_log`` 一行与类声明行。
+方法与方法间注释均自拆分前的 runtime_catalog.py 单文件 mixin 一字不改复制；
+本文件自写内容只有模块 docstring、import、_log 一行与类声明行。
 """
 from __future__ import annotations
 

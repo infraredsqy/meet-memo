@@ -1,8 +1,8 @@
-"""跨文件共用的假件与工厂辅助（phase3 §3.8；**`pytest` 不收集本文件**）。
+"""跨文件共用的假件与工厂辅助（设计口径；**`pytest` 不收集本文件**）。
 
 定位与分工（写死，不留自由发挥的口子）：
 
-  - 本模块是 `tests/` 下**跨测试文件共用的假件与工厂辅助的唯一落点**，命名与 phase2 的
+  - 本模块是 `tests/` 下**跨测试文件共用的假件与工厂辅助的唯一落点**，命名与设计的
     `tests/_service.py` 同形；`tests/test_drain.py` 与 `tests/test_shutdown_signal.py` 都从这里
     取假件，**只 import、不各自定义、不各写一份**，也不把假件塞进 `tests/conftest.py`
     （`conftest.py` 只放 fixture）。
@@ -71,12 +71,12 @@ ANNOTATION_ENV = "MEETING_TEST_DRAIN_FAKES_ANNOTATION"
 #: 旋钮清单与它们的用处见下面那一段的注释（`BLOCK_SECONDS_ENV` / `FINALIZE_*` /
 #: `BACKLOG_DEPTH_ENV` / `SEGMENT_TIMEOUT_SECONDS_ENV` / `LAUNCH_*` 共七个）。
 #:
-#: 三个配置键（既有的键，本 Phase 不新增配置键）
+#: 三个配置键（既有的键，本项目不新增配置键）
 CONFIG_KEY_CAPTURE = "capture.backend"
 CONFIG_KEY_TRANSCRIBER = "transcriber.backend"
 CONFIG_KEY_POST = "post.hook"
 
-#: 五个假件的类名（与 `phase3.md` §3.8 的清单逐字一致）
+#: 五个假件的类名（与 `设计.md` §3.8 的清单逐字一致）
 FAKE_CLASS_NAMES: tuple[str, ...] = (
     "FakeCaptureBackend",
     "FakeTranscriberBackend",
@@ -191,7 +191,7 @@ _FAKE_MODULE_SOURCE = _FAKE_MODULE_HEADER + _class_source() + _FAKE_MODULE_FOOTE
 # ---------------------------------------------------------------------------
 # 旋钮常量、缺省值与读值助手（**本区段整体写给子进程那一份模块**，一处维护、两处使用）
 #
-# 为什么旋钮走环境变量而不是构造参数：`registry` 对后端**无参实例化**（`cls()`，phase1
+# 为什么旋钮走环境变量而不是构造参数：`registry` 对后端**无参实例化**（`cls()`，设计
 # 冻结的口径），假件的构造参数因此没法由配置键传进去。把「那一步睡多久 / 抛不抛错 / 报多大
 # 积压」经环境变量交给子进程里那份假件，于是用例侧那句话与实测一致。
 #
@@ -306,7 +306,7 @@ def _block_seconds_from_env() -> float:
 
 
 #: 模块级常量（`BlockingThreadPostHook` **每次调用现读环境变量**，不只认它；保留它是为了
-#: 与 phase3 早期写下的「`BLOCK_SECONDS`」这个名字对得上）
+#: 与设计早期写下的「`BLOCK_SECONDS`」这个名字对得上）
 BLOCK_SECONDS = _block_seconds_from_env()
 
 
@@ -969,7 +969,7 @@ def service_env_overrides(
 ) -> dict[str, str]:
     """拼一份子进程环境变量覆盖：家目录两项 + 假件标记那一项（+ 调用方给的）。
 
-    **不新增任何本服务的环境变量**：`MEETING_*` 五项与 `PYTHONPATH` 由 phase2 的夹具能力
+    **不新增任何本服务的环境变量**：`MEETING_*` 五项与 `PYTHONPATH` 由设计的夹具能力
     （`service_process(*, pythonpath=..., extra_env=...)`）与调用方给全；这里只补家目录两项与
     `MEETING_TEST_DRAIN_FAKES_ANNOTATION`（测试设施自己的变量，与假 webbrowser 那一类同形）。
     """
@@ -985,7 +985,7 @@ def service_env_overrides(
 def write_plugin_config(home: Path | str, plugin: FakePlugin) -> Path:
     """把假件的配置键写进 `<家目录>/.config/meeting/config.json`（**点号扁平键**）。
 
-    键名与形状照 phase2 冻结的口径：只有一层点号扁平键名，**嵌套形状不合法**。
+    键名与形状照设计冻结的口径：只有一层点号扁平键名，**嵌套形状不合法**。
     """
     from tests import _helpers as helpers
 
@@ -1004,13 +1004,13 @@ def json_dump(path: Path | str, data: dict[str, Any]) -> Path:
 # 「某一步越过预算」那一档的控速件：把子进程读的那只单调钟按标记前移
 #
 # 为什么需要它（写清，别读成绕过断言）：收尾预算的下限是 `DRAIN_BUDGET_MIN_SECONDS` = 30 秒、
-# 封顶 300 秒，公式与三个数都**硬编码、不开配置键**（phase3 §3.3）。于是「某一步越过预算 →
+# 封顶 300 秒，公式与三个数都**硬编码、不开配置键**（设计口径）。于是「某一步越过预算 →
 # 该步 `failed`」这条行为在真服务里不睡满 30 秒就造不出来，而用例的红线是「单条 ≤ 5 秒」。
 # 本文件因此给一条**只在用例显式开了旋钮时才生效**的控速件：
 #
 #   `FakeCaptureBackend.finalize()` 跑完之后（`FINALIZE_MARKER_ENV` 给了路径时）把偏移秒数
-#   写进那个文件 → 子进程里被注入的 `clockoffset` 模块（见 `write_clock_offset_shim()`）
-#   把 `meeting.service.runtime` 与拆分进各 mixin 模块（`runtime_facts` / `runtime_sessions` /
+# 写进那个文件 → 子进程里被注入的 `clockoffset` 模块（见 `write_clock_offset_shim()`）
+# 把 `meeting.service.runtime` 与拆分进各 mixin 模块（`runtime_facts` / `runtime_sessions` /
 #   `runtime_summary` / `runtime_drain`）的那几处 `time` 名字换成自己的替身 → 此后工作线程里的
 #   `_remaining_budget()` 读到的单调钟整体前移 → 那一条 deadline 真的过期。
 #

@@ -2,7 +2,7 @@ import type { SessionStatus, SpeakerIdentity } from '../contract';
 
 /**
  * 工作台详情那一侧「说话人名字」的纯逻辑（`docs/requirements.md` R10 第四条 / R30，
- * 节点 `91b6752e`）。
+ * 节点）。
  *
  * 入口一行（会后区里），点开一个小弹窗：一行一个身份（路标签 + 编号 + 现名/待确认），
  * 输入框 + 确认，动作回包即重问单场状态（当场生效）。这一层只做「这一行怎么读、

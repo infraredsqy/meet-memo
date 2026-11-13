@@ -121,13 +121,13 @@ def _note_sentence(source: str, kinds: Sequence[str]) -> str:
         return (
             f"> `{source}` 这一路的稿：{shape}。两份都在，**平级、不合并**，"
             "逐块对照那一步两份都要读。"
-        )
+)
     return (
         f"> `{source}` 这一路本次只有{shape_of(kinds[0])}。"
         f"{_MISSING_DRAFT_LABELS[kind]}不在这台机器上，"
         "逐块对照那一步没有第二条可对。附录里如实写明「这一路分不出个人」，"
         "不要为任何人名给出推断。"
-    )
+)
 
 
 class PromptTemplateError(ValueError):
@@ -223,7 +223,7 @@ def mode_note_text(mode: str, per_source: Sequence[tuple[str, str]]) -> str:
             return (
                 f"> 本次这两路两份都在（{where}）：{shape}。两份**平级、不合并**，"
                 "逐块对照那一步两份都要读。"
-            )
+)
         return "\n".join(_note_sentence(source, _kinds_of(kind)) for source, kind in per_source)
     # live_only / offline_only 两档逐字同构、只差缺席稿的名字（`_MISSING_DRAFT_LABELS`
     # 一处收敛）：四段模型可见文案逐字钉在 `tests/test_minutes_prompt.py`。
@@ -233,7 +233,7 @@ def mode_note_text(mode: str, per_source: Sequence[tuple[str, str]]) -> str:
         "逐块对照那一步没有第二条可对。附录里如实写明「这一路分不出个人」，"
         "不要为任何人名给出推断。"
         f"（这一档的两路：{where}。）"
-    )
+)
 
 
 def _kinds_of(kind: str) -> tuple[str, ...]:
@@ -292,7 +292,7 @@ def speaker_names_section(rows: Sequence[Mapping[str, object]]) -> str:
             "表里没有的编号照旧从上下文推断、标把握，猜不出的照旧列进「猜不出的」。"
             "两路各自的编号不合并成一行。",
         ]
-    )
+)
     return "\n".join(lines)
 
 
@@ -330,7 +330,7 @@ def build_inputs_text(listing: InputsListing) -> str:
         table.append(
             f"| {item.source} | {item.label} | {item.transcript} | {item.lines}"
             f" | {item.chunk_count} | {item.index} |"
-        )
+)
     lines.extend(table)
     lines.append("")
     for item in listing.inputs:
@@ -338,7 +338,7 @@ def build_inputs_text(listing: InputsListing) -> str:
             f"`{item.source}` 的{item.label}：{item.transcript}（{item.lines} 行，"
             f"{SPEAKER_SHAPE_NOTES[item.kind]}），切了 {item.chunk_count} 块，"
             f"块文件在 `{item.chunk_dir}/`，区间表 `{item.index}`。"
-        )
+)
     lines.append("")
     lines.extend(
         [
@@ -348,7 +348,7 @@ def build_inputs_text(listing: InputsListing) -> str:
             json.dumps(_listing_payload(listing), ensure_ascii=False, indent=2),
             "```",
         ]
-    )
+)
     return "\n".join(lines)
 
 
@@ -394,11 +394,11 @@ def extract_phase_body(template_text: str, template: object, *, token: str = "{{
     if begin < 0 or end < 0:
         raise PromptTemplateError(
             f"模板里找不到编排正文的标记（要有 {PHASE_BODY_BEGIN} 与 {PHASE_BODY_END}）：{template}"
-        )
+)
     if end <= begin:
         raise PromptTemplateError(
             f"模板里 {PHASE_BODY_BEGIN} 与 {PHASE_BODY_END} 的次序不对：{template}"
-        )
+)
     body = template_text[begin + len(PHASE_BODY_BEGIN) : end]
     return body.replace(token, "").strip()
 
@@ -446,7 +446,7 @@ def render_prompt(
     if unknown:
         raise PromptTemplateError(
             f"模板里有对不上号的占位符 {sorted(set(unknown))}（认识的是 {tokens}）：{template}"
-        )
+)
     # `{{MAX_SEGMENTS}}` 允许整处省略：分段方案不再是纪要流程的产物（`{{PHASE_BODY}}`
     # 同理，标记块就是正文的落点，见 `PHASE_BODY_BEGIN` 的注释）。
     for name in PLACEHOLDER_NAMES:
@@ -472,7 +472,7 @@ def render_prompt(
     end = template_text.find(PHASE_BODY_END)
     rendered = (
         template_text[:begin] + body + template_text[end + len(PHASE_BODY_END) :]
-    )
+)
     for name in PLACEHOLDER_NAMES:
         if name != "PHASE_BODY":
             rendered = rendered.replace(defined[name], values[name])
@@ -501,14 +501,14 @@ def render_session_prompt(
     except OSError as exc:
         raise PromptTemplateError(
             f"提示词模板读不动：{template}（{type(exc).__name__}: {exc}）"
-        ) from exc
+) from exc
     return render_prompt(
         listing,
         template_text,
         max_segments=max_segments,
         template=template,
         speaker_names=speaker_names_text_for_session(session_dir),
-    )
+)
 
 
 def listing_for_session(session_dir: str | Path, *, mode: str | None = None) -> InputsListing:
@@ -519,7 +519,7 @@ def listing_for_session(session_dir: str | Path, *, mode: str | None = None) -> 
     if not resolved:
         raise PromptTemplateError(
             f"场次目录里没有任何一条转写，不渲染提示词（不启动子会话）：{session}"
-        )
+)
     inputs = tuple(item for spec in specs for item in _prompt_inputs(session, spec))
     return InputsListing(session_dir=str(session), mode=resolved, inputs=inputs)
 
@@ -554,7 +554,7 @@ def _prompt_inputs(session: Path, spec: InputSpec) -> tuple[PromptInput, ...]:
                 raise PromptTemplateError(
                     f"输入 {spec.source!r} 的{kind}转写读不动：{transcript}"
                     f"（{type(exc).__name__}: {exc}）"
-                ) from exc
+) from exc
             lines = count_lines(text)
             chunk_count = 0
         found.append(
@@ -566,8 +566,8 @@ def _prompt_inputs(session: Path, spec: InputSpec) -> tuple[PromptInput, ...]:
                 chunk_count=chunk_count or 0,
                 index=f"{base}/{INDEX_NAME}",
                 chunk_dir=f"{base}/{CHUNK_DIR_NAME}",
-            )
-        )
+)
+)
     if not found:
         raise PromptTemplateError(f"输入 {spec.source!r} 里没有任何一份转写文件名")
     return tuple(found)
@@ -609,7 +609,7 @@ def main(argv: Sequence[str] | None = None, *, prog: str = "python -m meeting.mi
     parser = argparse.ArgumentParser(
         prog=prog,
         description="按场次目录渲染会后纪要的编排提示词（模板正文归 prompts/meeting_final.md）。",
-    )
+)
     parser.add_argument("session_dir", help="场次目录（工作区目录，路径由人给）")
     parser.add_argument("--mode", choices=MODES, default=None, help="档位（默认按盘上的输入自己判）")
     parser.add_argument("--template", default=str(DEFAULT_TEMPLATE), help="提示词模板的路径")
@@ -622,7 +622,7 @@ def main(argv: Sequence[str] | None = None, *, prog: str = "python -m meeting.mi
             template_path=args.template,
             mode=args.mode,
             max_segments=args.max_segments,
-        )
+)
     except PromptTemplateError as exc:
         print(f"提示词渲染失败：{exc}", file=sys.stderr)
         return 1

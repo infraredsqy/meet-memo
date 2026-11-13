@@ -21,8 +21,8 @@
 三条固定标签是**前缀**（允许前后空白）：
 
     刚才在讲什么 → 【讲什么】
-    讲到哪儿了   → 【讲到哪】
-    丢掉了什么   → 【丢掉什么】
+    讲到哪儿了 → 【讲到哪】
+    丢掉了什么 → 【丢掉什么】
 
 认出来的进对应那一段并**去掉标签**；认不出的进第一段（`what`），并且计入第二个返回值。
 **一条都认不出来算解析失败**（由 `run_summary()` 转成一次重试）：三条都认不出，
@@ -97,7 +97,7 @@ def parse_bullets(raw: str) -> list[str] | None:
         bullets = data.get("bullets") if isinstance(data, dict) else None
         if isinstance(bullets, list) and all(
             isinstance(item, str) and item.strip() for item in bullets
-        ):
+):
             return [item.strip() for item in bullets]
     return None
 

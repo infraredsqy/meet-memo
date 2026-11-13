@@ -317,7 +317,7 @@ def test_write_session_json_is_atomic_and_leaves_no_tmp(tmp_path):
 
 
 def test_state_for_maps_top_state_to_the_disk_state():
-    """顶层四态 → 盘上 `state` 的映射只有这一处（phase2 §7.1 高危点 1）。"""
+    """顶层四态 → 盘上 `state` 的映射只有这一处（设计口径高危点 1）。"""
     assert state_for(top_state="recording") == "recording"
     assert state_for(top_state="alert") == "recording"
     assert state_for(top_state="ended", ended_phase="draining") == "draining"
@@ -408,7 +408,7 @@ def test_every_phase_change_writes_the_session_file(tmp_path, monkeypatch):
         hook = SlowRelease()
         runtime.transcriber_backend.release_gpu = hook.release_gpu
 
-        # 收尾三步的调用都经 `_drain_wait()` 这一层包装（phase3 的自适应预算就把这里包住）。
+        # 收尾三步的调用都经 `_drain_wait()` 这一层包装（设计的自适应预算就把这里包住）。
         # 本用例把这一层换成「照原样调用、如实回报耗时」的替身：**同步实现放进工作线程**
         # （与真实现里的 `asyncio.to_thread` 同形），慢替身因此不会把事件循环钉住，
         # `/api/state` 在整个等待里照常应答。

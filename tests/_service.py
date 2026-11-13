@@ -1,4 +1,4 @@
-"""真服务子进程夹具的驱动件与全部解析助手（phase2 §5.4）。
+"""真服务子进程夹具的驱动件与全部解析助手（设计口径）。
 
 **定位**：本文件是测试支持模块 —— 文件名不以 `test_` 开头，`pytest` **不收集**它；
 它**不是 `conftest.py`**，因此不提供 fixture（fixture 全在 `tests/conftest.py`）。
@@ -16,9 +16,9 @@
 **正本在 `tests/_helpers.py`**（原先本模块的那份已并进去，语义与签名以它为准），本模块与
 各用例一律从那里 import。
 
-与 phase1 的 `tests/_helpers.py` 的分工（**同一职责只留一处落点**）：子进程的底层构造
+与设计的 `tests/_helpers.py` 的分工（**同一职责只留一处落点**）：子进程的底层构造
 （`spawn_service()` / 家目录隔离 / 假 `webbrowser` 注入）与 ASGI 客户端仍在 `_helpers.py`
-里；本模块**复用**它们并在之上补齐 phase2 契约要求的能力（`base_url` / 发中断信号 /
+里；本模块**复用**它们并在之上补齐设计契约要求的能力（`base_url` / 发中断信号 /
 读退出码 / 完整的环境变量覆盖），**不另起第二套子进程管理**。
 """
 
@@ -105,7 +105,7 @@ def _hidden_startupinfo() -> Any:
 class ServiceProcess(helpers.ServiceProcess):
     """一个真服务子进程（`[sys.executable, "-m", "meeting", "web"]`，cwd = 仓库根）。
 
-    在 phase1 的 `_helpers.ServiceProcess` 之上补齐 phase2 契约点名的三项能力与七项环境变量
+    在设计的 `_helpers.ServiceProcess` 之上补齐设计契约点名的三项能力与七项环境变量
     覆盖：**`base_url`**（`MEETING_PORT=0` + 子进程启动输出解析）、**向子进程发中断信号**、
     **读退出码**（`returncode`）；环境变量覆盖由调用方给全（`env=` 完整映射，或给
     `home` + 各项；`PYTHONPATH` = 仓库根 + 临时假件目录，不需要假件时至少保留仓库根）。
@@ -419,7 +419,7 @@ class ServiceProcess(helpers.ServiceProcess):
         随后**关掉 stdout / stderr 两个管道**。
 
         宽限秒数取自 `tests/_helpers.py` 的 `PROCESS_TERMINATE_GRACE_SECONDS`（契约 §3.8
-        文末那张表里的具名常量）：本文件与 phase1 的 `ServiceProcess` 因此共用同一个口径，
+        文末那张表里的具名常量）：本文件与设计的 `ServiceProcess` 因此共用同一个口径，
         不再各自写一个裸秒数。
 
         关管道这一步是硬要求（M6）：`Popen(stdout=PIPE, stderr=PIPE)` 交回来的两个句柄

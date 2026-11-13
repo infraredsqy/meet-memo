@@ -306,7 +306,7 @@ export const describeFailure = z
             error: z.string(),
           })
           .strict(),
-      )
+)
       .optional(),
     log_path: z.string().optional(),
     // capture_unavailable 第二档（第一版 session.json 写不进去）

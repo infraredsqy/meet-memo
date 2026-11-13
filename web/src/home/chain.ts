@@ -236,7 +236,7 @@ export function chainView(input: ChainInput): ChainView {
   const offlineFlying = prog.phase === 'in-flight';
   const offlineLine =
     offlineFlying
-      ? prog.phaseLabel // 在跑的那一句与进度区同源（`本地 第 2/5 块` 那一套）
+      ? prog.phaseLabel // 在跑的那一句与进度区同源（`本地第 2/5 块` 那一套）
       : offlineState === 'running'
         ? '盘上记着在跑，此刻没东西在跑'
         : offlineState === 'interrupted'

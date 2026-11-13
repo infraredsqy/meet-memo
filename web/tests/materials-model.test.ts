@@ -21,7 +21,7 @@ import {
 } from '../src/api/materials';
 
 /**
- * 资料区那份纯逻辑的用例（160d1a78）。
+ * 资料区那份纯逻辑的用例。
  *
  * 完成判定点名的六样里，**粘贴收图**这一条由这里承住：node 环境没有 `document`、
  * 没有真 `ClipboardEvent`（仓库不引 jsdom），所以粘贴的**筛子**（只有图片项才收、
@@ -71,7 +71,7 @@ describe('类型判读（缩略图 vs 类型标签）', () => {
 describe('提交文字的落盘名', () => {
   it('标题填了就用它（交原始名，清洗归服务），固定 .md 收尾', () => {
     expect(textMaterialName('季度复盘', new Date(0))).toBe('季度复盘.md');
-    expect(textMaterialName('  两侧空白进去  ', new Date(0))).toBe('两侧空白进去.md');
+    expect(textMaterialName('  两侧空白进去 ', new Date(0))).toBe('两侧空白进去.md');
   });
 
   it('没填标题用本地时间戳 YYYYMMDD-HHMMSS.md；空串与纯空白同档', () => {
@@ -138,7 +138,7 @@ describe('逐文件失败的读法（网络 / 403 头哨 / 服务错误，分档
   it('网络层失败：点明「没有放上去」并带上原话', () => {
     const text = materialsFailureText(
       new MaterialsUnavailableError('资料上传', new Error('Failed to fetch')),
-    );
+);
     expect(text).toContain('没有放上去');
     expect(text).toContain('Failed to fetch');
   });
@@ -153,7 +153,7 @@ describe('逐文件失败的读法（网络 / 403 头哨 / 服务错误，分档
   it('HTTP 失败信封：状态 + code + 服务回的那句原话；读不出信封就只有状态', () => {
     const missing = materialsFailureText(
       new MaterialsHttpError(404, 'material_missing', '资料里没有这一份：报告.pdf', '{}'),
-    );
+);
     expect(missing).toContain('404');
     expect(missing).toContain('material_missing');
     expect(missing).toContain('资料里没有这一份：报告.pdf');

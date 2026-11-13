@@ -22,6 +22,6 @@ export function confirmWorkspaceOpen(
     .then(
       () => undefined,
       (error) => io.onFail(failureFrom(error)),
-    )
+)
     .then(() => io.reload());
 }

@@ -31,7 +31,7 @@ from tests._service import post_action, read_session_json
 # 本文件的具名常量（§3.8 末「测试侧常量」那张表；用例里不留裸秒数）
 #
 # **取值收口的授权说明（第七轮审查 m3，措辞在下游文件里一字不改地重复）**：
-# 「以上取值由指挥者授权收口（原契约表的值见 phase3.md §3.8 末表；红线：单条用例 ≤5s）」
+# 「以上取值由指挥者授权收口（原契约表的值见设计.md §3.8 末表；红线：单条用例 ≤5s）」
 # —— 本文件里被这一条覆盖的常量是 `TEST_SILENCE_SECONDS`、`E2E_CASE_WALL_CLOCK_LIMIT_SECONDS`、
 # `DRAIN_BLOCKING_STEP_SECONDS`、`DRAIN_SLOW_STEP_SECONDS`、`DRAIN_SLOW_POST_STEP_SECONDS`；
 # 下面各自那一段说明写清了「判据的形状一字未改」与「数值由谁定的」。下游不必再把这几个数
@@ -210,7 +210,7 @@ DRAIN_OVERRUN_BACKLOG_LARGE = 10
 #: 于是「域里只有这两项」这件事有实测依据，不靠一句恒真的 `in ("draining", "done")`。
 ENDED_PHASE_DOMAIN = ("draining", "done")
 
-#: `session.json` 的 `state` **取值域**（phase2 冻结的四档）：四档逐字写死在这里
+#: `session.json` 的 `state` **取值域**（设计冻结的四档）：四档逐字写死在这里
 #: （「未收尾」的判据原来取自 `meeting/session.py` 的 `UNFINISHED_STATES`；启动扫描已随
 #: 默认落点退场，没有别的消费点，这里不再引入中间常量）。
 #: ⑪ 条核结束标记里的 `state` 时按这份取值域断言成员关系。
@@ -226,7 +226,7 @@ SESSION_STATE_DOMAIN = ("recording", "draining", "done", "failed")
 #
 #   - 选哪个假件 → 既有配置键 `capture.backend` / `post.hook` / `transcriber.backend`；
 #   - 那一步的行为参数 → **环境变量旋钮**（`fakes.FINALIZE_DELAY_SECONDS_ENV` 等常量名，
-#     不抄裸字符串）。理由与 `fakes.BLOCK_SECONDS_ENV` 那一处相同：`registry` 对后端
+# 不抄裸字符串）。理由与 `fakes.BLOCK_SECONDS_ENV` 那一处相同：`registry` 对后端
 #     **无参实例化**，构造参数进不去子进程，值只能经环境变量交给假件。
 #
 # 本文件经 `fakes.write_knob_plugin()` / `write_slow_drain_plugin()` /
@@ -453,7 +453,7 @@ def _new_workspace(tmp_path: Path, name: str) -> str:
 
 def _inprocess_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """进程内那一档的 `ServiceRuntime`（⑤d 条用：不起服务，直接调被断言的对象）。
-    与 phase2 的 `dev_runtime` 夹具同一档（家目录隔离 + 临时日志根），差别只在
+    与设计的 `dev_runtime` 夹具同一档（家目录隔离 + 临时日志根），差别只在
     **服务级 log 的目录由本用例另给**：同一个用例里要读的 log 落在这个临时目录下。
     服务级日志按临时家目录重建、用完放回原样（走 `logging_setup` 的公开快照入口，
     不读被测模块的私有状态）。

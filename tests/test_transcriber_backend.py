@@ -1,6 +1,6 @@
 """`tests/test_transcriber_backend.py` —— 转写后端的协议实现与**解耦证明**。
 
-`9e5db89c` phase2 的验收在这里落成用例：
+ 设计的验收在这里落成用例：
 
   - **协议**：`TranscriberBackend` 交出 `bind` / `start` / `stop` / `health` /
     `backlog_depth` / `segment_timeout`，并且**模块顶层不 import 重依赖**；
@@ -652,7 +652,7 @@ def test_health_reports_stopped_when_the_model_blows_up(session_dir: Path):
 
 
 def test_transcription_model_runs_on_a_worker_thread(session_dir: Path):
-    """结构性断言（`68927c27` 收尾轮）：模型在 worker 线程上被调，与主线程不同一条。
+    """结构性断言（收尾轮）：模型在 worker 线程上被调，与主线程不同一条。
 
     原来的「解耦证明」（按住模型若干秒、看归档照涨）按机主的敏捷口径收走——
     「不在同一条线程」这个结构事实用一次调用就能钉死：模型被调到的线程 id ≠ 主线程。
@@ -778,7 +778,7 @@ def test_backlog_changes_reach_the_snapshot_without_touching_the_revision(sessio
     并推那一帧，**不参与状态迁移、不涨 `revision`**；`state` / `snapshot` 的帧级 `id` 与
     `data.revision` 是同一次提交的那个数，界面靠「`id` 变了就是状态变了」判断。积压量几乎
     每一行都在变，让它触发 `commit()` 等于给 `state` 通道加一份高频抖动，那句承诺当场失效
-    （`phase2/task.md` §7：这两个计数只在 `/debug` 与 log 里看着用）。
+    （设计口径 §7：这两个计数只在 `/debug` 与 log 里看着用）。
 
     这一条**没有注入 stub 后端**：转写侧就是真实现（`TranscriberBackend` + 真流水线 +
     被按住的假模型），积压量取自段队列里真堆着的三段；
@@ -991,7 +991,7 @@ def test_transcript_handles_reopened_after_stop_are_closed_again(session_dir: Pa
     model = HeldModel(hold_seconds=2.5)  # 只有 release 才放行；hold 只作兜底
     # 噪声预筛（`_is_noise_segment`，真 `webrtcvad`）在这一条的常量样本上判定不稳，
     # 命中就等于「不写行」—— 这条要的是**确定性**的「进模型 → 写行」，因此把预筛让开
-    # （phase1 的预筛本身由 `tests/test_asr_glm.py` 与 `test_asr_pipeline.py` 覆盖）
+    # （设计的预筛本身由 `tests/test_asr_glm.py` 与 `test_asr_pipeline.py` 覆盖）
     monkeypatch.setattr(
         transcribe_module.glm_module, "_is_noise_segment", lambda audio: False
     )
@@ -1049,7 +1049,7 @@ def test_transcript_handles_reopened_after_stop_are_closed_again(session_dir: Pa
         )
         backend.stop(drain_join_seconds=0.25)  # 显式小上界：`stop()` 一定先于 worker 返回
         # ① `stop()` 返回时：内层那次收队已经走完（关过一次）、worker 还在模型手里。
-        #    内层收队里读线程那一段与归档落盘可能各要几十毫秒，等它一下（判据不是「多快」）
+        # 内层收队里读线程那一段与归档落盘可能各要几十毫秒，等它一下（判据不是「多快」）
         wait_until(lambda: closes or None, timeout=1.0)
         assert pipeline._worker_thread.is_alive(), "这一刻 worker 该还被模型扣着"
         assert closes, "内层那次收队该已经关过一次"

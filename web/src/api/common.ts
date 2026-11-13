@@ -48,7 +48,7 @@ export class HttpRejectError extends Error {
     code: string | null,
     note: string | null,
     raw: string,
-  ) {
+) {
     super(message);
     this.name = 'HttpRejectError';
     this.status = status;

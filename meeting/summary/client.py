@@ -51,7 +51,7 @@ TEMPERATURE = 0.3
 #: 不再另存一个同值字面量。
 DEFAULT_TIMEOUT_SECONDS = float(_default(DEADLINE_KEY))
 
-#: `SummaryError.reason` 的取值域（phase2 照它分辨怎么跟人说）
+#: `SummaryError.reason` 的取值域（设计照它分辨怎么跟人说）
 ERROR_REASONS: tuple[str, ...] = ("timeout", "bad_status", "bad_json", "no_content")
 
 

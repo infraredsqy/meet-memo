@@ -68,7 +68,7 @@ describe('行状态一眼可读', () => {
     expect(statusLabel(row({ state: 'ended' }))).toBe('录音结束');
   });
 
-  it('没有记录的两档按名目 kind 分：空白工作区 / 尚未开始（d61829f1 的行四档）', () => {
+  it('没有记录的两档按名目 kind 分：空白工作区 / 尚未开始（ 的行四档）', () => {
     expect(statusLabel(row({ kind: 'empty' }))).toBe('空白工作区');
     // 有材料没元数据的疑似目录、收编的普通目录：没开过会就一律「尚未开始」
     expect(statusLabel(row({ kind: 'meeting', suspected: true }))).toBe('尚未开始');
@@ -100,7 +100,7 @@ describe('详情区的段读数（续接过的会看得出接过）', () => {
           { index: 2, started_at: '2026-09-21T11:30:00+08:00', ended_at: '2026-09-21T11:32:00+08:00', duration_seconds: 122.3 },
         ],
       }),
-    );
+);
     expect(view).not.toBeNull();
     expect(view?.total).toBe('共 2 段 · 3 分 4 秒');
     expect(view?.lines.map((line) => line.label)).toEqual(['段 1', '段 2']);
@@ -117,7 +117,7 @@ describe('详情区的段读数（续接过的会看得出接过）', () => {
           { index: 2, started_at: '2026-09-21T11:30:00+08:00', ended_at: null, duration_seconds: null },
         ],
       }),
-    );
+);
     expect(view?.total).toBe('共 2 段 · 1 分 2 秒');
     expect(view?.lines[1]).toMatchObject({ time: '11:30 起', seconds: '没写完' });
   });
@@ -176,7 +176,7 @@ describe('会后那两个按钮（R26 / R29）', () => {
   });
 });
 
-describe('停止入口（R28 / b1c6a58e）', () => {
+describe('停止入口（R28 / ）', () => {
   const dir = 'C:\\会议\\跟老王聊周会';
 
   it('这一场的 offline 在飞：入口出现', () => {
@@ -269,14 +269,14 @@ describe('闸的分流（R26：结束录音之后回到工作台）', () => {
     expect(showsWorkspaceHome(snap)).toBe(true);
   });
 
-  it('停止录音就回工作台，落盘还在跑也回（d61829f1：停下不锁屏）', () => {
+  it('停止录音就回工作台，落盘还在跑也回（：停下不锁屏）', () => {
     const snap = snapshot({ phase: 'draining', statuses: ['done', 'done', 'done', 'running'] });
     expect(showsWorkspaceHome(snap)).toBe(true);
     // 那一小块的两档判据照旧：没落定就是没落定（详情里写「还差最后一块没进盘」）
     expect(drainSettled(snap)).toBe(false);
   });
 
-  it('前三步还没轮到（waiting）→ 照样回工作台（d61829f1：ended 任意相都回）', () => {
+  it('前三步还没轮到（waiting）→ 照样回工作台（：ended 任意相都回）', () => {
     const snap = snapshot({
       phase: 'draining',
       statuses: ['waiting', 'waiting', 'waiting', 'waiting'],

@@ -43,5 +43,5 @@ export function ThemeToggle(): ReactNode {
     >
       {target}
     </button>
-  );
+);
 }

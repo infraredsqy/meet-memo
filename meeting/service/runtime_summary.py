@@ -21,7 +21,7 @@ from meeting.summary import (
 
 _log = logging.getLogger("meeting.service.runtime")
 
-#: 会中总结那一次模型调用专用的工作线程条数（`1987cb20` phase2 的复审裁定）。
+#: 会中总结那一次模型调用专用的工作线程条数（设计的复审裁定）。
 #: 那次模型调用是一条同步的 `urllib.request`，跑在事件循环上会把 `/api/state`、三个 SSE
 #: 通道、心跳与健康节拍一起按住（复审实测：假客户端 sleep 3 秒，另一条 `GET /api/state`
 #: 等了 2.70 秒）——设计章 4.5 的「其余照常」要避免的正是这个。取 2 而不是 1：
@@ -60,7 +60,7 @@ class RuntimeSummaryMixin:
         """`GET /api/summaries` 的应答体：本场按过的、**成功产出的**那几次（按时间先后）。
 
         没有场次或一次都没按过时 `session_id` 为 `null`、`entries` 是空数组。每一格的形状由
-        `phase2/task.md` 的接口口径写死（`window` / `window_label` / `at` / `elapsed_seconds` /
+        设计口径的接口口径写死（`window` / `window_label` / `at` / `elapsed_seconds` /
         `what` / `where` / `lost` —— **没有 `lines` 与 `bullets`**）。
         """
         return {
@@ -142,7 +142,7 @@ class RuntimeSummaryMixin:
     async def summarize(self, args: dict[str, Any]) -> dict[str, Any]:
         """`summarize`：按一下，把最近这段时间的实时转写读一遍，给回三小段。
 
-        **判定的先后是固定的**（照 `start` 的先例，`phase2/task.md` 的接口口径）：
+        **判定的先后是固定的**（照 `start` 的先例，设计口径的接口口径）：
 
           1. 判态 —— 没有在录的场次（`idle` / `ended`）→ `not_recording`(409)；
           2. 校验 `window` —— 取值不在四档里 → `invalid_setting`(400)（**不静默落缺省档**：
@@ -260,7 +260,7 @@ class RuntimeSummaryMixin:
             int(outcome.attempts), entry["elapsed_seconds"],
         )
         # **只记成功产出的那几次**（失败没有「那几条」可记）；记录活在内存里，不落文件。
-        # 记录这一条按 `GET /api/summaries` 写死的形状来（`phase2/task.md` 那一份没有 `lines`），
+        # 记录这一条按 `GET /api/summaries` 写死的形状来（设计口径那一份没有 `lines`），
         # 与上面交给应答体的那一份是**两个形状**：应答体多一格窗口行数。
         self.summary_records.append(self._summary_entry(outcome))
         return entry
@@ -269,7 +269,7 @@ class RuntimeSummaryMixin:
     def _summary_result(outcome: SummaryOutcome) -> dict[str, Any]:
         """`SummaryOutcome` → 应答体里那个 `summary` 子对象（逐键照接口口径）。
 
-        形状写死（`phase2/task.md` 的成功体）：`window` / `window_label` / `at` /
+        形状写死（设计口径的成功体）：`window` / `window_label` / `at` /
         `elapsed_seconds` / `lines` / `what` / `where` / `lost`。**`ok` / `bullets` / `attempts` /
         `detail` 不进应答体** —— 失败那几档走失败信封的 `code` + `detail`。`at` 由这里现取
         （`now_iso()`，与快照里那些时刻同一个格式），此后不再变。

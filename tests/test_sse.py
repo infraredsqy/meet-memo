@@ -1,4 +1,4 @@
-"""`tests/test_sse.py` —— `GET /api/events` 与三通道（phase2 §5.1 第七行；§3.8）。
+"""`tests/test_sse.py` —— `GET /api/events` 与三通道（设计口径第七行；§3.8）。
 
 覆盖（逐条对 §5.1 的 ①–⑥）：
 
@@ -35,7 +35,7 @@ from meeting.service.hub import (
 )
 from tests._service import SseClient, parse_sse_frame
 
-#: 慢档标记（68927c27 收尾轮）：真流式/真后端的收尾验收，不进每次迭代圈。
+#: 慢档标记（收尾轮）：真流式/真后端的收尾验收，不进每次迭代圈。
 pytestmark = pytest.mark.slow
 
 #: 用例的显式等待与读帧上限（秒）

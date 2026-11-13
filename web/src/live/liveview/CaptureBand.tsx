@@ -32,7 +32,7 @@ function Channel({ channel }: { channel: ChannelView }): ReactNode {
           <span className={`glyph ${health.glyph}`} aria-hidden="true" />
           {health.text}
         </span>
-        {/* 这一卡上没有开关：会中收音收在顶栏的四组合控件一处（`c9f5d04d`），
+        {/* 这一卡上没有开关：会中收音收在顶栏的四组合控件一处，
             旧的那颗「关掉 / 打开」小按钮不再以任何形态留在这里 */}
       </div>
       <div className="m-grid">
@@ -72,14 +72,14 @@ function Channel({ channel }: { channel: ChannelView }): ReactNode {
               className="m-env__bar"
               style={{ '--h': `${height.toFixed(1)}%` } as CSSProperties}
             />
-          ))}
+))}
         </div>
         <div className="m-env-note">
           <span className="m-env__stamp">{channel.stamp}</span>
         </div>
       </div>
     </section>
-  );
+);
 }
 
 /**
@@ -117,7 +117,7 @@ export function CaptureBand({
           <div className="m-chans">
             {channels.map((channel) => (
               <Channel key={channel.sourceId} channel={channel} />
-            ))}
+))}
           </div>
           <div className="live-tools">
             {/* 四个窗口档位（设计章 2.3）。缺省选中的是「15 分钟」；按下之后请求里带的
@@ -134,7 +134,7 @@ export function CaptureBand({
                 >
                   {item.label}
                 </button>
-              ))}
+))}
             </div>
             {/* 主按钮：录音中 / 告警态可用；跑起来时按钮位换成进行中那一句（不显示倒计时、
                 不提前宣布失败）。其余各档按钮按不动，原因写在下面那一行 */}
@@ -143,7 +143,7 @@ export function CaptureBand({
                 <span className="spinner" aria-hidden="true" />{' '}
                 {summaryRunningNote(summary.state().window)}
               </p>
-            ) : (
+) : (
               <button
                 className="btn btn--primary btn--block"
                 type="button"
@@ -153,12 +153,12 @@ export function CaptureBand({
               >
                 快速总结
               </button>
-            )}
+)}
             {summaryWhyText !== null && (
               <p className="sumbar__why" id="summary-why">
                 {summaryWhyText}
               </p>
-            )}
+)}
             {/* 本场摘要记录：入口写着按过的次数，点开列每一次（时刻 + 窗口 + 那几条）。
                 那一行在**还没取过服务那份**时先写「还没有」—— 这一刻手上确实一条都没有；
                 取回来之后整行换成服务给的条目数。它是**本场**的，与结果面板两块内容各关各的 */}
@@ -175,5 +175,5 @@ export function CaptureBand({
         </div>
       </div>
     </section>
-  );
+);
 }

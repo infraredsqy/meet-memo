@@ -122,11 +122,11 @@ describe('事后工序链', () => {
     const settled = { drain: { dir: DIR, ended: endedWith([['flush', 'done'], ['log', 'done'], ['post', 'waiting']]) } };
     expect(seg(chainView({ ...settled, status: baseStatus(), selectedDir: DIR }), 'drain').line).toBe(
       '录音已落盘',
-    );
+);
     // 换了选中那一场：快照说的不是它，落盘只说「已结束」
     expect(seg(chainView({ ...settled, status: baseStatus(), selectedDir: 'C:\\会议\\别的' }), 'drain').line).toBe(
       '已结束',
-    );
+);
   });
 
   it('落盘失败：「能不能走」点名失败、指向落盘那一小块', () => {
@@ -223,13 +223,13 @@ describe('事后工序链', () => {
     const stale = baseStatus({ minutes: { ...minutesIdle(), state: 'running' } });
     expect(seg(chainView({ drain: null, status: stale, selectedDir: DIR }), 'minutes').line).toBe(
       '盘上记着在跑，此刻没东西在跑',
-    );
+);
     const done = baseStatus({ minutes: { ...minutesIdle(), state: 'done' } });
     expect(seg(chainView({ drain: null, status: done, selectedDir: DIR }), 'minutes').line).toBe('已完成');
     const delivered = baseStatus({ minutes: { ...minutesIdle(), state: 'delivered' } });
     expect(seg(chainView({ drain: null, status: delivered, selectedDir: DIR }), 'minutes').line).toBe(
       '已交给 DSH 生成',
-    );
+);
     const failed = baseStatus({ minutes: { ...minutesIdle(), state: 'failed', error: 'DSH 没应答' } });
     const segment = seg(chainView({ drain: null, status: failed, selectedDir: DIR }), 'minutes');
     expect(segment).toMatchObject({ line: '失败', failed: true });
@@ -240,13 +240,13 @@ describe('事后工序链', () => {
     const stale = baseStatus({ minutes: { ...minutesIdle(), state: 'running' } });
     expect(chainView({ drain: null, status: stale, selectedDir: DIR }).walk.line).toBe(
       '可以走了：这一场眼下没有在跑的活。',
-    );
+);
     // post 清单里有 minutes 在飞：先别关机
     const flying = baseStatus({
       post: [{ running: true, kind: 'minutes', dir: DIR, started_at: '2025-09-06T23:00:00', finished_at: null }],
     });
     expect(chainView({ drain: null, status: flying, selectedDir: DIR }).walk.line).toBe(
       '先别关机：还有活没跑完；关掉页面不影响，服务照跑。',
-    );
+);
   });
 });

@@ -62,7 +62,7 @@ describe('稿子正文那一块', () => {
     const data = transcriptsOf(
       [cell('mic', { text: '[20:01] 本地一行\n' }), cell('loopback', { reason: 'unrecorded' })],
       [cell('mic', { reason: 'absent' }), cell('loopback', { reason: 'unrecorded' })],
-    );
+);
     const live = kindViewOf(data, 'live')!;
     expect(live.headline).toBeNull();
     expect(live.roads[1]).toMatchObject({
@@ -79,7 +79,7 @@ describe('稿子正文那一块', () => {
     const data = transcriptsOf(
       [cell('mic', { text: '[20:01] 本地一行\n' }), cell('loopback', { reason: 'absent' })],
       [cell('mic', { text: '[00:00] 会后\n' }), cell('loopback', { reason: 'absent' })],
-    );
+);
     const view = kindViewOf(data, 'live')!;
     expect(view.roads[1]?.note).toBe('会中稿里没有远端这一路。');
   });
@@ -88,7 +88,7 @@ describe('稿子正文那一块', () => {
     const data = transcriptsOf(
       [cell('mic', { reason: 'absent' }), cell('loopback', { reason: 'absent' })],
       [cell('mic', { reason: 'absent' }), cell('loopback', { reason: 'absent' })],
-    );
+);
     const offline = kindViewOf(data, 'offline')!;
     expect(offline.headline).toBe('会后稿还没有：按「生成会后精细稿」之后才有。');
     const live = kindViewOf(data, 'live')!;
@@ -97,7 +97,7 @@ describe('稿子正文那一块', () => {
     expect(offline.roads).toHaveLength(2);
     expect(transcriptKindView({ kind: 'offline', sources: [] }).headline).toBe(
       '会后稿还没有：按「生成会后精细稿」之后才有。',
-    );
+);
   });
 
   it('服务没给这一份稿（契约外）→ null，界面不编', () => {

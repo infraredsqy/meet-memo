@@ -20,7 +20,7 @@ import type {
   SessionsResponse,
 } from '../src/contract';
 
-/** 一格「没跑过」的纪要读数（`minutes` 格的空档形状，38817ecf）。 */
+/** 一格「没跑过」的纪要读数（`minutes` 格的空档形状）。 */
 function minutesIdle(): SessionStatus['minutes'] {
   return { state: 'idle', started_at: null, finished_at: null, error: null };
 }
@@ -52,7 +52,7 @@ function transcodeIdle(): SessionStatus['transcode'] {
  * 与 `dir`、`has_offline` 两档画出来的那一格、以及 409 落进失败块。手法同源
  * （`react-test-renderer`，不给 node 侧开 DOM）。
  *
- * 会后进度界面节点（52b24392）起的轮询也打在同一条边界上：替身里给一只**手动排程**
+ * 会后进度界面节点起的轮询也打在同一条边界上：替身里给一只**手动排程**
  * 的轮询器（tick 立刻转手 `fetchSessionStatus`、start/stop 只登记，不挂任何真定时器），
  * 用例因此不必等真实周期。
  */
@@ -82,7 +82,7 @@ vi.mock('../src/api/sessions', async (importOriginal) => {
     fetchSessions: vi.fn(),
     browseDirs: vi.fn(),
     fetchSessionStatus,
-    // 稿子那一跳（38817ecf）：本文件的用例不核它的内容，替身给一份「两份稿都缺」的
+    // 稿子那一跳：本文件的用例不核它的内容，替身给一份「两份稿都缺」的
     // 空应答，别让挂载用例摸真 fetch。
     fetchSessionTranscripts: vi.fn(async () => ({ dir: '', kinds: [] })),
     createSessionStatusPoller: vi.fn((registered: unknown) => {
@@ -97,7 +97,7 @@ vi.mock('../src/api', async (importOriginal) => {
   return { ...actual, postAction: vi.fn() };
 });
 
-// 会议资料区（160d1a78）：详情里那块面板挂载即取清单 —— 替身给空清单，这条文件不连网。
+// 会议资料区：详情里那块面板挂载即取清单 —— 替身给空清单，这条文件不连网。
 vi.mock('../src/api/materials', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/api/materials')>();
   return {
@@ -182,7 +182,7 @@ async function mountHome(): Promise<TestRenderer.ReactTestRenderer> {
 function optionsOf(renderer: TestRenderer.ReactTestRenderer): TestRenderer.ReactTestInstance[] {
   return renderer.root.findAll(
     (node) => node.props.role === 'option' && node.parent?.props['aria-label'] === '工作区列表',
-  );
+);
 }
 
 afterEach(() => {
@@ -207,7 +207,7 @@ describe('挂载即取列表（review-2 C1/m2）', () => {
         sessions: [row({ dir: 'C:\\a', session_id: 'a' }), row({ dir: 'C:\\b', session_id: 'b' })],
         recent: 'C:\\b',
       }),
-    );
+);
     const renderer = await mountHome();
 
     expect(fetchSessionsMock).toHaveBeenCalledTimes(1);
@@ -219,11 +219,11 @@ describe('挂载即取列表（review-2 C1/m2）', () => {
     expect(
       (onRow[0] as TestRenderer.ReactTestInstance).props.children.some(
         (child: { props: { className?: string } }) => child?.props?.className === 'wslist__name',
-      ),
-    ).toBe(true);
+),
+).toBe(true);
   });
 
-  it('清单行按应答给的次序渲染：喂乱序的应答，界面不许自己重排（7058f2e1）', async () => {
+  it('清单行按应答给的次序渲染：喂乱序的应答，界面不许自己重排', async () => {
     // 服务端按「最近在用」倒序排好才给（契约 4.8）：应答次序故意与每种常见重排都错开
     // ——拼音 localeCompare 升序得 [丙,甲,乙]、码点序得 [丙,乙,甲]、reverse 得
     // [甲,丙,乙]，全都 ≠ 应答序 [乙,丙,甲]——界面若自作主张重排，这条必红。
@@ -241,8 +241,8 @@ describe('挂载即取列表（review-2 C1/m2）', () => {
         node.props.children.find(
           (child: { props?: { className?: string } }) =>
             child?.props?.className === 'wslist__name',
-        )?.props.children,
-    );
+)?.props.children,
+);
     expect(names).toEqual(['乙', '丙', '甲']);
   });
 
@@ -255,7 +255,7 @@ describe('挂载即取列表（review-2 C1/m2）', () => {
     // 旧病画像：应答回来之后这条占位不该再挂着
     expect(
       renderer.root.findAll((node) => node.props.children === '正在取列表…'),
-    ).toHaveLength(0);
+).toHaveLength(0);
   });
 
   it('取失败：失败块如实画出来，不冒成功', async () => {
@@ -281,7 +281,7 @@ function buttonByText(
       (Array.isArray(node.props.children)
         ? node.props.children.join('')
         : `${node.props.children}`) === label,
-  );
+);
   expect(found, `界面上该有「${label}」这只按钮`).toHaveLength(1);
   return found[0] as TestRenderer.ReactTestInstance;
 }
@@ -323,7 +323,7 @@ describe('会后那两个按钮（review-1 m7）', () => {
   it('点「生成会后精细稿」发出 post_offline、点「生成纪要」发出 post_minutes，都带上选中那一行的 dir', async () => {
     fetchSessionsMock.mockResolvedValue(
       list({ sessions: [row({ dir: 'C:\\会议\\这一场', session_id: '这一场' })], recent: 'C:\\会议\\这一场' }),
-    );
+);
     postActionMock.mockResolvedValue({ kind: 'ok', ok: true, revision: 7 });
     const renderer = await mountHome();
 
@@ -341,7 +341,7 @@ describe('会后那两个按钮（review-1 m7）', () => {
     const withoutOffline = row({ dir: 'C:\\会议\\没稿', has_offline: false });
     fetchSessionsMock.mockResolvedValue(
       list({ sessions: [withOffline, withoutOffline], recent: withOffline.dir }),
-    );
+);
     const renderer = await mountHome();
 
     expect(postLines(renderer).join('\n')).toContain('会后精细稿：有');
@@ -351,7 +351,7 @@ describe('会后那两个按钮（review-1 m7）', () => {
     const other = rows.find((node) =>
       `${node.props.children}`.includes('没稿') ||
       textOf(node).includes('没稿'),
-    );
+);
     expect(other, '列表里该有「没稿」那一行').toBeDefined();
     await act(async () => {
       other?.props.onClick();
@@ -362,7 +362,7 @@ describe('会后那两个按钮（review-1 m7）', () => {
   it('纪要回执带 inputs / note 时照实画进回执那一行（说破不静默）', async () => {
     fetchSessionsMock.mockResolvedValue(
       list({ sessions: [row({ dir: 'C:\\会议\\这一场' })], recent: 'C:\\会议\\这一场' }),
-    );
+);
     // 形状照 `meeting/service/runtime_post.py` 的 `post_minutes()` 回执（contract 4.3）：
     // `inputs` 恒在、`note` 只在同场会后精细稿还在跑那档出现（原文同 MINUTES_DEGRADED_NOTE）。
     postActionMock.mockResolvedValue({
@@ -389,10 +389,10 @@ describe('会后那两个按钮（review-1 m7）', () => {
   it('按钮被拒（409 draining）时失败块出列，回执那一行不留假成功', async () => {
     fetchSessionsMock.mockResolvedValue(
       list({ sessions: [row({ dir: 'C:\\会议\\这一场' })], recent: 'C:\\会议\\这一场' }),
-    );
+);
     postActionMock.mockRejectedValue(
       new ActionFailedError(409, 'draining', '纪要这一层已经在飞', { kind: 'minutes' }),
-    );
+);
     const renderer = await mountHome();
 
     await click(renderer, buttonByText(renderer, '生成纪要'));
@@ -408,7 +408,7 @@ describe('会后那两个按钮（review-1 m7）', () => {
   it('目录不在原地那一行：两个按钮都按不动，原因句写在脸上', async () => {
     fetchSessionsMock.mockResolvedValue(
       list({ sessions: [row({ dir: 'C:\\会议\\搬走了', dir_exists: false })], recent: 'C:\\会议\\搬走了' }),
-    );
+);
     const renderer = await mountHome();
 
     expect(buttonByText(renderer, '生成会后精细稿').props.disabled).toBe(true);
@@ -432,7 +432,7 @@ describe('会后那两个按钮（review-1 m7）', () => {
         sessions: [row({ dir: 'C:\\会议\\在录', state: 'recording', has_offline: true })],
         recent: 'C:\\会议\\在录',
       }),
-    );
+);
     const renderer = await mountHome();
 
     expect(buttonByText(renderer, '生成会后精细稿').props.disabled).toBe(true);
@@ -455,7 +455,7 @@ describe('会后那两个按钮（review-1 m7）', () => {
         sessions: [row({ dir: 'C:\\会议\\强杀现场', state: 'ended', has_offline: false })],
         recent: 'C:\\会议\\强杀现场',
       }),
-    );
+);
     const renderer = await mountHome();
 
     // 「落盘没落定就拒」判据作废：ended 的那一场按钮照常可按
@@ -467,7 +467,7 @@ describe('会后那两个按钮（review-1 m7）', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 说话人名字那只弹窗（人名节点 91b6752e）：入口在会后区，点开、确认、当场生效
+// 说话人名字那只弹窗（人名节点 ）：入口在会后区，点开、确认、当场生效
 // ---------------------------------------------------------------------------
 
 /** 一份带说话人身份的单场读数（`speakers` 一格照服务的形状给）。 */
@@ -485,7 +485,7 @@ function inputOf(
 ): TestRenderer.ReactTestInstance {
   const found = renderer.root.findAll(
     (node) => node.type === 'input' && node.props['aria-label'] === label,
-  );
+);
   expect(found, `弹窗里该有「${label}」这只输入框`).toHaveLength(1);
   return found[0] as TestRenderer.ReactTestInstance;
 }
@@ -498,7 +498,7 @@ describe('说话人名字（R10 第四条 / R30）', () => {
       statusWithSpeakers(asked, [
         { key: 'mic:S01', source: 'mic', label: '本地', name: null, segments: 3 },
       ]),
-    );
+);
     postActionMock.mockResolvedValue({ kind: 'speaker', ok: true, revision: 7, speaker: { dir, key: 'mic:S01', name: '老王' } });
     const renderer = await mountHome();
     const ticksBefore = fetchSessionStatusMock.mock.calls.length;
@@ -507,7 +507,7 @@ describe('说话人名字（R10 第四条 / R30）', () => {
 
     const dialog = renderer.root.findAll(
       (node) => node.props.role === 'dialog' && node.props['aria-label'] === '说话人名字',
-    );
+);
     expect(dialog).toHaveLength(1);
     expect(textOf(dialog[0] as TestRenderer.ReactTestInstance)).toContain('本地 · S01');
     expect(textOf(dialog[0] as TestRenderer.ReactTestInstance)).toContain('待确认');
@@ -535,7 +535,7 @@ describe('说话人名字（R10 第四条 / R30）', () => {
         { key: 'mic:S01', source: 'mic', label: '本地', name: '老王', segments: 3 },
         { key: 'loopback', source: 'loopback', label: '远端', name: null, segments: null },
       ]),
-    );
+);
     postActionMock.mockResolvedValue({ kind: 'speaker', ok: true, revision: 8, speaker: { dir, key: 'loopback', name: '老王' } });
     const renderer = await mountHome();
 
@@ -547,15 +547,15 @@ describe('说话人名字（R10 第四条 / R30）', () => {
     // 两行各有一只「确认」：点「远端」那一行自己的那一只
     const rowButton = (input.parent as TestRenderer.ReactTestInstance).find(
       (node) => node.type === 'button' && node.props.children === '确认',
-    );
+);
     await click(renderer, rowButton);
 
     const dialogs = renderer.root.findAll(
       (node) => node.props.role === 'dialog' && node.props['aria-label'] === '说话人名字',
-    );
+);
     expect(textOf(dialogs[0] as TestRenderer.ReactTestInstance)).toContain(
       '编号相互独立，允许重名',
-    );
+);
     expect(postActionMock).toHaveBeenLastCalledWith('speaker_rename', {
       dir,
       key: 'loopback',
@@ -571,12 +571,12 @@ describe('说话人名字（R10 第四条 / R30）', () => {
         { key: 'mic:S01', source: 'mic', label: '本地', name: '老王', segments: 3 },
         { key: 'loopback', source: 'loopback', label: '远端', name: null, segments: null },
       ]),
-    );
+);
     postActionMock.mockRejectedValue(
       new ActionFailedError(400, 'invalid_setting', '人名表在盘上但读不出来，改名拒写', {
         key: 'key',
       }),
-    );
+);
     const renderer = await mountHome();
 
     await click(renderer, buttonByText(renderer, '说话人名字…'));
@@ -587,7 +587,7 @@ describe('说话人名字（R10 第四条 / R30）', () => {
     // 两行各有一只「确认」：点「远端」那一行自己的那一只
     const rowButton = (input.parent as TestRenderer.ReactTestInstance).find(
       (node) => node.type === 'button' && node.props.children === '确认',
-    );
+);
     await click(renderer, rowButton);
 
     expect(postActionMock).toHaveBeenLastCalledWith('speaker_rename', {
@@ -598,7 +598,7 @@ describe('说话人名字（R10 第四条 / R30）', () => {
     // 弹窗里不留成功话术：撞名提示（含「已照你写的名字提交」）在失败时清掉（review-1 m3）
     const dialogs = renderer.root.findAll(
       (node) => node.props.role === 'dialog' && node.props['aria-label'] === '说话人名字',
-    );
+);
     const dialogText = textOf(dialogs[0] as TestRenderer.ReactTestInstance);
     expect(dialogText).not.toContain('已照你写的名字提交');
     expect(dialogText).not.toContain('允许重名');
@@ -616,20 +616,20 @@ describe('说话人名字（R10 第四条 / R30）', () => {
         sessions: [row({ dir: 'C:\\会议\\在录', state: 'recording' })],
         recent: 'C:\\会议\\在录',
       }),
-    );
+);
     const renderer = await mountHome();
 
     expect(buttonByText(renderer, '说话人名字…').props.disabled).toBe(true);
     expect(
       renderer.root.findAll(
         (node) => node.props.role === 'dialog' && node.props['aria-label'] === '说话人名字',
-      ),
-    ).toHaveLength(0);
+),
+).toHaveLength(0);
   });
 });
 
 // ---------------------------------------------------------------------------
-// 停掉会后与「添加工作区会打断」确认（R28 / b1c6a58e）
+// 停掉会后与「添加工作区会打断」确认（R28 / ）
 // ---------------------------------------------------------------------------
 
 const stopDir = 'C:\\会议\\正在运行会后';
@@ -651,7 +651,7 @@ function flyingList(
   });
 }
 
-/** 目录选择器里的一行（57ab5255 起行本体不是按钮：单击选中、双击进下层）。 */
+/** 目录选择器里的一行（ 起行本体不是按钮：单击选中、双击进下层）。 */
 function pickerRow(
   renderer: TestRenderer.ReactTestRenderer,
   name: string,
@@ -661,7 +661,7 @@ function pickerRow(
       node.props.role === 'option' &&
       node.parent?.props['aria-label'] === '这一层的子目录' &&
       textOf(node).includes(name),
-  );
+);
   expect(found, `选择器里该有「${name}」这一项`).toHaveLength(1);
   return found[0] as TestRenderer.ReactTestInstance;
 }
@@ -672,15 +672,15 @@ function pickerAddr(renderer: TestRenderer.ReactTestRenderer): TestRenderer.Reac
     (node) =>
       node.type === 'input' &&
       node.props['aria-label'] === '当前层路径，可输入路径回车跳转',
-  );
+);
 }
 
 const emptyDirs: DirsResponse = {
   home: 'C:\\Users\\<user>',
   cwd: 'C:\\Users\\<user>',
   up: 'C:\\Users',
-  here: { name: 'PC', dir: 'C:\\Users\\<user>', kind: 'unknown', suspected: false },
-  dirs: [{ name: '新场', dir: 'C:\\会议\\新场', kind: 'empty', suspected: false }],
+  here: { name: '<user>', dir: 'C:\\Users\\<user>', kind: 'unknown', suspected: false },
+  dirs: [{ name: '新场', dir: 'C:\\meeting\\新场', kind: 'empty', suspected: false }],
 };
 
 /** 选择器里摆一个「非空、无会议材料」的目录（`probeDecision` → need-confirm 那一档）。 */
@@ -688,7 +688,7 @@ const nonEmptyDirs: DirsResponse = {
   home: 'C:\\Users\\<user>',
   cwd: 'C:\\Users\\<user>',
   up: 'C:\\Users',
-  here: { name: 'PC', dir: 'C:\\Users\\<user>', kind: 'unknown', suspected: false },
+  here: { name: '<user>', dir: 'C:\\Users\\<user>', kind: 'unknown', suspected: false },
   dirs: [{ name: '旧文件夹', dir: 'C:\\杂物\\旧文件夹', kind: 'unknown', suspected: false }],
 };
 
@@ -697,14 +697,14 @@ const twoKindDirs: DirsResponse = {
   home: 'C:\\Users\\<user>',
   cwd: 'C:\\Users\\<user>',
   up: 'C:\\Users',
-  here: { name: 'PC', dir: 'C:\\Users\\<user>', kind: 'unknown', suspected: false },
+  here: { name: '<user>', dir: 'C:\\Users\\<user>', kind: 'unknown', suspected: false },
   dirs: [
-    { name: '新场', dir: 'C:\\会议\\新场', kind: 'empty', suspected: false },
+    { name: '新场', dir: 'C:\\meeting\\新场', kind: 'empty', suspected: false },
     { name: '旧文件夹', dir: 'C:\\杂物\\旧文件夹', kind: 'unknown', suspected: false },
   ],
 };
 
-describe('停掉会后与「添加工作区会打断」确认（R28 / b1c6a58e）', () => {
+describe('停掉会后与「添加工作区会打断」确认（R28 / ）', () => {
   it('这一场的 offline 在飞：进度区头行有「停止」，点了发出 post_stop 并如实写受理那一行', async () => {
     fetchSessionsMock.mockResolvedValue(flyingList());
     postActionMock.mockResolvedValue({
@@ -728,14 +728,14 @@ describe('停掉会后与「添加工作区会打断」确认（R28 / b1c6a58e�
         dir: stopDir,
         started_at: '2026-09-21T22:10:00+08:00',
       }])
-    );
+);
     const renderer = await mountHome();
 
     expect(
       renderer.root.findAll(
         (node) => node.type === 'button' && `${node.props.children}` === '停止',
-      ),
-    ).toHaveLength(0);
+),
+).toHaveLength(0);
   });
 
   it('会后在跑时按「添加工作区」挑目录：直接登记、零 stop（登记不打断任何在飞的活）', async () => {
@@ -752,7 +752,7 @@ describe('停掉会后与「添加工作区会打断」确认（R28 / b1c6a58e�
 
     // 一刀切已废：登记只是写一行名单，不问打断、不发 stop
     expect(renderer.root.findAll((node) => node.props.role === 'dialog')).toHaveLength(0);
-    expect(postActionMock).toHaveBeenLastCalledWith('workspace_open', { dir: 'C:\\会议\\新场' });
+    expect(postActionMock).toHaveBeenLastCalledWith('workspace_open', { dir: 'C:\\meeting\\新场' });
     expect(postActionMock.mock.calls.map(([name]) => name)).not.toContain('post_stop');
   });
 
@@ -800,14 +800,14 @@ describe('停掉会后与「添加工作区会打断」确认（R28 / b1c6a58e�
     });
     await click(renderer, buttonByText(renderer, '选定这个目录'));
 
-    expect(postActionMock).toHaveBeenLastCalledWith('workspace_open', { dir: 'C:\\会议\\新场' });
+    expect(postActionMock).toHaveBeenLastCalledWith('workspace_open', { dir: 'C:\\meeting\\新场' });
     expect(postActionMock.mock.calls.map(([name]) => name)).not.toContain('post_stop');
   });
 
   it('在飞的是 minutes：按「添加工作区」挑目录无确认、零 stop、直接登记（review-1 m1）', async () => {
     fetchSessionsMock.mockResolvedValue(
       flyingList([{ kind: 'minutes', dir: stopDir, started_at: '2026-09-21T22:10:00+08:00' }])
-    );
+);
     browseDirsMock.mockResolvedValue(emptyDirs);
     postActionMock.mockResolvedValue({ kind: 'ok', ok: true, revision: 11 });
     const renderer = await mountHome();
@@ -820,14 +820,14 @@ describe('停掉会后与「添加工作区会打断」确认（R28 / b1c6a58e�
 
     // 没有东西会已中断：不弹任何确认（minutes 在飞不摆打断那只）
     expect(renderer.root.findAll((node) => node.props.role === 'dialog')).toHaveLength(0);
-    expect(postActionMock).toHaveBeenLastCalledWith('workspace_open', { dir: 'C:\\会议\\新场' });
+    expect(postActionMock).toHaveBeenLastCalledWith('workspace_open', { dir: 'C:\\meeting\\新场' });
     expect(postActionMock.mock.calls.map(([name]) => name)).not.toContain('post_stop');
   });
 
   it('minutes 在飞 × 非空目录：只问收编、不问打断，登记带 confirm 且零 stop（review-1 m1/m2）', async () => {
     fetchSessionsMock.mockResolvedValue(
       flyingList([{ kind: 'minutes', dir: stopDir, started_at: '2026-09-21T22:10:00+08:00' }])
-    );
+);
     browseDirsMock.mockResolvedValue(nonEmptyDirs);
     postActionMock.mockResolvedValue({ kind: 'ok', ok: true, revision: 12 });
     const renderer = await mountHome();
@@ -899,10 +899,10 @@ describe('停掉会后与「添加工作区会打断」确认（R28 / b1c6a58e�
 });
 
 // ---------------------------------------------------------------------------
-// 目录选择器「选中再确认」（节点 57ab5255）：spec 完成判定的四条 + 换层清选中
+// 目录选择器「选中再确认」（节点 ）：spec 完成判定的四条 + 换层清选中
 // ---------------------------------------------------------------------------
 
-describe('目录选择器「选中再确认」（57ab5255）', () => {
+describe('目录选择器「选中再确认」', () => {
   it('地址栏：输入存在的路径回车跳过去——地址栏与清单按新层渲染', async () => {
     fetchSessionsMock.mockResolvedValue(list());
     browseDirsMock.mockResolvedValue(twoKindDirs);
@@ -934,8 +934,8 @@ describe('目录选择器「选中再确认」（57ab5255）', () => {
     expect(
       renderer.root.findAll(
         (node) => node.props.role === 'option' && textOf(node).includes('旧文件夹'),
-      ),
-    ).toHaveLength(0);
+),
+).toHaveLength(0);
   });
 
   it('地址栏：输入不存在的路径回车——画出「跳不过去」，层不动、输入还在', async () => {
@@ -979,15 +979,15 @@ describe('目录选择器「选中再确认」（57ab5255）', () => {
 
     browseDirsMock.mockResolvedValue({
       home: 'C:\\Users\\<user>',
-      cwd: 'C:\\会议\\新场',
+      cwd: 'C:\\meeting\\新场',
       up: 'C:\\Users\\<user>',
-      here: { name: '新场', dir: 'C:\\会议\\新场', kind: 'empty', suspected: false },
+      here: { name: '新场', dir: 'C:\\meeting\\新场', kind: 'empty', suspected: false },
       dirs: [],
     });
     await act(async () => {
       pickerRow(renderer, '新场').props.onDoubleClick();
     });
-    expect(browseDirsMock).toHaveBeenLastCalledWith('C:\\会议\\新场');
+    expect(browseDirsMock).toHaveBeenLastCalledWith('C:\\meeting\\新场');
   });
 
   it('「向上一层」住在地址栏旁：盘根置灰；主目录不再置灰（点了退上一层）', async () => {
@@ -1006,7 +1006,7 @@ describe('目录选择器「选中再确认」（57ab5255）', () => {
       cwd: 'C:\\Users',
       up: 'C:\\',
       here: { name: 'Users', dir: 'C:\\Users', kind: 'unknown', suspected: false },
-      dirs: [{ name: 'PC', dir: 'C:\\Users\\<user>', kind: 'unknown', suspected: false }],
+      dirs: [{ name: '<user>', dir: 'C:\\Users\\<user>', kind: 'unknown', suspected: false }],
     });
     await click(renderer, upAtHome);
     expect(browseDirsMock).toHaveBeenLastCalledWith('C:\\Users');
@@ -1048,7 +1048,7 @@ describe('目录选择器「选中再确认」（57ab5255）', () => {
     expect(armed.props.disabled).toBe(false);
     await click(renderer, armed);
 
-    expect(postActionMock).toHaveBeenLastCalledWith('workspace_open', { dir: 'C:\\会议\\新场' });
+    expect(postActionMock).toHaveBeenLastCalledWith('workspace_open', { dir: 'C:\\meeting\\新场' });
     // 确认即收弹层
     expect(renderer.root.findAll((node) => node.props.role === 'dialog')).toHaveLength(0);
   });
@@ -1085,7 +1085,7 @@ describe('目录选择器「选中再确认」（57ab5255）', () => {
       home: 'C:\\Users\\<user>',
       cwd: 'C:\\Users\\<user>',
       up: 'C:\\Users',
-      here: { name: 'PC', dir: 'C:\\Users\\<user>', kind: 'unknown', suspected: false },
+      here: { name: '<user>', dir: 'C:\\Users\\<user>', kind: 'unknown', suspected: false },
       dirs: [
         { name: '旧会议', dir: 'C:\\会议\\旧会议', kind: 'meeting', suspected: false },
       ],
@@ -1132,12 +1132,12 @@ describe('目录选择器「选中再确认」（57ab5255）', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 落盘那一小块（d61829f1）：停止录音就回工作台，收尾还在跑也回 ——
+// 落盘那一小块：停止录音就回工作台，收尾还在跑也回 ——
 // 详情里那一小块如实说「还差最后一块没进盘」，且不阻塞会后那两个按钮。
 // （闸的判据「ended 任意相都回」在 home.test.ts 单独锁；这里锁回得来之后的画。）
 // ---------------------------------------------------------------------------
 
-describe('落盘那一小块（d61829f1，ui-design 4.2 二）', () => {
+describe('落盘那一小块（ui-design 4.2 二）', () => {
   /** 一份「收尾还在跑」的快照 ended（HomeGate 从快照上摘下来转手的那几格）。 */
   function drainingEnded(): Ended {
     return {
@@ -1154,7 +1154,7 @@ describe('落盘那一小块（d61829f1，ui-design 4.2 二）', () => {
   it('停止录音就回工作台（落盘仍在跑那一档）：详情打得开，小块写「还差最后一块没进盘」', async () => {
     fetchSessionsMock.mockResolvedValue(
       list({ sessions: [row({ state: 'ended' })], recent: 'C:\\会议\\跟老王聊周会' }),
-    );
+);
     let renderer!: TestRenderer.ReactTestRenderer;
     await act(async () => {
       renderer = TestRenderer.create(
@@ -1166,7 +1166,7 @@ describe('落盘那一小块（d61829f1，ui-design 4.2 二）', () => {
             logPath: 'C:\\log\\meeting.log',
           },
         }),
-      );
+);
     });
 
     const blocks = renderer.root.findAll((node) => node.props['aria-label'] === '落盘进度');
@@ -1197,7 +1197,7 @@ describe('落盘那一小块（d61829f1，ui-design 4.2 二）', () => {
     }
     fetchSessionsMock.mockResolvedValue(
       list({ sessions: [row({ state: 'ended' })], recent: 'C:\\会议\\跟老王聊周会' }),
-    );
+);
     let renderer!: TestRenderer.ReactTestRenderer;
     await act(async () => {
       renderer = TestRenderer.create(
@@ -1209,7 +1209,7 @@ describe('落盘那一小块（d61829f1，ui-design 4.2 二）', () => {
             logPath: null,
           },
         }),
-      );
+);
     });
 
     const blocks = renderer.root.findAll((node) => node.props['aria-label'] === '落盘进度');
@@ -1223,7 +1223,7 @@ describe('落盘那一小块（d61829f1，ui-design 4.2 二）', () => {
 
 
 // ---------------------------------------------------------------------------
-// 稿子正文与事后工序链（38817ecf）：默认会中稿、切换换正文、缺稿给那一句；
+// 稿子正文与事后工序链：默认会中稿、切换换正文、缺稿给那一句；
 // 链上四段与「能不能走」那一行。mount 级接线：取数打在 api/sessions 边界的替身上。
 // ---------------------------------------------------------------------------
 
@@ -1269,13 +1269,13 @@ function srcText(renderer: TestRenderer.ReactTestRenderer): string {
   return textOf(blocks[0] as TestRenderer.ReactTestInstance);
 }
 
-describe('稿子正文与事后工序链（38817ecf）', () => {
-  const dir = 'C:\会议\这一场';
+describe('稿子正文与事后工序链', () => {
+  const dir = '~/这一场';
 
   function mountEnded(transcripts: SessionTranscripts): Promise<TestRenderer.ReactTestRenderer> {
     fetchSessionsMock.mockResolvedValue(
       list({ sessions: [row({ dir, state: 'ended', session_id: '这一场' })], recent: dir }),
-    );
+);
     fetchSessionStatusMock.mockImplementation(async (asked: string) => endedStatus(asked));
     fetchSessionTranscriptsMock.mockResolvedValue(transcripts);
     return mountHome();
@@ -1327,7 +1327,7 @@ describe('稿子正文与事后工序链（38817ecf）', () => {
   it('工序链：已结束的场次摆出四段与「能不能走」那一行；稿子取失败只在那一块里说', async () => {
     fetchSessionsMock.mockResolvedValue(
       list({ sessions: [row({ dir, state: 'ended', session_id: '这一场' })], recent: dir }),
-    );
+);
     fetchSessionStatusMock.mockImplementation(async (asked: string) => endedStatus(asked));
     fetchSessionTranscriptsMock.mockRejectedValue(new Error('取不到这一场的稿子：服务没应答'));
     const renderer = await mountHome();
@@ -1351,7 +1351,7 @@ describe('稿子正文与事后工序链（38817ecf）', () => {
   it('转码在飞：链上那一段给出「暂停」，点了发出 transcode_pause 并带上 dir', async () => {
     fetchSessionsMock.mockResolvedValue(
       list({ sessions: [row({ dir, state: 'ended', session_id: '这一场' })], recent: dir }),
-    );
+);
     fetchSessionStatusMock.mockImplementation(async (asked: string) => ({
       ...endedStatus(asked),
       transcode: {
@@ -1378,10 +1378,10 @@ describe('稿子正文与事后工序链（38817ecf）', () => {
   it('还在录的那一场：链与稿子两块都不摆（会后的事还没开始）', async () => {
     fetchSessionsMock.mockResolvedValue(
       list({ sessions: [row({ dir, state: 'recording', session_id: '这一场' })], recent: dir }),
-    );
+);
     fetchSessionStatusMock.mockImplementation(
       async (asked: string) => ({ ...endedStatus(asked), state: 'recording' as const }),
-    );
+);
     fetchSessionTranscriptsMock.mockResolvedValue(bothRoads(dir));
     const renderer = await mountHome();
 
@@ -1404,7 +1404,7 @@ describe('开始钮的「起录在飞」一档（per-session-model-reload-starve
   it('点开始录音：在飞期间画「正在启动…」并保持禁用；成功落定后收回原文案、回到可按', async () => {
     fetchSessionsMock.mockResolvedValue(
       list({ sessions: [row({ dir: 'C:\\会议\\这一场' })], recent: 'C:\\会议\\这一场' }),
-    );
+);
     // `start` 那一跳挂在手上不放（在飞现场），其余动作照常受理。
     let releaseStart!: () => void;
     postActionMock.mockImplementation((name: string) => {
@@ -1435,14 +1435,14 @@ describe('开始钮的「起录在飞」一档（per-session-model-reload-starve
   it('起录被拒：失败块出列，钮收回原文案、回到可按（不楔死在「正在启动…」）', async () => {
     fetchSessionsMock.mockResolvedValue(
       list({ sessions: [row({ dir: 'C:\\会议\\这一场' })], recent: 'C:\\会议\\这一场' }),
-    );
+);
     postActionMock.mockRejectedValue(
       new ActionFailedError(409, 'already_recording', '已经有一场在录', {
         session_id: '别场',
         dir: 'C:\\会议\\别场',
         elapsed_seconds: 0,
       }),
-    );
+);
     const renderer = await mountHome();
 
     await click(renderer, buttonByText(renderer, '开始录音'));

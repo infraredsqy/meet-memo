@@ -4,7 +4,7 @@ import { DialogFrame } from '../../dialogs';
 import { duplicateNameHolders, type NamesRowView } from '../names';
 
 /**
- * 一只改名字的弹窗（人名节点 `91b6752e`，R10 第四条 / R30）：一行一个身份
+ * 一只改名字的弹窗（人名节点，R10 第四条 / R30）：一行一个身份
  * （路标签 + 编号 + 现名/待确认），输入框 + 确认，动作回包即重问单场状态（当场生效）。
  *
  * 身份读数来自服务（单场状态的 `speakers` 一格），名字跟着这一场的目录走——界面
@@ -42,7 +42,7 @@ export function SpeakerNamesDialog({
           duplicateNameHolders(rows, row.key, name).length > 0
             ? '编号相互独立，允许重名；已按输入提交。'
             : null,
-        );
+);
         setPending(null);
         setDrafts((current) => ({ ...current, [row.key]: '' }));
       },
@@ -51,7 +51,7 @@ export function SpeakerNamesDialog({
         setNote(null);
         setPending(null);
       },
-    );
+);
   };
 
   return (
@@ -69,7 +69,7 @@ export function SpeakerNamesDialog({
       </p>
       {rows.length === 0 && (
         <p className="empty">该工作区暂无待命名的身份（录音过的工作区才有本地、远端或编号）。</p>
-      )}
+)}
       {rows.map((row) => (
         <div className="picker__row" key={row.key}>
           <button className="picker__pick" type="button" onClick={() => confirmRow(row)}>
@@ -100,8 +100,8 @@ export function SpeakerNamesDialog({
             确认
           </button>
         </div>
-      ))}
+))}
       {note !== null && <p className="hint">{note}</p>}
     </DialogFrame>
-  );
+);
 }

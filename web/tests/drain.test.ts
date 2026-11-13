@@ -3,7 +3,7 @@ import { drainStripView, stepsSettled } from '../src/home/drain';
 import type { Ended } from '../src/contract';
 
 /**
- * 工作台详情里那一小块「落盘进度」的纯逻辑用例（`home/drain.ts`，d61829f1）。
+ * 工作台详情里那一小块「落盘进度」的纯逻辑用例（`home/drain.ts`）。
  *
  * 只锁不变量：两句话的判据（「还差最后一块没进盘」/「录音已落盘」）、失败档绝不
  * 说「已落盘」、三步明细各自的人话。判据本体是 `stepsSettled()`，闸（`gate.ts`）
@@ -89,7 +89,7 @@ describe('落盘那一小块的两句话（ui-design 4.2 二）', () => {
         { id: 'log', status: 'skipped' },
         { id: 'post', status: 'running' },
       ] }).steps),
-    ).toBe(false);
+).toBe(false);
     expect(stepsSettled([])).toBe(true);
   });
 });

@@ -1,10 +1,10 @@
-"""``meeting.service.runtime`` 模块级的公共冻结名字与 daemon 线程池类（叶子模块）。
+"""meeting.service.runtime 模块级的公共冻结名字与 daemon 线程池类（叶子模块）。
 
-存放收尾执行器线程数常量、daemon 工作线程池 ``_DaemonThreadPoolExecutor`` 与动作层冻结名
-（``ACTION_CODES`` / ``ACTION_NAMES`` / ``SESSION_MODES`` / ``DEFAULT_SESSION_MODE`` / ``ActionError``）、
-Windows 保留设备名的单一权威表、``(kind, dir)`` 槽位登记的公共读法与单场目录寻址的两档判读
-（两个小 mixin），供 runtime 各 mixin 模块原样引用；模块顶层不 import 任何 ``meeting.*``
-（方法体内用到的 ``meeting.*`` 一律函数体内 import）。
+存放收尾执行器线程数常量、daemon 工作线程池 _DaemonThreadPoolExecutor 与动作层冻结名
+（ACTION_CODES / ACTION_NAMES / SESSION_MODES / DEFAULT_SESSION_MODE / ActionError）、
+Windows 保留设备名的单一权威表、(kind, dir) 槽位登记的公共读法与单场目录寻址的两档判读
+（两个小 mixin），供 runtime 各 mixin 模块原样引用；模块顶层不 import 任何 meeting.*
+（方法体内用到的 meeting.* 一律函数体内 import）。
 """
 from __future__ import annotations
 
@@ -25,12 +25,12 @@ class _DaemonThreadPoolExecutor(_ThreadPoolExecutor):
     """工作线程是 **daemon** 的线程池（同步实现丢进工作线程的那些调用专用）。
 
     三处调用点：**收尾三步**（`_drain_wait()`）、**会中总结那一次模型调用**
-    （`_summary_wait()`，`1987cb20` phase2 的复审裁定）、**会中模型的收 / 放**
-    （`_submit_model_lifecycle()`，`10770b41`）。三处各起一台池（收尾那台 4 条线程、
+    （`_summary_wait()`， 设计的复审裁定）、**会中模型的收 / 放**
+    （`_submit_model_lifecycle()`）。三处各起一台池（收尾那台 4 条线程、
     会中总结那台按 `SUMMARY_EXECUTOR_MAX_WORKERS`、会中模型的收 / 放那台按
     `MODEL_EXECUTOR_MAX_WORKERS` 取 1 条），工作线程都是本类的 daemon 线程。
 
-    **为什么必须是 daemon**（phase3 §3.5 行为表第二行「**立即中止**」）：第二次 `Ctrl+C`
+    **为什么必须是 daemon**（设计口径行为表第二行「**立即中止**」）：第二次 `Ctrl+C`
     的语义是「先落盘（`draining` + `interrupted: true`）、再 `cancel()` 收尾 task、随即请求
     关停」。`cancel()` 中止的是 `_drain_wait()` 里那次 `wait_for` 的**等待**，已经交给工作
     线程的那次同步调用（`launch()` / `finalize()` / 场次 log 的 flush 与摘除）**照跑到底**；
@@ -115,7 +115,7 @@ class _DaemonThreadPoolExecutor(_ThreadPoolExecutor):
 
 # 动作层的错误（`code` 取值只用 `ACTION_CODES` 里已冻结的那九个串，不自造）
 
-#: 动作失败的 `code` 全集（phase2 §3.6.2；`1987cb20` phase2 补上会中总结那两档）
+#: 动作失败的 `code` 全集（设计口径； 设计补上会中总结那两档）
 ACTION_CODES: tuple[str, ...] = (
     "already_recording",
     "draining",
@@ -128,7 +128,7 @@ ACTION_CODES: tuple[str, ...] = (
     "summary_failed",
 )
 
-#: 动作名清单（phase2 §3.13 + `dca4539b` 的 `reprobe` + `1987cb20` phase2 的 `summarize`
+#: 动作名清单（设计口径 +  的 `reprobe` +  设计的 `summarize`
 #: + 工作台收编节点的 `workspace_open` / `workspace_remove` + 会后两个按钮
 #: `post_offline` / `post_minutes` + 暂停节点的 `pause` / `resume` / `set_source`
 #: + 人名节点的 `speaker_rename` + 打断会后的 `post_stop`

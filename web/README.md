@@ -2,8 +2,7 @@
 
 > meeting 的前端：契约层、服务接口客户端（SSE / 动作 / 心跳）、工作区首页与会中主视图。
 > 上游指针：契约正文 `docs/contract.md`（可机读样本与掩码规则见 `contract/README.md`）；
-> 界面口径的正本（信息架构、交互清单、多开 / 关闭 / 刷新行为、设计 token）在 `docs/ui-design.md`；
-> 设计稿本体在 `docs/ui/`（不进构建、不被服务引用）。
+> 界面口径的正本（信息架构、交互清单、多开 / 关闭 / 刷新行为、设计 token）在 `docs/ui-design.md`。
 
 ## 前提
 
@@ -47,13 +46,13 @@ npm test           # vitest run
 
 `src/main.tsx` 按 `tokens.css` → `console.css` → `live.css` 的顺序引入：
 
-- **`tokens.css`** —— `docs/ui/tokens.css` 的逐字节拷贝（出处与拷贝日期见文件头注释）。那份文件是设计
-  token 的唯一定义处，改它等于改设计稿；本文件正文一个字符都不改。
+- **`tokens.css`** —— 尺度 token 的唯一定义处（语义与理由见 `docs/ui-design.md` 7.1）；组件与另两份
+  样式都从它取值，改它等于改整套视觉尺度。
 - **`console.css`** —— 主题 token 层：具名色的两套实现取值都在这里。`:root` 是日面（纸白底、墨字、
   信号橙），`[data-theme="dark"]` 翻夜面（暖黑底）。日面是默认；左栏铭牌旁那颗「夜间 / 日间」随时翻，
   选择存在 localStorage 的 `meeting.theme`（键名归 `src/home/theme.ts`）——主题只管配色，
   与快照那些会中读数各存各的。
-- **`live.css`** —— 会中视图样式，类名照旧（与 `docs/ui/ui.css` 同一套）；取色与字体全部 `var()` 自前两份。
+- **`live.css`** —— 会中视图样式，类名与组件同一套；取色与字体全部 `var()` 自前两份。
   数据进 style 变量的分层口径见 `docs/ui-design.md`：`--level` / `--hold` / `--h` 由组件写到元素上，高度怎么画在 `live.css`；没有一处内联宽高，也没有一处"让电平看起来在动"的动画。
 
 ## 行为口径

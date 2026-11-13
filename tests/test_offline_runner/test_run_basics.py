@@ -43,7 +43,7 @@ from tests.test_offline_runner._common import (
     read_status,
 )
 
-#: 慢档标记（68927c27 收尾轮）：会后离线链的契约验收，归收尾跑。
+#: 慢档标记（收尾轮）：会后离线链的契约验收，归收尾跑。
 pytestmark = pytest.mark.slow
 
 # ---------------------------------------------------------------------------

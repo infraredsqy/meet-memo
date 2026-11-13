@@ -14,7 +14,7 @@ import { initialHeartbeatState } from '../src/live/heartbeat';
 import { makeSnapshot, makeSource } from './live-fixtures';
 
 /**
- * 会中收音四组合直切的映射表（`c9f5d04d`）。
+ * 会中收音四组合直切的映射表（``）。
  *
  * spec 完成判定的第四条钉在这里：每档组合发哪些动作、幂等重按一个请求都不发。
  * 判据三条：
@@ -65,7 +65,7 @@ describe('snapshotComboState + comboOf：从用例快照读出的那一档', () 
     expect(comboOf(snapshotComboState(snapshot))).toBe('both');
     expect(liveView(snapshot, heartbeat, null, null, '2026-09-21T20:57:31+08:00').combo).toBe(
       'both',
-    );
+);
   });
 
   it('远端被关掉是「仅本地」，本地被关掉是「仅远端」', () => {
@@ -162,7 +162,7 @@ describe('comboActions：幂等重按不发多余请求', () => {
     ({ combo }) => {
       expect(comboActions(combo, comboStateOf(combo))).toEqual([]);
     },
-  );
+);
 
   it('「全停」在暂停中重按：连 pause 都不发', () => {
     expect(comboActions('paused', state(true, false, true))).toEqual([]);

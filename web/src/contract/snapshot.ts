@@ -225,10 +225,10 @@ export const asrSettingsSchema = strict({
 });
 
 /**
- * `settings` 七键。`devices` 的两个子键是 `mic` / `loopback`（`dca4539b` 定名），
+ * `settings` 七键。`devices` 的两个子键是 `mic` / `loopback`（定名），
  * 取值是设备名字符串，没配就是 `null`。
  *
- * `summary_default_window`（`311f84f5`）是快速总结的缺省档（四档取值域）：
+ * `summary_default_window`是快速总结的缺省档（四档取值域）：
  * 界面的默认预选随它走 —— 服务是唯一来源，前端不自造第二份。
  *
  * `summary_preset_names` / `summary_active_preset`（会中切模型，本节点）：预设的

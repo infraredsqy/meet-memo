@@ -281,6 +281,6 @@ def samples_within_one_block(
     """「样本数」与「墙钟秒数 × 采样率」的偏差是否在一个采集块以内。
 
     采集按块落盘（一块 0.1 秒 = 1600 样本），墙钟是连续量：两者的差被一个块宽吸收
-    （任务书 §3 的口径）。边界值算在内（恰好差一个块 = 通过）。
+    （设计口径 §3 的口径）。边界值算在内（恰好差一个块 = 通过）。
     """
     return abs(int(samples) - float(wall_seconds) * sample_rate) <= block_samples

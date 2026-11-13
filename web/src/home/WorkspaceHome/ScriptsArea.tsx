@@ -36,7 +36,7 @@ export function ScriptsArea({
             >
               {kind === 'live' ? '会中稿' : '会后稿'}
             </button>
-          ))}
+))}
         </div>
       </div>
       {error !== null && <p className="wssrc__bad">{error}</p>}
@@ -46,24 +46,24 @@ export function ScriptsArea({
             <span className="spinner" aria-hidden="true" />
             正在取这一场的稿子。
           </p>
-        )
-      ) : (
+)
+) : (
         <>
           {srcView.headline !== null && (
             <p className="wssrc__note">{srcView.headline}</p>
-          )}
+)}
           {srcView.roads.map((road) => (
             <div className="wssrc__road" key={road.source} data-road={road.source}>
               <p className="wssrc__roadname">{road.label}</p>
               {road.present ? (
                 <pre className="wssrc__text">{road.text}</pre>
-              ) : (
+) : (
                 <p className="wssrc__note">{road.note}</p>
-              )}
+)}
             </div>
-          ))}
+))}
         </>
-      )}
+)}
     </div>
-  );
+);
 }

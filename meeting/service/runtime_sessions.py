@@ -139,7 +139,7 @@ class RuntimeSessionsMixin:
         `state=None` 时由 `_session_state_on_disk()` 经 `state_for()` 四档映射算出；只有
         取消路径显式传 `state="draining"` 钉住这一档——现场已有 `failed` 步时映射会算出
         `"failed"`，把 `mark_interrupted()` 刚写下的 `draining` 覆盖掉；四档映射本身是
-        跨 Phase 契约，只钉写值、不改映射。
+        跨层契约，只钉写值、不改映射。
         """
         session = self.snapshot.session
         if session is None:  # pragma: no cover - 调用点都有会话
@@ -178,7 +178,7 @@ class RuntimeSessionsMixin:
         self._reject_start_on_offline_post()
 
         # ② 校验落点（**显式给、已存在**；不建目录）。已有记录的那一档 = 续接：
-        #    先把旧记录读进来（本场落盘的每一版都要跟它合并），再动任何东西
+        # 先把旧记录读进来（本场落盘的每一版都要跟它合并），再动任何东西
         try:
             session_dir = resolve_workspace_dir(dir)
         except ValueError as exc:
@@ -274,7 +274,7 @@ class RuntimeSessionsMixin:
             session_id, session_dir, mode,
             f"，续接第 {planned_segment} 段（旧记录已合并）" if resuming else "",
         )
-        # `idle → recording` 的副作用会把两路 `health` 推到 `capturing`（phase2 §3.5.2），
+        # `idle → recording` 的副作用会把两路 `health` 推到 `capturing`（设计口径），
         # 逐路落一条（阈值取 `mode`：本场采哪几路是这一档的口径）
         self._log_health_migrations(
             reason=f"场次开始（mode={mode}）",
@@ -405,7 +405,7 @@ class RuntimeSessionsMixin:
             session.id if session else "?", session.dir if session else "?", reason,
             round(session.elapsed_seconds, 3) if session else "?",
         )
-        # `→ ended` 的副作用把两路 `health` 推到 `stopped`（phase2 §3.5.2），逐路落一条
+        # `→ ended` 的副作用把两路 `health` 推到 `stopped`（设计口径），逐路落一条
         self._log_health_migrations(
             reason=f"场次结束、进收尾（reason={reason}）",
             threshold="无阈值（收尾这一步不看阈值）",

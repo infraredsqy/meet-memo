@@ -85,7 +85,7 @@ def write_chunk_wav(path: Path | str, samples: "np.ndarray") -> Path:
 
     ⚠ **float32 必须先乘 32767 再转 int16**：直接 `.astype("<i2")` 会把 `[-1, 1]`
     波形截成全 0，写出一份数字静音的 wav——模型对静音照样吐 `[0.5][S01]…`
-    （phase3 实测坑，用例 `test_write_chunk_wav_keeps_the_signal` 盯着）。换算走
+    （设计实测坑，用例 `test_write_chunk_wav_keeps_the_signal` 盯着）。换算走
     `full_scale_counts()`（满量程换算的唯一出处）。
     「写出来全零」不作产品代码错误判据：真正安静的会议写出来本来就是零，
     自检只在**调引擎之前**的静音门上做。`wave` / `numpy` 函数体内 import（惰性纪律）。

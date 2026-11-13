@@ -32,7 +32,7 @@ from tests._app_drivers import live, post, snapshot_of
 from tests._helpers import wait_until
 from tests._capture_fakes import CHUNK_BYTES, FakeCaptureSource
 
-#: 慢档标记（68927c27 收尾轮）：真流式/真后端的收尾验收，不进每次迭代圈。
+#: 慢档标记（收尾轮）：真流式/真后端的收尾验收，不进每次迭代圈。
 pytestmark = pytest.mark.slow
 
 #: 假端点表（形状照本机实测：同名端点在不同 host API 下并存）
@@ -162,7 +162,7 @@ def make_backend(
 def test_start_brings_up_both_routes_and_writes_both_archives(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """两路都起得来：归档写进 `session_dir`，字节数按 3200 一 块 对得上。"""
+    """两路都起得来：归档写进 `session_dir`，字节数按 3200 一块对得上。"""
     factory = SourceFactory(chunks=4)
     backend = make_backend(monkeypatch, factory=factory)
     session_dir = tmp_path / "250906"

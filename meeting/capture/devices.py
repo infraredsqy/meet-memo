@@ -1,4 +1,4 @@
-"""设备模型与挑选策略——纯逻辑，不 import 声卡库（`dca4539b` phase1 §3）。
+"""设备模型与挑选策略——纯逻辑，不 import 声卡库（设计口径）。
 
 挑选内核整段拷自 V1（`mnotes_core/recorder.py`）：`_resolve_mic_device`（`:371-413`）→
 `select_microphone()`，`_resolve_loopback_speaker`（`:444-465`）→ `select_loopback()`。
@@ -7,7 +7,7 @@
 （`SelectionOutcome`），好让 `probe()` 如实报三档。候选筛选、`host_rank` 的
 `WASAPI → DirectSound → MME` 次序、精确名优先再前缀兜、loopback 三级——一律照 V1 原文。
 
-两处收尾有意不照搬 V1（`phase1/task.md` §3 第 5、6 条）：单候选也试开一次；「全试完不成 →
+两处收尾有意不照搬 V1（设计口径 §3 第 5、6 条）：单候选也试开一次；「全试完不成 →
 回落首个候选」换成两档收敛——在打开了的候选里挑（先要有波形的），一条都没打开落
 `probe_failed`、`endpoint=None`，绝不回落从没打开过的候选（V1 没有 `probe_failed` 可报，V2 有）。
 
@@ -20,7 +20,7 @@
 多个 host API 下同名，sounddevice 按名字匹配会抛 'Multiple input devices found'；WASAPI
 端点常不支持 SAMPLE_RATE（如 48k 下 16k 打开失败），故按 host API 优先级逐个试开。
 
-本机实测（原始输出见 `phase1/report.md` 与 `phase1/fix3.md`）：系统默认输入是
+本机实测（原始输出见实测记录）：系统默认输入是
 `Analogue 1 + 2 (2- Focusrite US`（MME #1）；序号最小的 `#0` 是 MME 的
 `Microsoft 声音映射器 - Input`——Windows 的 WAVE_MAPPER，跟随系统默认输入、报出的是
 跟着变的别名（旧稿按序号最小取种子落到的就是它）。VB-Cable 的抓取侧 `CABLE Output`
@@ -275,7 +275,7 @@ def is_pseudo_capture(name: str) -> bool:
     """这条输入端点是不是抓取型虚拟端点（判据 = 模块级两个常量同时命中）。
 
     V1 没有这一条；V2 必须挡住：抓取侧 `CABLE Output` 抓的是远端那一路，当麦克风录下来
-    mic 与 loopback 就是同一路内容（任务书 §3.1）。本机真表命中四条：MME `#2`、
+    mic 与 loopback 就是同一路内容（设计口径 §3.1）。本机真表命中四条：MME `#2`、
     DirectSound `#11`、WASAPI `#21` 的 `CABLE Output (VB-Audio Virtual Cable)`，
     与 WDM-KS `#25` 的 `CABLE Output (VB-Audio Point)`（最后这条牌子标记里没有 "virtual"）。
     """
@@ -329,7 +329,7 @@ def mic_candidates(
 
     if not name:
         # 没配名字：种子取系统默认输入端点（要报得出真名）；抓取型的默认输入不进候选，
-        # 那样 mic 与 loopback 会录同一路（任务书 §3.1）。
+        # 那样 mic 与 loopback 会录同一路（设计口径 §3.1）。
         seed = next(
             (
                 endpoint
@@ -391,14 +391,14 @@ def select_microphone(
     加的那一步：循环里的「能开」判定换成 `_has_sound()`——开起来之后读回一小段样本，
     有波形才算数，「能打开但全是零」的端点不会中选；V1 的排序骨架原样不动。
 
-    收尾按任务书 §3 的裁定改过（V1 的 `return cands[0]` 不照搬），收敛分两档：
+    收尾按设计口径 §3 的裁定改过（V1 的 `return cands[0]` 不照搬），收敛分两档：
 
       - 在打开了的候选里挑：第一条有波形的落 `ready`；一条有波形的都没有时取第一条
         打开了的。波形只用来在候选之间挑，不判这一路生死——试开只看得见零点几秒，
         房间当时安静、远端没出声时读到的就是全零，拿它报故障等于每次安静都亮故障灯；
       - 一条都没打开时落 `probe_failed` 且 `endpoint=None`，`detail` 逐条写清试过哪几条。
         不回落任何从没打开过的候选：报一个打不开的端点上去，界面先显示就绪、真开录时
-        立刻掉线（`base.py:46` 与 `phase1/task.md:87` 定的口径）。
+        立刻掉线（`base.py:46` 与 `设计口径` 定的口径）。
 
     V1 的短路口（`if len(cands) == 1: return cands[0]`）也不再照搬：单候选照样试开，
     「候选只有一条、那条开不了」同样落 `probe_failed`。

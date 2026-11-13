@@ -62,7 +62,7 @@ export function describeDetail(detail: FailureDetail): string[] {
     }
     lines.push(
       `${key}：${typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value)}`,
-    );
+);
   }
   return lines;
 }

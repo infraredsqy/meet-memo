@@ -1,6 +1,6 @@
 """`meeting/minutes/runner.py` / `inputs.py` / `status.py` 与两个钩子的契约用例。
 
-要盯的八条（对应任务书 phase2 的完成判定与给复审的自检项）：
+要盯的八条（对应设计口径2 的完成判定与给复审的自检项）：
 
   1. **一次成功的运行**：找输入 → `working/inputs.json` → 切块 → 渲染 → 拉起 → 校验 → 落状态；
   2. **一条转写都没有**：不启动 DSH、状态记 `failed` + 原因（不许静默出空纪要）；
@@ -81,16 +81,16 @@ def _session(tmp_path: Path, session_id: str = "250919") -> Path:
     (session / "meeting_transcript_mic.md").write_text(
         "\n".join(f"[21:{minute:02d}] mic 会中第 {minute} 句。" for minute in range(25)) + "\n",
         encoding="utf-8",
-    )
+)
     (session / "meeting_offline_transcript_mic.md").write_text(
         "\n".join(f"[21:{minute:02d}] **S01**: mic 会后第 {minute} 句。" for minute in range(22))
         + "\n",
         encoding="utf-8",
-    )
+)
     (session / "meeting_transcript_loopback.md").write_text(
         "\n".join(f"[21:{minute:02d}] loopback 会中第 {minute} 句。" for minute in range(15)) + "\n",
         encoding="utf-8",
-    )
+)
     return session
 
 
@@ -120,7 +120,7 @@ class RecordingLauncher:
         directory = Path(session_dir)
         write_text_atomic(
             directory / "working" / "run_prompt.md", str(kwargs.get("prompt_text") or "")
-        )
+)
         if self.write_final:
             (directory / FINAL_NAME).write_text(GOOD_FINAL, encoding="utf-8")
         if self.fail:
@@ -134,7 +134,7 @@ class RecordingLauncher:
                 prompt="working/run_prompt.md",
                 failure=self.fail,
                 error=f"启动器报了这一档：{self.fail}",
-            )
+)
         return LaunchResult(
             ok=True,
             branch="headless",
@@ -143,7 +143,7 @@ class RecordingLauncher:
             seconds=0.01,
             log=ARTIFACT_LOG,
             prompt="working/run_prompt.md",
-        )
+)
 
 
 def _load_config(home: Path, values: dict) -> config_module.Config:
@@ -152,7 +152,7 @@ def _load_config(home: Path, values: dict) -> config_module.Config:
     return config_module.load(
         environ={"HOME": str(home), "USERPROFILE": str(home)},
         path=str(helpers.config_path_of(home)),
-    )
+)
 
 
 @pytest.fixture(autouse=True)
@@ -178,7 +178,7 @@ def test_a_successful_run_writes_the_inputs_the_chunks_and_the_status(tmp_path: 
 
     document = runner_module.run(
         session, launcher=launcher, deliver=True, probe=_dead_probe
-    )
+)
 
     assert document["state"] == STATE_DONE
     assert document["mode"] == "both"
@@ -210,7 +210,7 @@ def test_the_inputs_document_matches_the_spec_shape(tmp_path: Path) -> None:
 
     document = runner_module.run(
         session, launcher=RecordingLauncher(), deliver=True, probe=_dead_probe
-    )
+)
 
     written = json.loads((session / "working" / "inputs.json").read_text(encoding="utf-8"))
     assert written["schema_version"] == 1
@@ -250,7 +250,7 @@ def test_the_status_file_round_trips_and_rejects_a_foreign_version(tmp_path: Pat
     session = _session(tmp_path)
     runner_module.run(
         session, launcher=RecordingLauncher(), deliver=True, probe=_dead_probe
-    )
+)
     path = session / STATUS_NAME
 
     written = status_module.read_status(path)
@@ -276,7 +276,7 @@ def test_a_session_without_inputs_never_starts_dsh(tmp_path: Path) -> None:
 
     document = runner_module.run(
         session, launcher=launcher, deliver=True, probe=_dead_probe
-    )
+)
 
     assert document["state"] == STATE_FAILED
     assert document["mode"] == "none"
@@ -293,7 +293,7 @@ def test_a_launcher_failure_lands_in_the_status(tmp_path: Path) -> None:
 
     document = runner_module.run(
         session, launcher=launcher, deliver=True, probe=_dead_probe
-    )
+)
 
     assert document["state"] == STATE_FAILED
     assert "artifact_missing" in str(document["error"])
@@ -317,7 +317,7 @@ def test_a_template_error_lands_in_the_status(tmp_path: Path, monkeypatch) -> No
     monkeypatch.setattr(runner_module, "render_session_prompt", boom)
     document = runner_module.run(
         session, launcher=launcher, deliver=True, probe=_dead_probe
-    )
+)
 
     assert document["state"] == STATE_FAILED
     assert "提示词渲染失败" in str(document["error"])
@@ -337,7 +337,7 @@ def test_the_reentry_gate_stops_before_the_launcher(tmp_path: Path) -> None:
 
     document = runner_module.run(
         session, launcher=launcher, environ={"MEETING_MINUTES_CHILD": "1"}
-    )
+)
 
     assert document["state"] == STATE_SKIPPED
     assert launcher.calls == []
@@ -377,7 +377,7 @@ def test_the_launcher_is_handed_the_rendered_prompt(tmp_path: Path) -> None:
     assert written["session_id"] == session.name
     assert launcher.calls[0]["timeout"] == float(
         config_module.DEFAULT_VALUES["minutes.timeout_seconds"]
-    )
+)
 
 
 # ---------------------------------------------------------------------------
@@ -402,7 +402,7 @@ def test_a_temp_config_file_lets_chunk_lines_through_and_rejects_an_out_of_range
         config_module.load(
             environ={"HOME": str(home), "USERPROFILE": str(home)},
             path=str(helpers.config_path_of(home)),
-        )
+)
     assert info.value.key == "minutes.chunk_lines"
     assert "10–1000" in info.value.legal
 
@@ -417,7 +417,7 @@ def test_chunk_lines_from_the_config_reaches_the_chunker(tmp_path: Path) -> None
 
     document = runner_module.run(
         session, launcher=launcher, config=loaded, deliver=True, probe=_dead_probe
-    )
+)
 
     assert document["chunks"]["mic"]["offline"]["chunk_count"] == 3, "22 行按 10 行一块切"
     assert document["chunks"]["mic"]["live"]["chunk_count"] == 3, "25 行按 10 行一块切"
@@ -481,7 +481,7 @@ def test_the_hook_launch_returns_immediately_and_never_raises(
         lambda: (session / STATUS_NAME).exists()
         and status_module.read_status(session / STATUS_NAME)["state"] == STATE_FAILED,
         what="后台线程把状态文件补成 failed",
-    )
+)
     written = status_module.read_status(session / STATUS_NAME)
     assert "这一趟炸了" in str(written["error"])
 
@@ -557,7 +557,7 @@ def test_a_second_launch_on_the_same_session_is_refused(
     arms: list[str] = []
     monkeypatch.setattr(
         runner_module, "run", lambda session_dir, **kwargs: arms.append(str(session_dir))
-    )
+)
     hook = minutes_backend.MinutesHook()
 
     hook.launch(str(session), deliver=True)
@@ -579,7 +579,7 @@ def test_force_launches_again_on_the_same_session(tmp_path: Path, monkeypatch) -
         runner_module,
         "run",
         lambda session_dir, **kwargs: seen.append((str(session_dir), bool(kwargs))),
-    )
+)
     hook = minutes_backend.MinutesHook()
 
     hook.launch(str(session), deliver=True)
@@ -629,7 +629,7 @@ def test_a_minutes_run_leaves_the_offline_artifacts_untouched(
 
     offline_runner.run_session(
         session, engine=FakeEngine(), config=FakeConfig(**{"post.chunk_seconds": 450})
-    )
+)
     before = {
         name: _digest(session / name) for name in OFFLINE_ARTIFACTS if (session / name).is_file()
     }
@@ -638,7 +638,7 @@ def test_a_minutes_run_leaves_the_offline_artifacts_untouched(
     monkeypatch.delenv("MEETING_MINUTES_CHILD")
     runner_module.run(
         session, launcher=RecordingLauncher(), deliver=True, probe=_dead_probe
-    )
+)
 
     after = {name: _digest(session / name) for name in OFFLINE_ARTIFACTS}
     assert after == before
@@ -658,7 +658,7 @@ def test_the_offline_tail_announces_the_hook_once(tmp_path: Path, monkeypatch) -
         engine=FakeEngine(),
         config=FakeConfig(**{"post.chunk_seconds": 450}),
         announce_minutes=True,
-    )
+)
 
     assert summary["minutes"]["hook"] == "skipped"
     assert summary["minutes"]["announced"] is False
@@ -679,14 +679,14 @@ def test_the_offline_tail_keeps_a_broken_minutes_layer_out_of_its_own_status(
 
     offline_runner.run_session(
         session, engine=FakeEngine(), config=FakeConfig(**{"post.chunk_seconds": 450})
-    )
+)
     before = {name: _digest(session / name) for name in OFFLINE_ARTIFACTS}
 
     monkeypatch.delenv("MEETING_MINUTES_CHILD")
     monkeypatch.setattr(
         "meeting.backends.registry.resolve_minutes_hook",
         _raising_resolver,
-    )
+)
     outcome = minutes_tail._announce_minutes(session, announce_minutes=True)
 
     assert outcome["hook"] == "failed"
@@ -706,7 +706,7 @@ def test_a_null_hook_keeps_the_minutes_status_away(tmp_path: Path, monkeypatch) 
     monkeypatch.delenv("MEETING_MINUTES_CHILD", raising=False)
     monkeypatch.setattr(
         config_module, "get", _config_getter({"minutes.hook": None, "post.chunk_seconds": 450})
-    )
+)
     from meeting.offline import runner as offline_runner
 
     summary = offline_runner.run_session(
@@ -714,7 +714,7 @@ def test_a_null_hook_keeps_the_minutes_status_away(tmp_path: Path, monkeypatch) 
         engine=FakeEngine(),
         config=FakeConfig(**{"post.chunk_seconds": 450}),
         announce_minutes=True,
-    )
+)
 
     assert summary["minutes"]["hook"] == "absent"
     assert summary["minutes"]["announced"] is False
@@ -769,7 +769,7 @@ def test_the_new_modules_pull_no_heavy_dependency() -> None:
         encoding="utf-8",
         errors="replace",
         timeout=60,
-    )
+)
     output = (result.stdout or "") + (result.stderr or "")
     assert result.returncode == 0, f"全新解释器里 import 失败：\n{output}"
     lines = (result.stdout or "").strip().splitlines()
@@ -813,7 +813,7 @@ def test_the_running_state_is_on_disk_before_the_launcher_is_called(tmp_path: Pa
             seconds=0.01,
             log=ARTIFACT_LOG,
             prompt="working/run_prompt.md",
-        )
+)
 
     document = runner_module.run(session, launcher=peek, deliver=True, probe=_dead_probe)
 
@@ -842,7 +842,7 @@ def test_a_failed_run_still_overwrites_the_running_state(tmp_path: Path) -> None
 
     document = runner_module.run(
         session, launcher=launcher, deliver=True, probe=_dead_probe
-    )
+)
 
     assert document["state"] == STATE_FAILED
     written = _status_on_disk(session)
@@ -858,7 +858,7 @@ def test_a_session_without_inputs_leaves_a_failed_state_not_a_running_one(tmp_pa
 
     runner_module.run(
         session, launcher=RecordingLauncher(), deliver=True, probe=_dead_probe
-    )
+)
 
     assert _status_on_disk(session)["state"] == STATE_FAILED
 
@@ -869,7 +869,7 @@ def test_the_reentry_gate_writes_no_status_at_all(tmp_path: Path) -> None:
 
     document = runner_module.run(
         session, launcher=RecordingLauncher(), environ={"MEETING_MINUTES_CHILD": "1"}
-    )
+)
 
     assert document["state"] == STATE_SKIPPED
     assert not (session / STATUS_NAME).exists(), "子会话不落 running，也不覆盖父进程那一趟"

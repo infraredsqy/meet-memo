@@ -16,7 +16,7 @@ import { sourceDisplayName } from '../live/format';
  *
  * 四件事，判据全部落在服务给的原文上：
  *
- * 1. **列表行四档**（d61829f1：空白工作区 / 尚未开始 / 录音中 / 录音结束，另保留
+ * 1. **列表行四档**（：空白工作区 / 尚未开始 / 录音中 / 录音结束，另保留
  *    「目录不存在」）—— 纯显示层重映射，行 schema 十二键一字不动；会后工序的进度
  *    不进这一格（`post_jobs` 只喂左栏底那格忙闲与详情里的进度区）。
  * 2. **进度读数**：`GET /api/sessions/{id}` 的 `offline` 那份 → 每路一条的读数与
@@ -24,7 +24,7 @@ import { sourceDisplayName } from '../live/format';
  *    不存在的量，设计意图第 9 条）。
  * 3. **「真在跑 vs 停着一版 running vs 被打断」**：`offline.in_process` 与 `offline.state`
  *    各答各的事（契约 4.9）；进程崩在半路那一场盘上停着 `running`，读数如实分两层；
- *    「被打断」是盘上自己的终态（b1c6a58e，R28）—— 自成一相，**不许掉进「跑完了」**，
+ *    「被打断」是盘上自己的终态（R28）—— 自成一相，**不许掉进「跑完了」**，
  *    阶段行明说「被打断、可以重跑」。
  * 4. **全局「显卡忙不忙」**（b1/b2）：忙 = 有模型开着 —— 本机正在录（快照状态）
  *    ∨ 会后那趟在本进程跑（`GET /api/sessions` 顶层的 `post_jobs`；转码那趟不吃
@@ -40,7 +40,7 @@ export type { PostJobCell };
 // ---------------------------------------------------------------------------
 
 /**
- * 行状态的档位。列表行只说录音的**四档**（d61829f1）：`blank`（空白工作区）/
+ * 行状态的档位。列表行只说录音的**四档**：`blank`（空白工作区）/
  * `unstarted`（尚未开始）/ `recording`（录音中）/ `ended`（录音结束）；另有一档
  * 如实保留：「目录不存在」（`gone`）。行 `state` 是三档口径（契约 4.8）：
  * `recording` / `ended` / `null` —— 收尾走到哪一步、会后那几趟在不在飞都**不进
@@ -112,7 +112,7 @@ export type OfflinePhase = 'in-flight' | 'stale-running' | 'interrupted' | 'fini
 
 export interface ProgressView {
   phase: OfflinePhase;
-  /** 阶段那一行的整句（「正在跑：本地 第 2/5 块」/「停着一版"在跑"，其实谁都没在跑」）。 */
+  /** 阶段那一行的整句（「正在跑：本地第 2/5 块」/「停着一版"在跑"，其实谁都没在跑」）。 */
   phaseLabel: string;
   /** `state` 与 `in_process` 两格的原文（界面在阶段行旁边如实摆出这两格）。 */
   onDiskState: SessionStatus['offline']['state'];
@@ -201,7 +201,7 @@ export function progressView(status: SessionStatus): ProgressView {
       unjudged: sum.unjudged + road.counts.unjudged,
     }),
     { ...ZERO_COUNTS },
-  );
+);
 
   const onTheRoad = roads.find((road) => road.source === offline.current_source) ?? null;
   const phaseLabel =
@@ -427,7 +427,7 @@ export function gpuBusyView(
  * - **转码与纪要在飞也问**（本节点：工序链的第一批读者）——转码那趟在跑/停着
  *   `paused`（工序还活着、等摘旗）时链上那一段要跟着翻面；纪要在飞时链上那一段
  *   要在收工那一刻翻成「已完成」；
- * - 其余（终态、**被打断**（b1c6a58e：它也是终态，重按按钮才再跑）、还没跑过、
+ * - 其余（终态、**被打断**（：它也是终态，重按按钮才再跑）、还没跑过、
  *   什么都没选）→ 不问。
  */
 export function shouldWatch(

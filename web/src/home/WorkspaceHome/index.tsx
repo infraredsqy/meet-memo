@@ -8,13 +8,13 @@ import type { ReactNode } from 'react';
  * `workspaces.json`，界面只读、不落任何本地存储 —— 契约章 6 第 2 条）；会后在进度区读
  * `GET /api/sessions/{id}`。会中那一路（`start` 之后）由外面那层闸（`HomeGate`）切到
  * `LiveView`，本组件不碰会中屏。左栏那条常驻工作区栏（清单 / 添加 / 移除 / 忙闲一格）
- * 与会中屏共用同一个组件（`../WorkspaceRail`，d61829f1）；「添加工作区」的选择器与
+ * 与会中屏共用同一个组件（`../WorkspaceRail`）；「添加工作区」的选择器与
  * 收编、移除两只确认弹窗也住在那条栏里。
  *
- * 会后进度区（R27，节点 52b24392）读 `GET /api/sessions/{id}`：**不开 SSE 通道**，
+ * 会后进度区（R27，节点）读 `GET /api/sessions/{id}`：**不开 SSE 通道**，
  * 按心跳的样板自排轮询（`api/sessions.ts` 的轮询器，有活动才开），逐块行往下刷、
  * 带进度条、可展开收缩；左清单每行四档与全局「显卡忙不忙」一格的读法在 `home/progress.ts`。
- * 详情里还有一小块**落盘进度**（d61829f1，ui-design 4.2 二）：停止录音那一刻就回
+ * 详情里还有一小块**落盘进度**（ui-design 4.2 二）：停止录音那一刻就回
  * 工作台，收尾还在跑也回 —— 它读的是快照 `ended`（HomeGate 转手进来），只占一小块。
  *
  * 区块各归各的子组件（同目录）：会后进度区 `./ProgressArea`、稿子区 `./ScriptsArea`、
@@ -147,7 +147,7 @@ export function WorkspaceHome(props: {
         setTranscripts(null);
         setTranscriptsError(error instanceof Error ? error.message : String(error));
       },
-    );
+);
   };
   /** 上一跳的会后在飞记号（翻假的那一跳重取稿子——会后稿刚落盘就读得到）。 */
   const offlineFlyingRef = useRef(false);
@@ -156,7 +156,7 @@ export function WorkspaceHome(props: {
 
   const selected: SessionRow | null = (sessions?.sessions ?? []).find(
     (row) => row.dir === selection,
-  ) ?? null;
+) ?? null;
   const postJobs = sessions?.post_jobs ?? [];
 
   // -- 六类动作派发（收进 ./useWorkspaceActions 一个 hook）-------------------
@@ -218,7 +218,7 @@ export function WorkspaceHome(props: {
       before === null ||
       before.dir !== tick.status.dir ||
       chunkLedgerReset(before, tick.status)
-    ) {
+) {
       setChunkRows(initialChunkRows(tick.status));
     } else {
       setChunkRows((rows) => [...rows, ...advanceChunkRows(rows, before, tick.status)]);
@@ -323,7 +323,7 @@ export function WorkspaceHome(props: {
         selectionRef.current === dir &&
         !watchRef.current &&
         !statusFatalRef.current
-      ) {
+) {
         void pollerRef.current?.tick(dir);
       }
     }, seconds * 1000);
@@ -340,7 +340,7 @@ export function WorkspaceHome(props: {
   const gpu = gpuBusyView(postJobs, false);
   /** 进度区的读数（有读数才算；读不出来就画失败那一行）。 */
   const prog = status === null ? null : progressView(status);
-  /** 停止入口（R28 / b1c6a58e）：这一场的 offline 在飞时出现在进度区头行。 */
+  /** 停止入口（R28 /）：这一场的 offline 在飞时出现在进度区头行。 */
   const stop = postStopView(postJobs, selected?.dir ?? null);
 
   /**
@@ -361,7 +361,7 @@ export function WorkspaceHome(props: {
   const isEmpty = sessions !== null && sessions.sessions.length === 0;
 
   /**
-   * 落盘那一小块（d61829f1）：快照 `ended` 说的是快照里那一场收尾，只在选中它时显示。
+   * 落盘那一小块：快照 `ended` 说的是快照里那一场收尾，只在选中它时显示。
    * HomeGate 把快照上的 `ended` / `session.dir` / `service.log_path` 转手进来，
    * 快照一路在推，这一小块跟着翻面（落定即「录音已落盘」），不等任何轮询。
    */
@@ -375,7 +375,7 @@ export function WorkspaceHome(props: {
       <section className="home">
         {/* 左栏：这一台机器上有哪些工作区。铭牌、添加工作区、清单、忙闲一格、
             选择器与收编/移除两只确认都住在那条栏里 —— 它与会中屏共用同一个组件
-            （d61829f1：两屏同一条常驻工作区栏）。 */}
+            （：两屏同一条常驻工作区栏）。 */}
         <WorkspaceRail
           sessions={sessions}
           selection={selection}
@@ -396,9 +396,9 @@ export function WorkspaceHome(props: {
               <div className="ws-empty__title">{lines.title}</div>
               <div className="ws-empty__body">{lines.body}</div>
             </div>
-          ) : selected === null ? (
+) : selected === null ? (
             <p className="hint">尚未选择工作区。</p>
-          ) : (
+) : (
             <div className="wspane">
               {/* 面板头：这一场是谁 + 拿它录一段。动作钮长在面板里面 ——
                   它作用的正是左边选中那一行（`startWhy()` 给按不动时那句原因）。 */}
@@ -416,7 +416,7 @@ export function WorkspaceHome(props: {
                   </button>
                   {whyForSelected !== null && (
                     <p className="wspane__why">{whyForSelected}</p>
-                  )}
+)}
                 </div>
               </div>
               {/* 工作区分两栏（宽屏并排、窄屏上下摞，见 `live.css` §7.10 第 8 条）：
@@ -436,9 +436,9 @@ export function WorkspaceHome(props: {
                       {cell.label}
                     </span>
                   </p>
-                );
+);
               })()}
-              {/* 落盘那一小块（d61829f1，ui-design 4.2 二）：「录音已结束」之下的
+              {/* 落盘那一小块（ui-design 4.2 二）：「录音已结束」之下的
                   一小段进度，只占一小块、不阻塞任何东西 —— 会后那两个按钮照常可按。
                   家务进度不用告警带：quiet 的小块，失败也只是把原因、命令与 log 写全。 */}
               {strip !== null && (
@@ -456,7 +456,7 @@ export function WorkspaceHome(props: {
                     <p className="wsdrain__steps num">
                       {strip.steps.map((step) => `${step.label}：${step.status}`).join(' · ')}
                     </p>
-                  )}
+)}
                   {(strip.error !== null || strip.failures.length > 0) && (
                     <div className="wsdrain__bad">
                       {strip.error !== null && <p className="wsdrain__fail">{strip.error}</p>}
@@ -464,7 +464,7 @@ export function WorkspaceHome(props: {
                         <p className="wsdrain__fail" key={line}>
                           {line}
                         </p>
-                      ))}
+))}
                       {/* R15 / R16 的兜底：可复制的命令与 log 路径（绝不说「已落盘」） */}
                       <code className="codeblock">meeting post {selected.dir}</code>
                       {drain?.logPath != null && (
@@ -472,17 +472,17 @@ export function WorkspaceHome(props: {
                           <code className="codeblock">{drain.logPath}</code>
                           <p className="wsdrain__fail">log：{drain.logPath}</p>
                         </>
-                      )}
+)}
                     </div>
-                  )}
+)}
                 </div>
-              )}
+)}
               {selected.date !== null && (
                 <p className="kv">
                   <span className="kv__k">日期</span>
                   <span className="kv__v num">{selected.date}</span>
                 </p>
-              )}
+)}
               {/* 各段的时长与时间（续接过的会在这里看得出接过）：盘上段记录的原文读数，
                   合计只数写完的段——权威时长是各段在录时长之和（设计意图第 7 条）。 */}
               {(() => {
@@ -501,9 +501,9 @@ export function WorkspaceHome(props: {
                           {line.time} · {line.seconds}
                         </span>
                       </p>
-                    ))}
+))}
                   </>
-                );
+);
               })()}
 
               {/* 会后那两个按钮跟读数住同一栏：宽屏上左栏是「这一场是谁 + 拿它做什么」，
@@ -533,7 +533,7 @@ export function WorkspaceHome(props: {
                   </div>
                   {post.offlineNotice !== null && (
                     <p className="wspane__postline">{post.offlineNotice}</p>
-                  )}
+)}
                   {post.why !== null && <p className="wspane__why">{post.why}</p>}
                   {postNote !== null && <p className="wspane__postline">{postNote}</p>}
                   {/* 说话人名字（R10 第四条）：会后区的一行入口，点开小弹窗当场改名。
@@ -553,7 +553,7 @@ export function WorkspaceHome(props: {
                     </button>
                   </p>
                 </div>
-              )}
+)}
               </div>
 
               <div className="wspane__work">
@@ -580,9 +580,9 @@ export function WorkspaceHome(props: {
                         <span className="wschain__line">
                           {segment.mark === null ? (
                             <span className="spinner" aria-hidden="true" />
-                          ) : (
+) : (
                             <span className={`glyph ${segment.mark}`} aria-hidden="true" />
-                          )}
+)}
                           {segment.line}
                         </span>
                         {segment.pause !== null &&
@@ -599,17 +599,17 @@ export function WorkspaceHome(props: {
                             onClick={() =>
                               transcodeAct(
                                 segment.pause?.canPause ? 'transcode_pause' : 'transcode_resume',
-                              )
+)
                             }
                           >
                             {segment.pause?.canPause ? '暂停' : '继续'}
                           </button>
-                        )}
+)}
                       </li>
-                    ))}
+))}
                   </ol>
                 </div>
-              )}
+)}
 
               {/* 稿子正文（本节点，契约 4.13）：两份稿平级（会中稿 / 会后稿），见
                   `./ScriptsArea`；这一场录完（`ended`）才摆。 */}
@@ -620,7 +620,7 @@ export function WorkspaceHome(props: {
                   srcKind={srcKind}
                   onSrcKind={setSrcKind}
                 />
-              )}
+)}
 
               {/* 会后进度区（R27）：可展开收缩，见 `./ProgressArea`；读数没到手或取数
                   出事时也摆（那一句失败行就是进度区里的如实画法）。 */}
@@ -633,14 +633,14 @@ export function WorkspaceHome(props: {
                   chunkRows={chunkRows}
                   onStop={stopPost}
                 />
-              )}
+)}
 
-              {/* 会议资料（160d1a78）：这一场的 meeting_materials/。粘贴图片、拖入文件、
+              {/* 会议资料：这一场的 meeting_materials/。粘贴图片、拖入文件、
                   提交文字、选盘上的文件，四个入口都在那一块里；删除走多选 + 确认。 */}
               <MaterialsPanel dir={selected.dir} />
               </div>
             </div>
-          )}
+)}
           {failure !== null && (
             <FailureBlock
               failure={failure}
@@ -649,7 +649,7 @@ export function WorkspaceHome(props: {
               /** forbidden 档照 HomeFailure 的旧画法只有 why + next 两行，不带说明行。 */
               forbiddenNote={false}
             />
-          )}
+)}
         </div>
       </section>
 
@@ -662,7 +662,7 @@ export function WorkspaceHome(props: {
           onConfirm={() => confirmStartInterrupt(confirm.dir)}
           onCancel={() => setConfirm(null)}
         />
-      )}
+)}
 
       {namesOpen && (
         <SpeakerNamesDialog
@@ -671,7 +671,7 @@ export function WorkspaceHome(props: {
           onRename={renameSpeaker}
           onClose={() => setNamesOpen(false)}
         />
-      )}
+)}
     </main>
-  );
+);
 }

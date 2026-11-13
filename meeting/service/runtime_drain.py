@@ -47,7 +47,7 @@ def _interrupted_message() -> str:
 
 
 
-# 收尾预算（phase3 §3.3；名字由 phase2 冻结）：公式 `budget = 30 + backlog ×
+# 收尾预算（设计口径；名字由设计冻结）：公式 `budget = 30 + backlog ×
 # (segment_timeout + 5)` 原样落地，下限 30 秒、封顶 300 秒；三个数硬编码、不开配置键。
 
 #: 预算下限（秒）
@@ -80,7 +80,7 @@ class DrainLimitExceeded(TimeoutError):
     """某一步超出这一趟收尾的共享预算。
 
     **只表达超时这一件事**：步骤自身抛出的异常不由本异常承载（那些异常原样上抛到该步的
-    `failed` 登记，见 phase3 §3.1 第 5 条与 §3.0 的边界）。
+    `failed` 登记，见设计口径第 5 条与 §3.0 的边界）。
     """
 
 
@@ -89,11 +89,11 @@ def compute_drain_budget(backlog: int, segment_timeout: float) -> float:
 
     输入来自转写后端的 `backlog_depth()` / `segment_timeout()`；转写后端缺席时调用方按
     `DRAIN_DEFAULT_BACKLOG` / `DRAIN_DEFAULT_SEGMENT_TIMEOUT_SECONDS` 取缺省
-    （phase3 §3.3；这两个缺省值与原公式出处是方案 §5.3 行 250 / §7.2 行 338）。
+    （设计口径；这两个缺省值与原公式出处是设计口径 §5.3 行 250 / §7.2 行 338）。
 
     **公式本体在 `meeting/asr/pipeline.py`**（积压量是转写域的量，那个模块也用它算
     自己 `stop()` 的收尾预算），这里只做转交：同一趟收尾的两处读数因此永远同源。
-    下面三个常量与那边逐字同值，是**跨 Phase 冻结的名字**（phase3 按它们读记录）。
+    下面三个常量与那边逐字同值，是**跨层冻结的名字**（设计按它们读记录）。
     """
     return asr_pipeline.compute_drain_budget(backlog, segment_timeout)
 
@@ -181,7 +181,7 @@ class RuntimeDrainMixin:
                 detail={"log_path": self.log_path},
             )
 
-    # 收尾编排（三步登记 + 终态判定；预算与失败出路的完整语义归 phase3）
+    # 收尾编排（三步登记 + 终态判定；预算与失败出路的完整语义归设计）
 
     async def drain(self) -> str:
         """收尾协程（普通协程、持有 task 句柄、可被 `cancel()`）。
@@ -193,7 +193,7 @@ class RuntimeDrainMixin:
         `frozen_interrupted` 保证先落盘那版 `draining` + `interrupted: true` 不被抹掉
         （§3.5 的三条不覆盖约束）。
 
-        自适应预算（phase3 §3.3）：开头按积压量算总上限 `compute_drain_budget()`，各步共享
+        自适应预算（设计口径）：开头按积压量算总上限 `compute_drain_budget()`，各步共享
         同一条 deadline（经 `_drain_wait()` 包在剩余预算里），绝不阻塞事件循环；唯一例外是
         `log` 步的 flush 与摘除，至少拿到 `DRAIN_LOG_MIN_BUDGET_SECONDS`。
         """
@@ -397,7 +397,7 @@ class RuntimeDrainMixin:
         if resolution is None or resolution.skipped() or not self.capture_capabilities.get("finalize"):
             self._skip_step(
                 step_id,
-                "这一场没有真实归档要落（采集替身不写真实音频；finalize 归 dca4539b）",
+                "这一场没有真实归档要落（采集替身不写真实音频；finalize 归）",
                 resolution,
             )
             return
@@ -546,12 +546,12 @@ class RuntimeDrainMixin:
         if elapsed is None and self._drain_step_started is not None:
             # 缺席步（`skipped`）也报耗时：它们各自也有 enter -> settle 的实测时长
             elapsed = max(0.0, time.monotonic() - self._drain_step_started)
-        # 每步的「结束 + 耗时」逐条进 log（方案 §5.3 行 250、§6.3 行 304）
+        # 每步的「结束 + 耗时」逐条进 log（设计口径 §5.3 行 250、§6.3 行 304）
         spent = "" if elapsed is None else f"，耗时 {round(float(elapsed), 3)}s"
         _log.info("收尾步骤结束：%s -> %s（%s）%s", step_id, status, detail, spent)
         if elapsed is not None:
             # 单列一行「耗时」：`log` 步的结束那一行落在摘掉场次 handler 之后，
-            # 这一行则一定写进场次 log（方案 §6.3 行 304 的「每一步的耗时」两处都查得到）。
+            # 这一行则一定写进场次 log（设计口径 §6.3 行 304 的「每一步的耗时」两处都查得到）。
             _log.info("收尾步骤耗时：%s 用时 %ss", step_id, round(float(elapsed), 3))
         finish_drain_step(
             step_id,
@@ -629,7 +629,7 @@ class RuntimeDrainMixin:
         ended = self.snapshot.ended
         if final_state == "done":
             _log.info("收尾完成：各步全部落定且没有失败步（ended.phase=done，top_state 停在 ended）")
-            # 成功档的收尾副作用把两路 `health` 从 `stopped` 带回 `unprobed`（phase2 §3.5.2），
+            # 成功档的收尾副作用把两路 `health` 从 `stopped` 带回 `unprobed`（设计口径），
             # 逐路落一条（失败档保留 `stopped` 现场，health 不动、因此这里不落）
             self._log_health_migrations(
                 reason="收尾走到终态（ended.phase=done）",
@@ -808,7 +808,7 @@ class RuntimeDrainMixin:
         """这一趟收尾**是不是还在跑 / 还没开跑**（句柄在手上且未落定）。
 
         §3.5 行为表把「收尾进行中」「收尾失败现场」两档与「无收尾可做」分得一清二楚，
-        判据因此落在**句柄 `_drain_task` 的读法**上（它由 phase2 的 `drain()` 持有、走完含
+        判据因此落在**句柄 `_drain_task` 的读法**上（它由设计的 `drain()` 持有、走完含
         被取消那趟后置空），**不看盘上有没有未收尾场次**：盘上的旧场次归下一节点的
         注册表收编，但与本收尾句柄无关 —— 此刻**没有任何收尾在跑**。
         """

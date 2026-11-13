@@ -7,7 +7,7 @@ import {
 } from '../src/home/names';
 import type { SessionStatus } from '../src/contract';
 
-/** 一格「没跑过」的纪要读数（`minutes` 格的空档形状，38817ecf）。 */
+/** 一格「没跑过」的纪要读数（`minutes` 格的空档形状）。 */
 function minutesIdle(): SessionStatus['minutes'] {
   return { state: 'idle', started_at: null, finished_at: null, error: null };
 }
@@ -27,7 +27,7 @@ function transcodeIdle(): SessionStatus['transcode'] {
 
 
 /**
- * 「说话人名字」纯逻辑的用例（人名节点 `91b6752e`）：行怎么读、撞名怎么判。
+ * 「说话人名字」纯逻辑的用例（人名节点 ``）：行怎么读、撞名怎么判。
  * 判据全部来自服务给的 `speakers` 一格——这一层只转手，不造数据。
  */
 
@@ -72,7 +72,7 @@ describe('namesRows：单场读数 → 弹窗的行', () => {
           segments: 3,
         },
       ]),
-    );
+);
 
     expect(rows).toEqual([
       { key: 'mic', title: '本地', name: null },
@@ -88,10 +88,10 @@ describe('namesRows：单场读数 → 弹窗的行', () => {
   it('identityTitle：编号取键里路前缀之后的那一段', () => {
     expect(
       identityTitle({ key: 'mic:S02', source: 'mic', label: '本地', name: null, segments: 1 }),
-    ).toBe('本地 · S02');
+).toBe('本地 · S02');
     expect(
       identityTitle({ key: 'loopback', source: 'loopback', label: '远端', name: null, segments: null }),
-    ).toBe('远端');
+).toBe('远端');
   });
 });
 
@@ -102,7 +102,7 @@ describe('duplicateNameHolders：撞名只提示、不拦', () => {
       { key: 'mic:S02', source: 'mic', label: '本地', name: null, segments: 1 },
       { key: 'loopback', source: 'loopback', label: '远端', name: '老王', segments: null },
     ]),
-  );
+);
 
   it('与其它行的现名同名时报出那些行（自己不算自己的撞名）', () => {
     expect(duplicateNameHolders(rows, 'mic:S02', '老王')).toEqual(['mic:S01', 'loopback']);

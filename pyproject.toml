@@ -1,6 +1,6 @@
 # meeting —— 本地会议录制服务骨架（V2 第一个工程节点）
 #
-# 依赖禁忌（phase1 §3.2，写进本文件以免下游照抄错）：
+# 依赖禁忌（设计口径，写进本文件以免下游照抄错）：
 #   - 不引 sse-starlette（SSE 手写）
 #   - 不引 FastAPI（技术栈是 Starlette + uvicorn）
 #   - 不引 pytest-asyncio（测试一律同步写）
@@ -10,7 +10,7 @@
 # 模型依赖一律放 optional extra，
 # 保证 `meeting web` 的 import 链不碰重依赖、启动在秒级完成（B11 / E10）。
 #
-# **音频依赖是例外（`dca4539b` §5 的裁定）**：录音是这个产品的主体（R1），所以
+# **音频依赖是例外（§5 的裁定）**：录音是这个产品的主体（R1），所以
 # numpy / sounddevice / soundcard / pydub 进**运行时依赖**，不进 `capture` extra ——
 # 放进可选 extra 会让「没装 extra」退化成「一场会什么都没录」，正是 R2 / R4 要消灭的
 # 那种静默失败。它们在函数体内惰性 import（`meeting/capture/sources.py`），所以
@@ -31,7 +31,7 @@ dependencies = [
     "uvicorn",
     # routes.py 直接 import（materials 上传的流式写盘），不靠 starlette 传递
     "anyio",
-    # 音频四件套（版本号是本机实测跑通整套采集与归档的那几个，照 `dca4539b` 的验收环境写）
+    # 音频四件套（版本号是本机实测跑通整套采集与归档的那几个，照的验收环境写）
     "numpy==2.4.4",
     "sounddevice==0.5.5",
     "soundcard==0.4.6",
@@ -42,10 +42,10 @@ dependencies = [
 meeting = "meeting.cli:main"
 
 [project.optional-dependencies]
-# `capture` 这一格**有意留空**（`dca4539b` §5）：音频四件套已经进运行时依赖，
+# `capture` 这一格**有意留空**（§5）：音频四件套已经进运行时依赖，
 # 这里再列一遍会让人以为它们是可选的。`asr` 等模型依赖由下游节点各自加（§3.2）。
 capture = []
-# `asr` = 转写（GLM-ASR）的模型依赖（`9e5db89c` phase1 定档）。三个版本号照 V1
+# `asr` = 转写（GLM-ASR）的模型依赖（设计定档）。三个版本号照 V1
 # 仓库（本机私有）requirements.txt 的本机实测值**逐项按行**写（Python 3.13.7 / CUDA 12.8）：
 #   torch 2.9.1+cu128（第 10 行；第 9 行是它要的 `--extra-index-url` 索引）·
 #   transformers 5.15.0（第 24 行，GLM-ASR 类由此版进稳定版）·
@@ -61,7 +61,7 @@ asr = [
     "transformers==5.15.0",
     "webrtcvad-wheels==2.0.14",
 ]
-# `post` = 会后离线转写这一层的依赖（`7c6952e5` phase2）。只有 `av` 一条：
+# `post` = 会后离线转写这一层的依赖（设计）。只有 `av` 一条：
 # `meeting/offline/audio.py` 用 PyAV 把任意容器解成 16k 单声道 float32 波形 ——
 # 走 `transformers.audio_utils.load_audio` 的字符串路径会落到 librosa 上，而本机没装它。
 # **有意不加 librosa**：`numba` / `librosa` 与钉死的 numpy 冲突，设计里也一直避开它。
@@ -73,7 +73,7 @@ post = [
 ]
 # 测试层：httpx 只服务测试层的真服务子进程；运行时的端口探针走标准库 socket。
 # pytest-xdist / execnet 服务并行档（`-n auto --dist loadfile` 走命令行，不进 addopts），
-# 只进测试 extra（`68927c27` spec 判定 6：运行时依赖零增加）；本机实测
+# 只进测试 extra（spec 判定 6：运行时依赖零增加）；本机实测
 # pytest-xdist 3.8.0 + execnet 2.1.2 与 pytest 9.0.3 兼容（并行趟全绿，下限按它取）。
 test = [
     "pytest",
@@ -84,18 +84,18 @@ test = [
 
 [tool.setuptools]
 # 显式列出包：与目录树一一对应（包标记都必须在位 —— `meeting.capture` 是
-# `dca4539b` 建的采集层，漏了它 `pip install` 之后那三个模块就不在包里；
-# `meeting.asr` 是 `9e5db89c` phase1 建的转写核心，漏了它 `transcriber.backend = auto`
-# 在装好的包里会解析失败；`meeting.offline` 是 `7c6952e5` 建的会后离线层，
+# 建的采集层，漏了它 `pip install` 之后那三个模块就不在包里；
+# `meeting.asr` 是设计建的转写核心，漏了它 `transcriber.backend = auto`
+# 在装好的包里会解析失败；`meeting.offline` 是建的会后离线层，
 # 漏了它 `post.hook = auto`（约定路径 `meeting.backends.post:PostProcessHook`）
-# 在装好的包里会解析不到 `meeting.offline.runner`；`meeting.minutes` 是 `41465462`
+# 在装好的包里会解析不到 `meeting.offline.runner`；`meeting.minutes` 是 
 # 建的会后纪要层，漏了它 `minutes.hook = auto`（约定路径
 # `meeting.backends.minutes:MinutesHook`）在装好的包里会解析不到、
 # `python -m meeting.minutes` 那三个手动子命令（`check` / `chunk` / `prompt`）
-# 也会找不到模块；`meeting.summary` 是 `1987cb20` phase1 建的会中总结内核，
-# 漏了它装好的包里 `import meeting.summary` 会直接失败（phase2 的服务接线、phase3 的
+# 也会找不到模块；`meeting.summary` 是设计建的会中总结内核，
+# 漏了它装好的包里 `import meeting.summary` 会直接失败（设计的服务接线、设计的
 # 界面都要经它拿到窗口切片与端点调用那一套）；`meeting.offline.runner` 是
-# `c8d62a1` 拆出的会后离线主链子包，漏了它装好的包里编排主模块与 `pcm` /
+# 拆出的会后离线主链子包，漏了它装好的包里编排主模块与 `pcm` /
 # `session_info` 两个分片都缺席；`meeting.service.runtime_catalog` 是工作台 /
 # 场次目录 mixin 的九域分包，漏了它装好的包里 `import meeting.service.runtime`
 # 直接 ModuleNotFoundError（`RuntimeCatalogMixin` 只从这里出）。

@@ -1,4 +1,4 @@
-"""会议资料层 mixin：场次目录下固定的 `meeting_materials/` 子目录（资料节点 285bf58c）。
+"""会议资料层 mixin：场次目录下固定的 `meeting_materials/` 子目录（资料节点）。
 
 产品口径（节点 spec 与 `docs/design-intent.md` 第 3、5、6 条）：
 
@@ -253,7 +253,7 @@ class RuntimeMaterialsMixin:
     ) -> dict[str, Any]:
         """一次上传的域编排：`from` 档源校验 → 占名 → 流式写盘 → 读数。
 
-        - `from` 档（选择器文件模式，160d1a78）：`from_param` 必须指到**已存在的普通
+        - `from` 档（选择器文件模式）：`from_param` 必须指到**已存在的普通
           文件**（先验再占名），给到不存在的文件回 400 `invalid_setting`
           （`detail = {key: "from", value, legal}`），此时盘上什么都不落；给了 `from`
           时 `body`（请求正文那路字节流）被忽略，字节从盘上那个**已有文件流式拷入**；

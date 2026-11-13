@@ -145,11 +145,11 @@ def test_session_log_attached_then_detached_with_end_marker(service_process, mee
 
 
 def test_all_log_event_categories_findable_before_end_marker(service_process, meeting_env):
-    """结束标记**之前**这一场的事件逐类可查（方案 §6.3 行 304 的清单）。
+    """结束标记**之前**这一场的事件逐类可查（设计口径 §6.3 行 304 的清单）。
 
     事件由 dev 采集替身与采集后端的收尾调用造出来：**每一路健康迁移**与告警起止由
     `MEETING_CAPTURE=dev` 的两路合成电平与 `dev_inject` 在**真服务子进程**里驱动，
-    收尾每一步的开始 / 结束 / 耗时与 `budget` / `backlog` 由 phase3 的编排落。
+    收尾每一步的开始 / 结束 / 耗时与 `budget` / `backlog` 由设计的编排落。
     阈值只**显式调小**（写进临时 home 的 `config.json`，**不改代码默认值**）。
 
     **故障档取 `silence`**（审查问题 C1 的证据口径）：它一路把 loopback 从 `capturing`
@@ -164,14 +164,14 @@ def test_all_log_event_categories_findable_before_end_marker(service_process, me
     服务级 log 里取「场次开始」那一行（带同一个 id 与目录）。别为了迎合字面去场次 log 里
     伪造一行。
 
-    **「挂载顺序」这件事与 phase2 的核对结论（审查问题 m10，照实写清）**：`start` 里那一行
+    **「挂载顺序」这件事与设计的核对结论（审查问题 m10，照实写清）**：`start` 里那一行
     `场次开始：<id>（目录 <dir>，mode=…）` 落在 `logging_setup.attach_session_log(session_dir)`
-    **之前**，因此它只可能出现在服务级 log 里。这个顺序是 **phase2 的既成事实**：拿 HEAD 的
-    上一个提交核过 —— `git show 56fcf33:meeting/service/runtime.py` 的 `start_session()` 里
+    **之前**，因此它只可能出现在服务级 log 里。这个顺序是 **设计的既成事实**：拿 HEAD 的
+    上一个提交核过 —— `git show :meeting/service/runtime.py` 的 `start_session()` 里
     `_log.info("场次开始：…")` 同样排在 `attach_session_log(session_dir)` 之前；
-    `git diff --ignore-cr-at-eol 56fcf33 -- meeting/service/runtime.py` 在这个位置只多了一行
-    「每一路健康迁移」的登记（phase3 补的），**挂载顺序一处没动**（phase3 §1.3 也没把
-    「重排 start 的挂载顺序」列进本 Phase 的动作）。本 Phase 因此照现行的两类 log 联合断言写，
+    `git diff --ignore-cr-at-eol  -- meeting/service/runtime.py` 在这个位置只多了一行
+    「每一路健康迁移」的登记（设计补的），**挂载顺序一处没动**（设计口径也没把
+    「重排 start 的挂载顺序」列进本项目的动作）。本项目因此照现行的两类 log 联合断言写，
     没有把这一行搬进场次 log。
     """
     plugin = fakes.write_fake_module(meeting_env.home)
@@ -234,12 +234,12 @@ def test_all_log_event_categories_findable_before_end_marker(service_process, me
     # —— 场次 log 里能找到的是**同一场的**「场次结束：<id>（目录 …）」与 session id / 目录本身。
     # 两类 log 因此**联合断言**：本场身份（id 与目录）两边各取一半，合起来覆盖契约点名的这一条。
     #
-    # **这个顺序的出处（审查问题 m10）**：它是 **phase2 的挂载顺序**，
-    # `git show 56fcf33:meeting/service/runtime.py` 的 `start_session()` 里
+    # **这个顺序的出处（审查问题 m10）**：它是 **设计的挂载顺序**，
+    # `git show :meeting/service/runtime.py` 的 `start_session()` 里
     # `_log.info("场次开始：…")` 就已排在 `attach_session_log(session_dir)` 之前；
-    # `git diff --ignore-cr-at-eol 56fcf33 -- meeting/service/runtime.py` 在这个位置只多了一行
-    # 「每一路健康迁移」的登记，**挂载顺序一处没改**（phase3 未动）。下面这条联合断言因此
-    # 照现行顺序写，没有把这一行搬进场次 log（搬了反而会与 phase2 的既成事实对不上）。
+    # `git diff --ignore-cr-at-eol  -- meeting/service/runtime.py` 在这个位置只多了一行
+    # 「每一路健康迁移」的登记，**挂载顺序一处没改**（设计未动）。下面这条联合断言因此
+    # 照现行顺序写，没有把这一行搬进场次 log（搬了反而会与设计的既成事实对不上）。
     check("场次结束：", "场次结束与目录（本场那一份里的收尾痕迹）")
     check(session_id, "场次 id")
     check(session_dir, "场次目录路径")

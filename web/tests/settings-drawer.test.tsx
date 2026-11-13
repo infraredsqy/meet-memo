@@ -7,7 +7,7 @@ import { readFixture } from './fixtures';
 import { DEVICE_LOCKED_HINT, HEARTBEAT_RANGE_HINT } from '../src/live/settings';
 
 /**
- * 设置抽屉的挂载用例（`311f84f5`，免 DOM 跑法，手法照 `home-mount.test.tsx`）。
+ * 设置抽屉的挂载用例（``，免 DOM 跑法，手法照 `home-mount.test.tsx`）。
  *
  * 两条承重断言：
  * 1. **负面验收**：抽屉整棵子树里找不出 ASR 那五个参数的任何一个（键名或人话都不行）——
@@ -71,7 +71,7 @@ async function mountDrawer(
         onSetting: handlers.onSetting ?? (() => undefined),
         onReprobe: handlers.onReprobe ?? (() => undefined),
       }),
-    );
+);
   });
   return renderer;
 }
@@ -98,7 +98,7 @@ function findByTestId(
 ): TestRenderer.ReactTestInstance {
   const found = renderer.root.findAll(
     (node) => node.props['data-testid'] === testId,
-  );
+);
   expect(found, `该有一只 data-testid=${testId}`).toHaveLength(1);
   return found[0] as TestRenderer.ReactTestInstance;
 }
@@ -252,7 +252,7 @@ describe('告警提示音与缺省档', () => {
         node.type === 'button' &&
         node.props['aria-pressed'] === true &&
         node.parent?.props['aria-label'] === '快速总结默认窗口',
-    );
+);
     expect(pressed).toHaveLength(1);
     expect(textOf(pressed[0] as TestRenderer.ReactTestInstance)).toBe('30 分钟');
 
@@ -261,7 +261,7 @@ describe('告警提示音与缺省档', () => {
         node.type === 'button' &&
         node.parent?.props['aria-label'] === '快速总结默认窗口' &&
         textOf(node) === '全场',
-    );
+);
     await act(async () => {
       (full[0] as TestRenderer.ReactTestInstance).props.onClick();
     });

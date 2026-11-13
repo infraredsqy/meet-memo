@@ -12,7 +12,7 @@ import type { PostJobCell, SessionRow } from '../contract';
 export const POST_OFFLINE_ACTION = 'post_offline';
 export const POST_MINUTES_ACTION = 'post_minutes';
 
-/** 停掉那一趟的动作名（R28 / b1c6a58e）：post_* 族，只停「生成会后精细稿」这一趟。 */
+/** 停掉那一趟的动作名（R28 /）：post_* 族，只停「生成会后精细稿」这一趟。 */
 export const POST_STOP_ACTION = 'post_stop';
 
 export interface PostButtonsView {
@@ -87,7 +87,7 @@ export function recordingOfflineNotice(row: SessionRow): string {
 }
 
 // ---------------------------------------------------------------------------
-// 停掉那一趟（R28 / b1c6a58e）：入口在进度区头行，只在「这一场的 offline 在飞」时出现
+// 停掉那一趟（R28 /）：入口在进度区头行，只在「这一场的 offline 在飞」时出现
 // ---------------------------------------------------------------------------
 
 export interface PostStopView {

@@ -479,7 +479,7 @@ def test_release_touches_neither_stopped_nor_health(monkeypatch):
 
 @pytest.mark.parametrize("module_name", ["meeting.backends.transcribe"])
 def test_release_keeps_the_module_toplevel_light(module_name):
-    """`release_gpu()` 的落地没有把 `torch` 搬到模块顶层（AST 判据与 phase2 那条同源）。"""
+    """`release_gpu()` 的落地没有把 `torch` 搬到模块顶层（AST 判据与设计那条同源）。"""
     import ast
     import importlib
     import inspect

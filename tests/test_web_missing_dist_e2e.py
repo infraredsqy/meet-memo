@@ -1,4 +1,4 @@
-"""`web.dist_dir` 指到一个不存在的路径时，**真 `meeting web` 子进程**的端到端用例（`65dd3e4c` phase3）。
+"""`web.dist_dir` 指到一个不存在的路径时，**真 `meeting web` 子进程**的端到端用例（设计）。
 
 这一条盯的是「前端产物还没构建」这个现场在产品路径上的样子 —— 起一个真服务子进程
 （`[sys.executable, "-m", "meeting", "web"]`，地址从启动输出里解析、**不猜端口**），
@@ -83,8 +83,8 @@ def test_a_real_web_process_serves_the_missing_dist_notice_and_exits_ok(
     )
 
     # ① 子进程起来了：那一行 `URL：…` 是**子进程自己**打在它自己的终端上的，而且它住在
-    #    另一个进程里 —— 这两条一起把「真子进程」这个前提钉住：进程内 `TestClient` 那一档
-    #    两头都做不到（它没有子进程的 stdout，pid 也是父进程自己）。
+    # 另一个进程里 —— 这两条一起把「真子进程」这个前提钉住：进程内 `TestClient` 那一档
+    # 两头都做不到（它没有子进程的 stdout，pid 也是父进程自己）。
     base_url = proc.wait_ready(timeout=SERVICE_STARTUP_TIMEOUT_SECONDS)
     assert f"URL：{base_url}" in proc.stdout(), (
         "这一趟该起真子进程：它自己的终端输出里没有那一行 URL。"

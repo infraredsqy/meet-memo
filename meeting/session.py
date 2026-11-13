@@ -115,7 +115,7 @@ def next_segment_number(
 def state_for(*, top_state: str, ended_phase: str | None = None, has_failed_step: bool = False) -> str:
     """顶层状态 / 收尾阶段 → `session.json` 的 `state`（映射的唯一落点）。
 
-    phase2 §7.1 高危点 1，四档固定：`recording` / `alert` → `recording`（告警不是盘上的
+    设计口径高危点 1，四档固定：`recording` / `alert` → `recording`（告警不是盘上的
     一档，会话还在录）；`ended.phase == "draining"` → `draining`；`done` 且无失败步 →
     `done`；有 `failed` 步 → `failed`。`idle` 与认不出的取值在这里抛 `ValueError`：
     盘上的 `state` 描述的是真开过的那一场，兜底成 `recording` 会留下一版「写着在录、
@@ -280,7 +280,7 @@ class SessionStore:
     def mark_interrupted(self, session_dir: str, record: dict[str, Any]) -> str:
         """强制打断的先落盘入口：把 `state: "draining"` + `interrupted: true` 那一版写到盘上。
 
-        薄封装（phase3 §2.4 / §4）：只覆盖三个参数（`state` / `interrupted` / `ended_at=None`），
+        薄封装（设计口径 / §4）：只覆盖三个参数（`state` / `interrupted` / `ended_at=None`），
         其余走 `write_session_json()` 同一原子写、不新开句柄。原 `steps` 原样保留、
         不伪造终态、不写 `done`、不写 `ended_at`。
         """

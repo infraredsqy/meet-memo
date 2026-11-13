@@ -15,7 +15,7 @@ import type { SessionRow, SessionsResponse, Snapshot } from '../src/contract';
 import { makeSnapshot, T } from './live-fixtures';
 
 /**
- * 会中那一屏的**常驻工作区栏**（d61829f1）的渲染层断言：
+ * 会中那一屏的**常驻工作区栏**的渲染层断言：
  *
  * - 栏存在（与工作台同一条 `home__list`）：清单、添加工作区、忙闲一格都在；
  * - 点别行发的是**既有**的 `workspace_open` 登记动作，成功后详情切过去；
@@ -119,7 +119,7 @@ async function mountLive(snapshot: Snapshot): Promise<TestRenderer.ReactTestRend
   await act(async () => {
     renderer = TestRenderer.create(
       createElement(LiveView, { snapshot, events: source as never }),
-    );
+);
   });
   mounted = renderer;
   return renderer;
@@ -147,7 +147,7 @@ function byClass(
 ): TestRenderer.ReactTestInstance[] {
   return renderer.root.findAll((node) =>
     `${node.props.className ?? ''}`.split(' ').includes(className),
-  );
+);
 }
 
 async function press(node: TestRenderer.ReactTestInstance): Promise<void> {
@@ -172,7 +172,7 @@ beforeEach(() => {
   postActionMock.mockResolvedValue({ kind: 'ok', ok: true, revision: 8 });
 });
 
-describe('会中屏的常驻工作区栏（d61829f1）', () => {
+describe('会中屏的常驻工作区栏', () => {
   it('栏存在：清单、添加工作区、忙闲一格都在（与工作台同一条 home__list）', async () => {
     const renderer = await mountLive(makeSnapshot());
 
@@ -196,7 +196,7 @@ describe('会中屏的常驻工作区栏（d61829f1）', () => {
     // 成功后详情切过去：小详情说的是另一场（选区跟着走）
     const detail = renderer.root.findAll(
       (node) => node.props['aria-label'] === '选中工作区详情',
-    );
+);
     expect(detail).toHaveLength(1);
     expect(textOf(detail[0] as TestRenderer.ReactTestInstance)).toContain('另一场');
   });
@@ -207,7 +207,7 @@ describe('会中屏的常驻工作区栏（d61829f1）', () => {
     // 清单默认选中在录那一场（recent），小详情里那颗「继续录音」按下去
     const startButton = renderer.root.find(
       (node) => node.type === 'button' && textOf(node) === '继续录音',
-    );
+);
     await press(startButton);
 
     expect(postActionMock).not.toHaveBeenCalled();
@@ -226,7 +226,7 @@ describe('会中屏的常驻工作区栏（d61829f1）', () => {
     // 默认选区即 recent＝在录那一行（review-1 m3 的那一段）：按「继续录音」照旧如实拒
     const startButton = renderer.root.find(
       (node) => node.type === 'button' && textOf(node) === '继续录音',
-    );
+);
     await press(startButton);
     expect(byClass(renderer, 'wsbar__reject'), '拒的话照旧现身').toHaveLength(1);
 
@@ -234,9 +234,9 @@ describe('会中屏的常驻工作区栏（d61829f1）', () => {
     expect(
       renderer.root.findAll(
         (node) => node.type === 'button' && textOf(node).startsWith('打开那一场'),
-      ),
+),
       '选区＝在录行时不摆这只没有真实去处的钮',
-    ).toHaveLength(0);
+).toHaveLength(0);
   });
 
   it('切到别场再按「开始录音」同样如实拒；「打开那一场」把选区切回在录那一行', async () => {
@@ -252,7 +252,7 @@ describe('会中屏的常驻工作区栏（d61829f1）', () => {
     // 另一场的小详情里那颗「继续录音」按下去：拒，一个请求都不发
     const startButton = renderer.root.find(
       (node) => node.type === 'button' && textOf(node) === '继续录音',
-    );
+);
     await press(startButton);
     expect(postActionMock).not.toHaveBeenCalled();
     expect(byClass(renderer, 'wsbar__reject')).toHaveLength(1);
@@ -260,7 +260,7 @@ describe('会中屏的常驻工作区栏（d61829f1）', () => {
     // 「打开那一场」：把选区切回在录那一行（发的是它自己的 workspace_open）
     const openButton = renderer.root.find(
       (node) => node.type === 'button' && textOf(node).startsWith('打开那一场'),
-    );
+);
     await press(openButton);
     expect(postActionMock).toHaveBeenCalledWith('workspace_open', { dir: SESSION_DIR });
   });

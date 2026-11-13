@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 /**
- * 设备清单端点（`docs/contract.md` 4.10，设置抽屉节点 `311f84f5`）。
+ * 设备清单端点（`docs/contract.md` 4.10，设置抽屉节点）。
  *
  * `GET /api/devices`：两路各自的候选端点表。**只读、纯枚举、不开设备**
  * （`probe()` 会短暂试开，清单不走它）；不涨 `revision`、不广播，任何状态下都 200。

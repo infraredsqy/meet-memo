@@ -8,7 +8,7 @@ import { MATERIALS_MAX_BYTES } from '../src/materials/model';
 import type { MaterialItem } from '../src/contract';
 
 /**
- * 资料区的挂载用例（160d1a78，免 DOM 跑法，手法照 `home-mount.test.tsx`）。
+ * 资料区的挂载用例（免 DOM 跑法，手法照 `home-mount.test.tsx`）。
  *
  * `fetch` 全部注入（`fetchImpl` prop），选择器的取数打在 `browseDirs` 替身上——
  * 不起服务、不发真请求。spec 完成判定点名的几样在这里**真的点**：删除确认、
@@ -89,7 +89,7 @@ async function mountPanel(fetchImpl: typeof fetch): Promise<TestRenderer.ReactTe
   await act(async () => {
     renderer = TestRenderer.create(
       createElement(MaterialsPanel, { dir: DIR, fetchImpl }),
-    );
+);
   });
   return renderer;
 }
@@ -119,7 +119,7 @@ function buttonByText(
       (Array.isArray(node.props.children)
         ? node.props.children.join('')
         : `${node.props.children}`) === label,
-  );
+);
   expect(found, `界面上该有「${label}」这只按钮`).toHaveLength(1);
   return found[0] as TestRenderer.ReactTestInstance;
 }
@@ -145,7 +145,7 @@ function rows(renderer: TestRenderer.ReactTestRenderer): TestRenderer.ReactTestI
     (node) =>
       node.props.role === 'option' &&
       node.parent?.props['aria-label'] === '资料清单',
-  );
+);
 }
 
 /** 一只改过 size 的 File（node 的 File 全局有；size 是 Blob 的 getter，逐个覆盖）。 */
@@ -161,7 +161,7 @@ function dropOnto(
 ): Promise<void> {
   const panel = renderer.root.find(
     (node) => node.props['aria-label'] === '资料' && typeof node.props.onDrop === 'function',
-  );
+);
   return act(async () => {
     panel.props.onDrop({ preventDefault() {}, dataTransfer: { files } });
   });
@@ -180,17 +180,17 @@ describe('清单与行', () => {
     expect(list).toHaveLength(2);
     const thumb = renderer.root.find(
       (node) => node.type === 'img' && `${node.props.className}`.includes('mat__thumb'),
-    );
+);
     expect(thumb.props.src).toBe(materialFileUrl(DIR, '截图.png'));
     // 图片行的名字是颗按钮（点开看原图）；非图片行是纯文本
     expect(
       renderer.root.findAll(
         (node) => node.type === 'button' && textOf(node) === '截图.png',
-      ),
-    ).toHaveLength(1);
+),
+).toHaveLength(1);
     expect(
       renderer.root.findAll((node) => `${node.props.className}`.includes('mat__icon')),
-    ).toHaveLength(1);
+).toHaveLength(1);
     const text = textOf(list[1] as TestRenderer.ReactTestInstance);
     expect(text).toContain('纪要.md');
     expect(text).toContain('32 B');
@@ -231,7 +231,7 @@ describe('多选删除（一次确认整批删）', () => {
     const renderer = await mountPanel(fetchImpl);
     const checkboxes = renderer.root.findAll(
       (node) => node.type === 'input' && node.props.type === 'checkbox',
-    );
+);
     expect(checkboxes).toHaveLength(2);
     await act(async () => {
       checkboxes.forEach((box) => box.props.onChange());
@@ -281,7 +281,7 @@ describe('多选删除（一次确认整批删）', () => {
     const renderer = await mountPanel(fetchImpl);
     const checkboxes = renderer.root.findAll(
       (node) => node.type === 'input' && node.props.type === 'checkbox',
-    );
+);
     await act(async () => {
       checkboxes.forEach((box) => box.props.onChange());
     });
@@ -348,7 +348,7 @@ describe('大文件确认框（100M 口径）', () => {
 describe('提交文字', () => {
   function openDialog(
     renderer: TestRenderer.ReactTestRenderer,
-  ): TestRenderer.ReactTestInstance {
+): TestRenderer.ReactTestInstance {
     return renderer.root.find((node) => node.props.role === 'dialog');
   }
 
@@ -374,10 +374,10 @@ describe('提交文字', () => {
 
     const title = dialog.find(
       (node) => node.type === 'input' && node.props['aria-label'] === '标题（可不填）',
-    );
+);
     const body = dialog.find(
       (node) => node.type === 'textarea' && node.props['aria-label'] === '正文（必填）',
-    );
+);
     await act(async () => {
       title.props.onChange({ target: { value: '会议备注' } });
       body.props.onChange({ target: { value: '第一段正文' } });
@@ -405,7 +405,7 @@ describe('提交文字', () => {
     const dialog = openDialog(renderer);
     const body = dialog.find(
       (node) => node.type === 'textarea' && node.props['aria-label'] === '正文（必填）',
-    );
+);
     await act(async () => {
       body.props.onChange({ target: { value: '没有标题的那段' } });
     });
@@ -423,12 +423,12 @@ describe('图片查看原图', () => {
     await click(
       renderer,
       renderer.root.find((node) => node.type === 'button' && textOf(node) === '截图.png'),
-    );
+);
     const viewer = renderer.root.find(
       (node) =>
         node.props.role === 'dialog' &&
         `${node.props.className}`.includes('dlg--viewer'),
-    );
+);
     const img = viewer.find((node) => node.type === 'img');
     expect(img.props.src).toBe(materialFileUrl(DIR, '截图.png'));
     await click(renderer, buttonByText(renderer, '关闭'));
@@ -441,14 +441,14 @@ describe('文件选择器（文件模式）', () => {
   async function openPickerAndPick(
     renderer: TestRenderer.ReactTestRenderer,
     fileName: string,
-  ): Promise<void> {
+): Promise<void> {
     await click(renderer, buttonByText(renderer, '选文件…'));
     const picker = renderer.root.find(
       (node) => node.props.role === 'dialog' && `${node.props.className}`.includes('dlg--picker'),
-    );
+);
     const row = picker.findAll(
       (node) => node.props.role === 'option' && textOf(node).includes(fileName),
-    );
+);
     expect(row, `选择器里该有「${fileName}」这一行`).toHaveLength(1);
     await act(async () => {
       (row[0] as TestRenderer.ReactTestInstance).props.onClick();
@@ -483,18 +483,18 @@ describe('文件选择器（文件模式）', () => {
 
     const picker = renderer.root.find(
       (node) => node.props.role === 'dialog' && `${node.props.className}`.includes('dlg--picker'),
-    );
+);
     expect(textOf(picker).includes('选择要放进资料的文件')).toBe(true);
     // 老用途的「选定这个目录」在文件模式不出现
     expect(
       renderer.root.findAll(
         (node) => node.type === 'button' && textOf(node) === '选定这个目录',
-      ),
-    ).toHaveLength(0);
+),
+).toHaveLength(0);
     // 文件行带大小；目录行还是老两格（名目判读）
     const fileRow = picker.findAll(
       (node) => node.props.role === 'option' && textOf(node).includes('报告.pdf'),
-    );
+);
     expect(fileRow).toHaveLength(1);
     expect(textOf(fileRow[0] as TestRenderer.ReactTestInstance).includes('10 B')).toBe(true);
     // 没选中之前确认置灰

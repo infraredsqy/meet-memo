@@ -1,5 +1,5 @@
-"""`tests/test_static.py` —— 静态产物、`/debug`、三道防线与完整版快照（phase1 §5 第 3 / 8 条；
-phase2 §2.2 / §2.3 的同源替换落在本文件）。
+"""`tests/test_static.py` —— 静态产物、`/debug`、三道防线与完整版快照（设计口径第 3 / 8 条；
+设计口径 / §2.3 的同源替换落在本文件）。
 
 ASGI 层断言一律用 `with TestClient(app, base_url="http://127.0.0.1")` 的**上下文管理器形式**
 （只有 `with` 才触发应用的生命周期钩子，`ServiceRuntime.startup()` 与快照的服务信息字段
@@ -10,7 +10,7 @@ ASGI 层断言一律用 `with TestClient(app, base_url="http://127.0.0.1")` 的*
   - 指到带 `index.html` 的真目录 → `GET /` 挂的是那份产物；
   - `/api/*` 的应答头带 `Cache-Control: no-store`（并且不发 CORS 头）；
   - `Host: evil.example` 得 **403**；裸 `POST /api/actions`（缺头 / 缺 `Content-Type`）得 **403**、
-    **头齐的 `POST /api/actions` 由真实应答替换旧的 `404` 断言**（phase2 §2.3 第 8 条）；
+    **头齐的 `POST /api/actions` 由真实应答替换旧的 `404` 断言**（设计口径第 8 条）；
   - `GET /api/state` 完整版的结构（顶层键全集、`sources` 两项且 `envelope` 逐字为空数组 `[]`、
     `service` 六字段且 `version` 非空、四态真值、`settings` 五键与 `asr` 五子键齐、
     `devices` 两个子键（`mic` / `loopback`，没配时都是 `null`））；
@@ -23,7 +23,7 @@ ASGI 层断言一律用 `with TestClient(app, base_url="http://127.0.0.1")` 的*
     `tests/conftest.py` 另有一层 autouse 兜底）；
   - 未装配即取快照**抛错**（不留退化的空值）、`/api/heartbeat` 的兜底应答自洽。
 
-**不断言 `revision` 的具体初始值**（phase1 契约冻结项 19 / phase2 §2.3 第 2 条）：
+**不断言 `revision` 的具体初始值**（设计契约冻结项 19 / 设计口径第 2 条）：
 只断言「存在、是 int、单调递增」。
 """
 
@@ -67,7 +67,7 @@ SETTINGS_TOP_KEYS = {
     "alarm_sound", "heartbeat_interval_seconds", "summary_default_window",
     "summary_preset_names", "summary_active_preset", "asr", "devices",
 }
-#: phase2 §2.3 第 3 条：`asr` 的五个子键（取当前生效值）、`devices` 的两个子键（`mic` / `loopback`，没配时 `null`）
+#: 设计口径第 3 条：`asr` 的五个子键（取当前生效值）、`devices` 的两个子键（`mic` / `loopback`，没配时 `null`）
 ASR_KEYS = {
     "max_segment_seconds",
     "timeout_seconds",
@@ -75,9 +75,9 @@ ASR_KEYS = {
     "repeat_max_unit",
     "repeat_min_coverage",
 }
-#: 顶层四态（phase2 §3.1.1）
+#: 顶层四态（设计口径）
 TOP_STATES = {"idle", "recording", "alert", "ended"}
-#: `sources[*].health` 的七取值（phase2 §3.1.2）
+#: `sources[*].health` 的七取值（设计口径）
 SOURCE_HEALTH = {
     "unprobed", "ready", "probe_failed", "capturing", "lost", "restored", "stopped",
 }
@@ -205,10 +205,10 @@ def test_debug_page_is_served_from_the_package(tmp_path, client_factory):
     response = client.get("/debug")
     assert response.status_code == 200
     text = response.text
-    # 非产品路径标注保留（phase2 §3.11）
+    # 非产品路径标注保留（设计口径）
     assert "非产品界面" in text
     assert "不承担任何告警职责" in text
-    # 两块占位已接通：动作端点 + 事件流（phase2 §3.11 / §5.1 的静态断言口径）
+    # 两块占位已接通：动作端点 + 事件流（设计口径 / §5.1 的静态断言口径）
     assert "/api/actions" in text
     assert "X-Meeting-Service" in text
     assert "EventSource" in text
@@ -371,7 +371,7 @@ def test_action_request_without_json_content_type_is_forbidden(tmp_path, client_
 
 
 def test_action_request_with_both_headers_gets_a_real_answer(tmp_path, client_factory):
-    """头齐的完整动作请求 → **真实应答**（phase2 §2.3 第 8 条：旧的「路由还没有」404 一条不留）。
+    """头齐的完整动作请求 → **真实应答**（设计口径第 8 条：旧的「路由还没有」404 一条不留）。
 
     默认（`helpers.app_client()` 补的 `dev` 采集替身）下 `start` 的真实结果是一条成功应答、
     并且盘上当场建出那一场的场次目录；同时这条应答证明请求确实被 `POST /api/actions` 的
@@ -417,7 +417,7 @@ def test_action_request_with_both_headers_gets_a_real_answer(tmp_path, client_fa
 
 
 def test_api_state_shape_is_the_full_one(tmp_path, client_factory):
-    """顶层键全集齐、嵌套字段按冻结形状、取值取到**真值**（phase2 §2.2 / §2.3 第 1 / 2 / 3 / 4 条）。"""
+    """顶层键全集齐、嵌套字段按冻结形状、取值取到**真值**（设计口径 / §2.3 第 1 / 2 / 3 / 4 条）。"""
     home = tmp_path / "home_for_state"
     home.mkdir()
     # 采集后端显式取 `null` 替身：**测试不许碰真声卡**，这一条验的是空闲态快照的形状
@@ -465,7 +465,7 @@ def test_api_state_shape_is_the_full_one(tmp_path, client_factory):
     assert snapshot["alerts"] == {"critical": None, "hints": []}
     assert set(snapshot["transcript"]) == TRANSCRIPT_KEYS
     # 空闲态的 `health` 是**从转写后端读来的**真值：这一场还没起过任何场次，真实现如实报
-    # `stopped`（`phase2` 复审 m3 定的口径「空闲 = stopped」；`normal` 是 dataclass 默认值，
+    # `stopped`（`设计` 复审 m3 定的口径「空闲 = stopped」；`normal` 是 dataclass 默认值，
     # 服务起来那一刻就不再是它了）。另三格空闲态就是零。
     assert snapshot["transcript"] == {
         "health": "stopped",
@@ -481,7 +481,7 @@ def test_api_state_shape_is_the_full_one(tmp_path, client_factory):
     assert set(settings) == SETTINGS_TOP_KEYS
     assert isinstance(settings["alarm_sound"], bool)
     assert isinstance(settings["heartbeat_interval_seconds"], int)
-    # 缺省档是四档之一（`311f84f5`）
+    # 缺省档是四档之一
     assert settings["summary_default_window"] == "15m"
     # `asr` 五子键齐且取当前生效值；`devices` 两个子键在没配时都是 `null`
     assert set(settings["asr"]) == ASR_KEYS
@@ -490,7 +490,7 @@ def test_api_state_shape_is_the_full_one(tmp_path, client_factory):
 
 
 def test_api_state_revision_grows_by_one_per_state_change(tmp_path, client_factory):
-    """`revision` 每次状态变更单调 `+1`；被拒绝的请求**不涨 `revision`**（phase2 §2.3 第 2 条）。"""
+    """`revision` 每次状态变更单调 `+1`；被拒绝的请求**不涨 `revision`**（设计口径第 2 条）。"""
     home = tmp_path / "home_for_revision"
     home.mkdir()
     out_root = tmp_path / "out_for_revision"

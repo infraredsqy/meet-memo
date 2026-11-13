@@ -8,7 +8,7 @@ import { stepsSettled } from './drain';
  * —— `App.tsx` 那个模块要用 DOM，`web/tests` 平时跑在 node 环境（`vitest.config.ts`）。
  * 闸本身只做一件笨事：照这里的判据在两个视图之间选一个。
  *
- * 两档回工作台（`docs/requirements.md` R26 / R18；d61829f1 起停下不锁屏）：
+ * 两档回工作台（`docs/requirements.md` R26 / R18； 起停下不锁屏）：
  *
  *   - `idle` 且没有场次：还没开过会的那种空闲；
  *   - `ended`——**任意相都回**：停止录音那一刻就能回工作台，哪怕落盘还在跑

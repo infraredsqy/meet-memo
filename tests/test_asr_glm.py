@@ -11,8 +11,8 @@
   - **噪声预筛**：命中即 `ok=True, reason="noise"`（「这一段落是静音，不写行」，
     不是失败），并且**省掉那一次生成**（假模型的 `generate` 一次都没被调）；
   - **超时与判环都不落部分文本**：两者都交回 `text=""` 加失败原因；
-  - **文本级兜底**：拿 V1 那条真实坏行（`tests/v1/fixtures_real_loops.py` 的 `LOOP_LINE_283`，
-    2515 字符的截断副本）当模型输出喂进去，断言出来的文本被砍到 <60 字符；
+  - **文本级兜底**：拿 `tests/v1/fixtures_loops.py` 的 `LOOP_LINE_283`
+    （3.3k 字符的长周期合成循环）当模型输出喂进去，断言出来的文本被砍到 <60 字符；
   - **参数一律从配置读出**：写一份 `config.json`、`config.load()` 之后断言 kwargs 里的
     `max_new_tokens` 与超时秒数跟着变（`docs/v1-lineage.md` 的 C9：要验就写 `config.json`，
     不 monkeypatch 配置函数）；
@@ -39,7 +39,7 @@ from meeting import config as config_module
 from meeting.asr import glm
 from meeting.asr.guards import _DeadlineStop, _LoopGuard
 from tests import _helpers as helpers
-from tests.v1.fixtures_real_loops import LOOP_LINE_283, NORMAL_LINES
+from tests.v1.fixtures_loops import LOOP_LINE_283, NORMAL_LINES
 
 #: 假 Processor 交回的 prompt token 个数（`n_new = outputs 长度 - 它`）
 PROMPT_TOKENS = 5
@@ -200,7 +200,7 @@ _IMPORT_CHAIN_CODE = (
 
 
 def test_import_chain_pulls_no_heavy_dependency():
-    """`import meeting.asr.glm` 只该拉进标准库与包内模块（`phase1/task.md` 完成判定第 4 条）。
+    """`import meeting.asr.glm` 只该拉进标准库与包内模块（设计口径完成判定第 4 条）。
 
     **必须换一个全新解释器**：本进程里 `numpy` 早被 `tests/conftest.py` 的声卡兜底
     （`_no_real_audio_capture` 会 import sounddevice）拉进 `sys.modules` 了，
@@ -217,13 +217,13 @@ def test_import_chain_pulls_no_heavy_dependency():
         encoding="utf-8",
         errors="replace",
         timeout=60,
-    )
+)
     output = (result.stdout or "") + (result.stderr or "")
     assert result.returncode == 0, f"全新解释器里 import 失败：\n{output}"
     lines = (result.stdout or "").strip().splitlines()
     assert lines[0] == "heavy=", (
         f"`import meeting.asr.glm` 把重依赖拉进了 sys.modules：{lines[0]!r}\n{output}"
-    )
+)
     assert lines[1] == "seam=GlmAsrTranscriber", output
 
 
@@ -301,7 +301,7 @@ def test_generate_kwargs_carry_the_four_layers(monkeypatch):
     assert isinstance(stopping, StoppingCriteriaList)
     assert len(stopping) == 1
     assert isinstance(stopping[0], _DeadlineStop)
-    # 两处超时钩子用**同一个** `timeout_s`（默认 20 秒，`phase1/task.md` 的形状第 3 条）
+    # 两处超时钩子用**同一个** `timeout_s`（默认 20 秒，设计口径的形状第 3 条）
     assert stopping[0].seconds == 20.0
     assert guard._deadline - time.monotonic() == pytest.approx(20.0, abs=1.0)
 
@@ -317,7 +317,7 @@ def test_segment_parameters_come_from_config(monkeypatch, tmp_path):
     config_path.write_text(
         '{"asr.max_segment_seconds": 1, "asr.timeout_seconds": 5, "asr.max_new_tokens": 33}',
         encoding="utf-8",
-    )
+)
     loaded_config = config_module.load(environ={}, path=str(config_path))
     config_module.set_current(loaded_config)
 
@@ -432,7 +432,7 @@ def test_deadline_stop_expires_and_takes_extra_kwargs():
 
 
 def test_deadline_stop_rejects_none_seconds():
-    """`float(seconds)` 不接受 `None`（`phase1/task.md` 的「必须保住的形状」第 2 条）。"""
+    """`float(seconds)` 不接受 `None`（设计口径的「必须保住的形状」第 2 条）。"""
     with pytest.raises(TypeError):
         _DeadlineStop(None)
 
@@ -445,9 +445,9 @@ def test_loop_guard_call_signature_is_exactly_three_names():
     多写一个 `**kwargs` 就会在 `generate` 内部抛
     `ValueError: Make sure that all the required parameters ... are passed`，
     **而堆栈指向 transformers**，很容易被误判成「这个模型不支持那个参数」
-    （`docs/v1-lineage.md` 的 C8 / E8、`phase1/task.md` 的「必须保住的形状」第 1 条）。
+    （`docs/v1-lineage.md` 的 C8 / E8、设计口径的「必须保住的形状」第 1 条）。
 
-    这条形状原先**没有任何用例盯着**（phase1 复审 minor-5：把签名改成
+    这条形状原先**没有任何用例盯着**（设计复审 minor-5：把签名改成
     `(self, input_ids, scores, **kwargs)` 之后 30 条用例全绿）—— 运行时零影响的那类改动
     会在真机 `generate` 里才炸，所以这里按参数**逐个点名**，`VAR_KEYWORD` 也一并禁掉：
     `inspect.signature` 对 `*args` / `**kwargs` 会报 `VAR_POSITIONAL` / `VAR_KEYWORD`，
@@ -456,7 +456,7 @@ def test_loop_guard_call_signature_is_exactly_three_names():
     parameters = list(inspect.signature(_LoopGuard.__call__).parameters.values())
     assert [item.name for item in parameters] == ["self", "input_ids", "scores"], (
         f"`_LoopGuard.__call__` 的参数必须恰好是 (self, input_ids, scores)：{parameters}"
-    )
+)
     kinds = {item.name: item.kind for item in parameters}
     assert kinds["self"] is inspect.Parameter.POSITIONAL_OR_KEYWORD
     assert kinds["input_ids"] is inspect.Parameter.POSITIONAL_OR_KEYWORD
@@ -464,7 +464,7 @@ def test_loop_guard_call_signature_is_exactly_three_names():
     assert not any(
         item.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
         for item in parameters
-    ), f"不许出现 *args / **kwargs：{parameters}"
+), f"不许出现 *args / **kwargs：{parameters}"
 
 
 def test_loop_guard_deadline_forces_eos_on_a_real_tensor():
@@ -481,16 +481,15 @@ def test_loop_guard_deadline_forces_eos_on_a_real_tensor():
 
 
 # ---------------------------------------------------------------------------
-# 七、文本级兜底（第 4 层）：真实坏行必须被砍掉
+# 七、文本级兜底（第 4 层）：长周期循环样本必须被砍掉
 # ---------------------------------------------------------------------------
 
 
-def test_text_level_fallback_strips_the_real_loop_line(monkeypatch):
-    """假模型吐出 V1 那条真实坏行 → `transcribe_segment` 交回的文本被砍到 <60 字符。
+def test_text_level_fallback_strips_the_loop_line(monkeypatch):
+    """假模型吐出长周期合成循环 → `transcribe_segment` 交回的文本被砍到 <60 字符。
 
     这条把第 4 层接在 `transcribe_segment` 里验：断言盯住**长度与前导正文本身**
-    （光断言「没抛错」等于没验）。fixture 是截断副本（2515 字符），精确的 3333 / 周期 5 / ×663
-    只在 V1 仓库（本机私有）对应素材的同一段坏行（原件 L283）。
+    （光断言「没抛错」等于没验）。fixture 是 3.3k 字符的合成样本（周期 5、×663）。
     """
     transcriber, _processor, _model, _loaded = _wire(monkeypatch, text=LOOP_LINE_283)
 
@@ -499,8 +498,8 @@ def test_text_level_fallback_strips_the_real_loop_line(monkeypatch):
     assert result.ok is True, "文本级兜底命中不算失败（留下的前导正文仍有价值）"
     assert result.reason == "ok"
     assert len(result.text) < 60, f"循环垃圾没被砍掉：出来 {len(result.text)} 字符"
-    assert result.text.startswith("这样赢赢哦，这空的，我现在这样，我"), "前导正文应当保留"
-    assert len(LOOP_LINE_283) > 2000, "前提：喂进去的确实是那条真实坏行的副本"
+    assert result.text.startswith("这是一段测试开头，"), "前导正文应当保留"
+    assert len(LOOP_LINE_283) > 2000, "前提：喂进去的确实是长周期循环样本"
 
 
 def test_normal_transcript_line_survives_the_fallback(monkeypatch):

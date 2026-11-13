@@ -42,7 +42,7 @@ export function clampHeartbeatInterval(seconds: unknown): number {
   return Math.min(
     HEARTBEAT_INTERVAL_MAX_SECONDS,
     Math.max(HEARTBEAT_INTERVAL_MIN_SECONDS, seconds),
-  );
+);
 }
 
 /**

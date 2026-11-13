@@ -1,4 +1,4 @@
-"""`tests/test_heartbeat.py` —— `GET /api/heartbeat` 与帧时钟（phase2 §5.1 第八行；§3.5.4）。
+"""`tests/test_heartbeat.py` —— `GET /api/heartbeat` 与帧时钟（设计口径第八行；§3.5.4）。
 
 覆盖（逐条对 §5.1 的 ①–⑦）：
 
@@ -15,7 +15,7 @@
   ⑥ **`SourceFacts` / `SourceLost` 不刷新帧时钟**；
   ⑦ **帧间隔的声明与回退**：`frame_interval` 属性就是声明位，拿不到或取值非正数时按
      `DEFAULT_FRAME_INTERVAL_SECONDS` 算窗口、**服务照常起、`top_state` 不动**；
-  ⑧ **「还没有第一帧」报未知**（de899128，开场误报的修法）：自本场 start 起算的同一只
+  ⑧ **「还没有第一帧」报未知**（开场误报的修法）：自本场 start 起算的同一只
      窗口（`max(2.0s, 3 × frame_interval)`）内一帧都没到时报 `None`，超窗仍无首帧报
      `False`（=停，「别把未知做成永不报」）；假采集档连开几场，开场窗口里
      `recording_alive` 不落 `False`。
@@ -405,7 +405,7 @@ def test_missing_frame_interval_attribute_falls_back(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# ⑧ 还没有第一帧：开场窗口内的未知档（de899128）
+# ⑧ 还没有第一帧：开场窗口内的未知档
 # ---------------------------------------------------------------------------
 
 

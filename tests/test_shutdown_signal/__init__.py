@@ -1,4 +1,4 @@
-"""`Ctrl+C` 两阶段语义的进程级用例（phase3 §5.1 / §3.8；契约点名的六个函数逐字在位）。
+"""`Ctrl+C` 两阶段语义的进程级用例（设计口径 / §3.8；契约点名的六个函数逐字在位）。
 
 **用例计数（照实登记，数目可核对）**
 
@@ -51,7 +51,7 @@
 第 ⑥ 条再用 `CTRL_C_EVENT` 复证两者结果一致。
 
 **真服务子进程**：起停、发中断信号、读退出码、取 `base_url` 四项能力都在
-`tests/_service.py` 的 `ServiceProcess` 上（phase2 的夹具能力），**本文件不另起一套子进程管理**。
+`tests/_service.py` 的 `ServiceProcess` 上（设计的夹具能力），**本文件不另起一套子进程管理**。
 子进程的环境变量与 `service_process` 夹具那一支**同一套**：家目录重定向（`HOME` +
 `USERPROFILE`）、`MEETING_PORT` / `MEETING_LOG_DIR` / `MEETING_NO_BROWSER`
 三项、`PYTHONPATH`；假件经临时目录 + `PYTHONPATH` + 既有配置键 `post.hook` 挂上（**本文件只

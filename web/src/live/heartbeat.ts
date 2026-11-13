@@ -24,7 +24,7 @@ export type HeartbeatLevel = '正常' | '迟到' | '失联' | '已恢复';
 export const RECOVERED_NOTE_SECONDS = 30;
 
 /**
- * 「采集已停」要**连续这么多次读数**是 `false` 才判（两拍规则，de899128）。
+ * 「采集已停」要**连续这么多次读数**是 `false` 才判（两拍规则）。
  *
  * 开场那一拍服务报的是 `null`（还没有第一帧），单次 `false` 也可能是竞态窗口里的
  * 误读 —— 一惊一乍的告警会被人关掉（design-intent 第 17 条）。计数是**界面层**的
@@ -94,7 +94,7 @@ export function applyHeartbeatReading(
   const lastReplyAt = reading.kind === 'reply' ? reading.heartbeat.server_time : state.lastReplyAt;
 
   // 两拍规则的计数（单一归并点）：`false` 连着数，`true` / `null` / 失联一并清零。
-  // `null` 是「还没有第一帧」的未知档（de899128），它重置计数正是开场不误报的关键。
+  // `null` 是「还没有第一帧」的未知档，它重置计数正是开场不误报的关键。
   const stalledBeats =
     reading.kind === 'reply' && reading.heartbeat.recording_alive === false
       ? state.stalledBeats + 1
@@ -192,7 +192,7 @@ export function lostBanner(state: HeartbeatState, intervalSeconds: number): Lost
  * 两秒没收到一帧事实就算停）。设计章 4.5 只规定「应答必须带录音存活字段」，
  * 没给这一档的成品文案；任务书「边界」第 6 条指定照失联横幅的结构写。
  *
- * **两拍规则**（de899128）：`stalledBeats`（`applyHeartbeatReading()` 记的连续
+ * **两拍规则**：`stalledBeats`（`applyHeartbeatReading()` 记的连续
  * `false` 计数）要够 `CAPTURE_STOP_CONFIRMATIONS` 才判停 —— 开场「还没有第一帧」
  * 那一档服务报 `null`（未知），不进计数；单次 `false` 不弹横幅。真的饿死时
  * 计数照样能攒够，不会报不出来。

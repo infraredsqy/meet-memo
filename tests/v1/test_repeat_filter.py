@@ -1,48 +1,48 @@
 # -*- coding: utf-8 -*-
 """重复循环过滤 + 循环检测的回归测试。
 
-回归基线来自 2026-09-17 那场真实会议：GLM-ASR 进入退化循环输出了两条
-2799/3333 字符的垃圾（周期 7 和 5），**旧过滤器一个字符都没删掉**。
-这两个用例的作用就是让那次故障永久可复现——过滤器再退化回旧行为就红。
+回归基线是两条合成的长周期循环样本（周期 7 与 5）：ASR 退化时会把同一短语
+重复几百次，**旧过滤器（周期上限 4）一个字符都没删掉**。这两个用例的作用
+就是让那种形态永久可复现——过滤器再退化回旧行为就红。
 """
 import os
 import sys
 
 # 本文件从 `tests/` 挪到 `tests/v1/` 之后，仓库根要往上数**两级**（`tests/v1/` → `tests/` → 仓库根）：
-# 只数一级算出来的是 `.../meeting/tests`，直跑本文件时 `import tests.v1.fixtures_real_loops`
+# 只数一级算出来的是 `.../meeting/tests`，直跑本文件时 `import tests.v1.fixtures_loops`
 # 会因为仓库根不在 `sys.path` 上而报 `ModuleNotFoundError: No module named 'tests'`。
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from tests.v1.fixtures_real_loops import LOOP_LINE_261, LOOP_LINE_283, NORMAL_LINES  # noqa: E402
+from tests.v1.fixtures_loops import LOOP_LINE_261, LOOP_LINE_283, NORMAL_LINES  # noqa: E402
 from meeting.asr.guards import (  # noqa: E402
     _loop_coverage, _strip_repeat_loops, _LoopGuard,
 )
 
 
-# ── 真实故障行必须被拦下 ────────────────────────────────────────
+# ── 长周期循环样本必须被拦下 ────────────────────────────────────
 
-def test_real_loop_line_261_is_stripped():
-    """周期 7 的「写啊哈，你可以」×399 —— 旧实现漏掉的正是这种长周期循环。
+def test_period7_loop_line_is_stripped():
+    """周期 7 的循环 ×399 —— 旧实现漏掉的正是这种长周期循环。
 
-    注意：检测到的"周期"可能是一个**循环移位**的等价单位（如「以写啊哈，你可」），
+    注意：检测到的"周期"可能是一个**循环移位**的等价单位（周期不同相位），
     因为多数候选移位的覆盖率同为最大。断言只检查行为契约，不绑定具体单位。
     """
     out = _strip_repeat_loops(LOOP_LINE_261)
     assert len(out) < 60, f"应把循环垃圾砍到 <60 字符，实际 {len(out)}"
     # 循环内容只保留一组：留下的单位在原串里能且只能匹配一次
     unit, count, cov = _loop_coverage(LOOP_LINE_261)
-    assert count > 100, "真实故障行的重复次数应在数百量级"
+    assert count > 100, "长循环样本的重复次数应在数百量级"
     assert out.count(unit) == 1, "只应保留一组"
 
 
-def test_real_loop_line_283_is_stripped():
-    """周期 5 的「是错的，那」×663。"""
+def test_period5_loop_line_is_stripped():
+    """周期 5 的循环 ×663。"""
     out = _strip_repeat_loops(LOOP_LINE_283)
     assert len(out) < 60, f"应把循环垃圾砍到 <60 字符，实际 {len(out)}"
     unit, count, cov = _loop_coverage(LOOP_LINE_283)
     assert out.count(unit) == 1, "只应保留一组"
     # 循环之前的前导正文应当保留
-    assert out.startswith("这样赢赢哦，这空的，我现在这样，我")
+    assert out.startswith("这是一段测试开头，")
 
 
 def test_old_filter_would_have_missed_these():
@@ -59,7 +59,7 @@ def test_old_filter_would_have_missed_these():
 # ── 正常文本绝不能误杀 ─────────────────────────────────────────
 
 def test_normal_lines_untouched():
-    """真实正常转写行必须原样返回（含「啊哈」、口头语、英文词重复）。"""
+    """正常语句样本必须原样返回（含「啊哈」、口头语、英文词重复）。"""
     for line in NORMAL_LINES:
         assert _strip_repeat_loops(line) == line, f"误杀正常行: {line[:40]}"
 

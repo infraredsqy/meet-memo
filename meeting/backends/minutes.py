@@ -1,4 +1,4 @@
-"""纪要钩子（`41465462` phase2）：会后纪要生成那一格的解析落点。
+"""纪要钩子（设计）：会后纪要生成那一格的解析落点。
 
 `registry.resolve_minutes_hook()` 按 `minutes.hook` 找的就是本模块的 `MinutesHook`
 （`DEFAULT_PATHS["minutes.hook"]` 那条约定路径）。**拉起它的地方有两处**：
@@ -89,7 +89,7 @@ class MinutesHook:
         force: bool = False,
         claimed: bool = False,
         deliver: bool = False,
-    ) -> dict[str, Any] | None:
+) -> dict[str, Any] | None:
         """`meeting post` 的离线尾巴与「直接出纪要」按钮调它，**返回即算启动成功**（不等它跑完）。
 
         `deliver` 是**人工放行标记**（缺省 `False`）：不放行就在 `mark_running()` **之前**
@@ -126,7 +126,7 @@ class MinutesHook:
             args=(target, deliver),
             name=THREAD_NAME,
             daemon=True,
-        )
+)
         thread.start()
         return None
 
@@ -147,7 +147,7 @@ class MinutesHook:
             session_dir,
             branch=launch_module.configured_branch(minutes_hook_selector()),
             force=force,
-        )
+)
 
     # -- 线程体 -------------------------------------------------------------
 

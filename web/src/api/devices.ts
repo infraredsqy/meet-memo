@@ -5,7 +5,7 @@ import {
 import { ProtocolError, UnavailableError, getJsonOk } from './common';
 
 /**
- * 设备清单端点的客户端（`docs/contract.md` 4.10，设置抽屉节点 `311f84f5`）。
+ * 设备清单端点的客户端（`docs/contract.md` 4.10，设置抽屉节点）。
  *
  * 与 `POST /api/actions` 那条不同，它**不带那两个必需头**（三道防线是给「改状态」的
  * 请求设的），也不写任何东西：读它不涨 `revision`、不广播。界面拿到的就是服务给的

@@ -5,15 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>meeting · 骨架自检页 /debug</title>
 <!--
-  骨架自检页（phase1 §3.8 建页；phase2 §3.11 接通动作与事件流）。
+  骨架自检页（设计口径建页；设计口径接通动作与事件流）。
 
   这一页的定位由契约冻结：
     * 它是**骨架自检页，非产品界面**，服务的是「半夜复核服务到底活着没、状态长什么样」
-      这种场景；产品界面是 `/` 上那个 React 应用（c62dec56 的活），跟这一页是两回事；
+      这种场景；产品界面是 `/` 上那个 React 应用（的活），跟这一页是两回事；
     * 它**不承担任何告警职责**：告警只走状态与界面，这一页只把原始快照与原始应答摆出来；
     * 它**不往 localStorage 写任何东西**（状态只由服务推出来，客户端不自己记状态）。
 
-  这一页做四件事（phase2 §3.11）：
+  这一页做四件事（设计口径）：
     1. 读原始快照：fetch("/api/state")；
     2. 按开始 / 结束：fetch("/api/actions", {method:"POST"})，必须带
        Content-Type: application/json 与 X-Meeting-Service: 1（否则 403）；

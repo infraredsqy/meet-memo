@@ -25,9 +25,9 @@ import {
 import type { MaterialItem } from '../contract';
 
 /**
- * 会议资料区（节点 160d1a78）：往这一场目录的 `meeting_materials/` 里放东西与管理的
+ * 会议资料区（节点）：往这一场目录的 `meeting_materials/` 里放东西与管理的
  * 界面入口。会中工作台（`App.tsx`，目标目录 = 当前场次）与会后详情（`WorkspaceHome`，
- * 目标目录 = 选中那一行）各摆一块；服务端那一半是资料节点 285bf58c 的四条端点。
+ * 目标目录 = 选中那一行）各摆一块；服务端那一半是资料节点 的四条端点。
  *
  * **四个入口，摩擦都要低**（spec 口径）：
  * 1. **页面级粘贴**：`document` 上收 `paste`——剪贴板里是图片就收进资料；焦点在输入框 /
@@ -116,7 +116,7 @@ function SubmitTextDialog({
       />
       {note !== null && <p className="picker__jumperr">{note}</p>}
     </DialogFrame>
-  );
+);
 }
 
 /** 大文件确认框压着的东西：粘贴 / 拖拽的一批 `File`，或选择器挑中的那一份盘上文件。 */
@@ -162,7 +162,7 @@ export function MaterialsPanel({
       (error) => {
         setListError(materialsFailureText(error));
       },
-    );
+);
   }, [dir, fetchImpl]);
 
   // 换场次即重取：清单、勾选、反馈、结果行都是这一场的，不跨场带走。
@@ -191,7 +191,7 @@ export function MaterialsPanel({
         () => {
           setTasks((current) =>
             current.map((task) => (task.key === key ? { ...task, status: 'done' } : task)),
-          );
+);
           return true;
         },
         (error) => {
@@ -200,14 +200,14 @@ export function MaterialsPanel({
               task.key === key
                 ? { ...task, status: 'failed', note: materialsFailureText(error) }
                 : task,
-            ),
-          );
+),
+);
           return false;
         },
-      );
+);
     },
     [],
-  );
+);
 
   /** 一批文件逐个上传（顺序发，不并排压服务），全部落定后重取清单。 */
   const runUpload = useCallback(
@@ -217,13 +217,13 @@ export function MaterialsPanel({
         for (const file of files) {
           await startTask(file.name, file.size, () =>
             uploadMaterial(dir, file.name, file, { fetchImpl }),
-          );
+);
         }
         refresh();
       })();
     },
     [dir, fetchImpl, refresh, startTask],
-  );
+);
 
   /** 入口共用的那道门：混着超大文件就先弹确认，确认后照传（不弹硬拒）。 */
   const addFiles = useCallback(
@@ -236,7 +236,7 @@ export function MaterialsPanel({
       runUpload(files);
     },
     [runUpload],
-  );
+);
 
   const addFilesRef = useRef(addFiles);
   addFilesRef.current = addFiles;
@@ -254,7 +254,7 @@ export function MaterialsPanel({
       if (eventTargetInEditable(event.target)) return;
       const files = pasteImageFiles(
         Array.from(event.clipboardData?.items ?? []) as Parameters<typeof pasteImageFiles>[0],
-      );
+);
       if (files.length === 0) return;
       event.preventDefault();
       addFilesRef.current(files);
@@ -270,25 +270,25 @@ export function MaterialsPanel({
       const bytes = new TextEncoder().encode(text);
       return startTask(name, bytes.byteLength, () =>
         uploadMaterial(dir, name, bytes, { fetchImpl }),
-      ).then((ok) => {
+).then((ok) => {
         if (ok) refresh();
         return ok;
       });
     },
     [dir, fetchImpl, refresh, startTask],
-  );
+);
 
   /** 文件模式挑中的那一份盘上文件：`?from=` 交给服务流式拷入（确认框确认后也走这里）。 */
   const uploadPick = useCallback(
     (pick: Extract<PickerPick, { what: 'file' }>): void => {
       void startTask(pick.name, pick.sizeBytes, () =>
         uploadMaterialFromDisk(dir, pick.name, pick.path, { fetchImpl }),
-      ).then((ok) => {
+).then((ok) => {
         if (ok) refresh();
       });
     },
     [dir, fetchImpl, refresh, startTask],
-  );
+);
 
   const pickFromDisk = useCallback(
     (pick: PickerPick): void => {
@@ -304,7 +304,7 @@ export function MaterialsPanel({
       uploadPick(pick);
     },
     [reset, uploadPick],
-  );
+);
 
   // -- 删除与查看 -----------------------------------------------------------
 
@@ -332,7 +332,7 @@ export function MaterialsPanel({
         failures.length === 0
           ? `已删除 ${deleted} 份。`
           : `删除了 ${deleted} 份，有没删成的：${failures.join('；')}`,
-      );
+);
       refresh();
     })();
   }, [checked, dir, fetchImpl, refresh]);
@@ -353,7 +353,7 @@ export function MaterialsPanel({
       addFilesRef.current(dragFiles(event.dataTransfer));
     },
     [],
-  );
+);
 
   const anyBusy = deleting || tasks.some((task) => task.status === 'uploading');
   const pendingOver =
@@ -383,7 +383,7 @@ export function MaterialsPanel({
             >
               删除所选({checked.size})
             </button>
-          )}
+)}
           <button
             className="btn btn--small"
             type="button"
@@ -413,12 +413,12 @@ export function MaterialsPanel({
             重试
           </button>
         </p>
-      )}
+)}
       {deleteNote !== null && <p className="mat__note">{deleteNote}</p>}
 
       {items !== null && items.length === 0 && listError === null && (
         <p className="empty">这一场还没有资料。图片可直接粘贴，或拖进这一块。</p>
-      )}
+)}
 
       {items !== null && items.length > 0 && (
         <div className="mat__list" role="listbox" aria-label="资料清单" aria-multiselectable="true">
@@ -446,9 +446,9 @@ export function MaterialsPanel({
                     alt=""
                     loading="lazy"
                   />
-                ) : (
+) : (
                   <span className="tag mat__icon">{materialKindLabel(item.name)}</span>
-                )}
+)}
                 {image ? (
                   <button
                     className="mat__name"
@@ -458,17 +458,17 @@ export function MaterialsPanel({
                   >
                     {item.name}
                   </button>
-                ) : (
+) : (
                   <span className="mat__name">{item.name}</span>
-                )}
+)}
                 <span className="mat__meta num">
                   {formatBytes(item.size_bytes)} · {materialTimeLabel(item.added_at)}
                 </span>
               </div>
-            );
+);
           })}
         </div>
-      )}
+)}
 
       {tasks.length > 0 && (
         <div className="mat__tasks" role="list" aria-label="上传反馈">
@@ -481,10 +481,10 @@ export function MaterialsPanel({
               {task.status === 'uploading' && <span className="spinner" aria-hidden="true" />}
               {task.status === 'done' && (
                 <span className="glyph glyph--check" aria-hidden="true" />
-              )}
+)}
               {task.status === 'failed' && (
                 <span className="glyph glyph--cross" aria-hidden="true" />
-              )}
+)}
               {task.name} ·{' '}
               {task.status === 'uploading'
                 ? '放进资料中…'
@@ -492,9 +492,9 @@ export function MaterialsPanel({
                   ? `已放进资料（${formatBytes(task.size)}）`
                   : `没有放上去：${task.note}`}
             </p>
-          ))}
+))}
         </div>
-      )}
+)}
 
       {/* 大文件确认框（spec 口径：超过 100M 弹「确认要放进资料吗」，确认后照传；
           粘贴 / 拖拽 / 选文件三个上传入口同一副门） */}
@@ -508,7 +508,7 @@ export function MaterialsPanel({
                   .join('；')}）。确认后整批照传。`
               : `这一份超过 100 MB（${pending.pick.name}，${formatBytes(
                   pending.pick.sizeBytes,
-                )}）。确认后照传。`
+)}）。确认后照传。`
           }
           confirmLabel="照传"
           busy={false}
@@ -520,7 +520,7 @@ export function MaterialsPanel({
           }}
           onCancel={() => setPending(null)}
         />
-      )}
+)}
 
       {confirmDelete && (
         <ConfirmDialog
@@ -531,7 +531,7 @@ export function MaterialsPanel({
           onConfirm={deleteChecked}
           onCancel={() => setConfirmDelete(false)}
         />
-      )}
+)}
 
       {textOpen && (
         <SubmitTextDialog
@@ -545,7 +545,7 @@ export function MaterialsPanel({
           }
           onClose={() => setTextOpen(false)}
         />
-      )}
+)}
 
       {pickerOpen && (
         <DirPicker
@@ -559,7 +559,7 @@ export function MaterialsPanel({
             reset();
           }}
         />
-      )}
+)}
       {pickerOpen && browseError !== null && (
         <DialogFrame
           title="目录浏览失败"
@@ -572,7 +572,7 @@ export function MaterialsPanel({
         >
           <div className="dlg__text">{browseError}</div>
         </DialogFrame>
-      )}
+)}
 
       {/* 原图查看：原样字节就是取原文件端点那一副，缩放归浏览器（服务不另做缩略文件） */}
       {viewer !== null && (
@@ -588,7 +588,7 @@ export function MaterialsPanel({
         >
           <img className="mat__view" src={materialFileUrl(dir, viewer)} alt={viewer} />
         </DialogFrame>
-      )}
+)}
     </section>
-  );
+);
 }

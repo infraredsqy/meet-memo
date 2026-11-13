@@ -120,7 +120,7 @@ export function LiveView({
   const [failure, setFailure] = useState<ActionFailureView | null>(null);
   const [busy, setBusy] = useState(false);
   /**
-   * 正在切去的那个组合（`c9f5d04d` 的受理反馈）：按下这一刻就把高亮交给它，
+   * 正在切去的那个组合（的受理反馈）：按下这一刻就把高亮交给它，
    * 快照没回来的半途界面照样自洽（高亮在目标档上，别的档不亮也不至于「没反应」）。
    * 收摊的时机有两个 —— 推来的快照真落到这一档（落地），或这一趟动作失败
    * （没落成，高亮退回快照说的那一档，原因交给失败块）。
@@ -132,7 +132,7 @@ export function LiveView({
   const [nowMs, setNowMs] = useState(() => Date.now());
   /**
    * 工作区注册表的那一份（`GET /api/sessions` 的应答原文）：顶层 `post_jobs` 喂全局
-   * 「显卡忙不忙」那一格；清单整份喂左栏那条**常驻工作区栏**（d61829f1：会中屏与
+   * 「显卡忙不忙」那一格；清单整份喂左栏那条**常驻工作区栏**（：会中屏与
    * 工作台共用同一条栏 —— 录音时能看清单、能切到别的工作区看详情、能添加工作区）。
    * 之前这一屏只留 `post_jobs`，且硬编码 `null` 显假「闲」（review-1 m2）——
    * 同一服务的同一份读数，按下面的心跳节奏伸手取即可。
@@ -177,7 +177,7 @@ export function LiveView({
     // （中途路过的新快照 —— 别的动作 commit 的 —— 不算落地）。
     setPendingCombo((current) =>
       current !== null && comboOf(snapshotComboState(next)) === current ? null : current,
-    );
+);
   }, []);
 
   // SSE 那条唯一连接的接线：挂载即往源侧注册四路回调 —— 晚于首帧的积压帧在
@@ -232,7 +232,7 @@ export function LiveView({
     heartRef.current?.setIntervalFromSnapshot(heartbeatSeconds);
   }, [heartbeatSeconds]);
 
-  // 工作区栏读数（review-1 m2 起，d61829f1 扩成整份清单）：挂上这一屏就按心跳节奏取
+  // 工作区栏读数（review-1 m2 起， 扩成整份清单）：挂上这一屏就按心跳节奏取
   // 一遍 `GET /api/sessions`，把顶层 `post_jobs` 喂给全局那格「显卡忙不忙」、清单整份
   // 喂给左栏那条常驻工作区栏。取不到的那一跳（瞬态失联）手上这份照旧，下一跳再试；
   // 周期与心跳同一个可配节奏。首份到手时给选区落座：最近一次被打开的那一场
@@ -269,7 +269,7 @@ export function LiveView({
     });
   }, []);
 
-  // 快速总结的缺省档同样来自快照的 settings（`311f84f5`）：预选跟着服务走，
+  // 快速总结的缺省档同样来自快照的 settings：预选跟着服务走，
   // 用户显式挑过的档不被覆盖（判据在 summary-controller 的 applyDefaultWindow 里）。
   useEffect(() => {
     if (snapshot === null) return;
@@ -278,7 +278,7 @@ export function LiveView({
 
   // 换新场次时清掉上一场的增量流与转写窗口：免得旧电平、旧正文顶着新状态。
   // 总结区那两样（这一次的应答 / 本场记录那一份）跟着一起收：新的一场从零开始，
-  // 服务侧 `start_session()` 也把缓冲与记录一起清了（phase2 的「缓冲与生命周期」）。
+  // 服务侧 `start_session()` 也把缓冲与记录一起清了（设计的「缓冲与生命周期」）。
   useEffect(() => {
     if (snapshot === null) return;
     if (snapshot.top_state === 'idle' && snapshot.session === null) {
@@ -365,7 +365,7 @@ export function LiveView({
       }
     },
     [],
-  );
+);
 
   /**
    * 打一个动作；失败时**只画失败块**，不往外抛 —— 调用方是 `onClick`，抛出去就是一条
@@ -376,10 +376,10 @@ export function LiveView({
       void runAction(name, args).catch(() => undefined);
     },
     [runAction],
-  );
+);
 
   /**
-   * 切工作区（d61829f1）：发**既有**的 `workspace_open` 登记动作（不造新端点），
+   * 切工作区：发**既有**的 `workspace_open` 登记动作（不造新端点），
    * 成功后才把详情切过去 —— 登记失败（目录没了这类）详情留在原处，失败块说原因。
    */
   const switchWorkspace = useCallback(
@@ -390,10 +390,10 @@ export function LiveView({
         .catch(() => undefined); // 失败块已由 runAction 画出
     },
     [runAction, wsSelection],
-  );
+);
 
   /**
-   * 四组合直切（`c9f5d04d`）：映射表差几步发几步，按次序发、中途失败即停。
+   * 四组合直切：映射表差几步发几步，按次序发、中途失败即停。
    *
    * 「现状」在半途要读对：上一趟还没落地（`pendingCombo` 有值）时快照还是旧的，
    * 现状改读按下那一档所代表的那份 —— 连切几次才不会串态（spec 完成判定第一条）。
@@ -420,7 +420,7 @@ export function LiveView({
             action.name === 'set_source'
               ? { source: action.source, active: action.active }
               : {},
-          );
+);
         }
       } catch {
         // 失败块已由 runAction 画出；这里只把乐观高亮收掉，让它退回快照说的那一档
@@ -474,7 +474,7 @@ export function LiveView({
   const gpu = gpuBusyView(
     postJobs,
     snapshot !== null && (snapshot.top_state === 'recording' || snapshot.top_state === 'alert'),
-  );
+);
   /** 左栏小详情说的是选中的那一场（清单点哪行说哪场）；选区没落座时这一块不给。 */
   const wsRow: SessionRow | null =
     (wsSessions?.sessions ?? []).find((row) => row.dir === wsSelection) ?? null;
@@ -497,7 +497,7 @@ export function LiveView({
       <main className="shell page--live">
         <p className="hint">正在接服务…</p>
       </main>
-    );
+);
   }
 
   const started = snapshot.top_state !== 'idle';
@@ -548,9 +548,9 @@ export function LiveView({
             {logPath === null ? '' : <>；日志在 <span className="num">{logPath}</span></>}。
           </div>
         </div>
-      )}
+)}
 
-      {/* 常驻工作区栏（d61829f1）：会中屏与工作台共用同一条左栏 —— 录音时能看清单、
+      {/* 常驻工作区栏：会中屏与工作台共用同一条左栏 —— 录音时能看清单、
           能切到别的工作区看详情、能添加工作区；只有「开始录音」受单场限制。
           会中自己的内容仍读作居中的 1440 单列（右边那格 `.wsbar-main` 里的 `.shell`）。 */}
       <div className="wsbar-page">
@@ -573,7 +573,7 @@ export function LiveView({
               onStart={() => runActionQuietly('start', { dir: wsRow.dir, mode: 'both' })}
               onOpenSession={() => switchWorkspace(snapshot.session?.dir ?? wsRow.dir)}
             />
-          )
+)
         }
       />
       <div className="wsbar-main">
@@ -639,7 +639,7 @@ export function LiveView({
           onStop={() => runActionQuietly('stop')}
           onMute={() => runActionQuietly('mute_session')}
         />
-      )}
+)}
 
       {/* 动作失败与拒绝：按 code 分派，detail 有哪个键显示哪个键（契约 6.7）。
           它排在告警区外面：失联时那一整块要收掉（两句话不同屏），
@@ -648,9 +648,9 @@ export function LiveView({
         <section className="band band--alert" aria-label="失败">
           <FailureBlock failure={failure} logPath={logPath} extraLines={drainFailedSteps} />
         </section>
-      )}
+)}
 
-      {/* 会议资料（160d1a78）：会中把图片 / 文件放进这一场的 meeting_materials/。
+      {/* 会议资料：会中把图片 / 文件放进这一场的 meeting_materials/。
           目标目录 = 当前场次（资料跟着场次走，哪怕录制中照收）；还没有场次时这一块
           不摆 —— 没有目标就没有入口。页面级粘贴由面板自己挂在 document 上。 */}
       {sessionDir !== null && <MaterialsPanel dir={sessionDir} />}
@@ -660,5 +660,5 @@ export function LiveView({
       </div>
       </div>
     </>
-  );
+);
 }

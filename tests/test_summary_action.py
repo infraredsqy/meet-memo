@@ -1,6 +1,6 @@
-"""`tests/test_summary_action.py` —— `summarize` 动作与 `GET /api/summaries`（`1987cb20` phase2）。
+"""`tests/test_summary_action.py` —— `summarize` 动作与 `GET /api/summaries`（设计）。
 
-覆盖 `phase2/task.md` 的接口口径与完成判定第 1 / 2 / 4 条：
+覆盖设计口径的接口口径与完成判定第 1 / 2 / 4 条：
 
   - **动作成功体**：通用信封上多一个 `summary` 键，逐键是
     `window` / `window_label` / `at` / `elapsed_seconds` / `lines` / `what` / `where` / `lost`；
@@ -57,7 +57,7 @@ STUCK_RESPONSE_LIMIT_SECONDS = 15.0
 #: （本机上要么当场被拒、要么等到这个上限 —— 两种都是真的走到了传输层，故取小值）
 REQUEST_REFUSED_TIMEOUT_SECONDS = 0.3
 
-#: `summary` 子对象的键全集（`phase2/task.md` 那张成功体逐字写死）
+#: `summary` 子对象的键全集（设计口径那张成功体逐字写死）
 SUMMARY_KEYS = {
     "window", "window_label", "at", "elapsed_seconds", "lines",
     "what", "where", "lost",

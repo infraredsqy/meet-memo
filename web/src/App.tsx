@@ -29,7 +29,7 @@ class ShellErrorBoundary extends Component<{ children: ReactNode }, { error: Err
           <pre className="fail__why">{this.state.error.message}</pre>
           <p className="hint">刷新页面重连。</p>
         </div>
-      );
+);
     }
     return this.props.children;
   }
@@ -56,5 +56,5 @@ export function App(): ReactNode {
     <ShellErrorBoundary>
       <HomeGate snapshot={snapshot} events={source} />
     </ShellErrorBoundary>
-  );
+);
 }
