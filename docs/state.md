@@ -161,7 +161,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 | 引擎失败 / 缺段 | `done`（每路都交回）/ `partial`（至少一路跑成、也至少一路整条没交回）/ `failed`（每路都没交回）；缺的区间在 `missing_spans` + `error` | `engine_error` / `no_segments` |
 | 跑成而段全零时长 | `done`，逐路 `audio.zero_span_segments > 0` | `zero_span_segments` |
 
-- 逐路 `artifacts.<source>.reason` 另有一套词：跑成的路是 `null`；一块产物都没落的路按次序挑第一个出现的词（`engine_load_error` > `no_audio` > `empty_pcm` > `engine_error` > `no_segments` > `all_chunks_failed`，见 `meeting/offline/runner.py`）；`not_run` 只出现在兜底那一版给还没轮到的路现开的格上。逐块行与逐路格的 `reason` 是两套词、各说一件事。
+- 逐路 `artifacts.<source>.reason` 另有一套词：跑成的路是 `null`；一块产物都没落的路按次序挑第一个出现的词（`engine_load_error` > `no_audio` > `empty_pcm` > `engine_error` > `no_segments` > `all_chunks_failed`，见 `meeting/offline/runner/`）；`not_run` 只出现在兜底那一版给还没轮到的路现开的格上。逐块行与逐路格的 `reason` 是两套词、各说一件事。
 - **缺段在三处留痕**：状态文件（`partial: true` + `error` 写明区间）、转写文件第一行的注释行（不占段号）、对照表 `audio` 格与报告。**每一块都没跑成的那一路落 `failed`**：转写只剩注释行、对照表是空表。整段一次跑的失败不落产物；没声那一档连整段一次跑都照落产物。
 - **`partial` 一词两处各说一件事**：顶层 `state = "partial"` 说「至少一路整条没交回」；`partial: true` 那个键只说「有一路缺了区间」。两件事可以同时立。
 - **零时长的段**（`end == start`：模型漏写结束标签时解析层故意退回、把正文留下）一段都不删，逐路数进 `audio.zero_span_segments` 与报告——这个形状同时是个可核对的异常信号。
