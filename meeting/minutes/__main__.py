@@ -137,8 +137,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     return _check_main(args.args)
 
 
+__all__ = ["SUBCOMMANDS", "main"]
+
+
 if __name__ == "__main__":  # pragma: no cover - 进程入口
     sys.exit(main())
-
-
-__all__ = ["SUBCOMMANDS", "main"]

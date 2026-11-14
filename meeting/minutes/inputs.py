@@ -120,8 +120,8 @@ def entries_for_session(session_dir: str | Path) -> tuple[SourceEntry, ...]:
                 source=spec.source,
                 live=_entry_of(session, spec.live),
                 offline=_entry_of(session, spec.offline),
-)
-)
+            )
+        )
     return tuple(entries)
 
 
@@ -150,9 +150,9 @@ def build_inputs_document(
             source=item.source,
             live=item.live.file if item.live else None,
             offline=item.offline.file if item.offline else None,
-)
+        )
         for item in entries
-)
+    )
     resolved = mode or mode_for(specs) or MODE_NONE
     if resolved not in INPUT_MODES:
         raise InputsError(f"档位只认 {INPUT_MODES}，收到 {resolved!r}")
@@ -197,7 +197,7 @@ def parse_inputs_document(document: Any) -> dict[str, Any]:
     if version != KNOWN_SCHEMA_MAJOR:
         raise InputsError(
             f"输入清单的主版本号不认识：{version}（本实现只认 {KNOWN_SCHEMA_MAJOR}）"
-)
+        )
     if document.get("mode") not in INPUT_MODES:
         raise InputsError(f"输入清单的 mode 只认 {INPUT_MODES}，收到 {document.get('mode')!r}")
     sources = document.get("sources")
