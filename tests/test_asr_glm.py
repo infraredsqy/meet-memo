@@ -14,7 +14,7 @@
   - **文本级兜底**：拿 `tests/v1/fixtures_loops.py` 的 `LOOP_LINE_283`
     （3.3k 字符的长周期合成循环）当模型输出喂进去，断言出来的文本被砍到 <60 字符；
   - **参数一律从配置读出**：写一份 `config.json`、`config.load()` 之后断言 kwargs 里的
-    `max_new_tokens` 与超时秒数跟着变（`docs/v1-lineage.md` 的 C9：要验就写 `config.json`，
+    `max_new_tokens` 与超时秒数跟着变（要验就写 `config.json`，
     不 monkeypatch 配置函数）；
   - **重依赖不进 `sys.modules`**：`import meeting.asr.glm` 在**一个全新解释器**里跑，
     `torch` / `transformers` / `numpy` / `webrtcvad` 一个都不许出现
@@ -227,7 +227,7 @@ def test_import_chain_pulls_no_heavy_dependency():
 def test_loader_seam_is_the_module_namespace_itself():
     """`_load_models` 是 `meeting.asr.glm` 的模块级名字，`_load_transcriber` 从**这份**字典里取它。
 
-    这条盯的是 `docs/v1-lineage.md` 的 C9 / E9 那个坑：一旦有人在 `glm.py` 里写
+    一旦有人在 `glm.py` 里写
     `from ... import _load_models`（把函数对象绑到另一个模块对象上），
     `monkeypatch.setattr(meeting.asr.glm, "_load_models", fake)` 就会变成**一边通过一边什么都没验**。
     """

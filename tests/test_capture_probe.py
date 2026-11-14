@@ -120,8 +120,7 @@ class FakeSources:
         """把枚举、试开与**两个造源函数**一起换成假件（`start()` 因此也走假源）。
 
         `capture.create_capture_source()` / `create_loopback_source()` 是采集引擎的注入接缝：
-        后端用的是「调用那一刻再取」的模块级查找，所以打在**模块对象**上照样生效
-        （`docs/v1-lineage.md` 的坑 C9）。
+        后端用的是「调用那一刻再取」的模块级查找，所以打在**模块对象**上照样生效。
         """
         from tests._capture_fakes import FakeCaptureSource
 
