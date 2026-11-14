@@ -1,18 +1,5 @@
 """`delivered` 这一档的流转用例：交付即完事、按产物判完成、不许重复拉起。
 
-**它盯的是这一层新增的那条分支**（web 分支交付给 DSH web 服务端），四件事：
-
-  1. **runner 两条分支的选择**：探到 DSH web 服务端在跑就把这一场**交付**出去（状态 `delivered`、
-     `branch=web`、**不校验产物**，即便 `meeting_final.md` 并不在场）；没在跑才走现成的 headless
-     那一趟；探针自己炸了也按「没在跑」算。交付失败时如实记 `failed`，**不偷偷改走 headless**。
-  2. **先落 `running` 再拉起**这条硬口径在 web 分支上照样成立：交付那一步被调到时，盘上那一版
-     状态已经是 `running`，而且 `branch` 已经是**实际走的** `web`。
-  3. **读方按产物判「完成没有」**：`delivered` + `meeting_final.md` 过四条判据 = 完成；
-     `delivered` 而产物还没落 = 还没完成。
-  4. **「已经交付过」是第三条「不必再拉起」的情形**：`_minutes_gate()` 与 `_announce_minutes()`
-     在 `delivered` 且产物没落时**不拉起第二个会话**（再拉一趟会让同一场生成两遍），
-     如实交回 `hook="delivered"`；`--force` 仍然是重新交付的唯一出路。
-
 用例一律注入假探针与假交付件，**一条都不连真实的 3080**（真往那台打的请求由
 `tests/conftest.py` 的第七道兜底拦下）；也不调用系统上的 `dsh`。
 """
@@ -43,11 +30,6 @@ from tests._minutes_fakes import GOOD_FINAL
 
 #: 交付这一步用的那个地址（用例自己塞进配置，不会是真实那一台）
 FAKE_DSH_URL = "http://127.0.0.1:54321"
-
-
-# ---------------------------------------------------------------------------
-# 造现场
-# ---------------------------------------------------------------------------
 
 
 def _transcripts(session: Path) -> Path:
@@ -197,11 +179,6 @@ def _no_test_process_reentry_flag(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MEETING_MINUTES_CHILD", raising=False)
 
 
-# ---------------------------------------------------------------------------
-# 一、runner 选分支
-# ---------------------------------------------------------------------------
-
-
 def test_a_live_dsh_web_server_takes_the_delivery_branch(tmp_path: Path) -> None:
     """探到服务端在跑 → 交付、终态 `delivered`、`branch=web`，而且**不校验产物**。"""
     session = _transcripts(tmp_path / "260927")
@@ -340,11 +317,6 @@ def test_the_child_gate_skips_before_any_probe(tmp_path: Path) -> None:
     assert not (session / STATUS_NAME).exists(), "这一档不写状态文件"
 
 
-# ---------------------------------------------------------------------------
-# 二、状态那一层认得这一档
-# ---------------------------------------------------------------------------
-
-
 def test_the_status_round_trip_keeps_delivered(tmp_path: Path) -> None:
     """`delivered` 写得进、读得回，而且它在四档里（读方不拒收）。"""
     session = tmp_path / "260927"
@@ -357,11 +329,6 @@ def test_the_status_round_trip_keeps_delivered(tmp_path: Path) -> None:
     assert written["state"] == STATE_DELIVERED
     assert read_back["state"] == STATE_DELIVERED
     assert read_back["dsh"]["session_id"] == "session-abc"
-
-
-# ---------------------------------------------------------------------------
-# 三、读方：按产物判完成、按 delivered 判「已经交付过」
-# ---------------------------------------------------------------------------
 
 
 def test_the_gate_treats_a_delivered_meeting_with_its_final_as_done(tmp_path: Path) -> None:

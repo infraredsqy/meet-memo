@@ -7,71 +7,24 @@ import type {
 import { statusLabel } from './model';
 import { sourceDisplayName } from '../live/format';
 
-/**
- * 会后进度界面的**纯逻辑**（`docs/requirements.md` R27 / R31，设计意图第 12 条）。
- *
- * 这一层只做「服务给的字段 → 界面要摆的读数」，不碰组件、不碰取数；组件（
- * `home/WorkspaceHome/`）只把它算好的东西摆到位置上 —— 与会中电平块同一套分层
- * （`live/levels.ts` 算读数、`live/liveview/CaptureBand.tsx` 只写 CSS 变量）。
- *
- * 四件事，判据全部落在服务给的原文上：
- *
- * 1. **列表行四档**（：空白工作区 / 尚未开始 / 录音中 / 录音结束，另保留
- *    「目录不存在」）—— 纯显示层重映射，行 schema 十二键一字不动；会后工序的进度
- *    不进这一格（`post_jobs` 只喂左栏底那格忙闲与详情里的进度区）。
- * 2. **进度读数**：`GET /api/sessions/{id}` 的 `offline` 那份 → 每路一条的读数与
- *    进度条百分比。**分母按路各算各的**（契约 4.9：合成一个整场分母就是在造一个
- *    不存在的量，设计意图第 9 条）。
- * 3. **「真在跑 vs 停着一版 running vs 被打断」**：`offline.in_process` 与 `offline.state`
- *    各答各的事（契约 4.9）；进程崩在半路那一场盘上停着 `running`，读数如实分两层；
- *    「被打断」是盘上自己的终态（R28）—— 自成一相，**不许掉进「跑完了」**，
- *    阶段行明说「被打断、可以重跑」。
- * 4. **全局「显卡忙不忙」**（b1/b2）：忙 = 有模型开着 —— 本机正在录（快照状态）
- *    ∨ 会后那趟在本进程跑（`GET /api/sessions` 顶层的 `post_jobs`；转码那趟不吃
- *    显卡，不点亮这一格）。`meeting post` 命令行那趟活在另一进程、服务看不见，
- *    这一格因此不点亮 —— 如实显示。
- */
+/** 会后进度界面的**纯逻辑**。 */
 
-/** `GET /api/sessions` 顶层第三格的类型（`PostJobCell`）归契约层；这里引用不重定义。 */
 export type { PostJobCell };
 
-// ---------------------------------------------------------------------------
-// 1. 列表行四态（纯显示层重映射 + post_job 联结）
-// ---------------------------------------------------------------------------
-
 /**
- * 行状态的档位。列表行只说录音的**四档**：`blank`（空白工作区）/
- * `unstarted`（尚未开始）/ `recording`（录音中）/ `ended`（录音结束）；另有一档
- * 如实保留：「目录不存在」（`gone`）。行 `state` 是三档口径（契约 4.8）：
- * `recording` / `ended` / `null` —— 收尾走到哪一步、会后那几趟在不在飞都**不进
- * 这个口径**：落盘的进度由详情里那一小块落盘进度另答，会后由进度区（`offline`
- * 那份）与左栏底那格忙闲另答。
+ * 行状态的档位：列表行只说录音的**四档**，另有一档如实保留「目录不存在」（`gone`）。
+ * 收尾走到哪一步、会后那几趟在不在飞都**不进这个口径**。
  */
 export type RowTone = 'gone' | 'blank' | 'unstarted' | 'recording' | 'ended';
 
 export interface RowStatusView {
   tone: RowTone;
-  /** 状态格上的字。 */
   label: string;
-  /**
-   * 图形标记（形状是「不靠颜色」的那一半，`styles/live.css` 的 `glyph--*`）。
-   */
+  /** 图形标记（形状是「不靠颜色」的那一半）。 */
   mark: string;
-  /** 灰档：只有「目录不存在」用它（沿 `wslist__state--dim` 的既有口径）。 */
   dim: boolean;
 }
 
-/**
- * 一行（或选中那一场的详情「状态」格）该写什么。
- *
- * 判据按次序：
- *
- * - 目录不在原地 → 「目录不存在」（最优先 —— 目录都没了，录音也无从谈起）；
- * - 三档口径 `state`：`recording` → 录音中；`ended` → 录音结束（被强杀丢在收尾
- *   半路的那一场也在这一档 —— 三档口径只答「这场录音走到哪了」）；
- * - 其余（还没开过会）→ `kind === 'empty'` 读「空白工作区」，否则「尚未开始」
- *   （分界判据在 `model.ts` `statusLabel()`，唯一的文案出处）。
- */
 export function rowStatusView(row: SessionRow, _postJobs: readonly PostJobCell[]): RowStatusView {
   if (!row.dir_exists) {
     return { tone: 'gone', label: statusLabel(row), mark: 'glyph--dashed', dim: true };
@@ -92,10 +45,6 @@ export function rowStatusView(row: SessionRow, _postJobs: readonly PostJobCell[]
   };
 }
 
-// ---------------------------------------------------------------------------
-// 2. 进度读数（offline 那份 → 每路一条 + 进度条百分比）
-// ---------------------------------------------------------------------------
-
 export interface OfflineRoadView {
   source: 'mic' | 'loopback';
   label: string;
@@ -103,7 +52,7 @@ export interface OfflineRoadView {
   total: number | null;
   remaining: number | null;
   currentChunk: number | null;
-  /** 填充百分比（一位小数，0–100）；分母未知（`total: null`）时是 `null` —— 进度条不猜。 */
+  /** 填充百分比；分母未知（`total: null`）时是 `null` —— 进度条不猜。 */
   percent: number | null;
   counts: OfflineSourceProgress['counts'];
 }
@@ -112,9 +61,7 @@ export type OfflinePhase = 'in-flight' | 'stale-running' | 'interrupted' | 'fini
 
 export interface ProgressView {
   phase: OfflinePhase;
-  /** 阶段那一行的整句（「正在跑：本地第 2/5 块」/「停着一版"在跑"，其实谁都没在跑」）。 */
   phaseLabel: string;
-  /** `state` 与 `in_process` 两格的原文（界面在阶段行旁边如实摆出这两格）。 */
   onDiskState: SessionStatus['offline']['state'];
   inProcess: boolean;
   roads: OfflineRoadView[];
@@ -126,7 +73,6 @@ export interface ProgressView {
   currentSource: 'mic' | 'loopback' | null;
 }
 
-/** 一路的百分比：`done / total`，一位小数、钳在 0–100；分母未知就不算。 */
 export function roadPercent(done: number, total: number | null): number | null {
   if (total === null || total <= 0) return null;
   return Math.min(100, Math.max(0, Math.round((done / total) * 1000) / 10));
@@ -136,8 +82,7 @@ const ZERO_COUNTS = { transcribed: 0, silent: 0, failed: 0, unjudged: 0 };
 
 /**
  * 阶段那一格的图形标记（形状是「不靠颜色」的那一半）：真在跑画 `spinner`（`null`），
- * 停着一版 running 画红叉（「出事了」那一档的形状），**被打断同画红叉**（这一场
- * 没跑完、需要人决定要不要重按），终态画实心块打勾，没跑过画空心框。
+ * 停着一版 running 画红叉，**被打断同画红叉**（这一场没跑完、需要人决定要不要重按）。
  */
 export function phaseMark(phase: OfflinePhase): string | null {
   switch (phase) {
@@ -158,7 +103,7 @@ export function phaseMark(phase: OfflinePhase): string | null {
  * 终态那一档的人话。
  *
  * 这四档不能合成一句「已完成」：盘上 `failed` / `partial` 是**没跑成**的两种场面，
- * 笼统一句会把它们说反（先前那一版只能把盘上的词挂在括号里打补丁）。
+ * 笼统一句会把它们说反。
  */
 const FINISHED_PHASE: Readonly<Record<string, string>> = {
   done: '已完成',
@@ -167,7 +112,7 @@ const FINISHED_PHASE: Readonly<Record<string, string>> = {
   ledger: '有逐块记录，尚未出结论',
 };
 
-/** `offline` 那份 → 进度区的读数。判据逐条写在 `phaseLabel` 里，组件不解读。 */
+/** 判据逐条写在 `phaseLabel` 里，组件不解读。 */
 export function progressView(status: SessionStatus): ProgressView {
   const offline = status.offline;
   const inFlight = offline.in_process;
@@ -231,11 +176,6 @@ export function progressView(status: SessionStatus): ProgressView {
   };
 }
 
-// ---------------------------------------------------------------------------
-// 3. 逐块行（每跑完一块落一行）
-// ---------------------------------------------------------------------------
-
-/** 逐块行的四档归属 + 「读得着但归不了档」的兜底。 */
 export type ChunkVerdict = 'transcribed' | 'silent' | 'failed' | 'unjudged' | 'observed';
 
 export interface ChunkRow {
@@ -263,8 +203,7 @@ export function chunkRowLabel(row: ChunkRow): string {
 
 /**
  * 第一次读到这一场时，把**已经跑过的**那些块补成行（档位读不着、如实记 `observed`
- * —— 界面只从这一刻起见证往后的块，此前的不编）。`done` 可能比块数多不了、也可能
- * 分母未知，行数照 `done` 走。
+ * —— 界面只从这一刻起见证往后的块，此前的不编）。
  */
 export function initialChunkRows(status: SessionStatus): ChunkRow[] {
   const rows: ChunkRow[] = [];
@@ -286,11 +225,9 @@ export function initialChunkRows(status: SessionStatus): ChunkRow[] {
 /**
  * 两次读数之间新跑完的块 → 追加的行。
  *
- * 归档靠**四档计数的差值**（每档差几就有几块落在那一档），次序 `transcribed` /
- * `silent` / `failed` / `unjudged`；差值对不上 `done` 的差值时，多出来的块如实记
- * `observed`（界面不猜它是哪一档）。`before` 为 `null`（这一场是刚选中才第一次读）
- * 时交空数组 —— 初始那批归 `initialChunkRows()`。**重跑那一档不进这里**：记录已重置
- * （`chunkLedgerReset()` 命中）时差值全是钳出来的 0，组件按重播整段换行，不走差值。
+ * 归档靠**四档计数的差值**，次序 `transcribed` / `silent` / `failed` / `unjudged`；差值对不上
+ * `done` 的差值时，多出来的块如实记 `observed`（界面不猜它是哪一档）。`before` 为 `null`
+ * 时交空数组 —— 初始那批归 `initialChunkRows()`。**重跑那一档不进这里**。
  */
 export function advanceChunkRows(
   _prev: ChunkRow[],
@@ -333,18 +270,10 @@ export function advanceChunkRows(
 }
 
 /**
- * 两次读数之间，逐块行该不该整段**重播**（review-2 m2：记录已重置 —— 新一趟开始了）。
+ * 两次读数之间，逐块行该不该整段**重播**（记录已重置 —— 新一趟开始了）。
  *
- * 后端每趟重跑都新建记录、`start()` 落**只有表头**的记录（`meeting/offline/progress.py`
- * 的 `start()`；`service/runtime_post.py` 每趟新造 ledger），重跑时盘上 `done` 从 0 重数 ——
- * `advanceChunkRows()` 的差值 `Math.max(0, next - was)` 把回落全钳成 0，旧行一行
- * 都掉不下去，追加行号还会接旧记录（出「第 11/10 块」这种行）。判据两条、命中即重播：
- *
- * - **`started_at` 换新**：新一趟的墙钟起点，`start()` 写一次后整趟不变（`finish()`
- *   只动 `finished_at`）—— 两边一比就知道手上是哪一趟的记录；
- * - **某路 `done` 回落 ∨ 四档合计回落**：记录被整段换过的另一面（`started_at` 相同
- *   时兜底）。
- *
+ * 重跑时盘上 `done` 从 0 重数，`advanceChunkRows()` 的差值把回落全钳成 0，旧行一行都掉不下
+ * 去。判据两条、命中即重播：**`started_at` 换新**，或**某路 `done` 回落 ∨ 四档合计回落**。
  * 换场（`dir` 不同）不算 —— 那一档由组件的换选中清零负责。
  */
 export function chunkLedgerReset(before: SessionStatus, next: SessionStatus): boolean {
@@ -360,17 +289,10 @@ export function chunkLedgerReset(before: SessionStatus, next: SessionStatus): bo
   });
 }
 
-// ---------------------------------------------------------------------------
-// 4. 全局「显卡忙不忙」（R31；顶栏 topbar__right 与工作台左栏栏底两处共用这一份读法）
-// ---------------------------------------------------------------------------
-
 export interface GpuBusyView {
   busy: boolean;
-  /** 那一格的字：「忙碌」/「空闲」。 */
   label: string;
-  /** 旁边一句为什么（哪只模型开着）。 */
   note: string;
-  /** 图形标记：忙 = `glyph--rec`（实心），闲 = `glyph--idle`（空心框）。 */
   mark: string;
 }
 
@@ -381,11 +303,8 @@ const POST_KIND_LABELS: Readonly<Record<string, string>> = {
 };
 
 /**
- * 忙/闲的判据（b2）：忙 = 有模型开着 —— 本机正在录（会中模型）∨ 会后那趟在本进程跑。
- * **转码那一趟不吃显卡**（pydub / ffmpeg 是 CPU 的活），它不点亮这一格、也不进小注。
- * 两处调用各自带自己的输入：工作台首页（会中模型必关着）传 `recording: false` +
- * 列表应答的 `post_jobs`；会中那一屏传 `recording: top_state ∈ {recording, alert}`
- * —— 会后那趟在那一屏没有读数入口，不编。
+ * 忙/闲的判据：忙 = 有模型开着 —— 本机正在录（会中模型）∨ 会后那趟在本进程跑。
+ * **转码那一趟不吃显卡**，它不点亮这一格、也不进小注。
  */
 export function gpuBusyView(
   postJobs: readonly PostJobCell[],
@@ -410,25 +329,11 @@ export function gpuBusyView(
   };
 }
 
-// ---------------------------------------------------------------------------
-// 5. 要不要轮询（进度区的「往下刷」只在这一档开着）
-// ---------------------------------------------------------------------------
-
 /**
- * 进度区现在该不该问服务要读数（`api/sessions.ts` 的轮询器只在这一档跑，不空转）：
+ * 进度区现在该不该问服务要读数（轮询器只在这一档跑，不空转）。
  *
- * - 选中的这一场被 `post_job` 联结命中 → 问，**但只问到读数落定为止**：手上还没有
- *   这一场的读数（或还是上一场的旧记录）时先问一跳；读数到手后按读数本身判 ——
- *   `in_process` ∨ 盘上 `running` 才继续问，**终态那一跳让 watch 翻 false**
- *   （review-1 C1：联结命中恒真会让「跑完」永远收不了尾，行四态、全局格、轮询器
- *   一起楔死）；读数翻新由组件那头的「不用刷顺手刷一遍列表」接住；
- * - 手上已有一份读数、且它说「真在跑」（`in_process`）或「盘上停着 `running`」→ 问
- *   （后者也要问：万一那一趟其实还活着，读数会翻回 `in_process: true`）；
- * - **转码与纪要在飞也问**（本节点：工序链的第一批读者）——转码那趟在跑/停着
- *   `paused`（工序还活着、等摘旗）时链上那一段要跟着翻面；纪要在飞时链上那一段
- *   要在收工那一刻翻成「已完成」；
- * - 其余（终态、**被打断**（：它也是终态，重按按钮才再跑）、还没跑过、
- *   什么都没选）→ 不问。
+ * 联结命中时问，**但只问到读数落定为止**：`in_process` ∨ 盘上 `running` 才继续问，终态那一跳
+ * 让 watch 翻 false。**转码与纪要在飞也问** —— 链上那一段要跟着翻面。
  */
 export function shouldWatch(
   row: SessionRow | null,

@@ -1,5 +1,4 @@
-"""并发敏感的原子写：两包共用（`meeting/offline/artifacts.py` 与
-`meeting/minutes/inputs.py` 原先各留一份逐行同构的实现，现在只留这一份）。
+"""并发敏感的原子写：两包共用。
 
 写一份文本产物：先写本调用独占的临时文件，再 `os.replace` 换上去。收尾是后台线程在跑、
 界面与下游随时可能来读，半份文件比慢一点更坏。
@@ -32,7 +31,7 @@ REPLACE_RETRIES = 5
 
 
 def _tmp_path_for(target: Path) -> Path:
-    """这次调用独占的临时文件路径（`<目标名>.<pid>.<线程 id>.<随机串>.tmp`）。
+    """这次调用独占的临时文件路径。
 
     随机串兜住线程 id / pid 被复用（线程退出后 ident 会被下一条接着用）——
     只靠 pid + ident 在长跑的收尾线程池里仍会撞名。

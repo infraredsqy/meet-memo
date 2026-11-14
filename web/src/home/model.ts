@@ -1,19 +1,12 @@
 import type { SessionRow } from '../contract';
 import { formatWallClock } from '../live/format';
 
-/**
- * 工作台首页（空闲态那一张）的纯逻辑：选哪一行、每一行说什么、目录判了之后走哪一档。
- *
- * 全部判据都落在**服务给的字段**上（`GET /api/sessions` 的 `recent` / `dir_exists` /
- * `kind` / `state` / `segments`），这里不派生数据、不算时序 —— 与会中视图同一口径
- * （契约章 6 第 1 条）。
- */
+/** 工作台首页的纯逻辑：选哪一行、每一行说什么、目录判了之后走哪一档。全部判据都落在**服务给的字段**上，这里不派生数据、不算时序。 */
 
 /**
  * 打开这一页时选中的那一行：最近一次被打开/切换的那一场。
  *
- * `recent` 由服务从注册表给出（**不扫任何场次目录**）；它在注册表里恒有对应的一行，
- * 兜底才是第一行（两条判据都只读服务给的原文）。
+ * `recent` 由服务从注册表给出（**不扫任何场次目录**）；兜底才是第一行。
  */
 export function initialSelection(sessions: SessionRow[], recent: string | null): string | null {
   if (recent !== null && sessions.some((row) => row.dir === recent)) return recent;
@@ -27,19 +20,14 @@ export function startWhy(row: SessionRow): string | null {
 }
 
 /**
- * 那只动作钮在这一行上的名字：盘上还没有段的叫「开始录音」，已经录过的叫「继续录音」。
- *
- * 对着一个录过的目录按 start 就是同一场会再录一段（服务把段记录合并着写盘）。名字跟着
- * 这件事走，用的是录音这件事自己的说法 —— 「继续录音」直说接着往下录。
+ * 那只动作钮在这一行上的名字：盘上还没有段的叫「开始录音」，已经录过的叫「继续录音」——
+ * 对着一个录过的目录按 start 就是同一场会再录一段。
  */
 export function startButtonLabel(row: SessionRow): string {
   return row.state !== null ? '继续录音' : '开始录音';
 }
 
-/**
- * 清单行末尾那一格时长：盘上各段读数的和（只数写完的段 —— 权威时长就是它们的和，
- * 设计意图第 7 条）。一段都没有时交回 `null`，那一格就不占位置。
- */
+/** 清单行末尾那一格时长：盘上各段读数的和（只数写完的段）。一段都没有时交回 `null`。 */
 export function rowDurationLabel(row: SessionRow): string | null {
   const done = row.segments.filter((segment) => segment.duration_seconds !== null);
   if (done.length === 0) return null;
@@ -47,20 +35,18 @@ export function rowDurationLabel(row: SessionRow): string | null {
   return secondsLabel(total);
 }
 
-/** 一段的人话：段号、起止时刻、在录时长。 */
 export interface SegmentLineView {
-  /** 「段 1」这一格的名。 */
   label: string;
-  /** 「10:02–10:19」（还在录的那段是「10:30 起」）。 */
+  /** 还在录的那段是「<起> 起」。 */
   time: string;
-  /** 「61.5 秒」；还在录的那段如实写「没写完」。 */
+  /** 还在录的那段如实写「没写完」。 */
   seconds: string;
 }
 
 /** 详情区「录音」那格的读数：每段一行 + 权威时长的合计。 */
 export interface SessionSegmentsView {
   lines: SegmentLineView[];
-  /** 合计的人话（只数写完的段——权威时长是各段在录时长之和，第 7 条）。 */
+  /** 合计的人话（只数写完的段）。 */
   total: string;
 }
 
@@ -92,12 +78,10 @@ export function segmentsView(row: SessionRow): SessionSegmentsView | null {
 }
 
 /**
- * 行状态那一格的人话（契约字段 → 文案，一处定义；`state` 是三档口径）。
+ * 行状态那一格的人话（一处定义；`state` 是三档口径）。
  *
- * 列表行只说**录音走到哪了**的四档（：会后工序的进度不进这一格）——
- * 「空白工作区 / 尚未开始」的分界按名目 `kind` 判：`empty`（目录里什么都没有）读
- * 「空白工作区」，其余没开过会的（有音频没元数据的疑似目录、收编的普通目录）读
- * 「尚未开始」。颜色不是唯一通道：字由这里给，形状由 `rowStatusView()` 的 glyph 给。
+ * 列表行只说**录音走到哪了**的四档 —— 会后工序的进度不进这一格。「空白工作区 / 尚未开始」的
+ * 分界按名目 `kind` 判：`empty` 读「空白工作区」，其余没开过会的读「尚未开始」。
  */
 export function statusLabel(row: SessionRow): string {
   if (!row.dir_exists) return '目录不存在';

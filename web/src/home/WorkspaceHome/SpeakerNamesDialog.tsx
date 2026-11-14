@@ -4,13 +4,10 @@ import { DialogFrame } from '../../dialogs';
 import { duplicateNameHolders, type NamesRowView } from '../names';
 
 /**
- * 一只改名字的弹窗（人名节点，R10 第四条 / R30）：一行一个身份
- * （路标签 + 编号 + 现名/待确认），输入框 + 确认，动作回包即重问单场状态（当场生效）。
- *
  * 身份读数来自服务（单场状态的 `speakers` 一格），名字跟着这一场的目录走——界面
  * 只递话，落盘在服务侧那一半。两个编号叫同一个名合法：撞名时提示一句
- * 「编号是分开的，可以重名」，提交照走（ui-design §5.2 的既有口径）；这句话只在
- * 动作**成功之后**才说——失败那一档弹窗不留成功话术（review-1 m3）。
+ * 「编号是分开的，可以重名」，提交照走；这句话只在动作**成功之后**才说——失败那一档
+ * 弹窗不留成功话术。
  */
 export function SpeakerNamesDialog({
   rows,
@@ -20,7 +17,6 @@ export function SpeakerNamesDialog({
 }: {
   rows: NamesRowView[];
   busy: boolean;
-  /** 确认一颗：打改名动作 + 重问单场状态；失败画在首页的失败块，弹窗只清提示、收忙。 */
   onRename: (key: string, name: string) => Promise<void>;
   onClose: () => void;
 }): ReactNode {
@@ -37,7 +33,7 @@ export function SpeakerNamesDialog({
     setPending(row.key);
     void onRename(row.key, name).then(
       () => {
-        // 撞名提示挪进成功分支（review-1 m3）：动作结果落地之前不冒「已提交」。
+        // 动作结果落地之前不冒「已提交」。
         setNote(
           duplicateNameHolders(rows, row.key, name).length > 0
             ? '编号相互独立，允许重名；已按输入提交。'
@@ -47,7 +43,7 @@ export function SpeakerNamesDialog({
         setDrafts((current) => ({ ...current, [row.key]: '' }));
       },
       () => {
-        // 失败清掉撞名提示、不留成功话术：失败归首页的失败块如实说（review-1 m3）。
+        // 失败清掉撞名提示、不留成功话术：失败归首页的失败块如实说。
         setNote(null);
         setPending(null);
       },

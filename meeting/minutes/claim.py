@@ -32,12 +32,11 @@ from meeting.minutes.status import (
 _log = logging.getLogger("meeting.minutes.claim")
 
 #: 「在飞」那一版落盘时的**claim 锁**名（住在场次目录根，与状态文件并列）。
-#:
 #: 它保证「读一遍现状 + 写一版 `running`」这件事**跨进程原子**：两个 `meeting post`
 #: 前后脚进来时，只有一个拿得到它，另一个在锁在场期间读到的就是那一版 `running`。
 #: 它是**瞬态**文件（写完那一版 `running` 就删掉），产物清单里没有它的名字：进程被杀
 #: 也只是把它留在盘上，下一趟按下面那段有界等待兜住 —— 锁在场而状态已经离开 `running`
-#: 时，说明那一趟已经收工或压根没起来，接着拿锁就行）。
+#: 时，说明那一趟已经收工或压根没起来，接着拿锁就行。
 LOCK_NAME = "meeting_minutes_status.lock"
 
 #: 拿 claim 锁失败时最多再试几次（每次之间让出 `LOCK_WAIT_SECONDS`）
@@ -89,7 +88,7 @@ def mark_running(
         接着拿锁就行（进程崩在半路时锁会留在盘上，这一段有界等待正是为它准备的）。
 
     `force = True` 时**跳过上面那条在飞判据**：`--force` 的语义就是「无视这一层的现状、
-    重跑」（它是本轮唯一会再次花钱的开关），于是同一条在飞判据在 `force` 那一档照常放行，
+    重跑」，于是同一条在飞判据在 `force` 那一档照常放行，
     这一趟把那一版 `running` 原子覆盖成自己的（`finished_at` 仍是空串，读方看到的还是
     「正在跑」，只是记录换成了这一趟的）。
 
@@ -128,7 +127,6 @@ def mark_running(
 
 
 def _already_running_reason(session: Path) -> str:
-    """拒跑那一档的理由（点名状态文件与它的落点）。"""
     return (
         f"纪要这一层已经在飞（{STATUS_NAME} 停在 {STATE_RUNNING}）："
         f"这一趟不再拉起子会话：{session}"

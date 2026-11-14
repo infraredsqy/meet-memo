@@ -1,8 +1,6 @@
-"""`meeting/offline/segment.py` 的契约用例：V1 切段接缝搬过来之后的数值与规则。
+"""`meeting/offline/segment.py` 的契约用例：数值与规则。
 
-`docs/v1-lineage.md` 纪律 9 明写 `replay._segment` **零测试覆盖**，V1 那 27 个用例
-对搬错、搬漏一个都不报警，所以这一层要自己补网。素材一律**现场合成的 PCM**
-（前面静音 + 一段音 + 长静音），不碰真实会议音频。
+素材一律**现场合成的 PCM**（前面静音 + 一段音 + 长静音），不碰真实会议音频。
 
 四条要盯的规则（数值一个都不许改）：
 
@@ -11,8 +9,8 @@
   - 丢掉 <**500ms** 的段；
   - 段长硬上限生效（长语音按上限切）。
 
-**切出来的段长怎么算（`v1-lineage` 纪律 11：数字要带口径）**：语音块用一条固定随机流
-的高斯噪声（RMS 3000），`webrtcvad` 档位 1 会把它整块判成语音。V1 的规则是
+**切出来的段长怎么算**：语音块用一条固定随机流
+的高斯噪声（RMS 3000），`webrtcvad` 档位 1 会把它整块判成语音。规则是
 「静默**超过** 2.0s 才收段」，而 `cur` 在这 2.0s 里一直跟着涨，所以走静默这条路的段长
 一定 ≥ 2.0s。走**收尾**这条路的段（正文没被 2.0s 静默截断，段尾就在音频末尾附近）才可能短，
 `MIN_SEGMENT_MS` 那道判据正是作用在这里——本文件用「静音 + 语音块 + 短静音」的输入
@@ -28,16 +26,14 @@ import pytest
 
 from meeting.offline import segment as seg
 
-#: 一帧的样本数（480）与字节数（960）
 FRAME_SAMPLES = int(seg.SAMPLE_RATE * seg.FRAME_MS / 1000)
 FRAME_BYTES = FRAME_SAMPLES * 2
-#: 语音块的 RMS 档位：实测 `webrtcvad` 在档位 1 下逐帧判成语音（单频正弦做不到这一点）
+#: 语音块的 RMS 档位：`webrtcvad` 在档位 1 下逐帧判成语音（单频正弦做不到这一点）
 NOISE_RMS = 3000
 #: 随机流种子（每次取噪声都从同一条流往下走，因此同一段 PCM 里两个语音块不会一模一样，
 #: 结果仍然是确定的）
 SEED = 20260917
 _RNG = np.random.default_rng(SEED)
-
 
 def tone(frames: int, rms: int = NOISE_RMS) -> np.ndarray:
     """`frames` 帧的"语音"：高斯噪声，逐帧都判成语音。"""
@@ -65,13 +61,8 @@ def spans_of(*parts: np.ndarray, cap: float = 600.0) -> list[tuple[float, float,
     return seg.segment_pcm(pcm(*parts), max_segment_seconds=cap)
 
 
-# ---------------------------------------------------------------------------
-# 一、常量本身（数值契约）
-# ---------------------------------------------------------------------------
-
-
 def test_frame_bytes_is_960() -> None:
-    """30ms 帧 @ 16kHz 是 **960 字节 = 480 样本**（`v1-lineage` 的 B8 写死的那个数）。"""
+    """30ms 帧 @ 16kHz 是 **960 字节 = 480 样本**。"""
     assert seg.FRAME_MS == 30
     assert seg.SAMPLE_RATE == 16000
     assert FRAME_SAMPLES == 480
@@ -79,7 +70,7 @@ def test_frame_bytes_is_960() -> None:
 
 
 def test_vad_mode_defaults_to_one() -> None:
-    """默认 VAD 档位是 **1**（`v1-lineage` 的 B8，实时与离线共用同一档）。"""
+    """默认 VAD 档位是 **1**（实时与离线共用同一档）。"""
     assert seg.VAD_MODE == 1
     params = inspect.signature(seg.segment_pcm).parameters
     assert params["vad_mode"].default == 1
@@ -93,11 +84,6 @@ def test_max_segment_seconds_is_keyword_only() -> None:
     assert params["max_segment_seconds"].default is inspect.Parameter.empty
 
 
-# ---------------------------------------------------------------------------
-# 二、静默收段（走 2.0s 那条路，段长必然 ≥ 2.0s）
-# ---------------------------------------------------------------------------
-
-
 def test_silence_only_input_yields_nothing() -> None:
     """整段静音切出零段（静音起不了段）。"""
     assert spans_of(silence(600)) == []
@@ -106,8 +92,8 @@ def test_silence_only_input_yields_nothing() -> None:
 def test_silence_after_speech_closes_the_segment() -> None:
     """前 3 帧静音 + 60 帧语音 + 90 帧尾静音 → 一段，起始落在静音之后。
 
-    实测这一段是 3.96 秒（语音块 + VAD 的滞后 + 静默判据越过的那一帧），
-    断言按「一次实测值 ± 0.3 秒」写，用来盯住切段位置没有被搬歪。
+    这一段是语音块 + VAD 的滞后 + 静默判据越过的那一帧；断言按「一次实测值 ± 0.3 秒」
+    写，用来盯住切段位置没有被搬歪。
     """
     spans = spans_of(silence(3), tone(60), silence(90))
 
@@ -139,11 +125,6 @@ def test_a_gap_of_two_seconds_does_not_split_while_a_longer_gap_does() -> None:
     assert split[1][0] > split[0][0] + split[0][1]
 
 
-# ---------------------------------------------------------------------------
-# 三、丢掉 <500ms 的段（走收尾那条路）
-# ---------------------------------------------------------------------------
-
-
 def test_the_tail_segment_is_dropped_when_it_is_shorter_than_500ms() -> None:
     """语音块贴近音频末尾、后面只跟 0.1s 静音时，收尾段短于 500ms，**整段丢掉**。"""
     assert spans_of(silence(600), tone(8), silence(3)) == []
@@ -173,16 +154,11 @@ def test_no_emitted_segment_is_shorter_than_500ms(block_frames: int) -> None:
     assert all(length >= seg.MIN_SEGMENT_MS / 1000.0 for _, length, _ in spans)
 
 
-# ---------------------------------------------------------------------------
-# 四、段长硬上限
-# ---------------------------------------------------------------------------
-
-
 def test_max_segment_seconds_caps_a_long_utterance() -> None:
     """10 秒连续语音按 2.0 秒上限切：每段都 ≈ 上限（整数帧向上取），覆盖总时长不减。
 
     `cap_frames = 2.0 * 1000 / 30 = 66.67` 是小数，判据 `cur >= cap_frames` 在整数帧上
-    落到 67 帧（2.01 秒）——这是 V1 逐字搬过来的行为，用例照实断言。
+    落到 67 帧（2.01 秒），用例照实断言。
     """
     spans = spans_of(tone(334), cap=2.0)
 
@@ -208,11 +184,6 @@ def test_cap_splits_each_long_block_independently() -> None:
     assert spans[0][1] == pytest.approx(frame_seconds(132), abs=frame_seconds(3))
     assert spans[1][1] == pytest.approx(frame_seconds(134), abs=frame_seconds(3))
     assert spans[1][0] == pytest.approx(frame_seconds(370), abs=frame_seconds(3))
-
-
-# ---------------------------------------------------------------------------
-# 五、整段与样本的对应（段长与样本数同源）
-# ---------------------------------------------------------------------------
 
 
 def test_segment_samples_match_start_and_length() -> None:

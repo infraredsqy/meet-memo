@@ -1,9 +1,9 @@
-"""`meeting/backends/registry.py` 的解析口径用例（修复轮 M1）。
+"""`meeting/backends/registry.py` 的解析口径用例。
 
-修复轮复审实测出的一件事实：`_target_for()` 里那条 `selector is None → None` 分支**触发不到**。
+`_target_for()` 里那条 `selector is None → None` 分支**触发不到**。
 四条公开入口都先经过 `_selector()`，而它把配置里的 `None`（JSON `null` 归一出来的那一个）
 归一成 `"auto"`；真正让 `minutes.hook = null` 生效的是 `resolve_minutes_hook()` 里那段
-**提前返回缺席档**。这一段把那条因果钉在用例里，免得后来人再照着一句错话去理解这段代码。
+**提前返回缺席档**。这一段把那条因果钉在用例里。
 
 本文件只碰解析层：不写盘、不起进程、不加载真配置（`config.get` 是 `monkeypatch` 过的）。
 """
@@ -38,11 +38,6 @@ def _config_value(monkeypatch: pytest.MonkeyPatch, value: Any) -> None:
     monkeypatch.setattr(config_module, "get", lambda key, default=None: value)
 
 
-# ---------------------------------------------------------------------------
-# 一、`_selector()` 交回的是字符串：配置里的 `None` 在它这里就归一成 `auto`
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize("key", sorted(ENTRIES))
 def test_none_from_the_config_layer_never_reaches_target_for(
     key: str, monkeypatch: pytest.MonkeyPatch
@@ -73,15 +68,10 @@ def test_the_explicit_argument_wins_over_the_config_layer(
     assert registry._selector("capture.backend", "dev") == "dev"
 
 
-# ---------------------------------------------------------------------------
-# 二、`minutes.hook = null` 真正生效的那条路：`resolve_minutes_hook()` 的提前返回
-# ---------------------------------------------------------------------------
-
-
 def test_the_config_level_null_is_answered_before_any_target_lookup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """**M1 的因果**：配置级 `null` → 落缺席档，且 `target` 是 `None`（一次 `DEFAULT_PATHS` 查询都没做）。
+    """配置级 `null` → 落缺席档，且 `target` 是 `None`（一次 `DEFAULT_PATHS` 查询都没做）。
 
     这一档要是在 `_target_for()` 里靠「认出 `None`」来处理，`minutes.hook = null` 就得
     先穿过 `_selector()` 的归一（那里的答案是 `auto`）——那样「关掉自动跑」会静默失效。

@@ -1,7 +1,6 @@
 """OpenAI 兼容端点的调用（标准库实现，传输层可注入）。
 
-这一层在 V2 里是新写的：会后纪要那条链把「调模型」整个外包给一个 headless DSH 子会话，
-全仓此前没有一次 HTTP 模型调用。语义照搬 V1 `mnotes_core/summarizer.py` 的 `_call_api()`：
+线上语义：
 
   - `POST {base_url}/chat/completions`，`Authorization: Bearer {api_key}`、
     `Content-Type: application/json`；
@@ -10,12 +9,12 @@
   - 读 `choices[0].message.content`；`reasoning_content`（thinking）**丢掉**；
   - 非 2xx **优先取**响应体里 `error.message` 的原文。
 
-与 V1 的两处有意不同，都是 spec 明写的裁定：
+两处裁定：
 
-  - **传输层走标准库 `urllib.request`**：运行时的 import 链不碰 `httpx` / `requests`
-    （依赖禁忌里那条「启动秒级完成」）。`httpx` 只服务测试层的真服务子进程。
+  - **传输层走标准库 `urllib.request`**：运行时的 import 链不碰 `httpx` / `requests`。
+    `httpx` 只服务测试层的真服务子进程。
   - **单次超时不写死**：`complete()` 收一个 `timeout_seconds`，由 `run_summary()` 按
-    「剩余预算」现算 —— V1 那个硬编码 60 秒在这里换成了一个墙钟 deadline（默认 25 秒）。
+    「剩余预算」现算。
 
 `post` 是**注入点**（默认走 `urllib.request`）：测试与探针都从这个口子进，
 因此这一层的用例一条网络请求都不发。注入的可调用对象两种写法都收（见 `_post_request()`）：
@@ -39,10 +38,8 @@ from typing import Any
 
 from meeting.summary.settings import DEADLINE_KEY, _default
 
-#: 端点路径（照 V1：base_url 后面直接接它）
 CHAT_COMPLETIONS_PATH = "/chat/completions"
 
-#: 采样温度（照 V1，逐字同值）
 TEMPERATURE = 0.3
 
 #: 一次请求的兜底超时（秒）：只作 `HttpRequest.timeout` 这个 dataclass 字段的默认值
@@ -51,7 +48,7 @@ TEMPERATURE = 0.3
 #: 不再另存一个同值字面量。
 DEFAULT_TIMEOUT_SECONDS = float(_default(DEADLINE_KEY))
 
-#: `SummaryError.reason` 的取值域（设计照它分辨怎么跟人说）
+#: `SummaryError.reason` 的取值域
 ERROR_REASONS: tuple[str, ...] = ("timeout", "bad_status", "bad_json", "no_content")
 
 
@@ -59,8 +56,8 @@ class SummaryError(RuntimeError):
     """一次端点调用没成功。
 
     `reason` 是机器可读的四档之一（`timeout` / `bad_status` / `bad_json` / `no_content`），
-    `detail` 是**给人看的原文**（异常消息、HTTP 状态与响应体里的 `error.message`）——
-    V1 的立场是「用户要看原文，不做中文包装」，这里照旧。
+    `detail` 是**给人看的原文**（异常消息、HTTP 状态与响应体里的 `error.message`）
+    ——用户要看原文，不做中文包装。
     """
 
     def __init__(self, reason: str, detail: str) -> None:
@@ -69,7 +66,6 @@ class SummaryError(RuntimeError):
         super().__init__(f"{self.reason}: {self.detail}")
 
     def as_dict(self) -> dict[str, str]:
-        """交回一份可 JSON 化的形状（进 `detail` 那一格时用）。"""
         return {"reason": self.reason, "detail": self.detail}
 
 
@@ -108,14 +104,13 @@ def endpoint_url(base_url: str) -> str:
     """`base_url` → chat completions 的完整地址（末尾多余的斜杠收掉）。"""
     return f"{str(base_url).rstrip('/')}{CHAT_COMPLETIONS_PATH}"
 
-
 def build_payload(
     *,
     model: str,
     messages: Sequence[Mapping[str, str]],
     extra_body: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """组请求体：标准四格 + 并进来的 `extra_body`（照 V1 的 `payload.update(extra_body)`）。"""
+    """组请求体：标准四格 + 并进来的 `extra_body`。"""
     payload: dict[str, Any] = {
         "model": model,
         "messages": [dict(message) for message in messages],
@@ -150,7 +145,6 @@ def _http_post(request: HttpRequest) -> HttpResponse:
 
 
 def _accepts_keywords(callable_object: Callable[..., Any]) -> bool:
-    """这个可调用对象收不收 `json=` / `headers=` / `timeout=` 这一套关键字。"""
     try:
         signature = inspect.signature(callable_object)
     except (TypeError, ValueError):  # pragma: no cover - 内建 / C 实现的可调用对象
@@ -162,12 +156,7 @@ def _accepts_keywords(callable_object: Callable[..., Any]) -> bool:
 
 
 def _post_request(post: Callable[..., Any], request: HttpRequest) -> Any:
-    """按注入对象认得的写法把它调起来（两种写法见模块头）。
-
-    **先看它认不认关键字**，认就把四样摊开给它（`requests.post` 那种形状）；
-    不认就整个 `HttpRequest` 递过去。这一步是有意做的：两种写法都在文档里，
-    注入的人不必猜这一层今天走哪一条。
-    """
+    """按注入对象认得的写法把它调起来（两种写法见模块头）。"""
     if _accepts_keywords(post):
         return post(
             request.url,
@@ -179,10 +168,10 @@ def _post_request(post: Callable[..., Any], request: HttpRequest) -> Any:
 
 
 def _error_message_of(response: Any) -> str:
-    """非 2xx 时那句话：优先响应体里 `error.message` 的原文（照 V1）。
+    """非 2xx 时那句话：优先响应体里 `error.message` 的原文。
 
     读不出 JSON、或者里面没有 `error` 那一格时，退成**响应体原文** ——
-    V1 的立场是「用户要看原文」，一段 HTML 错误页也比一句「端点报错」有用。
+    一段 HTML 错误页也比一句「端点报错」有用。
     """
     try:
         error = response.json().get("error")
@@ -200,8 +189,7 @@ def _status_code_of(response: Any) -> int:
 class ModelClient:
     """一次会中总结要用的端点客户端（构造一次，可以在多轮总结里重复用）。
 
-    四个字段是**构造那一刻的快照**：中途改配置不影响已经在飞的那一次调用
-    （与 V1 `_call_api()` 快照四个字段同一个立场）。
+    四个字段是**构造那一刻的快照**：中途改配置不影响已经在飞的那一次调用。
     """
 
     def __init__(

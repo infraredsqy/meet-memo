@@ -1,18 +1,9 @@
 """`tests/test_capture_devices.py` —— 设备模型与挑选策略（**纯逻辑，无硬件、无 ffmpeg**）。
 
-被验的是 `meeting/capture/devices.py` 里那两段**从 V1 拷过来的内核**
-（`mnotes_core/recorder.py:371-413` 与 `:444-465`）在换成「端点表 + 假试开函数」之后
-行为是否还认得出原样（两处收尾按设计口径 §3 的裁定改过，见下面最后两条）：
-
-  - V1 的候选筛选：同名 + `max_input_channels > 0`；
-  - V1 的 `host_rank`：`WASAPI → DirectSound → MME → 其它(9)`；
-  - V1 的排序逐个试开骨架（`cands.sort(key=host_rank)` 后逐条试、取第一条成的）；
-  - V1 的 loopback 三级：精确名 → `CABLE Input` 且不含 `16ch` → `default_speaker()`；
-  - V2 补的四件事：没配名字时也挑（好让快照报得出真设备名）、抓取型虚拟端点不进候选、
-    试开时读回样本判「有没有真实波形」、名字的**精确优先落到候选集合上**；
-  - V2 按设计口径 §3 第 5、6 条改的收尾**两档收敛**：在打开了的那几条里挑（先要有波形的，
-    一条都没有就取第一条打开了）；**一条都没打开**时落 `probe_failed`、`endpoint=None`
-    （V1 那两条短路口 —— 单候选直接返回、全失败回落首个候选 —— 都不再照搬）。
+被验的是 `meeting/capture/devices.py` 的挑选内核：候选筛选（同名 + `max_input_channels > 0`）、
+`host_rank` 次序、排序逐个试开、loopback 三级（精确名 → `CABLE Input` 且不含 `16ch` →
+`default_speaker()`）、试开时读回样本判「有没有真实波形」；一条都没打开时落
+`probe_failed`、`endpoint=None`。
 
 端点表与试开函数都是本文件造的假件；真机那一侧不在自动化测试里验（真开设备需要机主点头）。
 """
@@ -32,16 +23,12 @@ from meeting.capture.devices import (
     select_microphone,
 )
 
-# ---------------------------------------------------------------------------
 # 假件
-# ---------------------------------------------------------------------------
 
 #: **同名多候选**的一张端点表：一块 Focusrite 在 DirectSound / WASAPI / MME 下同名，
-#: 另有一条 MME 的 Realtek 与一条 `CABLE Output`（抓取型）。名字照本机实测原文，
-#: MME 的截断名也照抄（V1 的注释里点过 Windows 会截断）。
-#:
-#: `is_default=True` 标在 **MME #1** 上：本机只读实测的系统默认输入端点
-#: （`sd.default.device = [1, 6]`、`query_devices(kind="input")["index"] == 1`）就是它，
+#: 另有一条 MME 的 Realtek 与一条 `CABLE Output`（抓取型）。名字照原文，
+#: MME 的截断名也照抄。
+#: `is_default=True` 标在 **MME #1** 上（那是本机的系统默认输入端点），
 #: 而**序号最小**的是 `Microsoft 声音映射器 - Input`（#0，Windows 的 WAVE_MAPPER）。
 MACHINE_INPUTS: tuple[DeviceEndpoint, ...] = (
     DeviceEndpoint(
@@ -63,7 +50,6 @@ MACHINE_INPUTS: tuple[DeviceEndpoint, ...] = (
     ),
 )
 
-#: 本机 render 端点表（`soundcard.all_speakers()` 的实测原文；系统默认那条排第一）
 MACHINE_RENDERS: tuple[DeviceEndpoint, ...] = (
     DeviceEndpoint("扬声器 (2- Focusrite USB Audio)", "", "render", index=0),
     DeviceEndpoint("CABLE Input (VB-Audio Virtual Cable)", "", "render", index=1),
@@ -108,9 +94,7 @@ def opener(mapping: dict[str, OpenAttempt], *, default: OpenAttempt | None = Non
     return test_open
 
 
-# ---------------------------------------------------------------------------
-# 样本判定（V2 补的那一步）
-# ---------------------------------------------------------------------------
+# 样本判定
 
 
 def test_measure_samples_reports_peak_and_step():
@@ -145,15 +129,13 @@ def test_attempt_reason_says_what_happened():
     assert "能打开" in flat and "没有波形" in flat and "峰值 0" in flat
 
 
-# ---------------------------------------------------------------------------
-# host_rank（V1 `_resolve_mic_device` 里的那段）
-# ---------------------------------------------------------------------------
+# host_rank
 
 
 def test_host_rank_follows_the_v1_table():
     """排序键：`WASAPI` → `DirectSound` → `MME` → 其余 `HOST_RANK_FALLBACK`。
 
-    钉的是**相对次序**（V1 那张表的性质）；各档的具体取值本身由一处常量给出，
+    钉的是**相对次序**；各档的具体取值本身由一处常量给出，
     再抄一遍数字不会多出信息。
     """
     wasapi = devices_module.host_rank("WASAPI")
@@ -181,9 +163,7 @@ def test_sort_candidates_uses_host_rank():
     assert shared == [item for item in MACHINE_INPUTS if item.host_api == "MME"]
 
 
-# ---------------------------------------------------------------------------
-# 抓取型虚拟端点（V2 补的那一条）
-# ---------------------------------------------------------------------------
+# 抓取型虚拟端点
 
 
 def test_pseudo_capture_needs_both_tokens():
@@ -198,11 +178,10 @@ def test_pseudo_capture_needs_both_tokens():
 
 
 def test_pseudo_capture_recognises_the_wdm_ks_point_spelling():
-    """本机真表里那条 WDM-KS 的 `CABLE Output (VB-Audio Point)`（#25, ch=16）也算抓取型。
+    """WDM-KS 的 `CABLE Output (VB-Audio Point)` 也算抓取型。
 
-    它的名字里**没有** "virtual"：牌子标记只取 `vb-audio`，取长写法会把这条漏掉，于是同一块
-    VB-Cable 的抓取侧在这一档上照进候选（设计口径 §3.1 要求这类端点「一律不进候选」）。
-    表里另有三条带 "Virtual" 的抓取侧（MME #2 / DirectSound #11 / WASAPI #21）作为对照。
+    它的名字里**没有** "virtual"：牌子标记只取 `vb-audio`，取长写法会把这条漏掉，
+    于是同一块 VB-Cable 的抓取侧在这一档上照进候选。
     """
     assert devices_module.PSEUDO_CAPTURE_MARKER == "vb-audio"
     assert devices_module.is_pseudo_capture("CABLE Output (VB-Audio Point)") is True
@@ -210,7 +189,7 @@ def test_pseudo_capture_recognises_the_wdm_ks_point_spelling():
     # 同一块虚拟线的 render 侧（`CABLE Input`）与 `Input (VB-Audio Point)` 都不是抓取侧
     assert devices_module.is_pseudo_capture("CABLE Input (VB-Audio Virtual Cable)") is False
     assert devices_module.is_pseudo_capture("Input (VB-Audio Point)") is False
-    # 真表的四条抓取侧逐条点名（假表的形状照抄本机）
+    # 真表的四条抓取侧逐条点名
     table = MACHINE_INPUTS + (DeviceEndpoint(
         "CABLE Output (VB-Audio Point)", "Windows WDM-KS", "input", index=25, channels=16,
     ),)
@@ -234,7 +213,7 @@ def test_marker_tokens_survive_hyphenated_spellings():
     """牌子标记在连字符写法下照样认得出（VB-Audio 的牌子在不同库里写法不一）。
 
     这一条只管**标记词**（`is_pseudo_capture()` 的那两个常量）：记号词按 `token_form()` 折过。
-    loopback 那两级判据走的是 V1 原文的 `in`（原样子串、不折形），见下一条。
+    loopback 那两级判据是原样子串、不折形（与这里的标记词折形不同），见下一条。
     """
     assert devices_module.token_form("CABLE-In-16ch (VB-Audio Virtual Cable)") == (
         "cable in 16ch (vb audio virtual cable)"
@@ -244,10 +223,8 @@ def test_marker_tokens_survive_hyphenated_spellings():
 
 
 def test_loopback_tokens_are_v1_literal_substrings():
-    """loopback 的两个子串判据**逐字照 V1**（`"CABLE Input" in s.name`，大小写敏感）。
-
-    V1 原文不做折形，V2 也不做：`CABLE-Input` / `cable input` 这些写法在 V1 不命中，在这里
-    同样不命中（旧稿曾走 `_contains()` 折大小写与连字符，比 V1 宽，已按 V1 原文收回）。
+    """loopback 的两个子串判据逐字比（`"CABLE Input" in s.name`，大小写敏感）：
+    `CABLE-Input` / `cable input` 这些折形写法不命中。
     """
     render = "CABLE Input (VB-Audio Virtual Cable)"
     hyphenated = "CABLE-Input (VB-Audio Virtual Cable)"
@@ -263,7 +240,7 @@ def test_loopback_tokens_are_v1_literal_substrings():
     assert tier == "cable"
     assert [item.name for item in literal] == [render]
 
-    # 折形写法不命中 → 落到「系统默认输出」那一档（V1 的 `in` 也不命中）
+    # 折形写法不命中 → 落到「系统默认输出」那一档
     folded, tier = devices_module.loopback_candidates(
         (
             DeviceEndpoint(plain_speaker, "", "render", index=0),
@@ -274,7 +251,7 @@ def test_loopback_tokens_are_v1_literal_substrings():
     assert tier == "default_speaker"
     assert [item.name for item in folded] == [plain_speaker]
 
-    # 排除词同样逐字比：`16ch` 原样命中，`16 ch` 不算（V1 的 `"16ch" not in s.name`）
+    # 排除词同样逐字比：`16ch` 原样命中，`16 ch` 不算
     spaced, tier = devices_module.loopback_candidates(
         (
             DeviceEndpoint(plain_speaker, "", "render", index=0),
@@ -289,7 +266,7 @@ def test_loopback_tokens_are_v1_literal_substrings():
 
 
 def test_pseudo_capture_endpoints_stay_out_of_the_mic_candidates():
-    """抓取型虚拟端点不进候选（设计口径 §3.1：不挡就会把远端声音当成麦克风录一遍）。"""
+    """抓取型虚拟端点不进候选（不挡就会把远端声音当成麦克风录一遍）。"""
     # 显式点名那条虚拟线：候选收窄到它，并标记成「显式配的抓取型端点」
     candidates, explicit_pseudo, matched_prefix = devices_module.mic_candidates(
         MACHINE_INPUTS, "CABLE Output (VB-Audio Virtual Cable)"
@@ -298,7 +275,7 @@ def test_pseudo_capture_endpoints_stay_out_of_the_mic_candidates():
     assert matched_prefix is False
     assert [item.name for item in candidates] == ["CABLE Output (VB-Audio Virtual Cable)"] * 2
 
-    # 没配名字时：种子取**系统默认输入**那条（`is_default`，本机 = MME #1 Focusrite），
+    # 没配名字时：种子取**系统默认输入**那条（`is_default`），
     # 那条虚拟线一条都不进候选
     candidates, explicit_pseudo, matched_prefix = devices_module.mic_candidates(
         MACHINE_INPUTS, None
@@ -309,13 +286,11 @@ def test_pseudo_capture_endpoints_stay_out_of_the_mic_candidates():
     assert all(not devices_module.is_pseudo_capture(item.name) for item in candidates)
 
 
-# ---------------------------------------------------------------------------
-# 麦克风：V1 的骨架
-# ---------------------------------------------------------------------------
+# 麦克风：试开骨架
 
 
 def test_a_lone_candidate_is_still_tried_once():
-    """V1 的单候选短路口**不再照搬**：候选只有一条也试开一次（读回样本才判得出「有没有波形」）。"""
+    """候选只有一条也试开一次（读回样本才判得出「有没有波形」）。"""
     test_open = opener({"Microsoft 声音映射器 - Input": open_with(WAVE)})
     outcome = select_microphone(
         MACHINE_INPUTS, "Microsoft 声音映射器 - Input", test_open
@@ -340,11 +315,7 @@ def test_a_lone_candidate_that_cannot_be_opened_reports_probe_failed():
 
 
 def test_same_named_candidates_are_tried_in_host_rank_order():
-    """同名多候选：按 host rank 逐个试开，取第一个**真的有波形**的（V2 的读回样本那一步）。
-
-    本机实测的摆法：WASAPI 那条抛 `Invalid sample rate`、DirectSound 那条能开但全是零、
-    MME 那条有真实波形 —— 选中 MME，且试开次序是 WASAPI → DirectSound → MME。
-    """
+    """同名多候选：按 host rank 逐个试开，取第一个**真的有波形**的。"""
     name = "Analogue 1 + 2 (2- Focusrite USB Audio"
     endpoints = (
         DeviceEndpoint(name, "Windows WASAPI", "input", index=18, channels=2),
@@ -374,9 +345,7 @@ def test_same_named_candidates_are_tried_in_host_rank_order():
 def test_all_candidates_silent_takes_the_first_one_that_opened():
     """一条有波形的都没有时：取**第一条打开了**的（`ready`），不是排序后的第一条。
 
-    本机实测的摆法：WASAPI 那条在 16k 直接开不了、DirectSound 那条能开但全是零、MME 那条
-    也能开但全是零 —— 中选的是排序后**第一条打开了**的 DirectSound（WASAPI 那条从头到尾
-    都没打开过，因此进不了这一档）。
+    WASAPI 那条从头到尾都没打开过，因此进不了这一档。
     """
     name = "Analogue 1 + 2 (2- Focusrite USB Audio"
     endpoints = (
@@ -406,9 +375,7 @@ def test_all_candidates_silent_takes_the_first_one_that_opened():
 def test_no_candidate_opens_reports_probe_failed():
     """**一条都没打开** → `probe_failed` + `endpoint=None`，`detail` 逐条写清各自为什么没成。
 
-    这就是设计口径 §3 第 6 条与两态裁定的那一条：V1 在这里返回 `cands[0]`，V2 有 `probe_failed`
-    这一档可报，**不许**把一个从没打开过的端点当 `ready` 报上去（那会先显示就绪、真开录立刻
-    掉线）。
+    **不许**把一个从没打开过的端点当 `ready` 报上去（那会先显示就绪、真开录立刻掉线）。
     """
     name = "Analogue 1 + 2 (2- Focusrite USB Audio"
     endpoints = (
@@ -449,10 +416,9 @@ def test_no_candidate_reports_probe_failed():
 def test_default_input_is_used_when_nothing_is_configured():
     """没配名字：种子取**系统默认输入端点**（`is_default`），显式配置那一栏的提醒一句都不出现。
 
-    本机那张表的形状：默认输入是 MME `#1` Focusrite（`is_default=True`），而**序号最小**的
-    `#0` 是 MME 的 `Microsoft 声音映射器 - Input`（Windows 的 WAVE_MAPPER，跟随系统默认
-    输入设备）。C1 点名的就是这两者的区别：按序号最小取会落到 mapper 上，报出来的
-    `device_name` 与机主插的那块声卡对不上，而且把「系统默认输入」这条路原样留着。
+    序号最小的 `#0` 是 `Microsoft 声音映射器 - Input`（Windows 的 WAVE_MAPPER）：
+    按序号最小取会落到 mapper 上，报出来的 `device_name` 与机主插的那块声卡对不上，
+    而且把「系统默认输入」这条路原样留着。
     """
     test_open = opener({}, default=open_with(WAVE))
     outcome = select_microphone(MACHINE_INPUTS, None, test_open)
@@ -463,11 +429,10 @@ def test_default_input_is_used_when_nothing_is_configured():
 
 
 def test_default_seed_is_the_marked_endpoint_not_the_lowest_index():
-    """种子的取值口跟着表上标出的 `is_default` 那一条走（C1 的回归钉子）。
+    """种子的取值口跟着表上标出的 `is_default` 那一条走。
 
-    本机那张表把 `is_default` 标在 MME `#1` Focusrite 上；同一张表把它挪到 WASAPI 那条
-    （序号 #18）上，种子跟着挪。序号最小的 `#0` 是 MME 的 WAVE_MAPPER，这个桩子钉的就是
-    「种子跟着标记走」这件事：谁把取值口改回 `min(index)`，这两条断言当场红。
+    同一张表把 `is_default` 挪到另一条上，种子跟着挪；谁把取值口改回 `min(index)`，
+    这两条断言当场红。
     """
     candidates, _pseudo, _prefix = devices_module.mic_candidates(MACHINE_INPUTS, None)
     assert [item.index for item in candidates] == [1]
@@ -488,7 +453,7 @@ def test_default_seed_is_the_marked_endpoint_not_the_lowest_index():
 def test_pseudo_default_input_falls_back_to_the_first_real_candidate():
     """系统默认输入端点本身是抓取型（`CABLE Output` 这类）时，它不进候选、也不当种子。
 
-    退回按 host API 排序的第一条非抓取型候选（设计口径 §3.1 的落点：默认输入一旦是它，
+    退回按 host API 排序的第一条非抓取型候选（默认输入一旦是它，
     mic 与 loopback 就会录同一路）。
     """
     endpoints = (
@@ -511,13 +476,11 @@ def test_pseudo_default_input_falls_back_to_the_first_real_candidate():
     assert [item.name for item in candidates] == ["Analogue 1 + 2 (2- Focusrite USB Audio)"]
 
 
-# ---------------------------------------------------------------------------
 # 麦克风：显式配置
-# ---------------------------------------------------------------------------
 
 
 def test_explicit_name_is_matched_exactly_first():
-    """精确名命中（V1 的 `d.get("name") == name`）：候选就是那几条同名的，别的一条都不碰。"""
+    """精确名命中：候选就是那几条同名的，别的一条都不碰。"""
     name = "Analogue 1 + 2 (2- Focusrite USB Audio"
     endpoints = (
         DeviceEndpoint(name, "Windows WASAPI", "input", index=18, channels=2),
@@ -539,7 +502,7 @@ def test_explicit_name_is_matched_exactly_first():
 def test_exact_name_wins_over_a_prefix_match_in_the_candidate_set():
     """显式配的**截断名**精确命中 MME 那条：前缀命中的 WASAPI 那条不进候选。
 
-    这条与下一条一起收掉 C1 复审的 minor 2：名字的两档匹配落在**候选集合**上（先取精确名
+    名字的两档匹配落在**候选集合**上（先取精确名
     命中的候选，精确命中为空才用前缀兜一次），于是「精确名命中 MME、前缀命中 WASAPI」时
     选中 MME 那条，`matched_prefix` 如实为 `False`。
     """
@@ -601,13 +564,11 @@ def test_explicit_capture_endpoint_is_honoured_with_a_note():
     assert "同一路内容" in outcome.detail
 
 
-# ---------------------------------------------------------------------------
-# loopback：V1 的三级
-# ---------------------------------------------------------------------------
+# loopback 的三级
 
 
 def test_loopback_prefers_cable_input_without_16ch():
-    """没配名字：名字含 `CABLE Input` 且不含 `16ch` 的 render 端点（V1 那一级）。"""
+    """没配名字：名字含 `CABLE Input` 且不含 `16ch` 的 render 端点。"""
     outcome = select_loopback(MACHINE_RENDERS, None, lambda endpoint: open_with(SILENCE))
     assert outcome.status == PROBE_READY
     assert outcome.device_name() == "CABLE Input (VB-Audio Virtual Cable)"
@@ -626,7 +587,7 @@ def test_loopback_prefers_cable_input_without_16ch():
 
 
 def test_loopback_explicit_name_wins():
-    """配了名字：精确命中那个 render 端点（V1 的 `if s.name == name: return s`）。"""
+    """配了名字：精确命中那个 render 端点。"""
     target = "扬声器 (2- Focusrite USB Audio)"
     calls: list[str] = []
 
@@ -683,7 +644,7 @@ def test_loopback_candidates_tiers():
     assert tier == "cable"
     assert [item.name for item in cable] == ["CABLE Input (VB-Audio Virtual Cable)"]
 
-    # 显式名没命中 → 落到 Cable 那一档（V1 的 `log.warning(...)` 之后继续往下走）
+    # 显式名没命中 → 落到 Cable 那一档
     fallback, tier = devices_module.loopback_candidates(MACHINE_RENDERS, "不存在的设备")
     assert tier == "cable"
 
@@ -695,9 +656,7 @@ def test_loopback_candidates_tiers():
     assert tier == "none" and empty == []
 
 
-# ---------------------------------------------------------------------------
 # 形状与名字匹配
-# ---------------------------------------------------------------------------
 
 
 def test_status_values_stay_inside_the_frozen_domain():

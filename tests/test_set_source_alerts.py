@@ -1,28 +1,12 @@
-"""会中关掉的那一路不报警、关断即收场、重开干净开场（节点）的进程级用例。
+"""会中关掉的那一路不报警、关断即收场、重开干净开场的进程级用例。
 
-判尺（`docs/design-intent.md` 第 1、9、17 条）：关掉某一路是机主的主动选择（那一路写静音），
+判尺：关掉某一路是机主的主动选择（那一路写静音），
 不是「采不到」——致命级只留给真采不到的那一路；点关掉，横幅要当场收场；重开是干净开场，
 不落「曾中断 / 曾关掉」的残留横幅。真故障（不开关直接 `lost` / `silence`）的既有判据一个
-字节不动（`tests/test_e2e_silence_alert.py` 那一支照旧是真故障的回归线）。
-
-五条用例各锁一条不变量：
-
-  1. **已关路的静音帧不进静默判定**：关掉 mic 后注入 `silence`，静默阈值过去之后横幅
-     不出现、胶囊停在「录音中」，另一路照常采着——切断的只是「已关路」这一格。
-  2. **关断即收场**：一路真故障挂着致命横幅，关掉**另一路**横幅不动；关掉横幅上那一路，
-     横幅当场清空、胶囊回「录音中」、该路落「已停止」且 `lost_since` 清空。
-  3. **重开 = 干净开场**：重开已清掉横幅的那一路，直接回 `capturing`（不回 `lost`）、
-     判定记录从零起算——随后注入 `silence`，阈值过半时还没有横幅（旧计数若还在，
-     重开第一拍就会被拉回致命级），攒满阈值才照旧出警。
-  4. **真故障照旧 + 换挂**：没被关过的那一路直接 `lost` / `silence` 照旧升致命级；
-     两路都真在 `lost` 时关掉横幅上那一路，致命级**换挂**另一路（原文照搬）、顶层停在
-     `alert`——真采不到的那一路不许跟着一起从界面上消失。
-  5. **已关路的迟到流中断是余波不是故障**：先关掉某一路，再让一条 `SourceLost` 迟到
-     （关掉前后在途的那条线程余波）——它不进告警、不把 `health` 写回 `lost`、判定记录里
-     没有这一路（徽标不许被拉回「信号丢失」）。
+字节不动。
 
 服务端全走 dev 替身（`capture.backend = dev`，进程内 `live()`），一条真声卡都不碰；
-静默阈值经配置调小（不改代码默认值，手法与 `tests/test_e2e_silence_alert.py` 同源）。
+静默阈值经配置调小（不改代码默认值）。
 """
 
 from __future__ import annotations
@@ -32,12 +16,10 @@ import pytest
 from tests._app_drivers import live, post, snapshot_of
 from tests._helpers import wait_until
 
-#: 慢档标记：进程内真运行时 + 真墙钟等待的收尾验收，与 `tests/test_api_actions.py` 同档。
 pytestmark = pytest.mark.slow
 
 #: 本文件把静默阈值**显式调小**到这个秒数（写进 `live()` 的配置；代码默认值仍是 180）。
-#: 收口理由与 `tests/test_e2e_silence_alert.py` 的 `TEST_SILENCE_SECONDS` 同一条：单条用例
-#: ≤ 5 秒的硬要求优先，判据的形状不变（阈值经配置显式写小）。
+#: 单条用例 ≤ 5 秒的硬要求优先，判据的形状不变（阈值经配置显式写小）。
 TEST_SILENCE_SECONDS = 1
 
 #: 「静默阈值已过去」的观察窗（秒）：阈值 1s + 余量，dev 替身 0.1s 一帧，
@@ -84,10 +66,8 @@ def test_a_closed_channel_never_raises_the_silence_alert(tmp_path):
             )(snapshot_of(client)),
             what="观察窗（阈值 + 余量）走完",
         )
-        # 已关路没把横幅拉起来，胶囊停在「录音中」
         assert waited["top_state"] == "recording", waited["alerts"]
         assert waited["alerts"]["critical"] is None, waited["alerts"]
-        # 已关路如实停在「已停止」；另一路照常采着（有电平读数）
         assert _source(waited, "mic")["health"] == "stopped"
         other = _source(waited, "loopback")
         assert other["health"] == "capturing", other
@@ -115,14 +95,12 @@ def test_closing_the_alerting_source_collapses_the_banner(tmp_path):
         assert alerting["alerts"]["critical"]["source"] == "loopback"
         assert _source(alerting, "loopback")["health"] == "lost"
 
-        # 先关「另一路」（横幅不是它的）：横幅原样挂着、顶层停在 alert
         assert post(client, "set_source", {"source": "mic", "active": False}).status_code == 200
         snap = snapshot_of(client)
         assert snap["top_state"] == "alert", snap["alerts"]
         assert snap["alerts"]["critical"]["source"] == "loopback", snap["alerts"]
         assert _source(snap, "mic")["health"] == "stopped"
 
-        # 再关横幅上那一路：横幅当场收场、胶囊回「录音中」、该路落「已停止」
         assert post(client, "set_source", {"source": "loopback", "active": False}).status_code == 200
         snap = snapshot_of(client)
         assert snap["top_state"] == "recording", snap["alerts"]
@@ -160,8 +138,7 @@ def test_reopening_a_cleared_source_starts_clean(tmp_path):
         assert snap["alerts"]["critical"] is None, snap["alerts"]
         reopened = _source(snap, "loopback")
         assert reopened["health"] == "capturing", reopened
-        # 重开后的第一帧落进判定器时，起的必须是一条全新的记录（旧计数若没清，
-        # 静默秒数还挂在旧记录上）——帧 0.1s 一条，等它进来再读
+        # 重开后的第一帧落进判定器（帧 0.1s 一条，等它进来再读）
         reopened_track = wait_until(
             lambda: runtime.judge._tracks.get("loopback"),  # noqa: SLF001 - 就为等这一格
             what="重开后的第一帧落进判定器",
@@ -220,7 +197,6 @@ def test_a_late_source_lost_on_a_closed_route_stays_quiet(tmp_path):
         # 余波没有把横幅拉起来，胶囊停在「录音中」
         assert waited["top_state"] == "recording", waited["alerts"]
         assert waited["alerts"]["critical"] is None, waited["alerts"]
-        # 旧行为会把已关路的 `health` 写回 `lost`（徽标回「信号丢失」）——钉死不许
         assert _source(waited, "mic")["health"] == "stopped"
         # 判定记录里没有这一路：这条流中断事实没进判定器
         assert "mic" not in runtime.judge._tracks  # noqa: SLF001 - 就为钉「事实没进判定」这一格
@@ -261,7 +237,7 @@ def test_real_faults_still_alert_and_the_banner_resurfaces_the_other_lost_route(
         )
         assert _source(both, "mic")["health"] == "lost"
 
-        # 关掉横幅上那一路（loopback）：mic 还真在 lost——致命级换挂 mic、顶层停在 alert
+        # 关掉横幅上那一路（loopback）
         assert post(client, "set_source", {"source": "loopback", "active": False}).status_code == 200
         snap = snapshot_of(client)
         assert snap["top_state"] == "alert", snap["alerts"]

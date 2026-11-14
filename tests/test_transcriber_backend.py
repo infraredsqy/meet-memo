@@ -54,12 +54,9 @@ from meeting.session import archive_name
 from tests import _helpers as helpers
 from tests._helpers import wait_until
 
-#: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md`。
 pytestmark = pytest.mark.slow
 
-# ---------------------------------------------------------------------------
 # 常量与假件
-# ---------------------------------------------------------------------------
 
 #: 用例的显式等待上限（秒；单条用例合计 ≤5 秒的看门之内）
 WAIT_TIMEOUT_SECONDS = 3.0
@@ -238,7 +235,7 @@ class FakePipeline:
         worker join 之前要先逐路 join 读线程（每路最多 `READER_JOIN_TIMEOUT_SECONDS`），
         这一段是外层余量必须盖住的额外开销。`reader_slack_seconds` 单独记时，`drain_seconds`
         从「那一段跑完之后」才开始算 —— 于是「外层的上界有没有把读线程这一段算进去」
-        可以单独验（复审 m5）。
+        可以单独验。
     """
 
     def __init__(
@@ -369,7 +366,6 @@ def write_until_segment(
 
 #: 端到端用例自造源的块长（0.1 秒的 16k 单声道 int16 = 3200 字节，与真采集同速）
 SCHEDULED_CHUNK_FRAMES = 1600
-SCHEDULED_CHUNK_BYTES = SCHEDULED_CHUNK_FRAMES * SAMPLE_WIDTH
 
 #: 端到端用例里「语音」那一档的样本常值（过得了 `FakeVad` 的阈值，也就过得了噪声预筛）
 SCHEDULED_VOICE_AMPLITUDE = 12000
@@ -501,9 +497,7 @@ def session_dir(tmp_path: Path) -> Path:
     return path
 
 
-# ---------------------------------------------------------------------------
 # 协议与解析
-# ---------------------------------------------------------------------------
 
 
 def test_backend_implements_the_frozen_protocol():
@@ -585,9 +579,7 @@ def test_dev_transcriber_emits_synthetic_lines_and_stops_cleanly():
     assert len(recorder.lines) == count, "stop() 之后不该再有新行"
 
 
-# ---------------------------------------------------------------------------
 # 三态与两个计数
-# ---------------------------------------------------------------------------
 
 
 def test_health_backlog_and_timeout_follow_the_pipeline(session_dir: Path, monkeypatch):
@@ -644,11 +636,7 @@ def test_health_reports_stopped_when_the_model_blows_up(session_dir: Path):
         backend.stop()
 
 
-# ---------------------------------------------------------------------------
 # 解耦证明（本单元的核心验收）
-# ---------------------------------------------------------------------------
-
-
 
 
 def test_transcription_model_runs_on_a_worker_thread(session_dir: Path):
@@ -688,9 +676,7 @@ def test_transcription_model_runs_on_a_worker_thread(session_dir: Path):
     assert seen.get("thread") not in (None, threading.get_ident()), (
         "模型必须跑在与主线程不同的 worker 线程上"
     )
-# ---------------------------------------------------------------------------
 # 服务侧快照：积压量写进快照，却不给 `revision` 投票（契约第 3.3 节）
-# ---------------------------------------------------------------------------
 
 #: 这一条投给服务的那一行转写正文
 ONE_TRANSCRIPT_LINE = "按住模型期间来的一行。"
@@ -728,7 +714,7 @@ def stable_revision(client, *, tries: int = 20, gap: float = 0.05) -> int:
 def settled_health(client, expected: str, *, timeout: float = 2.0) -> dict:
     """等 `transcript.health` 落到 `expected` **且**不再动，返回那一刻的快照。
 
-    起因（复审 m3）：快照里 `transcript` 的初值取自**真后端**（空闲档是 `stopped`），
+    起因：快照里 `transcript` 的初值取自**真后端**（空闲档是 `stopped`），
     而用例随后会把转写后端换成替身（报 `normal`）—— 那一次迁移由健康度节拍带去提交，
     最长要等 `TRANSCRIBER_HEALTH_INTERVAL_SECONDS`（0.5 秒）。判据说「这一刻之后没有
     任何迁移」之前，先把这一拍等掉。
@@ -778,7 +764,7 @@ def test_backlog_changes_reach_the_snapshot_without_touching_the_revision(sessio
     并推那一帧，**不参与状态迁移、不涨 `revision`**；`state` / `snapshot` 的帧级 `id` 与
     `data.revision` 是同一次提交的那个数，界面靠「`id` 变了就是状态变了」判断。积压量几乎
     每一行都在变，让它触发 `commit()` 等于给 `state` 通道加一份高频抖动，那句承诺当场失效
-    （设计口径 §7：这两个计数只在 `/debug` 与 log 里看着用）。
+    （这两个计数只在 `/debug` 与 log 里看着用）。
 
     这一条**没有注入 stub 后端**：转写侧就是真实现（`TranscriberBackend` + 真流水线 +
     被按住的假模型），积压量取自段队列里真堆着的三段；
@@ -872,7 +858,7 @@ def test_snapshot_reads_do_not_refresh_and_do_not_push_the_revision(session_dir:
         subscriber = runtime.hub.register()
         try:
             # 起点就是 `stopped`：这一条**没有起场次**，而健康度节拍随 `start_session()` 起
-            # （复审 m3：它在空闲态先提交一次 `stopped` 会多出一条时序依赖），因此空闲态这一格
+            # （它在空闲态先提交一次 `stopped` 会多出一条时序依赖），因此空闲态这一格
             # 停在 `startup()` 那一次刷出来的真值上、不会被替身改写。下面要验的是「读快照不
             # 改状态」，与这一格停在哪一档无关。
             def state_frames() -> list[str]:
@@ -964,7 +950,7 @@ def test_stop_is_idempotent_and_joins_the_worker(session_dir: Path):
 
 
 def test_transcript_handles_reopened_after_stop_are_closed_again(session_dir: Path, monkeypatch):
-    """**`stop()` 返回之后才写出来的那一行，重开的句柄也要有人关**（复审 m4）。
+    """**`stop()` 返回之后才写出来的那一行，重开的句柄也要有人关**。
 
     修的是这样一件事：worker 在预算耗完那一刻手上还扣着一段时，`pipeline.stop()` 末尾那次
     `_close_handles()` 关不掉**之后**才写的行 —— `_write_line()` 发现句柄已空就重开一个并
@@ -1042,7 +1028,7 @@ def test_transcript_handles_reopened_after_stop_are_closed_again(session_dir: Pa
         wait_for(lambda: model.entered.is_set() or None, what="假模型把 worker 按住")
         # 再压一段进队列：worker 放行之后会处理它，而那一刻 `_handles` 已经被
         # `pipeline.stop()` 末尾那次关闭清空 —— `_write_line()` 于是重开一个
-        # （复审 m4 指认的那条路径；生产上正是「预算耗完时队列里还有段」那一档）
+        # （生产上正是「预算耗完时队列里还有段」那一档）
         pipeline._enqueue("mic", time.time(), speech_pcm(1.0))
         assert pipeline._worker_thread is not None and pipeline._worker_thread.is_alive(), (
             "这一刻 worker 还被模型扣着（判据的前提）"

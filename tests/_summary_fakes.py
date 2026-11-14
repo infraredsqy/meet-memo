@@ -2,8 +2,6 @@
 
 定位与挂件方式照 `tests/_drain_fakes.py`（跨文件共用假件的唯一落点）：`live()` 在进程内
 真运行时上把转写后端与总结客户端都换成这里那份假件（`health` 可切、一条真实请求都不发）。
-原先 `test_summary_action.py` 与 `test_summary_buffer.py` 各养一份（后者是弱副本，
-少 `timeouts` / `error` 读数），现在只留这一份正本，两个文件都从这里 import。
 """
 
 from __future__ import annotations

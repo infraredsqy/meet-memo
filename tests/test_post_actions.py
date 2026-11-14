@@ -89,9 +89,7 @@ def restore_config():
     config_module.set_current(previous)
 
 
-# ---------------------------------------------------------------------------
 # 一、结束录音之后什么都不发生
-# ---------------------------------------------------------------------------
 
 
 def test_the_drain_post_step_settles_waiting_and_no_job_is_started(tmp_path, monkeypatch) -> None:
@@ -110,9 +108,7 @@ def test_the_drain_post_step_settles_waiting_and_no_job_is_started(tmp_path, mon
         config_module.set_current(previous)
 
 
-# ---------------------------------------------------------------------------
 # 二、「生成会后精细稿」：只有离线段跑起来
-# ---------------------------------------------------------------------------
 
 
 def test_post_offline_runs_the_offline_lane_only(tmp_path, monkeypatch) -> None:
@@ -283,9 +279,7 @@ def test_post_offline_is_refused_without_the_hook(tmp_path, monkeypatch) -> None
         config_module.set_current(previous)
 
 
-# ---------------------------------------------------------------------------
 # 三、「直接出纪要」：把手上有的稿子交给 DSH
-# ---------------------------------------------------------------------------
 
 
 def test_post_minutes_hands_the_session_over_without_running_the_offline_lane(
@@ -382,9 +376,7 @@ def test_post_minutes_is_refused_while_the_session_is_still_recording(tmp_path, 
         config_module.set_current(previous)
 
 
-# ---------------------------------------------------------------------------
 # 四、R29：`GET /api/sessions` 那一格
-# ---------------------------------------------------------------------------
 
 
 def test_sessions_dict_carries_has_offline(tmp_path, monkeypatch) -> None:
@@ -434,9 +426,7 @@ def test_has_offline_transcript_reads_the_directory(tmp_path) -> None:
     assert has_offline_transcript(tmp_path / "not-here") is False
 
 
-# ---------------------------------------------------------------------------
 # 五、C3：`args["dir"]` 指定跑哪一场（界面选中那一行与动作跑的那一场同源）
-# ---------------------------------------------------------------------------
 
 
 def _register_other_session(runtime, tmp_path: Path, monkeypatch, name: str):
@@ -648,15 +638,10 @@ def test_post_offline_accepts_a_session_killed_mid_drain(tmp_path, monkeypatch) 
     assert calls == [str(target)], calls
 
 
-# ---------------------------------------------------------------------------
-# 六、m2：`minutes.hook = null` 那一档（404）与「纪要这一层已经在飞」那一档（409）
-# ---------------------------------------------------------------------------
-
-
 def test_post_minutes_is_refused_without_the_minutes_hook(tmp_path, monkeypatch) -> None:
     """`minutes.hook = null` → 404 `action_unavailable`，不起线程（对称于 `post.hook` 那一侧）。
 
-    坑（复审 m3 点名的那一个）：`_reject_recording_post()` 的两道闸排在钩子闸**前面**，
+    坑：`_reject_recording_post()` 的两道闸排在钩子闸**前面**，
     一个 runtime 里连按两个按钮会把 404 盖成 409 —— 本条只按纪要那一个按钮。
     """
     from meeting.service.runtime import ActionError
@@ -720,9 +705,7 @@ def test_post_minutes_is_refused_when_the_minutes_layer_is_still_in_flight(
         config_module.set_current(previous)
 
 
-# ---------------------------------------------------------------------------
 # 六之二、m4：线没起来时，刚认下的那一版 claim 要如实退回（盘上不留永远在飞的记录）
-# ---------------------------------------------------------------------------
 
 
 def test_post_minutes_returns_the_claim_when_the_thread_cannot_start(
@@ -821,9 +804,7 @@ def test_post_minutes_returns_the_claim_without_a_mark_failed_writer(
         config_module.set_current(previous)
 
 
-# ---------------------------------------------------------------------------
 # 七、「落盘没落定就拒会后动作」判据作废：收尾没走完照样受理
-# ---------------------------------------------------------------------------
 
 
 def test_post_minutes_is_accepted_while_the_drain_has_not_settled(
@@ -875,9 +856,7 @@ def test_post_minutes_is_accepted_while_the_drain_has_not_settled(
         config_module.set_current(previous)
 
 
-# ---------------------------------------------------------------------------
 # 八、停掉正在跑的「生成会后精细稿」（R28）
-# ---------------------------------------------------------------------------
 
 
 def test_post_stop_sets_the_cancel_flag_and_answers_the_receipt(

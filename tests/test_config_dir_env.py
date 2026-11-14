@@ -1,6 +1,6 @@
 """`MEETING_CONFIG_DIR`：配置目录整组重定向（pytest 之外的探针与手工跑一行隔离）。
 
-三档口径（节点 spec）：
+三档口径：
   - **设了它**：`config_dir()` 整组跟着走——`config.json`、`workspaces.json`、
     会后任务记录与日志默认落点全从这一个函数推出；
   - **不设它**：家目录推导（`HOME` → `USERPROFILE`）与改动前逐字相同；
@@ -8,7 +8,7 @@
 
 显式 `log.dir`（config.json 或 `MEETING_LOG_DIR`）优先级不改：那一条由
 `tests/test_config.py` 与 `tests/test_cli_post_config.py` 的既有用例钉着，这里不重复。
-子进程端到端的落点断言由节点探针（可重跑脚本）负责，这里只钉进程内推导这一层。
+子进程端到端的落点断言由探针（可重跑脚本）负责，这里只钉进程内推导这一层。
 """
 
 from __future__ import annotations

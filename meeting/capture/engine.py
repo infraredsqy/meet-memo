@@ -1,12 +1,7 @@
-"""会话采集引擎——每路一套「读侧 + 写侧 + 0.5 秒电平刻度」（设计口径）。
+"""会话采集引擎——每路一套「读侧 + 写侧 + 0.5 秒电平刻度」。
 
-骨架来自 V1 的双录（真机跑通过整场整场的会，不另起一套，只按 V2 契约重排）：
-`_mic_callback` 入队那句 → `sources.py` 的 mic 读侧；`_loopback_pump` 循环 → loopback 源
-（专用线程 + `CoInitializeEx`）；`pipeline._audio_loop` 按块写 → `archive.PcmArchiveWriter`。
-
-与 V1 的结构差别只有三条，每条都有契约上的理由（§3 的取舍，别扩大成重构）：
 两路各自一条写线程（契约要求「一路出事另一路照跑」）；单路失败报 `SourceLost`、不影响
-另一路、`start()` 不因此抛错（R2：不能静默出事）；每路一条电平刻度线程，每
+另一路、`start()` 不因此抛错（不能静默出事）；每路一条电平刻度线程，每
 `frame_interval` 秒**无条件**发一帧 `LevelFrame`（静下来发 `-120 dBFS`）——服务侧的心跳
 窗口是 `max(2.0s, 3 × frame_interval)`，停发会把「静音」误判成「采集停了」。
 
@@ -54,10 +49,9 @@ JOIN_TIMEOUT_SECONDS = 5.0
 BYTES_PER_SECOND = SAMPLE_RATE * SAMPLE_WIDTH
 
 #: 写静音的节拍（秒）：暂停、用户关一路、没开的那一路都按这个节奏往归档里写数字零，
-#: 两路的时间轴因此始终等长（`docs/design-intent.md` 第 8、9 条）
+#: 两路的时间轴因此始终等长。
 SILENCE_CHUNK_SECONDS = 0.1
 
-#: 写静音的一块多少字节（0.1 秒 = 3200 字节；与真采集一个块的量级对齐）
 SILENCE_CHUNK_BYTES = int(SAMPLE_RATE * SILENCE_CHUNK_SECONDS) * SAMPLE_WIDTH
 
 #: 数字零的一块（写线程落盘的就是它；真音频块在写侧被等长替换，内容到不了盘上）
@@ -96,7 +90,7 @@ class _SourceWorker:
     """一路的全套件：一条读线程（拿块→喂写侧）、一条电平刻度线程、一条写线程。
 
     `active=False` 的那一路**不读真源、不发帧**，但读线程照样起——跑的是**写静音的节拍器**
-    （`docs/design-intent.md` 第 9 条：某一路没开也是「那一路写静音」，两路时间轴等长）。
+    （某一路没开也是「那一路写静音」，两路时间轴等长）。
     """
 
     def __init__(
@@ -170,12 +164,10 @@ class _SourceWorker:
                     )
         self._threads = []
 
-    # 关一路（用户的主动选择，不是故障）
-
     def deactivate(self) -> None:
         """用户主动关掉这一路：停读真源、改写静音；**不报 `SourceLost`、不进告警**。
 
-        与「这一路真死了」的区分落在这里（`docs/design-intent.md` 第 9 条：那一路写静音，
+        与「这一路真死了」的区分落在这里（那一路写静音，
         两路时间对齐）：真死维持读线程里的 `SourceLost` 语义不动；主动关只翻本地的
         `_user_closed` 信号——读线程随后不再碰源（设备被释放），转由静音节拍器接管。
         """
@@ -213,8 +205,6 @@ class _SourceWorker:
             self.alive = True
         _log.info("用户重新打开 %s 这一路：读线程回到读源", self.source)
 
-    # 读侧
-
     def _feed(self, data: bytes) -> None:
         """把拿到的块交给写侧；本场暂停中就**等长替换成静音**（内容到不了写侧队列）。"""
         if self._pause_event.is_set():
@@ -223,14 +213,14 @@ class _SourceWorker:
             self.writer.feed(data)
 
     def _read_loop(self) -> None:
-        """取一块、写一块（搬自 `pipeline._audio_loop` 的 `pipeline.py:89-95`）。
+        """取一块、写一块。
 
         一路的源读不出来 / 抛错时：**这一路收队并报一条 `SourceLost`**，另一路的读线程与写线程
         一个都不动（「一路出事另一路照跑」就是这么落地的）。用户主动关掉的那一路**不走**
         这条报障路：读线程转去跑静音节拍器。
 
         关路动作可以落进「顶层检查已过、`read()` 已进」的那一瞬（`deactivate()` 置位并停源，
-        停源让这一次 `read()` 交回 `None` 或抛错）——这一拍是停源的瞬时读空，不是「流结束」：
+        停源让这一次 `read()` 交回 `None` 或抛错）——这一拍是停源引发的瞬时读空，与「流结束」分开对待：
         两个分支都回循环顶交给静音节拍器，读线程不在这里死（死了 `reactivate()` 就没有
         「正跑在节拍器上的读线程」可接，重开的那一路永远录不到内容）。
 
@@ -295,8 +285,6 @@ class _SourceWorker:
         _log.error("%s 这一路的流断了：%s", self.source, reason)
         self._emit_fact(SourceLost(source=self.source, reason=reason))
 
-    # 电平刻度
-
     def _tick_loop(self) -> None:
         """每 `frame_interval` 秒**无条件**发一帧电平事实（外加一条流存活事实）。
 
@@ -358,7 +346,7 @@ class CaptureSession:
     独立工序（flush 落定自动起，不占收尾序列）；`stop()` 幂等收场。
 
     段记录（`segment_records()` / `audio_duration_seconds()`）由服务侧落进 `session.json`；
-    本类只管记对，不做任何墙钟核对（第 6 条：元信息除权威时长外一律不当判据）。
+    本类只管记对，不做任何墙钟核对（元信息除权威时长外一律不当判据）。
     """
 
     def __init__(
@@ -388,7 +376,7 @@ class CaptureSession:
         self._pause_intervals: list[dict[str, str | None]] = []
         #: **本段段号**（一段 = 一次录制；开场 1，续接取盘上已有段号 + 1）。
         #: 必须在开写侧**之前**定死——`open_pcm()` 是截断写，段号解析晚于打开会把
-        #: 上一段的 PCM 清成零字节（本节点的最大坑，见 `next_segment_number()`）。
+        #: 上一段的 PCM 清成零字节（见 `next_segment_number()`）。
         self.segment_number = next_segment_number(self.session_dir, SOURCE_IDS)
         #: 本段的起止戳与在录时长（一段 = 一次录制）
         self._segment_started_at: str | None = None
@@ -458,10 +446,8 @@ class CaptureSession:
             self.stop()
             raise
 
-    # 暂停 / 关一路（引擎的服务层出口；动作面入口在 `services/routes.py`）
-
     def pause(self) -> None:
-        """暂停本场采集：所有路从这一刻起写数字静音，**不录内容**（第 8 条的隐私线）。
+        """暂停本场采集：所有路从这一刻起写数字静音，**不录内容**（隐私线）。
 
         幂等；没在录（没 `start()` 或已 `finalize()`）时什么都不做。段**不**切段：
         暂停只在本段记录上记一条区间。

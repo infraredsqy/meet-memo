@@ -1,8 +1,7 @@
 """GLM-ASR 的加载与**单段识别** —— 四层防护的挂载点。
 
 只交付「一串 int16 样本进去，一段文本或一个失败原因出来」：不碰线程、不碰队列、不碰服务
-（V1 的 `MeetingRecorder` 把采集与识别挤在一个类里，V2 只搬识别那一半——采集在
-`meeting/capture/`；搬移出处与改动清单见 `docs/v1-lineage.md` 第 11 章「原 1.0 第 5 条」）。
+（采集在 `meeting/capture/`）。
 
 **模块顶层只有标准库与包内 import**（硬约束）：`torch` / `transformers` / `numpy` /
 `webrtcvad` 一律在函数体内惰性 import，否则 `transcriber.backend = auto` 在没装模型依赖的
@@ -23,24 +22,19 @@ from meeting.asr.guards import _DeadlineStop, _LoopGuard, _strip_repeat_loops
 from meeting.capture.archive import SAMPLE_RATE
 from meeting.importlock import heavy_imports
 
-#: 本项目自己的 logger（V1 那一行是 `logging.getLogger("meeting")`）
 log = logging.getLogger("meeting.asr.glm")
 
 # GLM-ASR 模型仓库 id。本地 HF cache 已存全量副本，加载走 _load_from_hub 的离线优先。
-# 搬自 V1 mnotes_core/recorder.py:175
 MODEL_ID = "zai-org/GLM-ASR-Nano-2512"
 
-# 搬自 V1 mnotes_core/recorder.py:27-29
 # no_repeat_ngram_size 是否可用：变体模型的自定义 generate 若不认该参数，
 # 首次失败后置 False，不再每段都试一遍（避免每段都白跑一次生成）。
 _NO_REPEAT_NGRAM_SUPPORTED = True
 
-# 采集与识别的采样率：16000 Hz / 单声道 / int16（`docs/v1-lineage.md` 的 B8）。
-# `SAMPLE_RATE` 不在本模块再抄一份：从 `capture/archive` 的同一处口径 import（上面），
-# V1 那份是 `mnotes_core/config.py:35`（V1 的 `recorder.py` 从那里 import）。
+# 采集与识别的采样率：16000 Hz / 单声道 / int16。
+# `SAMPLE_RATE` 不在本模块再抄一份：从 `capture/archive` 的同一处口径 import（上面）。
 
 
-# 搬自 V1 mnotes_core/recorder.py:32-44
 @dataclass
 class TranscribeResult:
     """单段转写结果（含失败原因与耗时，供流水线记日志与落盘占位符）。"""
@@ -56,15 +50,14 @@ class TranscribeResult:
         return not self.ok
 
 
-# 搬自 V1 mnotes_core/recorder.py:252-273
 def _is_noise_segment(audio_int16) -> bool:
     """判断一段音频是否为近静音/环境噪音（无真实人声）。
 
     语音帧占比 < 0.15 且能量(RMS) < 150 且语音帧 < 5，三者 AND 才判噪音。
     真实语音几乎不可能同时满足三条，误杀率极低。
 
-    **命中的语义是「这一段落是静音，不写行」**：V1 的调用点（`:512-514`）返回
-    `ok=True, reason="noise"` —— 它算一次成功的「什么都没识别出来」，不是失败。
+    **命中的语义是「这一段落是静音，不写行」**：返回 `ok=True, reason="noise"` ——
+    它算一次成功的「什么都没识别出来」。
     """
     import webrtcvad
     import numpy as np
@@ -85,7 +78,6 @@ def _is_noise_segment(audio_int16) -> bool:
     return ratio < 0.15 and rms < 150 and speech_frames < 5
 
 
-# 搬自 V1 mnotes_core/recorder.py:276-295
 def _load_from_hub(loader, **kwargs):
     """本地缓存优先加载模型/Processor，缓存缺文件时才回退联网下载。
 
@@ -106,19 +98,17 @@ def _load_from_hub(loader, **kwargs):
         return loader.from_pretrained(MODEL_ID, **kwargs)
 
 
-# 搬自 V1 mnotes_core/recorder.py:321-341（`MeetingRecorder._load_transcriber` 的识别那一半）
 def _load_models():
     """加载 Processor 与模型权重，返回 `(processor, transcriber)`。
 
     重依赖全在函数体内惰性 import，整段 import 包进 `heavy_imports()`（进程级锁）：
     会中链与 `meeting/offline/engine.py`（会后链）在各自后台线程首次 import transformers，
-    两线程同时首导同一模块时其一可能见到半初始化的模块对象（260928-2 实测）。
+    两线程同时首导同一模块时其一可能见到半初始化的模块对象。
     进程退出期（`sys.is_finalizing()`）当场抛 `RuntimeError`，不触任何 import。
 
     测试的接缝：`monkeypatch.setattr(meeting.asr.glm, "_load_models", fake)` 打在
     **同一份模块对象**上——别写 `from meeting.asr.glm import _load_models` 那种绑到
-    另一个模块对象的引用，那正是 V1 那个「测试一边通过一边什么都没验」的坑
-    （`docs/v1-lineage.md` 的 C9 / E9）。
+    另一个模块对象的引用。
     """
     if sys.is_finalizing():
         raise RuntimeError("进程正在退出，会中 ASR 模型加载中断；重新开会话时会再次加载")
@@ -153,13 +143,12 @@ class GlmAsrTranscriber:
         self.processor = None
         self.transcriber = None
 
-    # 搬自 V1 mnotes_core/recorder.py:321-323（`_load_transcriber` 的入口三行）
     def _load_transcriber(self):
         if self.transcriber is not None:
             return
         self.processor, self.transcriber = _load_models()
 
-    # 「用完即关」的模型侧一半（`docs/design-intent.md` 第 21 条）：引用由模型自己丢，
+    # 「用完即关」的模型侧一半：引用由模型自己丢，
     # 后端（`meeting/backends/transcribe.py`）经这两个公开方法问与放，不按字段名戳内部。
     def has_model_references(self) -> bool:
         """模型引用还在手上吗（processor 或权重任一格非空）。"""
@@ -179,7 +168,6 @@ class GlmAsrTranscriber:
             dropped = True
         return dropped
 
-    # 搬自 V1 mnotes_core/recorder.py:495-598（核心段 `:512-597`）
     def transcribe_segment(self, audio_int16) -> TranscribeResult:
         """转写一段音频，返回 TranscribeResult（含失败原因与耗时）。
 
@@ -205,7 +193,7 @@ class GlmAsrTranscriber:
             log.info("dropped noise segment")
             return TranscribeResult(text="", ok=True, reason="noise")
 
-        # 改自 V1 `:516-518`：V1 每段重读 config.json；V2 走 meeting.config 同一批 asr.* 热读键。
+        # 每段现读 `meeting.config` 同一批 `asr.*` 热读键。
         timeout_s = float(config_module.get("asr.timeout_seconds"))
         max_new = int(config_module.get("asr.max_new_tokens"))
 
@@ -279,7 +267,7 @@ class GlmAsrTranscriber:
             return TranscribeResult(text="", ok=False, reason="loop",
                                     duration=duration, tokens=n_new)
 
-        # 改自 V1 `:591-592`（同一批 asr.* 热读键）。
+        # 同一批 `asr.*` 热读键。
         stripped = _strip_repeat_loops(
             text,
             max_unit=config_module.get("asr.repeat_max_unit"),

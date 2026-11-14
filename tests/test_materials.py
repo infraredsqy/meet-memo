@@ -1,19 +1,5 @@
 """会议资料四条端点的用例（资料节点）：上传 / 清单 / 取原文件 / 删除。
 
-本文件盯住七件事：
-
-  - **上传**：原样字节落盘、重名自动加序号后缀（用户看到的名字保留）、文件名清洗
-    （穿越 / 非法字符 / 保留设备名 / 结尾点与空格）、`name` 必给；
-  - **目录校验拒绝**：只认两种目标目录——当前活跃场次、注册表登记过的场次；
-    未登记与目录不在原地都拒收（404），且**盘上不落任何新东西**；
-  - **活跃场次**：一边录一边传照收——哪怕那一行刚被 `workspace_remove` 摘出清单
-    （资料跟着场次走，不跟着清单行走）；
-  - **清单**：目录就是清单（没有 JSON 记录），没传过就是空数组且**不建目录**；
-  - **取原文件**：字节原样、`Content-Type` 按扩展名（认不出 `application/octet-stream`）；
-  - **删除**：只删那一个文件；重复删除如实 404；
-  - **独立于快照 + 流式**：不涨 `revision`、快照九键不动；几 MB 级上传照常落盘；
-    写请求缺 `X-Meeting-Service: 1` 被中间件的头哨拦下（403）。
-
 **全部走假件**（项目测试纪律）：采集用 dev 替身（`app_client` 的共用缺省），
 一条真实模型端点请求都不发、不碰任何声卡。
 """
@@ -74,11 +60,6 @@ def _upload(client, session: Path, name: str, content: bytes):
 
 def _materials_dir(session: Path) -> Path:
     return session / "meeting_materials"
-
-
-# ---------------------------------------------------------------------------
-# 注册与寻址
-# ---------------------------------------------------------------------------
 
 
 def test_the_four_routes_are_registered_before_the_session_catch_all() -> None:
@@ -146,11 +127,6 @@ def test_an_unregistered_dir_is_rejected_without_touching_the_disk(
         assert deleted.status_code == 404
 
     assert not (stranger / "meeting_materials").exists(), "拒收路径不建资料目录"
-
-
-# ---------------------------------------------------------------------------
-# 上传
-# ---------------------------------------------------------------------------
 
 
 def test_upload_stores_bytes_verbatim_and_reports_the_stored_name(
@@ -273,8 +249,7 @@ def test_the_active_session_accepts_uploads_while_recording(materials_client) ->
         what="dev 替身开一场进 recording",
     )
 
-    removed = materials_client.post(
-        "/api/actions",
+    removed = materials_client.post(        "/api/actions",
         json={"action": "workspace_remove", "args": {"dir": str(session)}},
         headers={"X-Meeting-Service": "1"},
     )
@@ -283,11 +258,6 @@ def test_the_active_session_accepts_uploads_while_recording(materials_client) ->
     uploaded = _upload(materials_client, session, "现场补充.txt", "录制中贴进来的资料".encode("utf-8"))
     assert uploaded.status_code == 200, uploaded.text
     assert (_materials_dir(session) / "现场补充.txt").read_bytes() == "录制中贴进来的资料".encode("utf-8")
-
-
-# ---------------------------------------------------------------------------
-# 清单
-# ---------------------------------------------------------------------------
 
 
 def test_listing_is_the_directory_itself(materials_client) -> None:
@@ -310,11 +280,6 @@ def test_listing_is_the_directory_itself(materials_client) -> None:
     assert sizes == {"a.pdf": 1, "b.pdf": 2}
     for row in after["items"]:
         assert set(row) == {"name", "size_bytes", "added_at"}
-
-
-# ---------------------------------------------------------------------------
-# 取原文件
-# ---------------------------------------------------------------------------
 
 
 def test_fetch_returns_original_bytes_with_a_extension_content_type(
@@ -359,11 +324,6 @@ def test_fetching_a_missing_or_hostile_name_is_a_404(materials_client) -> None:
     assert traversal.json()["code"] == "material_missing"
 
 
-# ---------------------------------------------------------------------------
-# 删除
-# ---------------------------------------------------------------------------
-
-
 def test_delete_removes_exactly_one_file(materials_client) -> None:
     """删除只动那一个文件；重复删除如实 404（`material_missing`）。"""
     session = _open_session(materials_client)
@@ -388,11 +348,6 @@ def test_delete_removes_exactly_one_file(materials_client) -> None:
     )
     assert again.status_code == 404
     assert again.json()["code"] == "material_missing"
-
-
-# ---------------------------------------------------------------------------
-# 流式大文件 / 快照独立 / 头哨
-# ---------------------------------------------------------------------------
 
 
 def test_a_few_megabyte_upload_streams_through(materials_client) -> None:
@@ -459,18 +414,12 @@ def test_materials_writes_require_the_custom_header(materials_client) -> None:
     # 纯读那两条与其余 GET 同档：Host 校验已盖住，不要求自定义头
     assert materials_client.get(base).status_code == 200
 
-    # 头带齐之后照常放行
     assert (
         materials_client.post(
             f"{base}?name=x.txt", content=b"x", headers={"X-Meeting-Service": "1"}
         ).status_code
         == 200
     )
-
-
-# ---------------------------------------------------------------------------
-# 选择器文件模式的盘上拷入：`?name=<名>&from=<路径>`
-# ---------------------------------------------------------------------------
 
 
 def _upload_from(client, session: Path, name: str, source: Path):
@@ -511,7 +460,6 @@ def test_upload_from_copies_an_existing_file_verbatim(materials_client) -> None:
     assert source.read_bytes() == payload, "源文件一个字节不动"
     assert source.stat().st_mtime == source_mtime
 
-    # 清单里看得到这一份（目录就是清单）
     listed = materials_client.get(_materials_base(session))
     assert [item["name"] for item in listed.json()["items"]] == ["季度报表.pdf"]
 

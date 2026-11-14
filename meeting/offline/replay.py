@@ -1,18 +1,18 @@
-"""重放验证工具：拿归档录音全速重跑一遍会后离线链路（节点）。
+"""重放验证工具：拿归档录音全速重跑一遍会后离线链路。
 
 `meeting replay <场次目录>` 背后那一层：把已有场次的素材复制/截断进工具自己的临时落地，
 在拷贝上跑**与生产同一条** `run_session()`，打印实时率、逐块耗时与失败原因分布。
-不是第二条生产路径（spec「坑与注意」第 1 条），链上代码一个字不动。三条边界：
+只做验证，链上代码一个字不动。三条边界：
 
 1. **素材只读**：链必写它被指到的目录，唯一干净落法是工具侧把素材复制/截断进自己的
-   临时目录再对拷贝跑链（备料决策 d3）——PCM 按字节截断；MP3 用现成 `decode_audio()`
+   临时目录再对拷贝跑链——PCM 按字节截断；MP3 用现成 `decode_audio()`
    解开切前 N 秒写成裸 s16le 段 PCM（链的段 PCM 优先逻辑零改动吃到）。旧素材
    （之前无段号命名）退认旧名、写进拷贝落成现行命名（段 001）。
-2. **绝不拉纪要**：直调 `run_session(..., minutes=False)`，不碰 DSH（备料决策 d4）。
-3. **读数只给人看**：实时率、墙钟、块计数都是附注，不带校验含义（design-intent 第 6、7 条）；
-   「两遍同量级」的判尺由跑工具的人自己比（d6），本模块不裁断。
+2. **绝不拉纪要**：直调 `run_session(..., minutes=False)`，不碰 DSH。
+3. **读数只给人看**：实时率、墙钟、块计数都是附注，不带校验含义；
+   「两遍同量级」的判尺由跑工具的人自己比，本模块不裁断。
 
-音频时长权威口径与链上同一条：**实际截到盘上的音频时长**（design-intent 第 7 条）——
+音频时长权威口径与链上同一条：**实际截到盘上的音频时长**——
 拷贝完成后按字节数现量，不读旧产物、不读 `session.json`。
 """
 
@@ -54,7 +54,7 @@ def cap_to_seconds(
 
     - `seconds`：正数（秒）；非正数、非有限数、认不出都拒绝；
     - `chunks`：正整数（块数）× `chunk_seconds` 换算成秒；`chunk_seconds <= 0` 时
-      如实拒绝（那格 `0 = 不分块`，块语义塌缩，不硬猜——备料决策 d1）；
+      如实拒绝（那格 `0 = 不分块`，块语义塌缩，不硬猜）；
     - 两个都给：拒绝（上限表达不歧义）。
     """
     if seconds is not None and chunks is not None:
@@ -113,7 +113,7 @@ class StagedMaterial:
 
 
 def _budget_samples(cap_seconds: float | None) -> int | None:
-    """秒上限换算成样本预算（向上取整，照备料侦察 §3 的口径）；无上限交回 `None`。"""
+    """秒上限换算成样本预算（向上取整）；无上限交回 `None`。"""
     if cap_seconds is None:
         return None
     samples = int(math.ceil(float(cap_seconds) * SAMPLE_RATE))
@@ -171,8 +171,8 @@ def _legacy_audio_paths(source_dir: Path, source: str) -> list[Path]:
     """旧素材的音频文件（**分段归档落地之前**的命名：`meeting_audio_<source>.<扩展名>`）。
 
     现行链按 `meeting_audio_<source>_<三位段号>` 枚举段（`meeting/session.py` 的
-    `segment_archive_paths()`），归档分节点之前的旧录音没有段号
-    （`250906` / `250919` 这两批就是 `meeting_audio_mic.mp3` 这种名字）。重放工具的
+    `segment_archive_paths()`），归档分节点之前的旧录音没有段号（`meeting_audio_mic.mp3`
+    这种名字）。重放工具的
     素材面照链上同一条判据（`resolve_audio()`）找不到时，退一步认旧名——**拷贝进
     临时落地时写成现行命名（段 001）**，链对那份拷贝照旧零改动地吃。
     """
@@ -265,7 +265,7 @@ def stage_material(
     target.mkdir(parents=True, exist_ok=True)
     session_json = source / "session.json"
     if session_json.exists():
-        # 原样复制（元信息不校验、不重写——design-intent 第 6 条）
+        # 原样复制（元信息不校验、不重写）
         (target / "session.json").write_bytes(session_json.read_bytes())
     budget = _budget_samples(cap_seconds)
     staged = StagedMaterial(work_dir=target)
@@ -345,7 +345,6 @@ def _build_reading(
     """把一次重放的结果拼成读数 dict（打印交给 `format_reading()`）。"""
     total_wall = float(summary.get("total_wall_seconds") or 0.0)
     measured = staged.total_seconds
-    # 数块数与 progress 的现场读数同一条实现（offline-replay-counts-duplicated）
     counts: dict[str, int] = counts_by_state(rows)
     failure_reasons: dict[str, int] = dict(
         Counter(

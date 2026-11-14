@@ -1,17 +1,5 @@
 """`tests/test_asr_pipeline.py` —— 实时转写流水线（进程内、无真实模型、无真实声卡）。
 
- 设计的落地口径 1–6 在这里逐条落到用例上：
-
-  - **时间戳是采集时刻**：每一行的时间戳落在「那段音频写进归档的墙钟窗口」之内
-    （照 `tests/test_capture_accounting.py` 的口径记下写入时刻，不靠固定 sleep 凑时序）；
-  - **落盘格式**：两路各一个 `meeting_transcript_<source>.md`，每行匹配 `^\\[\\d{2}:\\d{2}\\] `；
-  - **队列语义**：段队列无界（`maxsize == 0`）、顺序消费、源码里没有 busy-drop 路径；
-  - **三档占位符**：超时 / 判环 / 无输出各自落成规定的方括号形状、**不含 `**`**，
-    用 `docs/v1-lineage.md` A7 的下游正则 match 之后 `spk` 组是 `None`；
-  - **噪声段不写行**（连占位符也不写）；
-  - **收尾预算**：`30 + n × (timeout + 5)`、下限 30、封顶 300；预算耗完还有剩段时
-    **如实登记**（`caplog` 断言那一行）。
-
 **没有一条用例加载真模型、打开真声卡**：模型是注入的替身，VAD 是确定性的能量阈值替身。
 """
 
@@ -44,12 +32,8 @@ from meeting.asr.pipeline import (
 from meeting.service.runtime import compute_drain_budget
 from meeting.session import archive_name
 
-#: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md`。
 pytestmark = pytest.mark.slow
 
-# ---------------------------------------------------------------------------
-# 常量与假件
-# ---------------------------------------------------------------------------
 
 #: 假 VAD 的判定阈值：一帧里最大样本绝对值超过它就当语音（确定、与 webrtcvad 无关）
 SPEECH_AMPLITUDE = 4000
@@ -62,27 +46,10 @@ WAIT_TIMEOUT_SECONDS = 3.0
 #: 好让整文件耗时留在 10 秒线以内（单条仍守住 5 秒看门）。
 TEST_SILENCE_TIMEOUT_SECONDS = 0.3
 
-#: 每段日志里排队延迟那一格（`wait=%.1fs`，`docs/specs.md:143-149` 的字段）
 WAIT_RE = re.compile(r"wait=([\d.]+)s")
 
-#: 一行转写的形状（`docs/v1-lineage.md` A7 那条下游正则的**收紧变体**）。
-#:
-#: A7 的原件住在 V1 的 `.work/handoff/split_raw.py:12-13`：
-#: `r"^\[(\d{2}:\d{2}(?::\d{2})?)\]\s*(?:\*\*(?P<spk>.+?)\*\*\s*:?\s*)?(?P<text>.*)$"`。
-#: 本用例这一份与它有**四处**不同，都是**按 A7 的口径收紧**、不是等价替换（复审 m7）：
-#:
-#:   1. 时间戳只吃 `[HH:MM]`（A7 另允许秒级的 `[HH:MM:SS]`）—— **我们产出的就是分钟级**
-#:      （`meeting/asr/pipeline.py` 的 `_stamp()`），收紧之后「多出一个秒段」这种形状偏差
-#:      在本用例里就立不住了；
-#:   2. 说话人组用 `[^*]+`（A7 是 `.+?`）：占位符里那个 `**` 因此不可能被吃进说话人组；
-#:   3. 这一份要求说话人之后那个冒号**紧跟着** `**`（A7 允许中间夹着空白）；
-#:   4. 正文用 `.+`（A7 是 `.*`）：空正文在我们的产物里不成立。
-#:
-#: 四条收紧都不影响 `task.md` 完成判定 5 要的那件事：用这一份 match 三档占位符，
-#: `spk` 组仍是 `None`、`text` 仍是占位符本身（`review3.md` 的 m7 另用 A7 原件复核过同一结论）。
 LINE_RE = re.compile(r"^\[(\d{2}:\d{2})\]\s*(?:\*\*(?P<spk>[^*]+)\*\*:\s*)?(?P<text>.+)$")
 
-#: 落盘行的开头（设计口径完成判定 2）
 STAMPED_LINE_RE = re.compile(r"^\[\d{2}:\d{2}\] ")
 
 #: 噪声预筛与文本兜底的替身（打在 `meeting.asr.pipeline.glm_module` 那份模块对象上）
@@ -211,7 +178,7 @@ class LogCapture(logging.Handler):
     """直接挂在 `meeting.asr.pipeline` 这个 logger 上的记录器。
 
     为什么不用 `caplog`：本项目的 logger（`meeting.*`）是**命名 logger 且 `propagate=False`**
-    （`meeting/logging_setup.py` 的口径：不污染第三方），而 `caplog` 抓的是 root 那一层 ——
+    （不污染第三方），而 `caplog` 抓的是 root 那一层 ——
     于是这里一条都抓不到。挂在自己的 logger 上拿到的是同一批记录的正身。
     """
 
@@ -244,7 +211,6 @@ def capture_pipeline_log():
         logger.setLevel(previous_level)
 
 
-
 def line_texts(path: Path) -> list[str]:
     """读一路产物里的**非空文本**行（噪声段不写行，因此产物里本来就没有空行）。
 
@@ -271,7 +237,7 @@ class SegmentFeed:
     """把音频按「一段一段的节奏」喂进一路 VAD，并记下**每一段自己的起止写入时刻**。
 
     **合成时钟**：起点取 `time.time()`，此后按**音频时长**往前走（一块 0.3 秒的音频就前进
-    0.3 秒）。静默判据（V1 `vad.py:57` 的「离上一块语音多久了」）因此能在即时喂入的小块上
+    0.3 秒）。静默判据「离上一块语音多久了」因此能在即时喂入的小块上
     真的成立 —— 用真实墙钟连喂七块只过去几毫秒，那条判据永远不成立。这是**节拍模拟**，
     不是「用 sleep 凑时序」：用例一秒都不用等。
 
@@ -300,7 +266,6 @@ class SegmentFeed:
         self.windows: list[tuple[float, float]] = []
         self._open_at: float | None = None
 
-    # -- 内部 -------------------------------------------------------------
 
     def _record(self, pcm: bytes, at: float) -> None:
         self.pipeline._enqueue(self.source, at, pcm)
@@ -316,7 +281,6 @@ class SegmentFeed:
         )
         self.clock += len(chunk) / (SAMPLE_RATE * SAMPLE_WIDTH)
 
-    # -- 用例用的三个动作 --------------------------------------------------
 
     def speech(self, pattern: str) -> None:
         """喂一串块（`s` 语音 / `0` 静默），每块的音频时长都是 `chunk_seconds`。"""
@@ -446,11 +410,6 @@ def session_dir(tmp_path: Path) -> Path:
     return path
 
 
-# ---------------------------------------------------------------------------
-# 队列语义（无界 + 单 worker 顺序消费）
-# ---------------------------------------------------------------------------
-
-
 def test_segment_queue_is_unbounded_and_single_worker(session_dir: Path):
     """段队列**无界**（`maxsize == 0`），且**本流水线**只起了一个 worker 与两路读线程。
 
@@ -474,15 +433,11 @@ def test_segment_queue_is_unbounded_and_single_worker(session_dir: Path):
 
 
 def test_segments_under_half_a_second_are_never_enqueued(session_dir: Path):
-    """**不足半秒的段不识别、也不落行**（判据出处是 V1 `mnotes_core/pipeline.py:127`）。
+    """**不足半秒的段不识别、也不落行**。
 
-    **数值口径按 task.md 的 0.5 秒**：V1 那一行写的是 `len(seg_bytes) < SAMPLE_RATE * 0.5`，
-    拿**字节数**去比 `16000 × 0.5 = 8000`（按字节折算是 0.25 秒）—— 那是 V1 自身的一处
-    **量纲笔误**，而它那行注释写的是 `< 0.5s 跳过`。V2 取注释与 task.md 的意图：
-    `int(SAMPLE_RATE * 0.5) * SAMPLE_WIDTH = 16000` 字节，也就是真的半秒。
-    这条用例断的是「判据在位、且丢的是尾音」（丢的是 `0.2–0.5` 秒这一段，不跟 V1 的笔误走）。
+    这条用例断的是「判据在位、且丢的是尾音」（丢的是 `0.2–0.5` 秒这一段）。
 
-    这是队列语义那条硬要求允许的**唯一**一条丢弃路径（丢的是尾音），判据住在 `_enqueue` 的
+    这是队列语义允许的**唯一**一条丢弃路径（丢的是尾音），判据住在 `_enqueue` 的
     入口那一格 —— 从队列出口取段的用例一条都碰不到它，所以要在这里直接投一段 0.2 秒的语音。
     对照组是后面那一段 0.6 秒的语音：它照常进队、照常落成一行（证明这个入口不是把什么都挡了）。
     """
@@ -523,17 +478,11 @@ def test_placeholders_are_the_frozen_shapes_without_speaker_markup():
         assert match.group("text") == placeholder
 
 
-# ---------------------------------------------------------------------------
-# 进程内跑一条流水线（两路各出若干行 + 落盘格式 + 时间戳是采集时刻）
-# ---------------------------------------------------------------------------
-
-
 class SleepingTranscriber:
     """每一段先睡 `sleep_seconds` 再给一条成功结果（**拿它把「返回时刻」推后**）。
 
     用途：验时间戳的取值点。段在「读到这一块那一刻」就盖了章，模型慢只影响这一行**什么时候**
     写进产物，**不影响它带的时间戳** —— 这条判据是本单元的根因防线
-    （V1 的事故就是「等 ASR 返回后再取时间戳」，于是一个退化段把后面几分钟压成一堆）。
 
     `entries` 记下每一次**进入**识别的时刻：判据「盖章早于模型被进入」用它，
     它比「盖章 ≈ 返回时刻 - sleep」这种反推稳得多（反推要信 `sleep` 的精度）。
@@ -632,7 +581,6 @@ def test_line_timestamp_is_the_capture_moment_while_the_model_is_slow(session_di
     判据成对：盖章时刻必须**早于模型被进入**（`entries[0] + 0.05` 的余量），
     同时又要贴着「切出这一段的那一块静默被写进归档」的那一刻（±0.3 秒的读线程延迟）。
     模型返回比盖章晚 0.5 秒以上 —— 于是「时间戳 = ASR 返回时刻」那条退化写法两处都会红。
-    整条用例的等待约 1 秒，在 5 秒看门之内。
     """
     transcriber = SleepingTranscriber(sleep_seconds=0.6)
     recorder = LineRecorder()
@@ -830,7 +778,7 @@ def test_a_fresh_session_never_emits_a_gap_line(session_dir: Path):
 
 
 def test_a_pause_window_of_digital_silence_produces_no_lines(session_dir: Path):
-    """暂停窗口（整段的数字零）**一行转写都不产生**——静音不进正文（第 8 条的隐私线）。
+    """暂停窗口（整段的数字零）**一行转写都不产生**——静音不进正文。
 
     暂停写成同文件的数字零之后，这条由 VAD 与噪声预筛顺带保证；这里用真归档 + 真时间
     把它钉住：语音 → 一整段零 → 语音，产物里恰好两行，零窗一行都没有。
@@ -861,22 +809,14 @@ def test_a_pause_window_of_digital_silence_produces_no_lines(session_dir: Path):
     assert len(lines) == 2
 
 
-# ---------------------------------------------------------------------------
-# 每段日志的排队延迟（`wait=`：流水线落后的前兆）
-# ---------------------------------------------------------------------------
-
-
 def test_segment_log_reports_the_queue_wait_as_it_grows(session_dir: Path):
     """每段日志的 `wait=` 是**这一段在队列里等了多久**，并且会随排队增长。
 
-    `docs/specs.md:143-149` 的字段里，`wait` 是唯一一条「流水线落后」的可观测前兆
-    （V1 `mnotes_core/pipeline.py:140` 的 `waited = time.time() - captured_at`）。
     它要成立的前提是**两支钟同源**：盖章点写的是墙钟（`_tail_one_segment()` 的
     `on_chunk(data, time.time())`），取段那一刻也必须读墙钟 —— 混进单调钟之后
     `max(0.0, …)` 会把读数恒定夹成 `0.0`，这条前兆在 log 里就永远显示不出落后。
 
     造法：按住 worker 之后，第二段的盖章点故意落在 0.4 秒之前 —— 它只能等第一段做完。
-    读数若恒为 0.0，这条用例立刻红（受控破坏自证：把那一行改回 `time.monotonic()`）。
     """
     blocker = BlockingTranscriber(hold_seconds=3.0)
     pipeline = make_pipeline(session_dir, blocker)
@@ -902,11 +842,6 @@ def test_segment_log_reports_the_queue_wait_as_it_grows(session_dir: Path):
     assert max(waits) >= 0.35, (
         f"排队延迟必须随排队增长（读数恒 0.0 就是混用了两支钟）：{captured.messages}"
     )
-
-
-# ---------------------------------------------------------------------------
-# 三档失败：各自落成规定的方括号形状
-# ---------------------------------------------------------------------------
 
 
 def test_failed_segments_land_as_placeholders(session_dir: Path, monkeypatch):
@@ -993,11 +928,6 @@ def test_raising_model_writes_the_error_placeholder_without_partial_text(session
     assert line.endswith("[[识别失败: 错误]]")
     assert "假模型按要求抛错" not in line
     assert "Traceback" not in line
-
-
-# ---------------------------------------------------------------------------
-# 收尾预算（`30 + n × (timeout + 5)`，下限 30、封顶 300）
-# ---------------------------------------------------------------------------
 
 
 def test_drain_budget_matches_the_formula_and_the_cap(session_dir: Path):

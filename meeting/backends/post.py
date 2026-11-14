@@ -1,13 +1,10 @@
-"""会后钩子（设计）：会后离线转写那一层的**解析落点**。
+"""会后钩子：会后离线转写那一层的**解析落点**。
 
 `registry.resolve_post_hook()` 按 `post.hook` 找的就是本模块的 `PostProcessHook`
-（`DEFAULT_PATHS["post.hook"]` 那条约定路径）。**它只是一个解析落点**：收尾第 4 步
-不拉起任何会后动作（那一格做完释放显存就停在 `waiting`），「生成会后精细稿」按钮走
-`offline.runner.run_session(..., minutes=False)` 的直路也不经它 —— `post.hook` 在那一侧
-只答「这一层接没接」（`null` → 按钮 404 `action_unavailable`）。起 daemon 线程跑
-`meeting.post_run.run_post()` 的那套钩子机器（`launch` / `_run` / `_mark_failed`）没有任何
-产品调用方，已随收尾第 4 步的退场一并删除：**「跑会后一套」的产品入口只剩
-`meeting post` 这一条**。
+（`DEFAULT_PATHS["post.hook"]` 那条约定路径）。**它只是一个解析落点**：不拉起任何会后动作，
+「生成会后精细稿」按钮走 `offline.runner.run_session(..., minutes=False)` 的直路也不经它 ——
+`post.hook` 在那一侧只答「这一层接没接」（`null` → 按钮 404 `action_unavailable`）。
+**「跑会后一套」的产品入口只剩 `meeting post` 这一条**。
 
 **不实现 `finalize` / `transcode`**：那两项是采集后端的能力，采集侧那两步的闸门只看采集
 实现——`registry.capabilities_of()` 按实现自己声明的能力位（`writes_real_audio`）回答，
@@ -29,11 +26,7 @@ STATE_INTERRUPTED = "interrupted"
 
 
 class PostProcessHook:
-    """会后离线转写那一层的解析落点：**本类不带任何钩子方法**。
-
-    `post.hook` 的四档取值里 `auto` 落在这里；`null` 落 `registry._AbsentPostHook`
-    （缺席记 `skipped`，那是另一个档位的事）。
-    """
+    """会后离线转写那一层的解析落点：**本类不带任何钩子方法**。"""
 
 
 __all__ = [

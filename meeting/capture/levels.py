@@ -1,4 +1,4 @@
-"""电平换算（纯函数）—— 采集侧交给服务的「原始电平事实」（设计口径）。
+"""电平换算（纯函数）—— 采集侧交给服务的「原始电平事实」。
 
 本模块**不 import 声卡库、不起线程、不读配置**：给它一块 int16 样本，它交回三个 dBFS 数。
 采集引擎每 0.5 秒调一次，服务侧的 `push_level()` / `alerts.py` 只认交出去的那三个数。
@@ -13,9 +13,6 @@
 
 **为什么是「自己的钟」**：帧时间戳由采集侧给（`time.monotonic()`），`alerts.py` 拿它做差累计
 静默秒数，不拿墙钟做差 —— 慢机器上因此不虚报。本模块只出电平，时间戳由调用方带上。
-
-**这一块是新写的**：V1 里没有电平事实（它的 TUI 直接看队列深度与 VAD），所以本模块没有
-对照源，也不该有「搬自 V1」的出处注释。
 """
 
 from __future__ import annotations
@@ -46,7 +43,6 @@ def to_dbfs(amplitude: float) -> float:
 
 
 def rms_dbfs(samples: np.ndarray) -> float:
-    """一块 int16 样本的**均方根** dBFS（空块给 `SILENCE_DBFS`）。"""
     import numpy as np
 
     values = np.asarray(samples, dtype=np.float64).reshape(-1)
@@ -59,7 +55,6 @@ def rms_dbfs(samples: np.ndarray) -> float:
 
 
 def peak_dbfs(samples: np.ndarray) -> float:
-    """一块 int16 样本里**绝对值最大样本**的 dBFS（空块给 `SILENCE_DBFS`）。"""
     import numpy as np
 
     values = np.asarray(samples, dtype=np.float64).reshape(-1)
@@ -69,11 +64,7 @@ def peak_dbfs(samples: np.ndarray) -> float:
 
 
 def frame_level(samples: np.ndarray) -> tuple[float, float, float]:
-    """一个电平窗口 → `(dbfs, peak, bar)`（三处口径的唯一落点）。
-
-    `bar = max(dbfs, peak)`：`state.py` 的一根柱取的是这一帧的 `peak`，而 `bar` 是它的
-    同源读数，两者因此永远一致。
-    """
+    """一个电平窗口 → `(dbfs, peak, bar)`（三处口径的唯一落点）。"""
     rms_value = rms_dbfs(samples)
     peak_value = peak_dbfs(samples)
     return rms_value, peak_value, max(rms_value, peak_value)

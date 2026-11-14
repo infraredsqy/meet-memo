@@ -16,7 +16,7 @@
 ## 为什么落在慢档
 
 判据 ①（真服务子进程）与判据 ②（真墙钟等待）两条都成立：这个文件起一个真子进程、读它的
-真墙钟。归位判据见 `docs/service.md`；文件头这一行 `pytestmark` 是它进慢档
+真墙钟。文件头这一行 `pytestmark` 是它进慢档
 的唯一落点（**不塞进任何已有的快档文件**：那会让那个文件的单文件耗时越过 10 秒红线）。
 
 ## 为什么不删 `web/dist`
@@ -45,13 +45,12 @@ from meeting.cli import EXIT_OK
 from meeting.service.app import DIST_MISSING_MESSAGE
 from tests._service import SERVICE_ID
 
-#: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md`。
 pytestmark = pytest.mark.slow
 
 #: 本用例那份不存在的产物目录名（落在临时家目录下，与仓库里的 `web/dist` 无关）
 MISSING_DIST_DIR_NAME = "missing-dist"
 
-#: 起子进程与等就绪的墙钟上界（秒）—— 冷启动一个真服务在本机实测 1~2 秒，留足余量
+#: 起子进程与等就绪的墙钟上界（秒）
 SERVICE_STARTUP_TIMEOUT_SECONDS = 30.0
 
 #: 等子进程收场的墙钟上界（秒）
@@ -82,7 +81,7 @@ def test_a_real_web_process_serves_the_missing_dist_notice_and_exits_ok(
         pythonpath=str(Path(__file__).resolve().parent.parent),
     )
 
-    # ① 子进程起来了：那一行 `URL：…` 是**子进程自己**打在它自己的终端上的，而且它住在
+    # 那一行 `URL：…` 是**子进程自己**打在它自己的终端上的，而且它住在
     # 另一个进程里 —— 这两条一起把「真子进程」这个前提钉住：进程内 `TestClient` 那一档
     # 两头都做不到（它没有子进程的 stdout，pid 也是父进程自己）。
     base_url = proc.wait_ready(timeout=SERVICE_STARTUP_TIMEOUT_SECONDS)
@@ -94,29 +93,24 @@ def test_a_real_web_process_serves_the_missing_dist_notice_and_exits_ok(
         f"这一条该由真子进程承担，实测 pid={proc.pid}（跑用例的进程是 {os.getpid()}）"
     )
 
-    # ② `GET /` 是 200，正文是现成那个常量的内容（常量本身一个字不改）
     root = _get(f"{base_url}/")
     assert root.status_code == 200, f"GET / 该回 200，实测 {root.status_code}"
     assert DIST_MISSING_MESSAGE in root.text, (
         f"说明页里该有产物缺失的说明文案：{DIST_MISSING_MESSAGE!r}"
     )
 
-    # ③ `GET /api/heartbeat` 照常应答
     heartbeat = _get(f"{base_url}/api/heartbeat")
     assert heartbeat.status_code == 200, f"GET /api/heartbeat 该回 200，实测 {heartbeat.status_code}"
     assert heartbeat.json().get("service") == SERVICE_ID, f"心跳 body 不对：{heartbeat.text[:200]}"
 
-    # ④ `GET /api/state` 照常应答
     state = _get(f"{base_url}/api/state")
     assert state.status_code == 200, f"GET /api/state 该回 200，实测 {state.status_code}"
 
-    # ⑤ 服务没有为了这一页去把那个产物目录建出来
     assert not missing_dist.exists(), (
         f"服务把 {missing_dist} 建出来了；说明页承诺的是「产物一建好，刷新就能见」，"
         "它自己不该动那个目录"
     )
 
-    # ⑥ 发一次中断信号 → 退出码 `EXIT_OK`（空闲态退出档）
     proc.send_interrupt()
     code = proc.wait(timeout=SERVICE_EXIT_TIMEOUT_SECONDS)
     assert code == EXIT_OK, (
@@ -124,7 +118,6 @@ def test_a_real_web_process_serves_the_missing_dist_notice_and_exits_ok(
         f"stdout 末尾={proc.stdout()[-800:]!r} stderr 末尾={proc.stderr()[-800:]!r}"
     )
 
-    # 收场之后再确认一次：整个生命周期里它都没被建出来
     assert not missing_dist.exists(), f"服务收场之后 {missing_dist} 仍然不该存在"
 
 

@@ -1,20 +1,4 @@
-"""`tests/test_transcript_hints.py` —— 提示级告警的接线、广播语义与两条清除路径。
-
-这一单元之前 `AlertJudge.on_transcript_health()` / `on_backlog_depth()` 在整个 `meeting/`
-包里**零生产调用点**，`alerts.hints` 没有任何写入点，于是快照里那一格恒为空数组 ——
-设计要的「实时转写落后了」那条提示条在这套实现里根本画不出来。
-
-这里盯住的四件事（逐条对应 `task.md` 第三节）：
-
-  1. **接线落在 `ServiceRuntime._refresh_transcript_snapshot()` 上**（全仓唯一的转写刷新落点：
-     启动、开场、每行、0.5 秒节拍四处都经过它），并且**每次都调判定器** ——
-     持续提示条要在窗口内一直刷新 `duration_seconds`，只在 health 迁移那一刻调的话
-     条目会停在 `duration_seconds = 0`；
-  2. **广播语义**：提示级的**键集合**变化（新增 / 移除 / 被上限挤掉）要能被界面看见，
-     于是刷新返回「有变化」、调用点走一次 `commit()`（`revision +1` + 一次 `state` 广播）；
-  3. **同一键集合里 `duration_seconds` 的刷新不许为真** —— 0.5 秒的节拍不许把 `revision`
-     抖起来（契约第 3.3 节：转写通道不参与状态迁移）；
-  4. **两条清除路径**都走得通：health 回 `normal`、积压回落到门槛以下。
+"""提示级告警的接线、广播语义与两条清除路径。
 
 转写侧用替身后端摆布健康度与积压量（`dev` 替身恒报 `normal`，真机造不出 `behind`）。
 节拍那种「真的等 0.5 秒」的场合只留一条端到端用例，其余按**同一份调用序列**手动推进 ——
@@ -109,9 +93,9 @@ def settle(runtime, backend: StubTranscriber) -> None:
 def recording(tmp_path: Path, backend: StubTranscriber):
     """起一场录音（`top_state: recording`）之后的运行时 —— 提示级的成立范围。
 
-    **提示级只在 `recording` / `alert` 上成立**（`docs/ui-design.md` 章 2.5：空闲态与结束档
-    的告警区不出现），所以这些用例都先开一场；`live()` + `settle()` 收的是「空闲态、白纸」
-    那份起点，开场那一刻的 `_clear_hints()` 与这一场自己的刷新把提示级重新从零起算。
+    **提示级只在 `recording` / `alert` 上成立**，所以这些用例都先开一场；`live()` +
+    `settle()` 收的是「空闲态、白纸」那份起点，开场那一刻的 `_clear_hints()` 与这一场
+    自己的刷新把提示级重新从零起算。
 
     `yield` 出来的是三元组 `(client, runtime, started)`：`started` 标记开场那一刻就已经把
     stub 的读数摆进快照（stub 报 `behind` / 积压越线时就是这样），此时第一拍 `pump()`
@@ -141,11 +125,6 @@ def pump(runtime, *, times: int = 1) -> bool:
         if changed:
             runtime.commit()
     return changed
-
-
-# ---------------------------------------------------------------------------
-# 接线：提示级真的进快照
-# ---------------------------------------------------------------------------
 
 
 def test_health_drop_reaches_the_snapshot_as_a_hint(tmp_path):
@@ -213,11 +192,6 @@ def test_the_hint_judge_is_consulted_on_every_refresh(tmp_path):
         assert hints[0]["since"] == snapshot_of(client)["alerts"]["hints"][0]["since"]
 
 
-# ---------------------------------------------------------------------------
-# 广播语义：键集合变化提交一次，时长刷新不提交
-# ---------------------------------------------------------------------------
-
-
 def test_key_set_change_commits_and_duration_refresh_does_not(tmp_path):
     """键集合变化 → 刷新返回真、`revision` 涨；同一键集合内刷时长 → 返回假、`revision` 不动。
 
@@ -229,14 +203,12 @@ def test_key_set_change_commits_and_duration_refresh_does_not(tmp_path):
     with recording(tmp_path, backend) as (client, runtime, started):
         base = int(snapshot_of(client)["revision"])
 
-        # ① 提示级新增：一次变化、一次提交
         backend.health_value = "behind"
         assert pump(runtime) is True
         after_add = snapshot_of(client)
         assert int(after_add["revision"]) == base + 1
         assert len(after_add["alerts"]["hints"]) == 1
 
-        # ② 同一键集合内连推多拍（时长每拍都在刷）：一次都不许变、revision 原地不动
         for _ in range(5):
             time.sleep(0.03)
             assert pump(runtime) is False, "同一个键集合里刷时长不算变化"
@@ -244,13 +216,11 @@ def test_key_set_change_commits_and_duration_refresh_does_not(tmp_path):
         assert int(still["revision"]) == base + 1, "时长刷新不该推着 revision 走"
         assert len(still["alerts"]["hints"]) == 1
 
-        # ③ 再掉一档：新增一个键 → 又是一次变化
         backend.health_value = "stopped"
         assert pump(runtime) is True
         assert int(snapshot_of(client)["revision"]) == base + 2
         assert len(snapshot_of(client)["alerts"]["hints"]) == 2
 
-        # ④ 健康度回 normal：撤掉两条 → 键集合变化，同样提交一次
         backend.health_value = "normal"
         assert pump(runtime) is True
         after_clear = snapshot_of(client)
@@ -276,11 +246,6 @@ def test_hints_cap_of_three_also_counts_as_a_change(tmp_path):
         assert pump(runtime) is True, "被上限挤掉也是键集合变化"
         hints = snapshot_of(client)["alerts"]["hints"]
         assert len(hints) == HINT_LIMIT == 3
-
-
-# ---------------------------------------------------------------------------
-# 两条清除路径（走真实服务的那条路）
-# ---------------------------------------------------------------------------
 
 
 def test_health_recovery_clears_the_hint_from_the_snapshot(tmp_path):
@@ -325,11 +290,6 @@ def test_the_two_clear_paths_leave_each_other_alone(tmp_path):
         ], "队列还堆着，那条提示该留下"
 
 
-# ---------------------------------------------------------------------------
-# 端到端：0.5 秒节拍真的会把提示带上来
-# ---------------------------------------------------------------------------
-
-
 def test_the_health_ticker_carries_the_hint_without_any_new_line(tmp_path):
     """起一场之后，后台节拍自己把提示级刷进快照 —— 一行转写都不用来。
 
@@ -361,7 +321,6 @@ def test_the_health_ticker_carries_the_hint_without_any_new_line(tmp_path):
         assert [item["message"] for item in hints["alerts"]["hints"]] == ["转写落后了"]
         assert hints["transcript"]["health"] == "behind"
 
-        # 收尾一份现场，便于复审看「提示条与 revision 同时是什么样」
         revision = int(hints["revision"])
         for _ in range(3):
             time.sleep(0.1)
@@ -387,13 +346,8 @@ def test_hints_stay_empty_while_the_transcriber_reports_normal(tmp_path):
         assert snapshot_of(client)["alerts"] == {"critical": None, "hints": []}
 
 
-# ---------------------------------------------------------------------------
-# 提示级只在录音 / 告警态成立（C1）：空闲与结束档不出现，离开就清、下一场从零
-# ---------------------------------------------------------------------------
-
-
 def test_hints_stay_empty_in_idle_and_ended(tmp_path):
-    """`top_state ∈ {idle, ended}` 时 `alerts.hints` 恒为 `[]`（设计稿章 2.5 那张表）。
+    """`top_state ∈ {idle, ended}` 时 `alerts.hints` 恒为 `[]`。
 
     空闲态那个 `health == "stopped"` 报的是「真转写后端还没起过场次」，与录音中
     「转写停了」是两回事：判定权随状态收口，空闲与结束档不把读数交给判定器。

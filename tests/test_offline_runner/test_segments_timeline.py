@@ -47,12 +47,7 @@ from tests.test_offline_runner.test_silence_gate import (
     speech,
 )
 
-#: 慢档标记（收尾轮）：会后离线链的契约验收，归收尾跑。
 pytestmark = pytest.mark.slow
-
-# ---------------------------------------------------------------------------
-# 十三、段列表：几段拼一条时间轴（会后链吃段列表）
-# ---------------------------------------------------------------------------
 
 
 def _write_segment(root: Path, source: str, index: int, seconds: float, *, amplitude: int) -> Path:
@@ -98,7 +93,6 @@ def test_segments_concatenate_into_one_timeline(tmp_path) -> None:
     assert runner_module.measure_span(paths, offset=0.2, seconds=0.5).silent is False
     assert runner_module.measure_span(paths, offset=2.5, seconds=1.0).silent is False
     assert runner_module.measure_span(paths, offset=4.5, seconds=0.4).silent is False
-    # 跨段读一块：前半是段 1 的零、后半是段 2 的声
     counts = runner_module.pcm_sample_chunk_counts(paths, offset=2.5, seconds=1.0)
     assert int(counts.size) == SAMPLE_RATE
     assert int(np.max(np.abs(counts[: SAMPLE_RATE // 2]))) == 0
@@ -121,7 +115,6 @@ def test_single_pass_over_multiple_segments_feeds_one_concatenated_wav(tmp_path)
             return [OfflineSegment(0.0, 2.0, "S01", "拼起来的一句话")]
 
     run_session(session, engine=ReadingEngine(), config=FakeConfig(**{"post.chunk_seconds": 0}))
-    # 引擎只被调了一次，拿到的是 `_offline_chunks/` 里的一份 wav；数据区 = 段 1 + 段 2
     assert len(seen) == 1
     payload = seen[0]
     assert payload[:4] == b"RIFF"  # 一份现拼的 wav（引擎的入参总是单一文件）
@@ -129,16 +122,15 @@ def test_single_pass_over_multiple_segments_feeds_one_concatenated_wav(tmp_path)
     expected = _constant_pcm(1.0, 300) + _constant_pcm(1.0, 700)
     assert data == expected
     assert struct.unpack("<2h", data[:4]) == (300, 300)
-    # 跑完临时块照例扫干净
     assert not (session / CHUNK_DIR_NAME).exists()
     assert seg1.exists() and seg2.exists()  # 段文件一个字节都不动
 
 
 def test_multi_segment_mp3_series_feeds_the_decoded_waveform_not_raw_bytes(tmp_path) -> None:
-    """**P1（offline-mp3-fallback-series-corrupt-input）的回归**：单趟多段的 MP3，引擎
+    """单趟多段的 MP3，引擎
     收到的是**已解波形写成的 wav**，不是把各段裸字节硬拼进 wav 容器的坏容器。
 
-    旧行为（改前用自证脚本实证过）：`_materialize_series()` 无条件把各段裸字节按
+    旧行为：`_materialize_series()` 无条件把各段裸字节按
     int16 PCM 流写进容器——文件头说 PCM、数据区却是 MP3 帧字节，
     `_plan_for_source()` 已解好的波形在这条支路被无视。本条钉在 `_execute_chunks()`
     层面（issue 的最小场景）：归档 PCM 缺席 + MP3 在场 + 多于一段，喂已解波形，
@@ -181,9 +173,9 @@ def test_multi_segment_mp3_series_feeds_the_decoded_waveform_not_raw_bytes(tmp_p
 def test_multi_segment_mp3_that_cannot_be_decoded_lands_failed_without_the_engine(
     tmp_path, monkeypatch
 ) -> None:
-    """**同一条 P1 的另一半**：多段 MP3 解不出波形时**整路如实记失败**，引擎一次都不调。
+    """多段 MP3 解不出波形时**整路如实记失败**，引擎一次都不调。
 
-    旧行为（改前用自证脚本实证过）：解不出波形的那一趟照样把裸字节拼成 wav 送引擎，
+    旧行为：解不出波形的那一趟照样把裸字节拼成 wav 送引擎，
     假引擎还在坏容器上「跑成」了一块。现在坏容器不出手：解不出 → 逐块登记失败 →
     一块都没跑成 → `all_chunks_failed`，整路落 `failed`。
     """
@@ -220,7 +212,6 @@ def test_multi_segment_mp3_that_cannot_be_decoded_lands_failed_without_the_engin
 def test_a_two_segment_session_feeds_both_segments_of_both_routes(tmp_path) -> None:
     """续接过的一场（每路两段）整链验收：两段都到引擎、audio_seconds 是两段之和。
 
-    spec 完成判定「会后链拿这场会的音频喂模型时，两段都能被读到」的那一条：
     每路的段 1 + 段 2 按序拼成一份 wav 送进（假）引擎，逐字节可比；状态文件与
     运行报告的秒数读数跟着变成两段之和。全程假引擎，一次真模型调用都不发生。
     """
@@ -242,14 +233,12 @@ def test_a_two_segment_session_feeds_both_segments_of_both_routes(tmp_path) -> N
     )
 
     assert summary["state"] == "done"
-    # 两路各被调一次；每路拿到的数据区 = 它自己的段 1 + 段 2（按序、逐字节可比）
     assert len(seen) == 2
     expected = {
         source: _constant_pcm(1.0, first) + _constant_pcm(1.0, second)
         for source, (first, second) in amplitudes.items()
     }
     assert sorted(payload[44:] for _name, payload in seen) == sorted(expected.values())
-    # 状态文件：整场 done，两路的秒数读数都是两段之和；对照表的 audio 那格同源
     status = read_status(session)
     assert status["state"] == "done"
     for source in ("mic", "loopback"):
@@ -258,7 +247,6 @@ def test_a_two_segment_session_feeds_both_segments_of_both_routes(tmp_path) -> N
         assert cell["audio_seconds"] == pytest.approx(2.0)
         document = artifacts.read_speakers_artifact(session / cell["speakers"])
         assert document["audio"]["seconds"] == pytest.approx(2.0)
-    # 运行报告逐路那一行的秒数读数同源
     for source in ("mic", "loopback"):
         assert float(report_row(session, source)[2]) == pytest.approx(2.0)
     assert not (session / CHUNK_DIR_NAME).exists()
@@ -269,7 +257,7 @@ def test_a_corrupted_wall_clock_changes_no_conclusion(monkeypatch, tmp_path) -> 
 
     两份完全相同的场次目录，一份的 `session.json` 墙钟字段与段戳被改成胡话；
     同一引擎各跑一遍，逐字节比较三份产物与状态文件——除此之外任何代码都不许拿
-    墙钟核对（`docs/design-intent.md` 第 6 条；spec 完成判定第 4 条）。
+    墙钟核对。
     """
     # status 里 started_at 打的是 runner 运行那一刻的真实墙钟（秒级），跟结论无关；
     # 冻住这条时钟缝，逐字节比较才不用赌两次运行恰好落进同一秒。

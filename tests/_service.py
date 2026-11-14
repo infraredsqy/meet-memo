@@ -1,25 +1,10 @@
-"""真服务子进程夹具的驱动件与全部解析助手（设计口径）。
+"""真服务子进程夹具的驱动件与全部解析助手。
 
 **定位**：本文件是测试支持模块 —— 文件名不以 `test_` 开头，`pytest` **不收集**它；
 它**不是 `conftest.py`**，因此不提供 fixture（fixture 全在 `tests/conftest.py`）。
-
-**导出全集（八个名字，逐字冻结；只引用、不自起别名）**：
-
-    ServiceProcess / SseClient / post_action() / dev_inject() / read_session_json() /
-    write_config_json() / parse_sse_frame() / read_sse_frames()
-
-`__all__` **恰为这八个**；模块内另有几个**常量**（`SERVICE_ID` 与三条 SSE 行正则）随本模块
-一起工作，它们是本模块的实现细节，**不进导出名单**（名单一漂移，用例就会照着一个并不存在
-的导出名去 import）。`iter_session_dirs()` 这个无人使用的公开名已删掉。
-
-等待助手只有 `wait_until()` 一个名字（§2.2 / §3.8 的冻结口径，`wait_for` 这个旧名已清干净），
-**正本在 `tests/_helpers.py`**（原先本模块的那份已并进去，语义与签名以它为准），本模块与
-各用例一律从那里 import。
-
-与设计的 `tests/_helpers.py` 的分工（**同一职责只留一处落点**）：子进程的底层构造
-（`spawn_service()` / 家目录隔离 / 假 `webbrowser` 注入）与 ASGI 客户端仍在 `_helpers.py`
-里；本模块**复用**它们并在之上补齐设计契约要求的能力（`base_url` / 发中断信号 /
-读退出码 / 完整的环境变量覆盖），**不另起第二套子进程管理**。
+`__all__` **恰为这八个**；模块内另有几个**常量**（`SERVICE_ID` 与三条 SSE 行正则），
+它们**不进导出名单**（名单一漂移，用例就会照着一个并不存在的导出名去 import）。
+等待助手只有 `wait_until()` 一个名字，**正本在 `tests/_helpers.py`**。
 """
 
 from __future__ import annotations
@@ -41,14 +26,10 @@ import httpx
 from tests import _helpers as helpers
 from tests._helpers import REPO_ROOT, wait_until
 
-#: 服务标识（就绪判定与端口探针同一判据）
 SERVICE_ID = "meeting"
 
-#: 「这份快照不是 JSON 对象」那一次诊断的落点文件名（写在服务级 log 目录那一侧，
-#: 随本用例的临时目录一起消失）。`ServiceProcess.snapshot()` 用它把应答原文留成现场。
 SNAPSHOT_DUMP_NAME = "snapshot-shape-mismatch.txt"
 
-#: SSE 帧里 `event:` / `data:` / `id:` 三行的解析
 _EVENT_RE = re.compile(r"^event:\s*(.*)$")
 _DATA_RE = re.compile(r"^data:\s?(.*)$")
 _ID_RE = re.compile(r"^id:\s*(.*)$")
@@ -65,14 +46,8 @@ __all__ = [
 ]
 
 
-# ---------------------------------------------------------------------------
-# 真服务子进程
-# ---------------------------------------------------------------------------
-
-
 def _generate_console_ctrl_event(event: int, process_group: int) -> bool:
     """Windows：把 `CTRL_C_EVENT` / `CTRL_BREAK_EVENT` 定向发给某个进程组。
-
     走 `GenerateConsoleCtrlEvent`（`os.kill` 的 `CTRL_C_EVENT` 在 Windows 上不可靠：
     子进程收不到，用例会挂到超时）。返回是否调用成功。
     """
@@ -89,10 +64,8 @@ def _generate_console_ctrl_event(event: int, process_group: int) -> bool:
 def _hidden_startupinfo() -> Any:
     """Windows 上让服务子进程**不弹窗**（`SW_HIDE`，与宿主 `-WindowStyle Hidden` 同一件事）。
 
-    无控制台的宿主里 `Popen` 起的子进程会新建一个可见控制台窗口（`tests/
-    test_config_isolation.py` 里同名助手先落的那套口径，两处同一个落法）：本机 `AGENTS.md`
-    明令不用 `CREATE_NO_WINDOW`（那会让子进程以 `STATUS_DLL_INIT_FAILED` 死亡），
-    `STARTF_USESHOWWINDOW` + `SW_HIDE` 是这两条约束下的落法。
+    本机 `AGENTS.md` 明令不用 `CREATE_NO_WINDOW`（那会让子进程以 `STATUS_DLL_INIT_FAILED`
+    死亡），`STARTF_USESHOWWINDOW` + `SW_HIDE` 是这两条约束下的落法。
     """
     if os.name != "nt":
         return None
@@ -105,21 +78,13 @@ def _hidden_startupinfo() -> Any:
 class ServiceProcess(helpers.ServiceProcess):
     """一个真服务子进程（`[sys.executable, "-m", "meeting", "web"]`，cwd = 仓库根）。
 
-    在设计的 `_helpers.ServiceProcess` 之上补齐设计契约点名的三项能力与七项环境变量
-    覆盖：**`base_url`**（`MEETING_PORT=0` + 子进程启动输出解析）、**向子进程发中断信号**、
-    **读退出码**（`returncode`）；环境变量覆盖由调用方给全（`env=` 完整映射，或给
-    `home` + 各项；`PYTHONPATH` = 仓库根 + 临时假件目录，不需要假件时至少保留仓库根）。
-
-    **`capture=` 只在你显式传它时才生效**（审查问题 m5 / m6）：这一项写成 `MEETING_CAPTURE`
+    **`capture=` 只在你显式传它时才生效**：这一项写成 `MEETING_CAPTURE`
     进子进程 env，而它的优先级高于配置文件；缺省 `None` 表示采集后端**由用例的 `config.json`
-    表达**（`capture.backend`）。四条 `tests/test_e2e_*.py`、`tests/test_shutdown_signal.py`
-    与 `tests/test_drain.py` 都走这条路，两条子进程路径因此同源。
-
+    表达**（`capture.backend`）。
     **配置文件里没写 `capture.backend` 时，构造时补上测试层的共用缺省 `dev`**
     （`helpers.apply_backend_defaults()`，见 `helpers.DEFAULT_CAPTURE_BACKEND`）：
     产品缺省 `auto` 会解析到真实现，子进程 startup 里的 `probe()` 就去真枚举、真试开声卡
     设备了。用例显式写过的值（含 `null` / `auto` / 挂假件的 `module:Class`）一个字节都不动。
-
     `args=` 给的是**送给解释器的参数表**（`[sys.executable, *args]`），默认那条是
     `["-m", "meeting", action]`。用例需要「仍然跑真实服务、但外面包一层极小的启动脚本」时
     用它传 `["-c", "<脚本>"]` —— 例如 `tests/test_shutdown_signal.py` 的「两路信号同形」
@@ -151,7 +116,7 @@ class ServiceProcess(helpers.ServiceProcess):
         # `config.json` 里没写 `capture.backend` 时补 `DEFAULT_CAPTURE_BACKEND`（`dev` 替身）、
         # 没写 `post.hook` 时补 `DEFAULT_POST_HOOK`（`null` 缺席档）。不补的话产品缺省 `auto`
         # 会让子进程 startup 里的 `probe()` 走到真实采集入口上、收尾 `post` 那一步解析到
-        # 真实现（R26 之后那一格做完释放会中模型就停在 `waiting`，不自动跑会后）。
+        # 真实现。
         # 用例自己写过的值一个字节都不动（只补缺，见 `apply_backend_defaults()`）。
         helpers.apply_backend_defaults(home)
 
@@ -172,7 +137,7 @@ class ServiceProcess(helpers.ServiceProcess):
         if log_dir is not None:
             overrides["MEETING_LOG_DIR"] = str(log_dir)
         if capture is not None:
-            # **只有显式传 `capture=` 才写进子进程 env**（审查问题 m5 / m6）：`MEETING_CAPTURE`
+            # **只有显式传 `capture=` 才写进子进程 env**：`MEETING_CAPTURE`
             # 的优先级高于配置文件，一个静默的缺省值会把各用例自己写在 `config.json` 里的
             # `capture.backend` 压住（假件挂不上、替身选错档）。子进程的采集后端因此统一由
             # `config.json` 表达；这里的 `capture=` 留给「有意验环境变量覆盖」的用例，
@@ -223,7 +188,6 @@ class ServiceProcess(helpers.ServiceProcess):
         self._reader.start()
         self._base_url: str | None = None
 
-    # -- 读数 -------------------------------------------------------------
 
     def _pump(self) -> None:
         stream = self._proc.stdout
@@ -242,21 +206,18 @@ class ServiceProcess(helpers.ServiceProcess):
 
     @property
     def returncode(self) -> int | None:
-        """读退出码（进程还在跑时为 `None`）。"""
         return self._proc.poll()
 
     def poll(self) -> int | None:
         return self._proc.poll()
 
     def stdout(self) -> str:
-        """子进程 stdout 到目前为止的全部内容。"""
         return "".join(self._all_lines)
 
     def stdout_text(self) -> str:
         return self.stdout()
 
     def stderr(self) -> str:
-        """子进程 stderr（进程已收场时读管道；还在跑就返回空串，避免阻塞）。"""
         stream = self._proc.stderr
         if stream is None or self._proc.poll() is None:
             return ""
@@ -273,13 +234,11 @@ class ServiceProcess(helpers.ServiceProcess):
 
     @property
     def base_url(self) -> str:
-        """`MEETING_PORT=0` 时从子进程启动输出里解析出的地址（**不猜端口**）。"""
         if self._base_url is None:
             self._base_url = self.wait_for_base_url()
         return self._base_url
 
     def wait_for_base_url(self, *, timeout: float = 20.0) -> str:
-        """等子进程打印 `URL：http://127.0.0.1:<port>` 并解析成 `base_url`。"""
 
         def parsed() -> str | None:
             for line in list(self._all_lines):
@@ -294,7 +253,6 @@ class ServiceProcess(helpers.ServiceProcess):
         return int(self.base_url.rsplit(":", 1)[1])
 
     def wait_ready(self, *, timeout: float = 20.0) -> str:
-        """就绪判定 = `/api/heartbeat` 回 200 且 body 里 `"service": "meeting"`。"""
         url = self.wait_for_base_url(timeout=timeout)
 
         def ready() -> bool:
@@ -317,11 +275,9 @@ class ServiceProcess(helpers.ServiceProcess):
     def snapshot(self) -> dict[str, Any]:
         """读一次 `/api/state` 并返回那份快照。
 
-        **状态码在这一层就断言**（审查问题 m7c）：`GET /api/state` 是「收尾期间照常可观测」
-        这条判据的读入口（§3.1 第 6 条），拿到一份非 200 的应答说明服务答得不对 —— 那件事
-        必须当场说话，不能悄悄回一份别的什么 JSON 让调用点接着断言字段。此前这里只做
-        `response.json()`，而 `tests/test_drain.py` 的注释已经声称「`proc.snapshot()` 自己就
-        断言状态码」，两处对不上；现在二者一致。
+        **状态码在这一层就断言**：`GET /api/state` 是「收尾期间照常可观测」
+        这条判据的读入口，拿到一份非 200 的应答说明服务答得不对 —— 那件事必须当场说话，
+        不能悄悄回一份别的什么 JSON 让调用点接着断言字段。
 
         **形状也在这里就断言**（同一条口径的下一格）：这份快照**必须是一个 JSON 对象**。
         少了这一格，一份不是对象的应答会一路走到调用点的 `snapshot["ended"]` 上，炸成一句
@@ -369,11 +325,9 @@ class ServiceProcess(helpers.ServiceProcess):
             report += f"；本条诊断落盘失败：{type(exc).__name__}: {exc}"
         return report
 
-    # -- 信号 / 收场 -------------------------------------------------------
 
     def send_interrupt(self) -> None:
         """向子进程发中断信号（Windows 上经 `CTRL_BREAK_EVENT`，对应服务侧的 `SIGBREAK`）。
-
         信号常量**取自 `signal` 模块**（`CTRL_BREAK_EVENT` / `CTRL_C_EVENT`）：
         手写数字会撞上别的信号（`6` 是 `SIGABRT`，子进程会以「被中止」收场，走不到本服务的关停路径）。
         """
@@ -384,7 +338,6 @@ class ServiceProcess(helpers.ServiceProcess):
 
     def send_ctrl_c(self) -> None:
         """发 `CTRL_C_EVENT`（与 `CTRL_BREAK_EVENT` 走服务侧的同一个处理函数）。
-
         `os.kill(pid, signal.CTRL_C_EVENT)` 在 Windows 上**不可靠**（子进程收不到，
         用例会挂到超时），这里用 `GenerateConsoleCtrlEvent` 定向发给子进程所在的进程组 ——
         子进程由 `CREATE_NEW_PROCESS_GROUP` 起在同一组里，事件因此只落到它身上。
@@ -398,7 +351,6 @@ class ServiceProcess(helpers.ServiceProcess):
             self._proc.send_signal(signal.SIGINT)
 
     def wait(self, *, timeout: float = 20.0) -> int:
-        """等子进程收场并返回退出码。"""
         try:
             self._proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
@@ -408,7 +360,6 @@ class ServiceProcess(helpers.ServiceProcess):
         return int(self._proc.returncode or 0)
 
     def kill(self) -> None:
-        """硬杀（模拟断电 / 被任务管理器杀掉）：发 `kill()` 之后按同一个 grace 等它收场。"""
         if self._proc.poll() is None:
             self._proc.kill()
             self._proc.wait(timeout=helpers.PROCESS_TERMINATE_GRACE_SECONDS)
@@ -418,11 +369,7 @@ class ServiceProcess(helpers.ServiceProcess):
         """收场：先 `terminate`、等 `PROCESS_TERMINATE_GRACE_SECONDS` 秒、仍在才 `kill`，
         随后**关掉 stdout / stderr 两个管道**。
 
-        宽限秒数取自 `tests/_helpers.py` 的 `PROCESS_TERMINATE_GRACE_SECONDS`（契约 §3.8
-        文末那张表里的具名常量）：本文件与设计的 `ServiceProcess` 因此共用同一个口径，
-        不再各自写一个裸秒数。
-
-        关管道这一步是硬要求（M6）：`Popen(stdout=PIPE, stderr=PIPE)` 交回来的两个句柄
+        关管道这一步是硬要求：`Popen(stdout=PIPE, stderr=PIPE)` 交回来的两个句柄
         由本对象持有，收场路径不收它们，`python -m pytest -q -W always` 每条起过子进程的
         用例都会报一串 `ResourceWarning: unclosed file`。关闭之前先把**还在用的输出**读出来
         （`stderr()` 的语义不变：进程已收场时返回它读到的全部内容），因此诊断能力不丢。
@@ -439,7 +386,6 @@ class ServiceProcess(helpers.ServiceProcess):
 
     def _close_pipes(self) -> None:
         """把已用的输出先读出来，再关掉 stdout / stderr 两个管道（幂等）。
-
         - stdout 由 `_pump` 线程持续读走，这里只 `close()`（`_all_lines` 已完整）；
         - stderr 没有读线程，进程收场后 `stderr()` 会把它读空并缓存下来，再关句柄。
         """
@@ -459,17 +405,7 @@ class ServiceProcess(helpers.ServiceProcess):
         self.terminate()
 
 
-# ---------------------------------------------------------------------------
-# SSE 解析与读取
-# ---------------------------------------------------------------------------
-
-
 def parse_sse_frame(text: str) -> dict[str, Any]:
-    """把一个 SSE 帧的原文解析成 `{"event", "data", "id", "comment", "raw"}`。
-
-    `data` 是**解析后的 JSON**（解析不了时保留原文并标 `"parsed": False`）；
-    注释帧（`: ping`）里 `comment` 有值、`event` 为 `None`。
-    """
     frame: dict[str, Any] = {
         "event": None,
         "data": None,
@@ -512,7 +448,6 @@ def parse_sse_frame(text: str) -> dict[str, Any]:
 
 def _split_frame(buffer: str) -> tuple[str, str, str]:
     """从缓冲区里切出一个 SSE 帧：返回 `(帧原文, 分隔符, 剩下的部分)`。
-
     SSE 的空行既可能是 `\\n\\n`，也可能是 `\\r\\n\\r\\n`（uvicorn 在某些实现下会规范成后者），
     两者都要认，缺一种就会「一帧都读不到」。
     """
@@ -526,11 +461,6 @@ def _split_frame(buffer: str) -> tuple[str, str, str]:
 class SseClient:
     """一条 SSE 订阅（同步 `httpx.stream` + 后台读线程；`close()` 保证断开）。
 
-    用法（测试一律同步写）：:
-
-        with SseClient(base_url) as client:
-            first = client.read_frame(timeout=10.0)
-            frames = client.read_frames(3, timeout=10.0)
     """
 
     def __init__(self, base_url: Any, *, path: str = "/api/events", timeout: float = 30.0) -> None:
@@ -541,9 +471,7 @@ class SseClient:
         self._buffer = ""
         self._stop = threading.Event()
         # **每条订阅自己持有一条连接**（`close()` 关掉的就是它，不与别人共用），但 TLS 上下文
-        # 走 `tests/_helpers.py` 那份进程级共享的：本机新建 `httpx.Client` 的 0.83 秒几乎全花在
-        # `ssl.create_default_context()` 上，实测传进共享上下文之后只要 0.03 秒。明文回环上
-        # `verify` 对请求结果毫无影响，而本文件的好几条用例一条就要开两到四条订阅。
+        # 走 `tests/_helpers.py` 那份进程级共享的：明文回环上 `verify` 对请求结果毫无影响。
         self._client = httpx.Client(
             trust_env=False,
             timeout=httpx.Timeout(timeout, read=timeout),
@@ -555,7 +483,6 @@ class SseClient:
         self._reader = threading.Thread(target=self._pump, name="sse-reader", daemon=True)
         self._reader.start()
 
-    # -- 读 ---------------------------------------------------------------
 
     def _pump(self) -> None:
         try:
@@ -579,7 +506,6 @@ class SseClient:
         return "\n\n".join(self._raw)
 
     def read_frame(self, *, timeout: float) -> dict[str, Any]:
-        """读一帧（到超时抛 `AssertionError`，不留无上限等待）。"""
         try:
             return self._frames.get(timeout=timeout)
         except queue.Empty:
@@ -589,11 +515,9 @@ class SseClient:
             ) from None
 
     def read_frames(self, count: int, *, timeout: float) -> list[dict[str, Any]]:
-        """连读 `count` 帧（每一帧各自用同一个 `timeout` 兜住）。"""
         return [self.read_frame(timeout=timeout) for _ in range(int(count))]
 
     def read_until(self, name: str, *, timeout: float) -> dict[str, Any]:
-        """读到某个 `event:` 名为止（读到的其它帧丢弃）。"""
         deadline = time.monotonic() + float(timeout)
         while True:
             remaining = deadline - time.monotonic()
@@ -605,7 +529,6 @@ class SseClient:
 
     def read_event_frame(self, *, timeout: float) -> dict[str, Any]:
         """读**第一条带 `event:` 的帧**（`retry:` 与 `: ping` 这两类先跳过）。
-
         SSE 流开头那一条 `retry:` 是重连间隔的控制指令，它只带一个字段；契约说的
         「第一帧必须是 `snapshot`」指的是**第一条事件帧**。
         """
@@ -619,7 +542,6 @@ class SseClient:
                 return frame
 
     def frames(self) -> list[dict[str, Any]]:
-        """已经读到的全部帧（不等待）。"""
         out: list[dict[str, Any]] = []
         while True:
             try:
@@ -646,7 +568,6 @@ class SseClient:
 
 
 def _resolve_base_url(target: Any) -> str:
-    """`base_url` 可以给：字符串 / `ServiceProcess` / Starlette `TestClient`。"""
     if isinstance(target, str):
         return target.rstrip("/")
     for attr in ("base_url",):
@@ -659,14 +580,12 @@ def _resolve_base_url(target: Any) -> str:
 
 
 def read_sse_frames(client: Any, count: int = 1, *, timeout: float) -> list[dict[str, Any]]:
-    """按计数连读若干帧（`timeout` 必传）。"""
     if isinstance(client, SseClient):
         return client.read_frames(count, timeout=timeout)
     return [parse_sse_frame(item) for item in _read_via_httpx(client, count, timeout)]
 
 
 def _read_via_httpx(base_url: str, count: int, timeout: float) -> list[str]:  # pragma: no cover
-    """给「直接给一个 URL 字符串」的调用点用的兜底读法。"""
     out: list[str] = []
     buffer = ""
     with httpx.stream("GET", f"{_resolve_base_url(base_url)}/api/events",
@@ -682,16 +601,9 @@ def _read_via_httpx(base_url: str, count: int, timeout: float) -> list[str]:  # 
     return out
 
 
-# ---------------------------------------------------------------------------
-# 动作 / 会话文件 / 配置
-# ---------------------------------------------------------------------------
-
-
 def post_action(base_url: Any, action: str, args: dict[str, Any] | None = None, **kwargs: Any):
     """打一次 `POST /api/actions`（**两个必需请求头由这里带全**，测试不自己拼头）。
 
-    走 `tests/_helpers.py` 的 `local_post()`：连接对象按 `(url, trust_env, timeout)` 复用 ——
-    本机新建一个 `httpx.Client` 要 0.83 秒，动作请求与状态轮询都不该为它买单。
     """
     body: dict[str, Any] = {"action": action}
     merged_args = dict(args or {})
@@ -722,7 +634,6 @@ def dev_inject(
     duration_seconds: float | None = None,
     **kwargs: Any,
 ):
-    """`dev_inject` 动作：**透传 `after_seconds` 与 `duration_seconds`**（「注入 → 恢复」可写）。"""
     args: dict[str, Any] = {"source": source, "fault": fault, "after_seconds": after_seconds}
     if duration_seconds is not None:
         args["duration_seconds"] = duration_seconds
@@ -730,7 +641,6 @@ def dev_inject(
 
 
 def read_session_json(session_dir: Path | str) -> dict[str, Any] | None:
-    """读一个场次目录里的 `session.json`（读不出来返回 `None`）。"""
     path = Path(session_dir) / "session.json"
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -740,7 +650,6 @@ def read_session_json(session_dir: Path | str) -> dict[str, Any] | None:
 
 def write_config_json(home: Path | str, values: dict[str, Any]) -> Path:
     """把「点号扁平键名 → 值」的映射写进 `<家目录>/.config/meeting/config.json`。
-
     键形与 `settings_update` 的 `args` **逐字同形**（只有一层点号扁平键名，不写嵌套）。
     """
     return helpers.write_config_json(Path(home), values)

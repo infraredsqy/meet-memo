@@ -4,13 +4,13 @@
 flush 落定自动在后台起、也可由补跑动作或命令行随时拉起；可暂停、可继续、可补跑。同一段
 判据服务三处入口（服务后台工序 / 界面补跑 / `meeting post` 的归档补齐），判据只住这一处。
 
-完成判据是**凭据**，不是产物文件：`meeting_transcode_<source>_<NNN>.json`（临时文件 +
+完成判据是**凭据**，产物文件只是伴随物：`meeting_transcode_<source>_<NNN>.json`（临时文件 +
 `os.replace` 原子写）记下源 PCM 字节数与时长、产物 MP3 字节数；补跑 / 重启核对时凭据
 缺失或对不上账 → 那段重做。「产物文件在那儿」永远不构成完成——强杀留下的半截 MP3 没有
 凭据，一定被认出来重做。转码实现仍只有 `capture.archive` 那一份（转完保留 PCM）；MP3
 先写临时名字再原子替换，半截产物永远不坐最终路径。
 
-盘上三张文件（命名与格式照离线层先例）：`meeting_transcode_status.json`（工序状态 +
+盘上三张文件：`meeting_transcode_status.json`（工序状态 +
 逐路 done/total/current_segment 与逐段行）、`meeting_transcode_progress.jsonl`（逐段进度
 记录）、逐段凭据。判据读盘、不依赖进程内存：重启后读数照旧，盘上停着一版 `running` 而
 本进程没有工序在飞时读方按 `in_process` 分「真的在跑」与「上次被杀停在半路」。
@@ -28,17 +28,17 @@ from typing import Any, Callable, Sequence
 
 from meeting.backends.base import SOURCE_IDS
 from meeting.atomicio import write_text_atomic
-# 归档 PCM 的形状只认**一个口径来源**：`meeting/capture/archive.py`（同款先例见
-# `meeting/asr/pipeline.py` 顶部）——这里不再抄第二份，防两处各自漂移。
+# 归档 PCM 的形状只认**一个口径来源**：`meeting/capture/archive.py`——这里不再抄第二份，
+# 防两处各自漂移。
 from meeting.capture.archive import EMPTY_PCM_BYTES, SAMPLE_RATE, SAMPLE_WIDTH
 from meeting.state import now_iso
 
 _log = logging.getLogger("meeting.capture.transcode")
 
-#: 工序状态文件名（照 `meeting_offline_status.json` 的先例）
+#: 工序状态文件名
 STATUS_NAME = "meeting_transcode_status.json"
 
-#: 逐段进度记录名（照 `meeting_offline_progress.jsonl` 的先例）
+#: 逐段进度记录名
 PROGRESS_NAME = "meeting_transcode_progress.jsonl"
 
 #: 逐段凭据的文件名前缀（`meeting_transcode_<source>_<NNN>.json`）
@@ -236,7 +236,7 @@ def write_credential(entry: TranscodeSegment, document: dict[str, Any]) -> Path:
     )
 
 
-# 状态与进度记录（照离线层先例：状态整份原子替换；记录一行一段、整份重写原子替换）
+# 状态与进度记录：状态整份原子替换；记录一行一段、整份重写原子替换
 
 
 def build_status(

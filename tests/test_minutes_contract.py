@@ -76,9 +76,7 @@ def two_source_plan() -> dict:
     )
 
 
-# ---------------------------------------------------------------------------
 # 一、通过的那一档
-# ---------------------------------------------------------------------------
 
 
 def test_two_sources_pass_with_per_source_continuity(two_source_plan: dict) -> None:
@@ -125,9 +123,7 @@ def test_optional_fields_are_free_to_omit() -> None:
     assert validate_segmentation(payload, expected_lines={"mic": 12}) is True
 
 
-# ---------------------------------------------------------------------------
 # 二、失败的那几档：消息里点得出 source 与段号
-# ---------------------------------------------------------------------------
 
 
 def test_a_gap_inside_one_source_is_rejected(two_source_plan: dict) -> None:
@@ -341,9 +337,7 @@ def test_a_bad_max_segments_is_rejected() -> None:
         validate_segmentation(_plan([_segment(1, "mic", 1, 12)]), max_segments=0)
 
 
-# ---------------------------------------------------------------------------
 # 二、`total_lines` 的两种形状：整数只服务单 source，多 source 要逐 source 的对象
-# ---------------------------------------------------------------------------
 
 
 def test_total_lines_as_a_per_source_object_covers_unequal_sources() -> None:
@@ -489,9 +483,7 @@ def test_a_source_with_no_declared_total_lines_at_all_is_not_silently_skipped() 
     assert validate_segmentation(payload) is True
 
 
-# ---------------------------------------------------------------------------
 # 三、`inputs.json` 那一格：逐 source 的真实行数从哪来
-# ---------------------------------------------------------------------------
 
 
 def test_expected_lines_from_inputs_uses_the_live_transcript() -> None:
@@ -609,9 +601,7 @@ def test_the_check_subcommand_falls_back_when_inputs_json_is_absent(
     assert "按方案自己声明的 total_lines" in capsys.readouterr().out
 
 
-# ---------------------------------------------------------------------------
 # 四、读盘入口：三种能分辨的错误
-# ---------------------------------------------------------------------------
 
 
 def test_load_segmentation_reads_a_valid_file(tmp_path: Path) -> None:
@@ -750,9 +740,7 @@ def test_expected_lines_from_chunks_rejects_a_report_without_total_lines() -> No
         expected_lines_from_chunks({"mic": object()})
 
 
-# ---------------------------------------------------------------------------
 # 四、全新解释器里的 import 链：重依赖一个都不许被拉进来
-# ---------------------------------------------------------------------------
 
 #: 在子进程里跑的一行：import 整包与四个模块，再报出**重依赖**
 _IMPORT_CHAIN_CODE = (

@@ -43,12 +43,7 @@ from tests.test_offline_runner._common import (
     read_status,
 )
 
-#: 慢档标记（收尾轮）：会后离线链的契约验收，归收尾跑。
 pytestmark = pytest.mark.slow
-
-# ---------------------------------------------------------------------------
-# 一、一场会跑完：三份产物 + 状态文件
-# ---------------------------------------------------------------------------
 
 
 def test_run_session_writes_every_artifact(tmp_path) -> None:
@@ -101,7 +96,6 @@ def test_run_session_writes_every_artifact(tmp_path) -> None:
     assert "## 失败原因分布" in report
     assert "## 段耗时分布" in report
     assert "（无失败）" in report
-    # 两路各自查得到
     assert "| mic |" in report and "| loopback |" in report
 
 
@@ -167,11 +161,6 @@ def test_status_is_running_before_the_sources_run(tmp_path, monkeypatch) -> None
     assert read_status(session)["state"] == "done"
 
 
-# ---------------------------------------------------------------------------
-# 二、两路隔离
-# ---------------------------------------------------------------------------
-
-
 def test_two_sources_get_separate_files_and_never_collide(tmp_path) -> None:
     """两路各自成文件，`mic:S01` 与 `loopback:S01` 同时存在且不相等。"""
     session = synth_session(tmp_path / "250919")
@@ -190,10 +179,8 @@ def test_two_sources_get_separate_files_and_never_collide(tmp_path) -> None:
     assert loop_ids == {"loopback:S01"}
     assert mic_ids & loop_ids == set()
     assert mic_ids != loop_ids
-    # 同一批引擎标签在两路各自规范化成 S01（编号互不相认）
     assert mic["speakers"][0]["local"] == loop["speakers"][0]["local"] == "S01"
     assert mic["speakers"][0]["label_raw"] == loop["speakers"][0]["label_raw"] == "S02"
-    # 两个文件各自写着各自的 source
     assert mic["source"] == "mic"
     assert loop["source"] == "loopback"
 
@@ -206,11 +193,6 @@ def test_declared_sources_comes_from_session_json(tmp_path) -> None:
     bare = tmp_path / "bare"
     bare.mkdir()
     assert declared_sources(bare) == ("mic", "loopback")
-
-
-# ---------------------------------------------------------------------------
-# 三、一路音频不可用：如实记录，另一路照常产出
-# ---------------------------------------------------------------------------
 
 
 def test_a_missing_source_is_recorded_and_the_other_still_runs(tmp_path) -> None:
@@ -228,25 +210,19 @@ def test_a_missing_source_is_recorded_and_the_other_still_runs(tmp_path) -> None
     assert status["state"] == "partial"
     assert REASON_NO_AUDIO in (status["error"] or "")
     assert "loopback" in (status["error"] or "")
-    # 缺席那一路不落产物（也不留一份空文件充数），但**在状态文件里有一格**：
-    # `state = failed` + `reason = no_audio`，读方只看逐路那一档就知道缺的是哪一路
     assert not (session / "meeting_offline_transcript_loopback.md").exists()
     failed_row = status["artifacts"]["loopback"]
     assert failed_row["state"] == "failed"
     assert failed_row["reason"] == REASON_NO_AUDIO
     assert failed_row["transcript"] is None and failed_row["speakers"] is None
     assert failed_row["error"] and REASON_NO_AUDIO in failed_row["error"]
-    # 另一路照常
     assert (session / "meeting_offline_transcript_mic.md").exists()
     assert "mic" in status["artifacts"]
-    # 引擎只被调了一次，收到的是 mic 那一路
     assert [Path(call).name for call in engine.calls] == ["meeting_audio_mic_001.pcm"]
-    # 报告里两路各一行，失败那一行的原因查得到
     report = (session / artifacts.REPORT_NAME).read_text(encoding="utf-8")
     assert "| loopback | （缺）" in report
     assert f"{REASON_NO_AUDIO}：" in report
     assert summary["transcripts"]["mic"]["segments"] == 2
-    # 摘要那一格**两路都在**（没跑成的那一路也在，带着它自己的终态与原因）
     assert summary["transcripts"]["loopback"]["state"] == "failed"
     assert summary["transcripts"]["loopback"]["reason"] == REASON_NO_AUDIO
 

@@ -9,9 +9,9 @@ import { clockLabelWhileLost, frozenClockValue, recoveredNoteText } from '../hea
 import type { LiveView as LiveViewModel } from '../view';
 
 /**
- * 会中屏的顶栏（ui-design 2.4）：左边状态胶囊与「已恢复」一行，中间时长与主按钮 ——
+ * 会中屏的顶栏：左边状态胶囊与「已恢复」一行，中间时长与主按钮 ——
  * 空闲是「开始录音」，录音 / 告警是四组合直切 + 「结束录音」，右边忙闲一格与设置钮。
- * 设置抽屉（R32）跟这颗按钮是一对，开关状态也住在这里；四组合的受理反馈与
+ * 设置抽屉跟这颗按钮是一对，开关状态也住在这里；四组合的受理反馈与
  * 「已恢复」一行由调用方算好递进来。
  */
 export function LiveTopBar({
@@ -28,11 +28,9 @@ export function LiveTopBar({
   onSetting,
   onReprobe,
 }: {
-  /** 服务推来的那一份快照（冻结时长与设置抽屉的当前值都从它读）。 */
   snapshot: Snapshot;
   view: LiveViewModel;
   lost: boolean;
-  /** 「已恢复」那一行的间隔秒数；这一档不显示时是 `null`。 */
   recoveredGapSeconds: number | null;
   busy: boolean;
   /** 四组合控件此刻亮哪一档：半途亮按下去的那档（乐观），落地后亮快照说的那档。 */
@@ -44,7 +42,6 @@ export function LiveTopBar({
   onSetting: (key: string, value: unknown) => void;
   onReprobe: () => void;
 }): ReactNode {
-  /** 设置抽屉开着没有（R32：一个设置按钮 → 网页内小窗；）。 */
   const [settingsOpen, setSettingsOpen] = useState(false);
   const showStart = snapshot.top_state === 'idle';
   const showEnd = snapshot.top_state === 'recording' || snapshot.top_state === 'alert';
@@ -73,7 +70,7 @@ export function LiveTopBar({
         <div className="topbar__main">
           <span className={`clock ${view.clock.faint ? 'clock--faint' : ''}`}>
             {/* 失联：标签改「最后读数」，数字也一起冻在最后一份快照的已录时长上
-                （clockLabelWhileLost / frozenClockValue）—— 数字不许再走 */}
+                —— 数字不许再走 */}
             <span className="clock__label">
               {lost ? clockLabelWhileLost() : view.clock.label}
             </span>
@@ -126,12 +123,10 @@ export function LiveTopBar({
         </div>
 
         <div className="topbar__right">
-          {/* 全局只留这一格「显卡忙不忙」（R31）：画法与工作区栏底共用同一份
+          {/* 全局只留这一格「显卡忙不忙」：画法与工作区栏底共用同一份
               （`WorkspaceRail.tsx` 的 `GpuCell`）。全站没有全局进度条 ——
               进度跟着各自的工作区走。 */}
           <GpuCell gpu={gpu} />
-          {/* 设置按钮（R32：一个设置按钮 → 网页内小窗；类名契约把「齿轮」这一档
-              预留在 topbar__right，styles/live.css 的 glyph--*） */}
           <button
             className="btn btn--small btn--ghost"
             type="button"
@@ -144,7 +139,7 @@ export function LiveTopBar({
         </div>
       </header>
 
-      {/* 设置抽屉（R32）：五项设置就地写进 config；ASR 那五个参数不进这扇窗（章 14） */}
+      {/* 设置抽屉：ASR 那五个参数不进这扇窗 */}
       {settingsOpen && (
         <SettingsDrawer
           snapshot={snapshot}

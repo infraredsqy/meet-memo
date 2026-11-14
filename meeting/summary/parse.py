@@ -2,9 +2,7 @@
 
 两块各管一件事，合起来把「模型吐回来的一段文本」变成「界面上的三小段」。
 
-## 一、`parse_bullets()`：照搬 B15 的语义
-
-出处是 V1 `mnotes_core/summarizer.py` 的 `_parse_bullets()`（第 240-265 行），三步逐条照搬：
+`parse_bullets()` 三步：
 
   1. `strip()`；
   2. 整体以 ``` 开头就去掉首行、末行（```json 围栏的容忍）；
@@ -16,7 +14,7 @@
 比如纯噪声或重复，它**不算失败**）；其余一切（不是 JSON、没有 `bullets` 键、
 `bullets` 里混了数字、元素是空串）交回 `None`，由调用方转成一次重试。
 
-## 二、`split_sections()`：把每一条归到设计章 2.3 的三小段
+`split_sections()`：把每一条归到三小段。
 
 三条固定标签是**前缀**（允许前后空白）：
 
@@ -39,13 +37,13 @@ import json
 import re
 from collections.abc import Sequence
 
-#: 代码围栏开头的判据（照 V1：只看整段是不是以 ``` 起头）
+#: 代码围栏开头的判据（只看整段是不是以 ``` 起头）
 FENCE_PREFIX = "```"
 
-#: 从整段里抠 JSON 对象的那条正则（照 V1 的 `re.search(r"\{.*\}", text, re.DOTALL)`）
+#: 从整段里抠 JSON 对象的那条正则
 JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
 
-#: 三条固定标签 → 三小段的名字（设计章 2.3 的三小段）
+#: 三条固定标签 → 三小段的名字
 SECTION_LABELS: dict[str, str] = {
     "what": "【讲什么】",
     "where": "【讲到哪】",
@@ -67,7 +65,7 @@ _LABEL_TO_SECTION: dict[str, str] = {
 def parse_bullets(raw: str) -> list[str] | None:
     """从模型输出里抠出 `{"bullets": [...]}`，交回字符串列表；解析不出来交回 `None`。
 
-    三条路各自的结果（`tests/test_summary_parse.py` 逐条盯着）：
+    三条路各自的结果：
 
       - `{"bullets": ["a", "b"]}` → `["a", "b"]`（元素各自 `strip()`）；
       - 外面裹一层 ` ```json ` 围栏的同一段 → 同上（围栏去掉）；

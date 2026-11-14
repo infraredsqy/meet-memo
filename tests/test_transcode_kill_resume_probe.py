@@ -1,4 +1,4 @@
-"""造场探针（spec「转码搬出收尾」完成判定第一条）：转码跑到一半强杀进程 → 重启 → 补跑收口。
+"""造场探针：转码跑到一半强杀进程 → 重启 → 补跑收口。
 
 **造场**（真服务子进程 + 真 ffmpeg 转码； autopilot 红线之内 —— 不碰任何模型端点）：
 
@@ -33,28 +33,24 @@ from tests import _helpers as helpers
 from tests._helpers import wait_until
 from tests._service import post_action
 
-#: 慢档标记：真服务子进程 + 真 ffmpeg，不进每次迭代圈（全量档归收尾）。
 pytestmark = pytest.mark.slow
 
-#: 每路段数与每段秒数：段要够多，强杀才来得及落在工序半路。
+#: 段要够多，强杀才来得及落在工序半路。
 SEGMENTS_PER_SOURCE = 10
 SEGMENT_SECONDS = 1.5
-#: PCM 的形状（16k / 单声道 / int16）：每秒 32000 字节。
+#: PCM 的形状（16k / 单声道 / int16）。
 BYTES_PER_SECOND = 32000
 
 #: 杀前事件：盘上认账凭据落满 2 段就杀，等的是「凭据落盘」这个事实、不数钟点。
 #: 取小是为了让强杀尽量早地落进工序半路，与「20 段全部转完」拉开间隔；判据与服务
 #: 共用 `segment_done` 那一份（凭据在且认账），补跑认的正是同一批凭据。
 KILL_AFTER_SEGMENTS = 2
-#: 杀前事件的探测间隔（秒）：短间隔探测循环，不拿固定长 sleep 等杀点。
+#: 短间隔探测循环，不拿固定长 sleep 等杀点。
 KILL_PROBE_INTERVAL_SECONDS = 0.02
-#: 等杀前事件落盘的上限（秒）。
 KILL_WAIT_SECONDS = 20.0
 
-#: MP3 时长与 PCM 时长的容差（秒；与 `tests/test_capture_e2e.py` 同一档）。
 MP3_DURATION_TOLERANCE_SECONDS = 0.15
 
-#: 等补跑收工的上限（秒）。
 RESUME_TIMEOUT_SECONDS = 60.0
 
 SOURCES = ("mic", "loopback")
@@ -136,7 +132,6 @@ def test_a_transcode_killed_mid_run_resumes_and_every_mp3_decodes(
     workspace = _craft_session(env.out_root)
     env.write_config({"capture.backend": "dev"})
 
-    # ① 第一趟：起真服务、登记、补跑动作起真转码工序
     proc = service_process(home=env.home, out_root=env.out_root, extra_env=env.env)
     base_url = proc.wait_ready(timeout=20.0)
     opened = post_action(base_url, "workspace_open", {"dir": str(workspace)})
@@ -149,7 +144,6 @@ def test_a_transcode_killed_mid_run_resumes_and_every_mp3_decodes(
         "started": True,
     }, receipt.text
 
-    # ② 短间隔探测盘面：一落出 ≥KILL_AFTER_SEGMENTS 段认账凭据（工序确实跑进了半路）就立刻强杀
     plan = transcode_module.plan_segments(workspace, SOURCES)
     done_segments = wait_until(
         lambda: (done if len(done := _done_segments(plan)) >= KILL_AFTER_SEGMENTS else None),
@@ -166,13 +160,11 @@ def test_a_transcode_killed_mid_run_resumes_and_every_mp3_decodes(
     assert on_disk_status is not None, "强杀后盘上该停着一版状态文件"
     assert on_disk_status["state"] in ("running", "paused"), on_disk_status
 
-    # ③ 造一份「半截产物」：拿一段凭据已认账的 MP3 改成垃圾（凭据记的字节数对不上 → 不认账）
     victim = done_segments[0]
     victim_mp3 = victim.mp3
     assert victim_mp3.is_file(), "被拿来造半截的那一段该已有产物"
     victim_mp3.write_bytes(b"half-written-garbage")
 
-    # ④ 重启服务、再按一次补跑（界面补跑动作同一条路；判据读盘，不依赖进程内存）
     proc2 = service_process(home=env.home, out_root=env.out_root, extra_env=env.env)
     base_url2 = proc2.wait_ready(timeout=20.0)
     # 重启后的读数：盘上停着的那版状态照它答，in_process 如实为假（本进程没人跑）
@@ -196,7 +188,6 @@ def test_a_transcode_killed_mid_run_resumes_and_every_mp3_decodes(
     )
     assert document["state"] == "done", document
 
-    # ⑤ 逐段核对：凭据认账 + MP3 可解 + 时长与 PCM 对得上；半截那一段被重做回成品
     from pydub import AudioSegment
 
     plan = transcode_module.plan_segments(workspace, SOURCES)

@@ -1,4 +1,4 @@
-"""`tests/test_alerts.py` —— 告警判定与阈值（设计口径第三行；§3.3）。
+"""`tests/test_alerts.py` —— 告警判定与阈值。
 
 **这一层是纯判定、进程内单测**（`AlertJudge` 不持有快照、不写状态、不广播）：
 逐帧累计、分级、抑制窗口与 `muted` 都由它算出，`ServiceRuntime` 只把结论落到快照上。
@@ -69,9 +69,7 @@ def clock_from(values: list[float]):
     return read
 
 
-# ---------------------------------------------------------------------------
 # 逐帧累计
-# ---------------------------------------------------------------------------
 
 
 def test_silence_accumulates_by_frame_timestamps_up_to_the_threshold():
@@ -134,9 +132,7 @@ def test_recovery_needs_the_full_recover_seconds():
     assert j.on_level_frame("mic", 6.2, -30.0).recovered is True
 
 
-# ---------------------------------------------------------------------------
 # 暂停：暂停区间不计入两条累计（`docs/design-intent.md` 第 17 条）
-# ---------------------------------------------------------------------------
 
 
 def test_pause_freezes_the_silence_count_however_long_it_lasts():
@@ -192,9 +188,7 @@ def test_reset_for_new_session_clears_the_pause():
     assert frame.alert is not None
 
 
-# ---------------------------------------------------------------------------
 # 抑制窗口与 muted
-# ---------------------------------------------------------------------------
 
 
 def test_alarm_suppression_window_and_new_event_after_recovery():
@@ -354,9 +348,7 @@ def test_alert_encodes_the_six_frozen_fields():
     }
 
 
-# ---------------------------------------------------------------------------
 # 提示级
-# ---------------------------------------------------------------------------
 
 
 def test_transcript_health_drop_produces_one_hint():
@@ -490,7 +482,7 @@ def test_hints_keep_the_earliest_three():
 
 
 def test_the_cap_reclaims_the_evicted_key_from_the_judge_bookkeeping():
-    """上限 3 挤掉的那条**从登记里回收**：`hints()` 与 `_hints` 恒同长（复审 m4）。
+    """上限 3 挤掉的那条**从登记里回收**：`hints()` 与 `_hints` 恒同长。
 
     只截断 `hints()` 的返回值、把多出来的键留在 `_hints` 里的话，登记会只增不减
     （探针实测：`hints()` 返回 3 条而内部 4 条，转写回 `normal` 之后仍是 4 条）。
@@ -525,7 +517,7 @@ def test_the_cap_reclaims_the_evicted_key_from_the_judge_bookkeeping():
 
 
 def test_reset_for_new_session_clears_the_hint_bookkeeping():
-    """`reset_for_new_session()` 清判定器时，提示级的**两份登记一起清**（复审 m3）。
+    """`reset_for_new_session()` 清判定器时，提示级的**两份登记一起清**。
 
     清 `_hints` 而留下 `_hint_started_at`（或反过来）会让「登记与快照是同一份真相」这条
     不变量有一刻不成立，下一场开场之后旧刻度还会影响新一场的 `duration_seconds`。
@@ -547,9 +539,7 @@ def test_reset_for_new_session_clears_the_hint_bookkeeping():
     assert fresh.duration_seconds == 0.0
 
 
-# ---------------------------------------------------------------------------
 # 阈值
-# ---------------------------------------------------------------------------
 
 
 def test_thresholds_come_from_config_and_are_never_shrunk():
@@ -584,9 +574,7 @@ def test_thresholds_come_from_config_and_are_never_shrunk():
     assert judge(silence_seconds=300.0).thresholds.silence_seconds == 300.0
 
 
-# ---------------------------------------------------------------------------
 # 抑制窗口的锚点：首发那一帧必须放行
-# ---------------------------------------------------------------------------
 
 
 def test_first_raise_is_audible_and_the_anchor_is_written_after_the_judgement():
@@ -660,7 +648,7 @@ def test_refresh_muted_never_releases_the_same_alert_again():
 
 
 def test_session_mute_holds_through_the_raise_in_flight_pass_through():
-    """首发帧那条「刚起、还没广播」的条目在**本场静音期间照样是 `true`**（复审 m5）。
+    """首发帧那条「刚起、还没广播」的条目在**本场静音期间照样是 `true`**。
 
     `refresh_muted()` 对 `raise_in_flight` 那一条跳过的是**抑制窗口那一半**的重算（好让
     广播出去的首发帧保持 `false`），会话级静音那一半照算。少了这一层，静音期间过一遍
@@ -693,9 +681,7 @@ def test_session_mute_holds_through_the_raise_in_flight_pass_through():
     assert fresh.muted is False, "恢复后新事件的首发又该出声"
 
 
-# ---------------------------------------------------------------------------
 # 提示级的清除路径
-# ---------------------------------------------------------------------------
 
 
 def test_health_hint_is_cleared_by_the_normal_transition():

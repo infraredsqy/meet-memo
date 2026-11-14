@@ -1,17 +1,5 @@
 """`GET /api/sessions/{id}` 那只单场状态端点的用例（会后视图的进度区）。
 
-本文件盯住五件事：
-
-  - **跑到一半读得到**：会后的活儿正在飞时打这只端点，读得到「第 N 块 / 共 M 块、
-    正在跑哪一路、已经跑了多久」；跑完之后同一只端点照旧给得出读数（改读盘上那份记录）；
-  - **两块回答两件事**：`offline.state` 照盘上那份如实答（盘上写 `running` 就答
-    `running`，崩在半路那一场因此答 `running`；盘上写 `partial` / `failed` 也照它自己
-    那一档答），`offline.in_process` 答「本进程里此刻有没有这一趟活」；
-  - **前七格与列表同源**：同一份盘上 `session.json`，`GET /api/sessions` 那一行与
-    这一只端点的前七格给同一个值（域外的值两处都如实落 `null`）；
-  - **纯读**：读它不涨 `revision`、不广播，快照九键一个字不动；
-  - **失败档**：目录不在原地、这一场没在工作台清单里 → 404，回通用失败信封。
-
 **全部用假件**：离线段那一趟在现场把 `runner.build_engine` 换成假引擎（与
 `tests/test_post_idempotency.py` 同一处接缝），一次真推理都不发生，也不占显卡。
 """
@@ -181,7 +169,6 @@ def test_the_progress_is_readable_while_the_offline_run_is_in_flight(
         _wait_job_done(runtime)
         config_module.set_current(previous)
 
-    # 跑完之后同一只端点照旧给得出读数（改读盘上那份记录）：两路各 3 块都跑完
     after = runtime.session_status_dict(str(session))
     assert after["has_offline"] is True
     assert after["offline"]["state"] == "done"
@@ -223,7 +210,7 @@ def test_the_seven_cells_match_the_list_row_when_the_disk_is_out_of_range(
 ) -> None:
     """前七格与 `GET /api/sessions` 同一行**同源**：盘上落在域外时两处给同一个值。
 
-    契约 4.9 写着前七格与 4.8 同一行同源、逐格语义见 4.8；这一条把「同一个事实在两处
+    这一条把「同一个事实在两处
     给同一个值」钉住：`session.json` 的 `state` 写成取值域之外的 `waiting` 时，三档口径
     照样答 `ended`（盘上有这份记录 = 录音已发生过，盘上 `state` 停在哪一档不进这个口径）、
     `date` 写成数字 `20250906`、`mode` 写成 `null` 时两处都如实答 `null`
@@ -315,7 +302,7 @@ def test_a_partial_status_file_is_answered_as_partial(
 
     与 `failed` / `running` 那几档同一个姿态：盘上写什么就答什么。折成 `done` 之后，
     一路整条没交回的会后与一趟跑成的会后在读数上同形 —— 读方（界面这一格、下拉看这一场
-    的人）就被骗了，而那正是本节点第二条 bug 的痛点。
+    的人）就被骗了。
     """
     runtime, previous = _runtime(tmp_path, monkeypatch, **{"post.chunk_seconds": CHUNK_SECONDS})
     session = _workspace_with_audio(tmp_path)
@@ -335,9 +322,6 @@ def test_an_interrupted_status_file_is_answered_as_interrupted(
 ) -> None:
     """盘上落 `interrupted`（人停在块边界）的那一场：这一格答 `interrupted`，**不许折成 running**。
 
-    折档行（之前）只认 `done` / `partial` / `failed` 三档，`interrupted` 会掉进
-    「别的档一律折 running」的兜底 —— 被人停下的那一场就在读数上永远「在跑」了。加进
-    白名单之后它与那三档同一个姿态：盘上写什么就答什么。
     """
     runtime, previous = _runtime(tmp_path, monkeypatch, **{"post.chunk_seconds": CHUNK_SECONDS})
     session = _workspace_with_audio(tmp_path)
@@ -425,12 +409,11 @@ def test_a_session_that_never_ran_post_reports_an_empty_reading(
 def test_the_endpoint_leaves_the_snapshot_and_the_list_alone(
     tmp_path, monkeypatch, restore_config
 ) -> None:
-    """快照顶层九键与列表每行十二键各归各位（快照九键是硬门，本节点不碰）。"""
+    """快照顶层九键与列表每行十二键各归各位（快照九键是硬门）。"""
     runtime, previous = _runtime(tmp_path, monkeypatch, **{"post.chunk_seconds": CHUNK_SECONDS})
     session = _workspace_with_audio(tmp_path)
     runtime.workspace_open(str(session))
     # 引擎一律用假件：产品路径缺省会去造真离线引擎（真加载权重、真占卡），
-    # 用例这一层不许走到那一步（见 `tests/test_cli_post_config.py` 的自述事故）。
     monkeypatch.setattr(offline_runner, "build_engine", lambda config=None: GatedEngine(
         threading.Event(), block_at=0
     ))
@@ -498,11 +481,6 @@ def test_the_list_carries_the_post_job_cell_at_the_top_level(
     assert {row["dir"]: row for row in done["sessions"]}[str(session)]["state"] == "ended"
 
 
-# ---------------------------------------------------------------------------
-# `minutes` 那一格：纪要那一层的盘上读数（判据读盘，重启后照旧）
-# ---------------------------------------------------------------------------
-
-
 def _minutes_cell(tmp_path, monkeypatch, restore_config, session: Path) -> dict:
     runtime, previous = _runtime(tmp_path, monkeypatch)
     try:
@@ -563,7 +541,7 @@ def test_the_minutes_cell_reads_the_disk_states(
 def test_the_minutes_cell_survives_a_corrupt_status_file(
     tmp_path, monkeypatch, restore_config
 ) -> None:
-    """状态文件坏了 → 如实 `idle`，不挡这只端点（读不出就是不认为有，第 6 条）。"""
+    """状态文件坏了 → 如实 `idle`，不挡这只端点（读不出就是不认为有）。"""
     session = _workspace_with_audio(tmp_path)
     (session / "meeting_minutes_status.json").write_text("{oops", encoding="utf-8")
     cell = _minutes_cell(tmp_path, monkeypatch, restore_config, session)

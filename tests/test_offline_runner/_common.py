@@ -43,7 +43,7 @@ def read_status(source: Path) -> dict:
 
 
 def verdict_of(document: dict) -> tuple[str, list[str]]:
-    """**读方的判据**（本节点给读方立的那一条，用例按它核）：只看状态文件回答两件事。
+    """**读方的判据**（给读方立的那一条，用例按它核）：只看状态文件回答两件事。
 
     「这一场跑成什么样」与「缺的是哪几路」都只读 `state` 与 `artifacts.<source>.state`
     这两档，不去解析顶层 `error` 那句拼接串 —— 拼接串是给人看的，判据落在这两档上。

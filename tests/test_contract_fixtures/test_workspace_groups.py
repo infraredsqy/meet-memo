@@ -28,12 +28,7 @@ from tests.test_contract_fixtures._common import (
     make_client,
 )
 
-#: 慢档标记（收尾轮）：真服务/真样本采集的收尾验收，不进每次迭代圈。
 pytestmark = pytest.mark.slow
-
-# ---------------------------------------------------------------------------
-# 工作区注册表与目录选择器（工作台收编节点）
-# ---------------------------------------------------------------------------
 
 
 def test_capture_workspace_group(tmp_path, make_client, monkeypatch, contract_regen):
@@ -65,7 +60,6 @@ def test_capture_workspace_group(tmp_path, make_client, monkeypatch, contract_re
     empty_listing = listed.json()
     assert empty_listing == {"sessions": [], "recent": None, "post_jobs": []}
 
-    # 造三个目的目录并逐个走「新会议」：空的 / 有会议材料的 / 疑似会议目录
     place = tmp_path / "contract-workspaces"
     place.mkdir()
     empty_dir = place / "empty_ws"
@@ -174,7 +168,7 @@ def test_capture_dirs_group(tmp_path, make_client, contract_regen):
         "name": "contract-dirs", "dir": str(place), "kind": "unknown", "suspected": False,
     }
     assert listing["up"] == str(place.parent)
-    assert [row["name"] for row in listing["dirs"]] == ["杂物间", "空会"]  # 按名字排序
+    assert [row["name"] for row in listing["dirs"]] == ["杂物间", "空会"]
 
     created = client.post(
         f"/api/dirs?dir={quote(str(place), safe='')}&name={quote('新会', safe='')}",
@@ -185,7 +179,7 @@ def test_capture_dirs_group(tmp_path, make_client, contract_regen):
     assert created_body["directory"]["kind"] == "empty"
     assert (place / "新会").is_dir()
 
-    # 同名再建：409 dir_exists（这一片自己的 code，先例是 material_missing）
+    # 同名再建：409 `dir_exists`
     exists = client.post(
         f"/api/dirs?dir={quote(str(place), safe='')}&name={quote('新会', safe='')}",
         headers={"X-Meeting-Service": "1"},
@@ -271,7 +265,6 @@ def test_capture_devices_group(tmp_path, make_client, monkeypatch, contract_rege
     assert int(client.get("/api/state").json()["revision"]) == int(before["revision"])
 
     emit({"devices/all.json": normalize(body)}, regen=contract_regen)
-
 
 def test_capture_session_status_group(tmp_path, make_client, contract_regen) -> None:
     """`GET /api/sessions/{id}` 那一份（会后视图的进度区，节点）。
@@ -443,10 +436,9 @@ def test_capture_session_status_interrupted_group(tmp_path, make_client, contrac
 
 
 def test_capture_session_transcripts_group(tmp_path, make_client, contract_regen) -> None:
-    """`GET /api/sessions/{id}/transcripts` 那只稿子正文端点的四档样本（本节点）。
+    """`GET /api/sessions/{id}/transcripts` 那只稿子正文端点的四档样本。
 
-    spec 完成判定点的四档：**两路都有 / 缺一路 / 两路都缺 / 目录不在**，逐份采集
-    （`contract/README.md`的清单随改）。样本记的是**形状**：
+    四档：**两路都有 / 缺一路 / 两路都缺 / 目录不在**，逐份采集。样本记的是**形状**：
 
     - `transcripts-both.json`：四份文件都在，正文逐字原样（`text` 是确定值）；
     - `transcripts-one-missing.json`：`mode = "mic"` 只采了一路——另一路的缺稿落
@@ -472,7 +464,6 @@ def test_capture_session_transcripts_group(tmp_path, make_client, contract_regen
             encoding="utf-8",
         )
 
-    # -- 档 1：两路都有（四份文件都在，正文逐字原样）------------------------
     both_dir = place / "250906"
     both_dir.mkdir()
     _write_session_json(both_dir, "both")
@@ -494,7 +485,7 @@ def test_capture_session_transcripts_group(tmp_path, make_client, contract_regen
         for cell in kind_cell["sources"]:
             assert set(cell) == {"source", "text"}
 
-    # -- 档 2：缺一路（mode = mic → 另一路 unrecorded；会后稿 mic 还没跑过 → absent）
+    # -- 档 2：缺一路
     one_dir = place / "260907"
     one_dir.mkdir()
     _write_session_json(one_dir, "mic")
@@ -513,7 +504,7 @@ def test_capture_session_transcripts_group(tmp_path, make_client, contract_regen
     assert offline_cells["mic"] == {"source": "mic", "reason": "absent"}
     assert offline_cells["loopback"] == {"source": "loopback", "reason": "unrecorded"}
 
-    # -- 档 3：两路都缺（mode = both、一份稿都没有 → 四路全部 absent）--------
+    # -- 档 3：两路都缺
     none_dir = place / "260908"
     none_dir.mkdir()
     _write_session_json(none_dir, "both")
@@ -525,7 +516,7 @@ def test_capture_session_transcripts_group(tmp_path, make_client, contract_regen
         for cell in kind_cell["sources"]:
             assert cell == {"source": cell["source"], "reason": "absent"}
 
-    # -- 档 4：目录不在（登记过的目录被移走 → 404 session_dir_missing）------
+    # -- 档 4：目录不在
     gone_dir = place / "260909"
     gone_dir.mkdir()
     _write_session_json(gone_dir, "both")

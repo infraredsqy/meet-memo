@@ -1,8 +1,4 @@
-"""RuntimeCatalogMixin 的「稿子正文」域分片：GET /api/sessions/{id}/transcripts。
-
-方法与方法间注释均自拆分前的 runtime_catalog.py 单文件 mixin 一字不改复制；
-本文件自写内容只有模块 docstring、import 与类声明行（模块级的缺稿判读小函数一并在此）。
-"""
+"""RuntimeCatalogMixin 的「稿子正文」域分片：GET /api/sessions/{id}/transcripts。"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -41,24 +37,18 @@ def _read_transcript_body(path: Path) -> str | None:
 
 
 class RuntimeCatalogTranscriptsMixin:
-    """「稿子正文」：两份稿 × 两路各一份（平级，纯读）。"""
-
-    # 稿子正文（`GET /api/sessions/{id}/transcripts`：会后区的两份稿）
-
     def session_transcripts_dict(self, target: Any) -> dict[str, Any]:
         """`GET /api/sessions/{id}/transcripts` 的应答体：**这一场的稿子正文**。
 
-        两份稿（`docs/design-intent.md` 第 11 条：**平级**，谁也不叫"权威"）× 两路
-        各一份，文件名是上游冻结的契约（`meeting/minutes/chunk.py` 同一套模板，按名字
-        找、不猜）：会中稿 `meeting_transcript_<source>.md`（会中那条链逐行追加的临时稿）、
-        会后稿 `meeting_offline_transcript_<source>.md`（会后整段重跑的产物）。
+        两份稿（**平级**，谁也不叫"权威"）× 两路各一份，文件名是上游冻结的契约
+        （`meeting/minutes/chunk.py` 同一套模板，按名字找、不猜）。
 
-        每一路**只回答两件事之一**：文件在 → `text` 带正文原样（`utf-8` + 
+        每一路**只回答两件事之一**：文件在 → `text` 带正文原样（`utf-8` +
         `errors="replace"`，与纪要切块读稿同一口径——半个坏字节折成替换字符，
         不让一份稿把整只端点带走）；文件不在 → `reason` 带缺稿的那一档：
         `unrecorded`（这一场 `session.json` 的 `mode` 没采这一路——没有它的稿是天经地义）
         或 `absent`（采了这一路但盘上没有这一份：会中稿被清 / 会后稿还没生成过）。
-        缺稿话由界面按 `reason` 翻（契约章 6：标签与句子归界面，服务不摆没有数的空格）。
+        缺稿话由界面按 `reason` 翻（标签与句子归界面，服务不摆没有数的空格）。
 
         `{id}` 的寻址与失败口径跟 `session_status_dict()` 同一套（404 两档：
         目录不在原地 / 不在工作台清单里）。**纯读**：不提交、不涨 `revision`、不广播。

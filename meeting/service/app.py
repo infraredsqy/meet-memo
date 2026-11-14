@@ -1,8 +1,7 @@
-"""Starlette 应用组装、端口策略、三道防线（设计口径–§3.8；设计口径的搬迁与接线）。
+"""Starlette 应用组装、端口策略、三道防线。
 
-`ServiceRuntime` 已搬到 `meeting/service/runtime.py`（名字与语义不改），本模块只导入；
-工厂入口 `build_runtime()` 仍在这里，`cli.py` 调用点不动。常驻本模块的四样（不搬、不在
-别处复制）：服务器子类 `ServiceServer`（重写 `capture_signals()`）、信号处理函数
+工厂入口 `build_runtime()` 在这里，供 `cli.py` 调用。常驻本模块的四样：服务器子类
+`ServiceServer`（重写 `capture_signals()`）、信号处理函数
 `handle_shutdown_signal`、安装点 `install_shutdown_signal_handlers()`、模块级
 `_shutdown_target`。端口策略（`bind_http_socket()` / `probe_meeting_service()`）定死
 标准库 socket + 单调钟 deadline，运行时代码不许 import httpx。三道本地防线（Host 校验 /
@@ -45,11 +44,8 @@ PROBE_TIMEOUT_SECONDS = 1.0
 #: 允许的 Host（回环 + localhost；挡 DNS rebinding）
 ALLOWED_HOSTS = ("127.0.0.1", "localhost")
 
-#: 产物缺失说明页文案（冻结项 17）
+#: 产物缺失说明页文案
 DIST_MISSING_MESSAGE = "前端产物还没构建。跑 `npm run build`，或先用 `/debug` 自检页看服务状态"
-
-
-# 运行时错误
 
 
 class PortUnavailableError(RuntimeError):
@@ -63,9 +59,6 @@ class PortUnavailableError(RuntimeError):
         self.occupied_by_meeting = occupied_by_meeting
         super().__init__(message)
 
-
-# 信号接管（常驻本模块：handle_shutdown_signal / install_shutdown_signal_handlers /
-# _shutdown_target / ServiceServer）
 
 #: 关停目标：`(loop, trigger)`，形态由设计冻结。`trigger` 必须是可被
 #: `call_soon_threadsafe` 直接调用的**同步 callable**：处理函数体把它当同步对象排进循环、
@@ -89,7 +82,7 @@ _shutdown_press_count = 0
 #: `_shutdown_press_count` 的锁（见上面那段：计数要线程安全，但锁里不做事）
 _shutdown_press_lock = threading.Lock()
 
-#: 第二次按下时写进场次 log 的那行文案（设计口径的表；名字由本项目新起）。
+#: 第二次按下时写进场次 log 的那行文案。
 #: 由 `ServiceRuntime.trigger_shutdown()` 在事件循环那一侧落 `meeting` logger。
 DRAIN_INTERRUPTED_MESSAGE = "收尾被强制打断（用户第二次 Ctrl+C）"
 
@@ -246,9 +239,6 @@ class ServiceServer(uvicorn.Server):
         return contextlib.nullcontext()
 
 
-# 端口策略（§3.6）
-
-
 def probe_meeting_service(
     host: str, port: int, *, timeout: float = PROBE_TIMEOUT_SECONDS
 ) -> bool:
@@ -343,7 +333,7 @@ def bind_http_socket(
 
     探测顺序定死：**先尝试绑**；绑定抛 `OSError` 才去探测占用者形状。
     `port = 0` 时不做占用探测（系统挑端口）。
-    端口被占 → 抛 `PortUnavailableError`（两处文案不同，见 §3.6）。
+    端口被占 → 抛 `PortUnavailableError`（两处文案不同）。
     """
     if port is None:
         port = int(config_module.get("web.port"))
@@ -372,8 +362,6 @@ def bind_http_socket(
         f"换一个端口再来，例如：MEETING_PORT=8766 meeting web",
         occupied_by_meeting=False,
     )
-
-# 应用组装（注册次序是硬约束：六条路由先注册，静态 / 说明页最后挂）
 
 
 def build_runtime(config: Any = None) -> ServiceRuntime:
@@ -610,8 +598,7 @@ def launch_browser(url: str) -> bool:
     if not opened:
         _log.warning("打开浏览器没成功（只警告、不阻塞）：%s", url)
         return False
-    # 成功这一支也必须留痕（契约 §3.13「必须落 log 的事件」含启动与选中的 URL；
-    # §1.1 / §6 的「不许静默」）：三支各自一行 —— 跳过、失败、成功。
+    # 成功这一支也必须留痕：三支各自一行 —— 跳过、失败、成功。
     _log.info("打开浏览器成功：%s", url)
     return True
 

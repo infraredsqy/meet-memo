@@ -1,15 +1,7 @@
 """`tests/test_devices_endpoint.py` —— 设置抽屉节点的服务面（快档）。
 
-覆盖三块，全部**不碰真实音频硬件**（设备枚举一律走假件，`tests/conftest.py` 的
-`_no_real_audio_capture` 那道看门照旧在岗）：
-
-  1. `GET /api/devices`（新只读端点）：两路各自的候选端点表、每项六格、
-     **纯读**（不涨 `revision`、不广播）、任何状态下都 200、枚举失败如实 503；
-  2. 三键写后即时可见（`HOT_KEYS` 收编的那四项里的三个非 ASR 键）：
-     `settings_update` 确定后无需重启 —— 快照 `settings.devices` /
-     `heartbeat_interval_seconds` / `summary_default_window` 当场换新值；
-  3. `reprobe` 按新设备值挑：写盘成功后内存生效值已换，`rebind_and_probe()` bind 给
-     后端的那份配置视图读到的就是新值（备料侦察风险 ① 的落地判据）。
+全部**不碰真实音频硬件**（设备枚举一律走假件，`tests/conftest.py` 的
+`_no_real_audio_capture` 那道看门照旧在岗）。
 """
 
 from __future__ import annotations
@@ -23,7 +15,7 @@ from meeting.capture.devices import DeviceEndpoint
 from tests import _helpers as helpers
 from tests._app_drivers import live, post, snapshot_of
 
-#: 假端点表（形状照 `tests/test_capture_probe.py` 的本机实测样子，名字自带「假-」前缀）
+#: 假端点表（名字自带「假-」前缀）
 FAKE_INPUTS = (
     DeviceEndpoint("假-Focusrite Analogue 1 + 2", "MME", "input", index=0, channels=4,
                    is_default=True),
@@ -43,11 +35,6 @@ def _install_fake_endpoints(monkeypatch) -> None:
     """把 `sources.py` 的两个枚举函数换成假件（`devices_listing()` 调用的是当下那份）。"""
     monkeypatch.setattr(sources_module, "list_input_endpoints", lambda: list(FAKE_INPUTS))
     monkeypatch.setattr(sources_module, "list_render_endpoints", lambda: list(FAKE_RENDERS))
-
-
-# ---------------------------------------------------------------------------
-# GET /api/devices
-# ---------------------------------------------------------------------------
 
 
 def test_devices_listing_shape_and_purity(tmp_path, monkeypatch):
@@ -71,10 +58,9 @@ def test_devices_listing_shape_and_purity(tmp_path, monkeypatch):
         assert body["mic"][0]["is_default"] is True, "系统默认输入端点带着 is_default 标记"
         assert body["mic"][0]["role"] == "input"
         assert body["loopback"][0]["role"] == "render"
-        # 纯读：revision 原地不动、不广播
         assert int(snapshot_of(client)["revision"]) == int(before["revision"])
 
-        # 录音态照样 200（清单只枚举端点表；换不换得了由界面按第 7 章禁用）
+        # 录音态照样 200（清单只枚举端点表）
         assert post(client, "start").status_code == 200
         assert client.get("/api/devices").status_code == 200
         del runtime  # live() 给的 runtime 在这一条里只用来证明不用它
@@ -95,11 +81,6 @@ def test_devices_listing_maps_enumeration_failure_to_capture_unavailable(tmp_pat
         assert body["ok"] is False
         assert body["code"] == "capture_unavailable"
         assert set(body["detail"]) == {"error"}
-
-
-# ---------------------------------------------------------------------------
-# 三键写后即时可见（无需重启）
-# ---------------------------------------------------------------------------
 
 
 def test_heartbeat_interval_and_summary_window_apply_at_once(tmp_path):
@@ -146,11 +127,6 @@ def test_heartbeat_interval_out_of_range_is_rejected_before_writing(tmp_path):
         assert config_module.INT_LIMITS["heartbeat.interval_seconds"] == (1, 60)
 
 
-# ---------------------------------------------------------------------------
-# reprobe 用新设备值（侦察风险 ① 的落地判据）
-# ---------------------------------------------------------------------------
-
-
 def test_reprobe_picks_up_the_newly_written_device_value(tmp_path):
     """先写 `devices.mic` 再 `reprobe`：bind 给后端的那份配置视图读到的就是新值。"""
     seen: list[str | None] = []
@@ -190,6 +166,5 @@ def test_reprobe_picks_up_the_newly_written_device_value(tmp_path):
         assert seen[-1] == written_value, (
             "reprobe 重新 bind 时读到的该是刚写进去的新值（写后即时生效，不等重启）"
         )
-        # 结果如实渲染：快照两路的 device_name 是这次探测报的
         sources = snapshot_of(client)["sources"]
         assert sources[0]["device_name"] == "假-换上的麦克风"

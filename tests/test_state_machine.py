@@ -10,7 +10,7 @@
   - `elapsed_seconds` 在 `recording` / `alert` 走秒、进 `ended` 冻结；
   - `envelope` = 最近 30 秒 / 15 根柱 / 一根 2 秒，**一根柱 = 它那 2 秒窗口内
     所有 `LevelFrame.peak` 的最大值**；
-  - `to_dict()` 的字段名与取值域逐条对齐 §3.1.2（`sources` 恰好两项、`health` 七取值、
+  - `to_dict()` 的字段名与取值域逐条对齐（`sources` 恰好两项、`health` 七取值、
     `settings` 五个子键齐全且 `devices` 的两个子键都在（没配时都是 `null`））；
   - **收尾闭环两个分支都断言**：
     `test_finish_drain_keeps_top_state_ended` 管成功分支（`finish_drain()` 之后
@@ -68,9 +68,7 @@ STATE_POLL_INTERVAL_SECONDS = 0.05
 CANCEL_PIN_SECONDS = 3.0
 
 
-# ---------------------------------------------------------------------------
 # 夹具：进程内的活运行时（起 ASGI 应用、startup 钩子跑过、绑定到回环 8765）
-# ---------------------------------------------------------------------------
 
 
 def build_live_client(tmp_path: Path, values: dict | None = None):
@@ -140,9 +138,7 @@ def wait_for_drain_done(client, *, timeout: float = STATE_POLL_TIMEOUT_SECONDS) 
     return _wait(check, timeout=timeout, what="ended.phase == done")
 
 
-# ---------------------------------------------------------------------------
 # 取值域与冻结常量
-# ---------------------------------------------------------------------------
 
 
 def test_state_vocabularies_are_the_frozen_ones():
@@ -316,9 +312,7 @@ def test_rejected_request_does_not_touch_disk_when_recording(tmp_path):
         stack.close()
 
 
-# ---------------------------------------------------------------------------
 # 三条铁律
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.slow
@@ -405,9 +399,7 @@ def test_heartbeat_fields_do_not_drive_any_transition(tmp_path):
         stack.close()
 
 
-# ---------------------------------------------------------------------------
 # revision 与时长
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.slow
@@ -432,9 +424,7 @@ def test_elapsed_seconds_runs_then_freezes(tmp_path):
         stack.close()
 
 
-# ---------------------------------------------------------------------------
 # 包络
-# ---------------------------------------------------------------------------
 
 
 def test_envelope_is_fifteen_bars_of_two_second_windows():
@@ -464,7 +454,7 @@ def test_envelope_is_fifteen_bars_of_two_second_windows():
 
 
 def test_envelope_grows_to_fifteen_bars_while_recording(tmp_path):
-    """录音中包络从空数组长成 15 根柱（真服务 + dev 替身，§5.2 第 4 条）。"""
+    """录音中包络从空数组长成 15 根柱（真服务 + dev 替身）。"""
     stack, client, runtime = build_live_client(tmp_path, {"capture.backend": "dev"})
     try:
         assert post(client, "start").status_code == 200
@@ -608,15 +598,13 @@ def test_sample_levels_idle_keeps_the_empty_envelope():
         assert frame["bar"] is None
 
 
-# ---------------------------------------------------------------------------
 # 收尾闭环（成功分支 + 失败分支 + 取消分支）
-# ---------------------------------------------------------------------------
 
 
 def test_finish_drain_keeps_top_state_ended(tmp_path):
     """成功分支：四步全部落定且无失败步 → `top_state` **停在 `ended`**、`phase == "done"`。
 
-    断言逐条对齐 §5.1：`finish_drain()` 之后 `ended.phase == "done"`、`top_state` 停在
+    断言逐条对齐：`finish_drain()` 之后 `ended.phase == "done"`、`top_state` 停在
     `ended`、`session` 保留（本场时长冻结）、`ended` 摘要留到下一场 `start` 才清空、
     盘上 `state == "done"`。
 
@@ -669,7 +657,7 @@ def test_finish_drain_keeps_top_state_ended(tmp_path):
 
 
 def test_only_the_post_step_may_settle_waiting(tmp_path):
-    """`waiting` 只能当 `post` 那一格的落定结果，别的三步落回去一律抛错（复审 m4）。
+    """`waiting` 只能当 `post` 那一格的落定结果，别的三步落回去一律抛错。
 
     这条规则的价值正在「别的步骤不许落回 `waiting`」：`waiting` 说的是「这一步空着等人
     按按钮」（R26 的会后那一格），若 `flush` / `transcode` / `log` 也能落它，
@@ -699,7 +687,7 @@ def test_finish_drain_failure_branch_keeps_draining(tmp_path, monkeypatch):
     """失败分支：有任一步 `failed` → `phase` 保持 `draining`、`top_state` 停在 `ended`。
 
     造法（进程内，不起第二个服务）：把 `log` 那一步写**场次日志结束标记**的落点换成一个抛错的
-    替身 ——「有实现却抛错 → `failed`」这一档（§3.0 的边界）在收尾三步里由它来演。
+    替身 ——「有实现却抛错 → `failed`」这一档在收尾三步里由它来演。
     第 4 步 `post` 现在停在 `waiting`（会后一个动作都不自动跑，R26），它不再产生失败步；
     而失败步的记录形状（`error` 里带可复制命令与 log 路径、`start` 被 409 拒）一个字没变。
     """
@@ -975,7 +963,7 @@ def test_unassembled_snapshot_raises(tmp_path):
 
 
 def test_alert_and_drain_dataclasses_encode_the_frozen_fields():
-    """`Alert` / `AlertState` / `EndedState` 的编码字段集与取值域逐条对齐 §3.1.2。"""
+    """`Alert` / `AlertState` / `EndedState` 的编码字段集与取值域逐条对齐。"""
     alert = Alert(level="hint", source="mic", since="t", duration_seconds=1.5,
                   message="某个提示", muted=True)
     assert set(alert.encode()) == {

@@ -1,11 +1,11 @@
-"""工作区注册表与目录判别（工作台收编节点）。
+"""工作区注册表与目录判别。
 
-口径（`docs/design-intent.md` 第 2–5 条，`docs/requirements.md` R18–R21）：注册表
+口径：注册表
 `workspaces.json` 住在配置目录里（不塞进 `config.json`——那边表外键严格拒绝），
 按路径去重；列表从登记来，软件不扫任何根目录、不在启动时读任何场次目录
 （「最近一场」只从注册表读）；目录名就是这一场的名字，不解析、不改、不建目录；
 判别只看会议材料的名目（`session.json` 或 `meeting_audio_*.pcm`），不读内容不核对，
-有音频名却没有 `session.json` 的落「疑似会议目录」照收编（第 3 条的兜底）；
+有音频名却没有 `session.json` 的落「疑似会议目录」照收编；
 注册表记录只增删、不反映目录内容——目录还在不在由读取方现场判（`sessions_dict()`）。
 """
 
@@ -60,7 +60,7 @@ OFFLINE_TRANSCRIPT_PREFIX = "meeting_offline_transcript_"
 def has_offline_transcript(value: Any) -> bool:
     """这一场有没有**会后精细稿**（`meeting_offline_transcript_<source>.md`）。
 
-    R29 那一格的判据（`GET /api/sessions` 每行的 `has_offline`）：只看名目、不读内容、
+    `GET /api/sessions` 每行的 `has_offline` 判这一格：只看名目、不读内容、
     不猜 —— 文件在就算有，哪怕它还没被切块。「出纪要」按钮按它如实显示。
 
     目录不在 / 读不动时答 `False`（读不出来就是不认为有），不抛异常：
@@ -154,7 +154,7 @@ def _recency_key(entry: dict[str, Any]) -> tuple[str, str, str]:
     主判据是 `last_opened_at`（最近一次被打开/切换）；同秒（并列）时按 `added_at`，
     再按目录字典序——并列判据只为了让次序有唯一的答案（同一份注册表两次读取给出
     同一次序），语义仍是最近操作的时间戳。清单端点（`GET /api/sessions`）的排序与
-    顶层 `recent` 读的是这同一条链（工作区清单节点）。
+    顶层 `recent` 读的是这同一条链。
     """
     return (entry["last_opened_at"], entry["added_at"], entry["dir"])
 
@@ -228,8 +228,7 @@ class WorkspaceRegistry:
         """全部条目按「最近在用」倒序：最近一次被打开/切换的那一条排最前。
 
         排序判据就是 `_recency_key()` 这一条（与 `recent()` 同源）——清单端点
-        （`GET /api/sessions`）按它出清单，界面照应答次序渲染、自己不重排
-        （次序的口径正本在 `docs/contract.md` 4.8）。
+        （`GET /api/sessions`）按它出清单，界面照应答次序渲染、自己不重排。
         """
         return sorted(self.entries(), key=_recency_key, reverse=True)
 

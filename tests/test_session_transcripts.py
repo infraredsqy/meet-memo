@@ -1,17 +1,5 @@
 """`GET /api/sessions/{id}/transcripts` 那只稿子正文端点的用例（会后区的两份稿）。
 
-本文件盯住五件事：
-
-  - **两份稿 × 两路都在**：四份文件都在时正文逐字原样给回（`kinds` 次序 live → offline、
-    `sources` 次序 mic → loopback，两处次序都是契约）；
-  - **缺的那一份如实说没有**：缺稿只落在 `reason` 一格上，两档分得清——
-    `unrecorded`（这一场 `session.json` 的 `mode` 没采这一路：那一截音频从没录过）
-    与 `absent`（采了这一路但盘上没有这一份）；
-  - **读稿同一口径**：`utf-8` + `errors="replace"`（半个坏字节折成替换字符，不炸端点）；
-  - **失败档**：目录不在原地、这一场没在工作台清单里 → 404，回通用失败信封
-    （与单场状态那一只同一套）；
-  - **纯读**：不涨 `revision`、不写盘。
-
 **全部用假件**：只往临时目录里按真实形状落文件、经 `workspace_open` 登记，
 零真实模型端点、零网络。
 """
@@ -124,14 +112,12 @@ def test_missing_road_by_mode_says_unrecorded(tmp_path: Path, client) -> None:
     _open(client, session)
 
     body = _get(client, session).json()
-    # 会中稿：mic 有正文；loopback 没采过 → unrecorded
     live_mic = _source(_kind(body, "live"), "mic")
     assert live_mic["text"] == "[20:01] 只有本地一路\n"
     assert _source(_kind(body, "live"), "loopback") == {
         "source": "loopback",
         "reason": "unrecorded",
     }
-    # 会后稿：mic 采了但会后还没跑过 → absent；loopback 没采过 → unrecorded
     assert _source(_kind(body, "offline"), "mic") == {"source": "mic", "reason": "absent"}
     assert _source(_kind(body, "offline"), "loopback") == {
         "source": "loopback",

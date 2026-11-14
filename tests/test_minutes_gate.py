@@ -5,14 +5,6 @@
 按纪要流程拉起多个 subagent。机主要求在代码层把这件事封死：**整个项目与 DSH 隔离，只有
 两条人工入口（`meeting post` 与「直接出纪要」按钮）显式放行**。
 
-本文件盯三层：
-
-  1. **人工时刻闸**：`run_session(announce_minutes=…)` 缺省假（尾巴安静跳过、零状态文件）、
-     `MinutesHook.launch(deliver=…)` 缺省假（`mark_running()` 之前就返回）；
-  2. **测试基建护栏**：`tests/conftest.py` 第八道守卫（`_no_real_dsh_delivery`）的桩在岗；
-  3. **DSH 触达点自守**：`dsh_web.probe()` / `dsh_web.handoff()` / `launch_headless()` /
-     `minutes.runner.run()` 各自默认拒绝（`DeliveryForbidden`），放行标记逐层下传。
-
 外加**接线完整性**：两条人工路径各自的「传 True」用替身的调用登记钉死 —— 人工链路已验证过
 无数次，不重新端到端，但必须保证它还是通的。
 
@@ -90,11 +82,6 @@ def _headless_ok() -> LaunchResult:
     )
 
 
-# ---------------------------------------------------------------------------
-# 一、第 1 层：离线链的闸（`run_session` 缺省假）—— 契约点名的守卫用例
-# ---------------------------------------------------------------------------
-
-
 def test_run_session_by_default_launches_no_minutes_layer(tmp_path) -> None:
     """守卫用例：**缺省参数**调 `run_session()` —— 纪要层零启动、盘上零纪要状态文件。
 
@@ -135,11 +122,6 @@ def test_run_session_still_announces_when_the_human_flag_is_on(tmp_path, monkeyp
 
     assert summary["minutes"]["hook"] == "launched"
     assert seen and seen[0]["announce_minutes"] is True, seen
-
-
-# ---------------------------------------------------------------------------
-# 二、第 1 层：钩子的闸（`launch` 缺省假，`mark_running()` 之前就返回）
-# ---------------------------------------------------------------------------
 
 
 def test_hook_launch_without_deliver_skips_before_mark_running(tmp_path, monkeypatch) -> None:
@@ -183,11 +165,6 @@ def test_hook_launch_with_deliver_claims_and_runs(tmp_path, monkeypatch) -> None
     assert written["state"] == "running", "在飞那一版照旧落在 launch() 返回之前"
 
 
-# ---------------------------------------------------------------------------
-# 三、第 2 层：测试基建护栏（conftest 第八道守卫的桩在岗）
-# ---------------------------------------------------------------------------
-
-
 def test_the_conftest_delivery_guard_stubs_are_in_place() -> None:
     """第八道守卫（autouse）：三个 DSH 触达原语在本文件里都被换成了 conftest 的桩。"""
     assert dsh_web.probe.__module__ == "tests.conftest", dsh_web.probe
@@ -208,11 +185,6 @@ def test_the_conftest_guard_stubs_record_and_raise(_no_real_dsh_delivery) -> Non
     assert len(_no_real_dsh_delivery) == 1, "这一笔该被记进记录"
     assert "dsh_web.probe" in _no_real_dsh_delivery[0]
     _no_real_dsh_delivery.clear()
-
-
-# ---------------------------------------------------------------------------
-# 四、第 3 层：DSH 触达点自守（默认拒绝，一次动作都不发生）
-# ---------------------------------------------------------------------------
 
 
 def test_probe_without_the_allow_flag_refuses_before_any_tcp(allow_dsh_protocol_stubs) -> None:
@@ -272,11 +244,6 @@ def test_runner_run_without_deliver_refuses_before_any_disk_write(tmp_path, monk
     assert probes == []
     assert not (session / STATUS_NAME).exists(), "连那份 running 都不落"
     assert not (session / "working").exists()
-
-
-# ---------------------------------------------------------------------------
-# 五、逐层下传（`launch(deliver=True)` → `run(deliver=True)` → 三原语 `allow_dsh=True`）
-# ---------------------------------------------------------------------------
 
 
 def test_runner_run_hands_the_allow_flag_to_the_web_primitives(tmp_path, monkeypatch) -> None:
@@ -371,11 +338,6 @@ def test_offline_tail_without_the_human_flag_stays_quiet(tmp_path) -> None:
         "announced": False,
         "reason": "纪要层隔离：本次非人工发起，跳过",
     }
-
-
-# ---------------------------------------------------------------------------
-# 六、接线完整性：两条人工路径各自的「传 True」
-# ---------------------------------------------------------------------------
 
 
 def test_meeting_post_passes_the_human_flag_on_both_paths(tmp_path, monkeypatch) -> None:

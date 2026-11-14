@@ -29,18 +29,13 @@ from tests.test_contract_fixtures._common import (
     contract_regen,
 )
 
-#: 慢档标记（收尾轮）：真服务/真样本采集的收尾验收，不进每次迭代圈。
 pytestmark = pytest.mark.slow
-
-# ---------------------------------------------------------------------------
-# SSE 帧样本（真服务子进程：dev 替身 + module:Class 假转写后端）
-# ---------------------------------------------------------------------------
 
 
 def _read_frames_until(client, names: set[str], *, timeout: float) -> dict[str, dict]:
     """读到 `names` 里每一个 event 名都到手为止，返回 `{event 名: 帧}`。
 
-    **不依赖帧的到达次序**（审查问题：读帧顺序对 `revision` 有隐式时序依赖）。`levels` 是
+    **不依赖帧的到达次序**。`levels` 是
     高频通道，它在 `start` 之后随时会来，谁先谁后由服务侧的广播节奏决定；按次序逐个
     `read_until()` 会把「哪一帧先到」写进断言，读起来像在验契约、实际在验时序。
     `revision` 的确定性因此改由另一条**与次序无关**的判据钉住：每一帧都自报它落在哪一版，

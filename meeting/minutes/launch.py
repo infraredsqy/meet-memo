@@ -1,4 +1,4 @@
-"""headless 启动器（spec「启动方式」一节）。
+"""headless 启动器。
 
 一件事：**把一个 DSH headless 子进程拉起来，然后校验它到底交没交出纪要**。
 
@@ -10,18 +10,17 @@
 → `session/prompt`，投递 accepted 即算交付完成，终态记 `delivered`），探不到才落到这里。
 
 两件事因此各归各位：**这一层能等的只有自己起的那个子进程**；交给 DSH 服务端那一趟跑多久
-不归这一层管（用户停不停 DSH 是用户的事）。V1 那套 web 路径（`workspace.list` + 点号端点 +
-不带鉴权 Cookie）在 DSH 0.1.5-rc.2 上全失效了，能用的那一套实测口径写在 `dsh_web.py` 的
-模块头。状态文件里 `branch` 那一格记**实际走的**那一条（`headless` 或 `web`）。
+不归这一层管（用户停不停 DSH 是用户的事）。状态文件里 `branch` 那一格记**实际走的**那一条
+（`headless` 或 `web`）。
 
 ## 三条硬口径
 
   - **argv 里只放一段短指针**：提示词正文写进 `working/run_prompt.md`，argv 只带一句「去读哪个
-    文件」。`cmd.exe` 会在第一个换行处截断多行参数（V1 实测近五千字符只剩前 180），
+    文件」。`cmd.exe` 会在第一个换行处截断多行参数，
     正文走 argv 是把整份提示词赌在命令行解析上；
   - **绝不 `input()`、绝不弹窗**：这是一条无人值守路径，任何交互都在等一个不会来的回车。
     子进程一律不带窗口（本模块在 Windows 上给 `CREATE_NO_WINDOW`）；
-  - **不能只看退出码**：V1 遇到过「进程正常退出但纪要不落盘」。退出码 0 只是必要条件，
+  - **不能只看退出码**：退出码 0 只是必要条件，
     产物四条判据（`check_final_artifact()`）缺任何一条都算这一趟失败。
 
 ## 三档失败要分得开
@@ -29,7 +28,6 @@
   - **解析不到可执行文件**（`FAILURE_EXECUTABLE_MISSING`）：Windows 上 npm 全局安装只生成
     `.cmd` / `.ps1` shim，传裸名会 `WinError 2`，因此先 `shutil.which()` 解析真实路径；
   - **子进程退出码非 0**（`FAILURE_EXIT_CODE`）；
-  - **退出码 0 但产物没落盘 / 不合判据**（`FAILURE_ARTIFACT_MISSING`）—— V1 踩过的那个坑。
 
 超时按失败处理，错误里写清超时秒数与提示词路径（超时那一档同样留 `FAILURE_TIMEOUT`）。
 """
@@ -62,7 +60,7 @@ from meeting.minutes.status import (
     write_run_log,
 )
 
-#: 说话人附录那两段固定标题（spec 定死；启动器的产物校验按它们判）
+#: 说话人附录那两段固定标题（启动器的产物校验按它们判）
 APPENDIX_HEADING = "## 说话人附录"
 UNKNOWN_HEADING = "### 猜不出的"
 
@@ -99,7 +97,6 @@ FAILURES: tuple[str, ...] = (
 )
 
 #: 附录那张表算不算「写了东西」的格数门槛：表头与数据行都要有这么多格非空。
-#:
 #: 3 这个数是**表头最窄的形状**（`| 路 | 编号 | 人名 | 把握 | 依据 |` 是 5 格，真产物里
 #: 更短的写法不存在），比它少的行（`| — | — |` 这种凑格）不算一张表的一行。
 MIN_TABLE_CELLS = 3
@@ -183,7 +180,7 @@ def find_executable(name: str = "dsh", *, which: Any = None) -> str:
 def check_final_artifact(session_dir: str | Path) -> tuple[str, ...]:
     """校验 `meeting_final.md` 的四条判据，交回**缺的那几条**（全过就是空元组）。
 
-    四条（spec 定死，逐条都有能触发的测试）：
+    四条（逐条都有能触发的测试）：
 
       1. 文件在、去空白后非空；
       2. 里面有 `## 说话人附录`；
@@ -255,9 +252,7 @@ def _has_appendix_data_row(text: str) -> bool:
 
     三件事同时成立才算：表头（至少 `MIN_TABLE_CELLS` 格非空）、分隔行、以及分隔行之后
     至少一行数据行（同样至少 `MIN_TABLE_CELLS` 格非空）。**表头第一格写的是什么词不参与判断**：
-    早先按第一格的字面值（`cells[0] in ("路", "source")`）认表头，于是模型把表头第一格换成
-    「路径」「说话人」时，一张**只有表头 + 分隔行、一条数据都没有**的空附录就被当成了「有数据行」，
-    四条判据全过、状态记 `done` —— 那是 V1「退出码 0 但没做完」的近亲。
+    一张只有表头 + 分隔行、一条数据都没有的空附录不算「有数据行」。
     """
     lines = [
         line for line in _appendix_body(text).splitlines() if _is_table_row(line)

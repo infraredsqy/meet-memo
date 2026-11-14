@@ -1,11 +1,5 @@
 """`tests/_offline_fakes.py` —— 会后离线链的跨文件共用假件（**pytest 不收集本文件**）。
 
-定位与挂件方式照 `tests/_drain_fakes.py`（跨文件共用假件的唯一落点）：`FakeEngine` /
-`FakeConfig` / `synth_session()` 一族造「音频是合成的、引擎是假的」的场次，`sparse_pcm()` /
-`chunk_ranges()` / `silence_session()` 造分块与静音档，`LoadingEngine` / `GatedEngine`
-探加载与闸门那两档时序。原先住在 `test_offline_runner.py`（`GatedEngine` 在
-`test_offline_progress.py`）、被各用例文件互相 import 的正本搬到这里，用法一律
-`from tests._offline_fakes import ...`。
 """
 
 from __future__ import annotations
@@ -177,7 +171,7 @@ def silence_session(
     payload = bytearray(int(seconds * SAMPLE_RATE) * 2)
     for begin, _end, index in ranges:
         if index in silent_chunks:
-            continue  # 全零：这一块就是实测那一档的数字静音
+            continue  # 全零：这一块就是数字静音
         payload[begin:begin + 2] = b"\x01\x00" if index in quiet_chunks else b"\x00\x01"
     path.write_bytes(bytes(payload))
     (session / "session.json").write_text(

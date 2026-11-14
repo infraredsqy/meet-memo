@@ -5,32 +5,24 @@ import { formatBytes } from '../materials/model';
 import type { DirRow, DirsResponse } from '../contract';
 
 /**
- * 目录选择器弹窗（节点 定的「选中再确认」形状；从工作台首页（`home/WorkspaceHome/`）
- * 原样搬出， 起多一种**文件模式**给资料区用；目录选择器节点起目录模式
- * 多出**当前这一层**与**新建目录**两样）。
+ * 目录选择器弹窗（从工作台首页原样搬出，起多一种**文件模式**给资料区用；目录模式多出
+ * **当前这一层**与**新建目录**两样）。
  *
  * 两种模式、一套交互与视觉语言：
- * - **目录模式**（挑录音落点，目录选择器节点的新口径）：清单顶上多一行「当前这一层」
- *   ——正在浏览的这一层本身可选，不必退到上一层再点那一行；地址栏下面一行名字框 +
- *   「新建目录」：就地建一个、建完直接选中（名字必须用户给，软件不自动命名、
- *   不自动挑落点）；单击选中、双击进下层，确认钮「选定这个目录」；
- * - **文件模式**（`?files=1`，资料区「选文件…」那一档）：同一层多出**文件行**
- *   （`kind` 格显示大小），文件单击选中、确认钮换成「加入资料」；目录行照旧
- *   单击选中、双击进下层——确认只收文件，选中目录时确认钮置灰。文件模式不摆
- *   当前层行与新建行（确认只收文件，那两样在这一档没有落点）。
+ * - **目录模式**：清单顶上多一行「当前这一层」，地址栏下面一行名字框 + 「新建目录」；
+ *   单击选中、双击进下层，确认钮「选定这个目录」；
+ * - **文件模式**（`?files=1`）：同一层多出**文件行**，文件单击选中、确认钮换成「加入资料」；
+ *   文件模式不摆当前层行与新建行（确认只收文件）。
  */
 
-/** 名目 → 挑了之后走哪一档（spec 三情形的唯一出处是 `api/sessions.ts` 的
- * `probeDecision()`，这里只转手）。`missing` 名目到不了选择器——`GET /api/dirs`
- * 只摆存在的目录；真到了不走确认弹窗，显式失败（不可当作可收编入口）。 */
+/** 名目 → 挑了之后走哪一档（判据的唯一出处是 `api/sessions.ts` 的 `probeDecision()`，这里只转手）。`missing` 名目到不了选择器。 */
 export type PickPath = { dir: string; kind: 'empty' | 'meeting' | 'unknown' | 'missing' };
 
-/** 确认钮交出去的那一下：目录（挑落点）或文件（资料区的文件模式）。 */
 export type PickerPick =
   | { what: 'dir'; dir: string; kind: PickPath['kind'] }
   | { what: 'file'; name: string; path: string; sizeBytes: number };
 
-/** 名目 → 那一格人话标签（子目录行与「当前这一层」行共用同一套读法）。 */
+/** 子目录行与「当前这一层」行共用同一套读法。 */
 function kindLabel(item: DirRow): string {
   if (item.kind === 'empty') return '空目录';
   if (item.kind === 'meeting') return item.suspected ? '疑似会议目录' : '会议目录';
@@ -52,16 +44,13 @@ function insertSorted(dirs: DirRow[], row: DirRow): DirRow[] {
  * 选择器的取数（换层 / 跳层 / 新建）+ 取数失败那一行。
  *
  * `withFiles` 打开时请求带 `?files=1`（文件模式）；老路径不带头，服务照旧不给 `files`。
- * 取数失败画在弹窗里的那一行由调用方自己摆（老路径 WorkspaceHome 有一只独立的
- * 「目录浏览失败」弹窗，这条钩子只管把话说清）。
  */
 export function useDirBrowse(withFiles: boolean): {
   browse: DirsResponse | null;
   browseError: string | null;
   browseInto: (dir: string | null) => void;
   jumpTo: (dir: string) => Promise<string | null>;
-  /** 在 `parent` 那一层里新建一个目录：成功 resolve 新那一行（清单就地补上行），
-   *  失败 resolve 服务给的那句人话——层不动、清单不动。目录模式用。 */
+  /** 在 `parent` 那一层里新建一个目录：成功 resolve 新那一行（清单就地补上行），失败 resolve 服务给的那句人话。 */
   createIn: (parent: string, name: string) => Promise<DirRow | string>;
   reset: () => void;
 } {
@@ -73,8 +62,7 @@ export function useDirBrowse(withFiles: boolean): {
     setBrowseError(null);
   }, []);
 
-  /** 清当前层地取新层（清单双击 / 向上层那半边）。老路径（目录模式）保持单参调用——
-   *  挑录音落点那条用途的请求形状一个字节不动（用例钉着它）。 */
+  /** 清当前层地取新层（清单双击 / 向上层那半边）。老路径（目录模式）保持单参调用 —— 请求形状一个字节不动。 */
   const browseInto = useCallback(
     (dir: string | null): void => {
       setBrowse(null);
@@ -91,9 +79,8 @@ export function useDirBrowse(withFiles: boolean): {
 );
 
   /**
-   * 地址栏跳层：**不清当前层**地取新层。跳不过去把服务回的那句原话带上
-   * 「跳不过去」resolve 回弹窗，层原地不动：输入不存在的路径不许静默，也不许把
-   * 正在看的层顶掉。
+   * 地址栏跳层：**不清当前层**地取新层。跳不过去把服务回的那句原话带上「跳不过去」
+   * resolve 回来，层原地不动。
    */
   const jumpTo = useCallback(
     (dir: string): Promise<string | null> =>
@@ -112,9 +99,8 @@ export function useDirBrowse(withFiles: boolean): {
 );
 
   /**
-   * 就地新建（目录选择器节点）：打 `POST /api/dirs`，成功把新那一行按服务同一条
-   * 次序插进**当前层**的清单（落点就是这一层）、resolve 行给弹窗去选中；失败把
-   * 服务那句人话 resolve 回去。服务不清洗不改写名字：非法名原样拒回来。
+   * 就地新建：打 `POST /api/dirs`，成功把新那一行按服务同一条次序插进**当前层**的清单、
+   * resolve 行给弹窗去选中。服务不清洗不改写名字：非法名原样拒回来。
    */
   const createIn = useCallback(
     (parent: string, name: string): Promise<DirRow | string> =>
@@ -148,11 +134,9 @@ export function DirPicker({
   mode?: 'dir' | 'file';
   browse: DirsResponse | null;
   onBrowse: (dir: string | null) => void;
-  /** 地址栏回车：按输入的路径跳层。成功 resolve `null`（层已换）；跳不过去把那句
-   *  说清的话 resolve 回来——层不动，弹窗里画一行。 */
+  /** 地址栏回车：按输入的路径跳层。成功 resolve `null`；跳不过去把那句说清的话 resolve 回来。 */
   onJump: (dir: string) => Promise<string | null>;
-  /** 就地新建（目录模式才有）：在正在浏览的这一层里建一个用户起名的目录。
-   *  成功 resolve 新那一行（清单已补上行）；失败 resolve 那句人话，弹窗里画一行。 */
+  /** 就地新建（目录模式才有）：成功 resolve 新那一行，失败 resolve 那句人话。 */
   onCreate?: (parent: string, name: string) => Promise<DirRow | string>;
   /** 确认一颗：选中项交给调用方，按它的名目走（目录登记 / 文件拷入资料）。 */
   onPick: (pick: PickerPick) => void;
@@ -165,8 +149,7 @@ export function DirPicker({
   const [newName, setNewName] = useState('');
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
-  // 层一换（首次取到现场、跳层成功）：选中不跨层带走——旧层那一行已不在清单里，
-  // 留着会让确认钮指向看不见的目录；地址栏与名字框重置成新层的现场。
+  // 层一换（首次取到现场、跳层成功）：选中不跨层带走，地址栏与名字框重置成新层的现场。
   // 判据是层（`cwd`）不是应答对象：同一层里补一行（新建成功）不清选中。
   const cwd = browse?.cwd ?? null;
   useEffect(() => {

@@ -1,24 +1,16 @@
 /**
  * 四态的状态映射：顶层状态的胶囊（字 + 图形双通道）、两路健康徽标、每路健康那一行字。
  *
- * 「字 + 图形」是设计章 2.3 与门槛 1/2 的要求：颜色只是一条**冗余**通道，
- * 去色之后仍然要靠字形、整行文案、包络塌成直线这三条说清「哪一路死了」。
- * 所以这里每一档都同时给出**图形类名**（`.glyph--*`，`clip-path` 画的形状）
- * 与**整行文字**，颜色交给 CSS。
+ * 颜色只是一条**冗余**通道，所以这里每一档都同时给出**图形类名**（`.glyph--*`）与**整行
+ * 文字**，颜色交给 CSS。
  *
- * 文案口径：一行只讲一件事，用仪器面板上说惯了的话。采着的时候写「采样中」，
- * 断了写「信号丢失，从 HH:MM 起」。
- *
- * 状态全部是从服务推的快照上**读**出来的（`top_state`、`sources[*].health`、
- * `restored`、`lost_since`、`ended.phase`），这一层不做任何判定：
- * 某一路到底丢没丢，是服务说了算。
+ * 状态全部是从服务推的快照上**读**出来的，这一层不做任何判定：某一路到底丢没丢，是服务说了算。
  */
 
 import type { Source, TopState } from '../contract';
 import { formatLostMinutes, formatWallClock } from './format';
 import { lostSeconds, type LossWindow } from './loss';
 
-/** 胶囊上的图形标记：空心方框 / 实心圆 / 实心三角 / 半实心方框 / 方框打勾。 */
 export type StateGlyph =
   | 'glyph--idle'
   | 'glyph--rec'
@@ -27,20 +19,12 @@ export type StateGlyph =
   | 'glyph--done';
 
 export interface StatusView {
-  /** 状态名，四态固定文案。 */
   name: string;
   glyph: StateGlyph;
-  /** 胶囊实心块的配色档：`alert` 红、`on` 橙、`off` 深墨。 */
   tone: 'off' | 'on' | 'alert';
 }
 
-/**
- * 顶层状态 → 胶囊。收尾中 / 已完成按 `ended.phase` 分成两副面孔（设计章 4.2 二）。
- * 五句固定文案照 `docs/ui-design.md` 2.3 的口径逐字对齐。
- *
- * 顶栏只说状态名：哪一路在采、哪一路没了由通道卡头行的健康徽标逐路说
- * （一次事实只在它的那一路说一遍），顶栏不再另起一句汇总。
- */
+/** 顶层状态 → 胶囊：收尾中 / 已完成按 `ended.phase` 分成两副面孔。顶栏只说状态名 —— 哪一路在采、哪一路没了由通道卡头行的健康徽标逐路说。 */
 export function statusView(
   topState: TopState,
   endedPhase: 'draining' | 'done' | null,
@@ -71,44 +55,24 @@ export function statusView(
   }
 }
 
-/** 健康徽标的图形：勾 / 叉 / 虚线环 / 空心方框。 */
 export type HealthGlyph = 'glyph--check' | 'glyph--cross' | 'glyph--dashed' | 'glyph--idle';
 
-/** 健康徽标的色档，与 `ui.css` 的 `.m-health--*` 一一对应。 */
 export type HealthTone = 'ok' | 'ready' | 'dead' | 'restored' | 'stopped' | 'untouched' | 'fail';
 
 export interface HealthView {
-  /** 徽标上的字。 */
   text: string;
   glyph: HealthGlyph;
   tone: HealthTone;
-  /** 每路健康那一行的整句（`本地 · 还在采` / `远端 · 采不到了，从 20:57 起`）。 */
   chip: string;
   /** 这一路死了：包络塌成直线、床面压斜纹、读数打叉。 */
   dead: boolean;
   /** 这一路的数据已停（心跳失联）：冻结压灰、读数退成 `—`。 */
   frozen: boolean;
-  /** 本场丢过又接回来。 */
   restored: boolean;
   /** 还没开始采（空闲 / 已结束）：整块退到后排。 */
   idle: boolean;
 }
 
-/**
- * 一路的健康。
- *
- * 七取值逐档（`docs/contract.md` 第 2 章）：
- *
- * | health | 徽标 | 每路健康 | 通道档 |
- * |---|---|---|---|
- * | `unprobed` | 未探测 | `本地 · 未探测` | idle |
- * | `ready` | 已就绪 | `本地 · 已就绪` | idle |
- * | `probe_failed` | 不可用 · 没有能打开的端点 | 同 | idle（床面空着） |
- * | `capturing` | 采样中 | `本地 · 采样中` | 实时 |
- * | `lost` | 信号丢失，从 HH:MM 起 | 同 | dead |
- * | `restored` | 已恢复（…） | 同 | restored |
- * | `stopped` | 采集已停止 | `本地 · 采集已停止` | idle |
- */
 export function healthView(source: Source, window?: LossWindow): HealthView {
   const label = source.label;
   const since = formatWallClock(source.lost_since);
@@ -140,16 +104,9 @@ export function healthView(source: Source, window?: LossWindow): HealthView {
 }
 
 /**
- * 「已恢复」那一档的整句。
- *
- * 设计给出的样子是 `已恢复（20:57–21:10 丢过 13 分钟）`。三个数各有各的来路，
- * **缺哪个就少说哪个**，一个都不编：
- *
- * - 丢的时刻：界面在还看得见 `lost_since` 的时候记下的（见 `loss.ts`）；
- * - 接回来的时刻：界面**看到它离开 `lost`** 的那一刻；
- * - 丢了几分钟：上面两个时刻之差，只有两个都在才算得出来。
- *
- * 页面刷新之后这份观察记录没了（它不落本地存储），那时照实只说一句「丢过一段」。
+ * 「已恢复」那一档的整句。三个数各有各的来路，**缺哪个就少说哪个**，一个都不编：
+ * 丢的时刻界面在还看得见 `lost_since` 的时候记下；接回来的时刻是看到它离开 `lost` 的那一刻；
+ * 丢了几分钟是两个时刻之差。页面刷新之后这份观察记录没了，那时照实只说一句「丢过一段」。
  */
 export function restoredText(window?: LossWindow): string {
   const from = window?.lostSince ?? null;

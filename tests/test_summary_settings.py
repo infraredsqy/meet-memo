@@ -188,11 +188,7 @@ def test_setting_keys_lists_the_seven_names() -> None:
 
 
 def test_the_seven_keys_are_registered_in_the_config_layer() -> None:
-    """七个键在配置层四处都有登记：默认值、三分表、取值域、环境变量那一格。
-
-    `summary.default_window` 原与同组键一起归 `pending_restart`；设置抽屉节点
-    把它改收热读档（界面的缺省预选随快照走），同组其余六键不动。
-    """
+    """七个键在配置层四处都有登记：默认值、三分表、取值域、环境变量那一格。"""
     for key in SETTING_KEYS:
         assert key in config_module.DEFAULT_VALUES, key
         assert key in config_module.SETTING_KEY_GROUPS, key
@@ -207,7 +203,6 @@ def test_the_seven_keys_are_registered_in_the_config_layer() -> None:
     assert "summary.max_attempts" in config_module.INT_LIMITS
     assert API_KEY_KEY in config_module.NULLABLE_KEYS
 
-    # 环境变量：密钥那一格
     assert config_module.ENV_KEYS["MEETING_SUMMARY_API_KEY"] == API_KEY_KEY
     assert config_module.ENV_SUMMARY_API_KEY == "MEETING_SUMMARY_API_KEY"
 
@@ -295,10 +290,6 @@ def test_settings_module_reexports_the_seven_key_names() -> None:
     assert settings_module.MAX_ATTEMPTS_KEY == "summary.max_attempts"
     assert settings_module.DEFAULT_WINDOW_KEY == "summary.default_window"
 
-
-# ---------------------------------------------------------------------------
-# 会中切模型：预设解析、指针取值、回落平铺（本节点）
-# ---------------------------------------------------------------------------
 
 #: 两套预设（一套带 extra_body）+ 一套缺密钥的，人读的名字用中文
 PRESETS_TEXT = json.dumps(

@@ -1,23 +1,4 @@
-"""`tests/test_session_dir.py` —— 工作区寻址与 `session.json`（「没有默认落点」定稿）。
-
-覆盖：
-
-  - `start` **必须显式给目标工作区目录**：缺失 / 不是已存在目录都被 `invalid_setting` 拦下；
-    服务侧不建目录、不按日期命名；目录里已有 `session.json` 的那一档**放行**——
-    那是续接（同一场会再录一段，`docs/design-intent.md` 第 9 条）；
-  - **续接**：对着录过的目录再 start，旧记录的身份三格与段记录原样保留在合并后的
-    `session.json` 里，收尾失败那几格从 waiting 重新起算；
-  - **段号分配**：`next_segment_number()` 从盘上实有的段文件认号（最大值 + 1），
-    认名规则与 `archive_name()` 同一条；
-  - `session.id` **就是目录名**，`dir` 是工作区目录的绝对路径；
-  - **日期**是 `session.json` 的元信息字段（`date`），从开场的时刻取，不来自目录名；
-  - `session.json` 字段全貌、**原子写**（**无 `.tmp` 残骸**、读到的永远是完整 JSON）、
-    **每个阶段变更都落盘一次**（四步的 `status` / `detail` 各写一次）；
-  - `sources[*].archives` = 段文件名表（`meeting_audio_<source>_<段号:03d>.pcm`），
-    `segments` + `audio_duration_seconds` = 段记录（一段 = 一次录制；权威时长 = 各段在录
-    时长之和，写端唯一的自洽式）；
-  - `start` 写文件失败 → **不进 `recording`**、只收走本场写入的文件、主 log 有留痕。
-"""
+"""工作区寻址与 `session.json`（没有默认落点）。"""
 
 from __future__ import annotations
 
@@ -45,11 +26,6 @@ from meeting.session import (
 from meeting.state import DRAIN_STEP_IDS
 
 
-# ---------------------------------------------------------------------------
-# 工作区寻址（没有默认落点）
-# ---------------------------------------------------------------------------
-
-
 def test_resolve_workspace_dir_requires_an_existing_directory(tmp_path):
     """必给、已存在、里面没有另一场的记录；返回**绝对路径**，什么都没建。"""
     workspace = tmp_path / "跟老王聊周会"
@@ -57,7 +33,6 @@ def test_resolve_workspace_dir_requires_an_existing_directory(tmp_path):
     resolved = resolve_workspace_dir(str(workspace))
     assert Path(resolved).is_absolute()
     assert resolved == str(workspace)
-    # 没设默认落点：除了用户自己建的那个什么都没有
     assert [item.name for item in tmp_path.iterdir()] == ["跟老王聊周会"]
 
 
@@ -68,12 +43,11 @@ def test_resolve_workspace_dir_refuses_missing_targets(tmp_path):
     with pytest.raises(ValueError):
         resolve_workspace_dir("")
     with pytest.raises(ValueError):
-        resolve_workspace_dir(str(tmp_path / "not-there"))  # 不自动建
+        resolve_workspace_dir(str(tmp_path / "not-there"))
 
     taken = tmp_path / "taken"
     taken.mkdir()
     (taken / SESSION_FILE_NAME).write_text("{}", encoding="utf-8")
-    # 录过的目录照样解析得回（对着它按 start = 续接同一场会，第 9 条翻案）
     assert resolve_workspace_dir(str(taken)) == str(taken)
 
 
@@ -103,7 +77,6 @@ def test_start_action_requires_the_workspace_dir(tmp_path):
         body = response.json()
         assert body["code"] == "invalid_setting"
         assert "默认落点" in body["message"]
-        # 放置根下什么都没出现（没建目录、没有场次目录）
         assert list(out_root.iterdir()) == []
         assert runtime.snapshot.top_state == "idle"
     finally:
@@ -139,7 +112,7 @@ def test_start_action_resumes_a_workspace_that_already_has_a_session(tmp_path):
             what="第一场收尾落成 done",
         )
 
-        # 对着同一个目录再 start：不回 400，进场录音
+        # 对着同一个目录再 start
         assert _post(client, "start", {"dir": str(taken)}).status_code == 200
         assert runtime.snapshot.session.dir == str(taken)
         resumed = read_json(taken / SESSION_FILE_NAME)
@@ -178,11 +151,6 @@ def test_start_uses_the_given_workspace_verbatim(tmp_path):
         }
     finally:
         stack.close()
-
-
-# ---------------------------------------------------------------------------
-# session.json 的 schema 与原子写
-# ---------------------------------------------------------------------------
 
 
 def test_session_json_has_the_frozen_field_shape(tmp_path):
@@ -226,7 +194,6 @@ def test_archive_names_carry_the_segment_ordinal():
     assert archive_name("mic") == "meeting_audio_mic_001.pcm"
     assert archive_name("loopback", 2) == "meeting_audio_loopback_002.pcm"
     assert archive_name("mic", 12) == "meeting_audio_mic_012.pcm"
-    # 认号：三位数字才算段号，别的形状一概不是段文件
     assert archive_segment_number("meeting_audio_mic_007", "mic") == 7
     assert archive_segment_number("meeting_audio_mic_0007", "mic") is None
     assert archive_segment_number("meeting_audio_mic_abc", "mic") is None
@@ -317,7 +284,7 @@ def test_write_session_json_is_atomic_and_leaves_no_tmp(tmp_path):
 
 
 def test_state_for_maps_top_state_to_the_disk_state():
-    """顶层四态 → 盘上 `state` 的映射只有这一处（设计口径高危点 1）。"""
+    """顶层四态 → 盘上 `state` 的映射只有这一处。"""
     assert state_for(top_state="recording") == "recording"
     assert state_for(top_state="alert") == "recording"
     assert state_for(top_state="ended", ended_phase="draining") == "draining"
@@ -330,16 +297,11 @@ def test_state_for_refuses_idle_and_unknown_top_states():
     """`idle`（以及任何认不出的取值）按**显式错误**处理：这一档手上没有场次可写盘。
 
     盘上的 `state` 描述的是真的开过的那一场会；把它兜底成 `recording` 会在盘上留下一版
-    「写着在录、实际没录」的记录（R2 最不能犯的错），所以这里当场报错。
+    「写着在录、实际没录」的记录，所以这里当场报错。
     """
     for top_state in ("idle", "unknown", ""):
         with pytest.raises(ValueError):
             state_for(top_state=top_state)
-
-
-# ---------------------------------------------------------------------------
-# 一场会：每个阶段变更都落盘一次
-# ---------------------------------------------------------------------------
 
 
 def build_client(tmp_path: Path, values: dict | None = None):
@@ -388,7 +350,6 @@ def test_every_phase_change_writes_the_session_file(tmp_path, monkeypatch):
         assert [item["archives"] for item in first["sources"]] == [
             ["meeting_audio_mic_001.pcm"], ["meeting_audio_loopback_001.pcm"],
         ]
-        # 开场第一版：还没有段记录（引擎没起），权威时长 0
         assert first["segments"] == []
         assert first["audio_duration_seconds"] == 0.0
 
@@ -449,7 +410,6 @@ def test_every_phase_change_writes_the_session_file(tmp_path, monkeypatch):
         }
         assert done["ended_at"]
         assert done["interrupted"] is False
-        # 工作区里没有 `.tmp` 残骸
         assert [item.name for item in session_dir.rglob("*.tmp")] == []
     finally:
         stack.close()
@@ -512,7 +472,6 @@ def test_start_failure_cleans_its_own_file_and_leaves_a_trace(tmp_path, monkeypa
         assert _post(client, "start", {"dir": str(workspace)}).status_code == 200
         assert Path(runtime.snapshot.session.dir) == workspace
 
-        # 主 log 里能读到那条留痕
         log_text = helpers.read_text(helpers.service_log_path_of(tmp_path / "home"))
         assert "写不进去" in log_text
     finally:

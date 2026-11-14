@@ -1,15 +1,5 @@
 """转码独立工序的用例：凭据判据、打断续做、半截产物重做、暂停继续、重启存活、三只动作。
 
-本节点（转码搬出收尾）的完成判定落在这几条上：
-
-  - **「这一段写完了」以凭据为准**：产物文件在那儿不算完成 —— 造一份同名半截产物 +
-    完整源，验证它**不被跳过**而是重做；
-  - **凭据不认账就重做**：源 PCM 尺寸对不上、产物字节对不上，那一段重做；
-  - **可暂停、可继续、可补跑**：暂停后逐段进度不再前进，继续后接着前进；
-  - **进度 / 暂停状态在重启后存活**：判据读盘上凭据与状态文件，不依赖进程内存；
-  - **唯一硬闸 = 本地大模型互斥**：会后精细稿在飞时 `start` 409；**转码在飞不构成
-    `start` 的阻挡**。
-
 全部用假件（假转码器只写字节，不起真 ffmpeg / 真模型）：不起真模型、不占显卡、
 不拉起真 DSH（autopilot 红线）。
 """
@@ -31,11 +21,6 @@ from tests._offline_fakes import synth_session
 
 #: 等后台那一趟收工的轮询上限（事件驱动地等，等到了就立刻回）
 JOB_TIMEOUT_SECONDS = 5.0
-
-
-# ---------------------------------------------------------------------------
-# 假件
-# ---------------------------------------------------------------------------
 
 
 class RecordingConverter:
@@ -75,11 +60,6 @@ class GatedConverter:
         self.gates.setdefault(key, threading.Event()).wait(timeout=JOB_TIMEOUT_SECONDS)
         Path(mp3_path).write_bytes(self.bodies.get(key, b"gated-mp3"))
         return True
-
-
-# ---------------------------------------------------------------------------
-# 一、凭据判据（共享模块；`meeting post` 与服务工序共用这一份）
-# ---------------------------------------------------------------------------
 
 
 def test_run_transcode_writes_credentials_and_skips_them_on_rerun(tmp_path) -> None:
@@ -130,7 +110,7 @@ def test_a_credential_that_disagrees_with_the_source_is_redone(tmp_path) -> None
         entry,
         {
             "produced": True,
-            "pcm_bytes": 12345,  # 与盘上的源对不上
+            "pcm_bytes": 12345,
             "pcm_seconds": 0.38,
             "mp3": entry.mp3.name,
             "mp3_bytes": 3,
@@ -236,11 +216,7 @@ def test_pause_stops_the_progress_and_a_resume_pass_finishes_it(tmp_path) -> Non
     assert transcode_module.read_status(session)["state"] == "done"
 
 
-# ---------------------------------------------------------------------------
-# 二、服务侧：三只动作与读数（进程内真运行时）
-# ---------------------------------------------------------------------------
-
-#: 本文件起过的运行时（收场统一把转写流水线收干净，见下面那道 autouse 夹具）
+#: 本文件起过的运行时（收场统一把转写流水线收干净）
 _RUNTIMES: list[Any] = []
 
 
@@ -251,7 +227,7 @@ def _join_transcriber_pipelines():
     生产路径上转写后端的 `stop()` 只有 `shutdown()` 一个调用点（收尾编排不停转写），本文件
     的用例又各自 `start_session()` 起一条真转写流水线（worker + 两路读线程，daemon）：单进程
     连跑时这些线程会一直活着漏给下一个文件，`tests/test_asr_pipeline.py` 开场那条「进程里
-    一条 `asr-` 线程都不剩」的线程闸因此每条用例都红（实测 4 条流水线 12 个线程、44 errors）。
+    一条 `asr-` 线程都不剩」的线程闸因此每条用例都红。
     这里在测试层补上汇合点：收场对本文件登记过的每个运行时调一次
     `transcriber_backend.stop()`（幂等；空闲流水线毫秒级收工）。
     """
@@ -381,7 +357,6 @@ def test_transcode_pause_and_resume_freeze_and_resume_the_progress(
             "dir": str(session),
             "pausing": True,
         }, receipt
-        # 当前段（mic）收尾之后工序停在 paused：loopback 那一段不开跑 —— 进度不再前进
         mic_gate.set()
         deadline = time.monotonic() + JOB_TIMEOUT_SECONDS
         while time.monotonic() < deadline:
@@ -408,7 +383,6 @@ def test_transcode_pause_and_resume_freeze_and_resume_the_progress(
         )
         assert loop_cell["done"] == 1, "继续后剩下的段接着做完"
 
-        # 没有在跑的工序再暂停 → 409（没有可暂停的）
         from meeting.service.runtime_shared import ActionError
 
         with pytest.raises(ActionError) as info:
@@ -441,7 +415,6 @@ def test_the_transcode_readout_survives_a_restart(tmp_path, monkeypatch) -> None
         assert after["state"] == "done" and after["in_process"] is False
         assert after["sources"][0]["done"] == 1
 
-        # 补跑一趟全凭据认账的场次：照常受理、毫秒级收工、不重转
         converter.calls.clear()
         runtime.transcode_run({"dir": str(session)})
         _wait_transcode_done(runtime, session)
@@ -464,11 +437,6 @@ def test_transcode_run_refuses_the_actively_recording_session(tmp_path, monkeypa
         assert info.value.code == "invalid_setting" and info.value.status == 400
     finally:
         config_module.set_current(previous)
-
-
-# ---------------------------------------------------------------------------
-# 三、唯一硬闸：会后精细稿在飞时 start 409；转码在飞不构成 start 的阻挡
-# ---------------------------------------------------------------------------
 
 
 def _ended_runtime(tmp_path: Path, monkeypatch):

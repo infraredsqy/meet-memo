@@ -20,10 +20,6 @@
 所以在临时目录里放一份 conftest 把它当插件加载是这里唯一的办法；`pythonpath` 由
 `PYTHONPATH=<仓库根>` 给全。
 
-**修 C1 之前**这条验是红的：夹具那时用 `sys.modules.get(module_name)` 取模块、取不到就
-`continue`，于是桩一个都没装上，`sd.rec(1)` 直接落到真设备上（本机实测
-`TypeError: Unable to determine number of input channels`，不是看门的异常）。
-
 ## 隐私约束（本文件自己也要守）
 
 **子进程里没有任何一次调用落到真设备上**：四个入口在这一轮跑之前就已经被桩换掉了，
@@ -60,10 +56,8 @@ GUARDED_CALLS: dict[tuple[str, str], tuple[list[str], dict[str, str]]] = {
     ("soundcard", "get_microphone"): ([], {"include_loopback": True}),
 }
 
-#: 子进程里那份最小用例的落点（临时目录下）
 _SUBPROCESS_TEST_FILE = "test_zz_fresh_interpreter_guard.py"
 
-#: 看门装的桩的记号（`tests/conftest.py` 的 `_forbid_real_capture()` 里那个内层函数名）
 GUARD_STUB_QUALNAME_TOKEN = "blocked"
 #: 看门的桩定义在哪个模块（身份断言的第二半）
 GUARD_STUB_MODULE = "tests.conftest"
@@ -182,9 +176,6 @@ def test_a_fresh_interpreter_blocks_the_real_capture_entries(tmp_path: Path) -> 
     (tmp_path / _SUBPROCESS_TEST_FILE).write_text(
         _subprocess_case_source(entries), encoding="utf-8"
     )
-    # 临时目录里的 conftest：把仓库根那份 conftest **当插件加载**。`--rootdir` 只是改
-    # rootdir 这个名字，不会把仓库的 conftest 带进来（临时目录在仓库之外，conftest 的收集
-    # 顺序走不到 `tests/`），所以这一行是子进程里装上那道看门的唯一入口。
     (tmp_path / "conftest.py").write_text(
         'pytest_plugins = ["tests.conftest"]\n', encoding="utf-8"
     )

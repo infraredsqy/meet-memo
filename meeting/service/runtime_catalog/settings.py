@@ -1,8 +1,4 @@
-"""RuntimeCatalogMixin 的「设置写盘」域分片：settings_update 动作。
-
-方法与方法间注释均自拆分前的 runtime_catalog.py 单文件 mixin 一字不改复制；
-本文件自写内容只有模块 docstring、import、_log 一行与类声明行。
-"""
+"""RuntimeCatalogMixin 的「设置写盘」域分片：settings_update 动作。"""
 from __future__ import annotations
 
 import logging
@@ -16,21 +12,16 @@ _log = logging.getLogger("meeting.service.runtime")
 
 
 class RuntimeCatalogSettingsMixin:
-    """「设置写盘」：settings_update（写 config.json；可热读的键立刻生效，其余要重启）。"""
-
-    # 设置更新
-
     def settings_update(self, args: dict[str, Any]) -> dict[str, Any]:
         """写 `config.json`（原子写）；**可热读的键立刻生效，其余键写盘成功但要重启**。
 
         「写盘成功」与「快照立刻反映」是两件事：归 `pending_restart` 的那些键本次只落盘，
         运行期仍取启动时的生效值，快照 `settings` 里读到的还是旧值（可观察判据是主 log 那一行
-        「……仍取启动值」，见 §7.1 高危点 7）；本次改动里凡有热读键（`asr.*` 五个、
-        `alarm.sound` 与设置抽屉那四项：`devices.mic` / `devices.loopback` /
-        `heartbeat.interval_seconds` / `summary.default_window`），就在下面重取一次
-        `_settings_view()` 并提交 —— 出声开关勾选即生效；设备改完，紧接着的 `reprobe`
-        按**新值**挑（`_config_view()` 读的就是内存生效值）；心跳周期与总结缺省档的
-        快照格当场换新值。
+        「……仍取启动值」）；本次改动里凡有热读键（`asr.*` 五个、`alarm.sound` 与设置抽屉那四项：
+        `devices.mic` / `devices.loopback` / `heartbeat.interval_seconds` /
+        `summary.default_window`），就在下面重取一次 `_settings_view()` 并提交 ——
+        出声开关勾选即生效；设备改完，紧接着的 `reprobe` 按**新值**挑（`_config_view()`
+        读的就是内存生效值）；心跳周期与总结缺省档的快照格当场换新值。
         """
         try:
             changes = config_module.validate_setting_changes(args, current=self.config)
@@ -60,7 +51,6 @@ class RuntimeCatalogSettingsMixin:
             ) from exc
 
         applied, pending = config_module.split_setting_changes(changes)
-        # 热读键立刻生效：生效值在内存里换掉（下一段读到的就是新值）
         if applied and self.config is not None:
             values = dict(self.config.applied)
             values.update({key: changes[key] for key in applied})

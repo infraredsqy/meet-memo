@@ -1,4 +1,4 @@
-"""`tests/test_resume.py` —— 续接的端到端验收（spec 完成判定的那一场戏）。
+"""`tests/test_resume.py` —— 续接的端到端验收。
 
 **全程假采集**：`capture.backend = tests._capture_faulty:FaultyCaptureBackend`
 （真后端 + 假端点表 + 带剧本的假源，段记录/归档/字节数全真），进程内真
@@ -34,17 +34,16 @@ from tests._capture_faulty import (
 from tests._app_drivers import live, post, snapshot_of
 from tests._helpers import wait_until
 
-#: 慢档标记：起真采集引擎与真收尾（含 ffmpeg 转码），单条实测见 report.md。
 pytestmark = pytest.mark.slow
 
-#: 进程内用例的轮询超时（收尾三步跑在收尾线程池里；与既有端到端同档）
+#: 进程内用例的轮询超时（收尾三步跑在收尾线程池里）
 POLL_TIMEOUT_SECONDS = 20.0
 
 #: 两场各喂多少块（0.1 秒一块）：第一场 10 块、续接那一场 12 块，两段的时长拉开可辨
 FIRST_CHUNKS = 10
 SECOND_CHUNKS = 12
 
-#: 块节奏（秒/块）：0.02 秒一块，一场 10 块的墙钟在 0.3 秒量级
+#: 块节奏（秒/块）：0.02 秒一块
 PACE_SECONDS = "0.02"
 
 
@@ -88,7 +87,6 @@ def test_a_resumed_session_keeps_the_old_segment_and_adds_a_new_one(tmp_path, mo
         workspace = Path(out_root) / "跟老王聊周会"
         workspace.mkdir()
 
-        # —— 第一场：两路各喂满 FIRST_CHUNKS 块，结束，等收尾落定 ——
         assert post(client, "start", {"dir": str(workspace)}).status_code == 200
         _wait_recording(client)
         backend = runtime.capture_backend
@@ -109,7 +107,6 @@ def test_a_resumed_session_keeps_the_old_segment_and_adds_a_new_one(tmp_path, mo
         for source in ("mic", "loopback"):
             assert old_bytes[source] == expected_archive_bytes(source, FIRST_CHUNKS)
 
-        # —— 第二场（续接）：对同一个目录再 start，换一组交付上限 ——
         monkeypatch.setenv(DELIVER_MIC_ENV, str(SECOND_CHUNKS))
         monkeypatch.setenv(DELIVER_LOOPBACK_ENV, str(SECOND_CHUNKS))
         assert post(client, "start", {"dir": str(workspace)}).status_code == 200
@@ -127,13 +124,12 @@ def test_a_resumed_session_keeps_the_old_segment_and_adds_a_new_one(tmp_path, mo
         assert post(client, "stop").status_code == 200
         _wait_for_done(client)
 
-        # ① 旧段逐字节原样（本节点最大的坑就是这里被截断清零）
+        # 旧段逐字节原样（最大的坑就是这里被截断清零）
         for source in ("mic", "loopback"):
             assert (workspace / archive_name(source, 1)).read_bytes() == old_bytes[source]
             new_path = workspace / archive_name(source, 2)
             assert new_path.read_bytes() == expected_archive_bytes(source, SECOND_CHUNKS)
 
-        # ② `session.json`：两段齐、身份沿用开场那次、权威时长 = 两段之和
         record = _read_record(workspace)
         assert record["state"] == "done"
         assert record["session_id"] == first["session_id"]
@@ -155,7 +151,6 @@ def test_a_resumed_session_keeps_the_old_segment_and_adds_a_new_one(tmp_path, mo
                 archive_name(item["id"], 2),
             ]
 
-        # ③ 转码独立工序（flush 落定自动起的那一道）给两段各产一份 MP3；目录里没有半截残骸
         from meeting.capture import transcode as transcode_module
 
         wait_until(
@@ -171,7 +166,6 @@ def test_a_resumed_session_keeps_the_old_segment_and_adds_a_new_one(tmp_path, mo
             for index in (1, 2):
                 assert (workspace / archive_name(source, index)).with_suffix(".mp3").is_file()
 
-        # ④ 界面的取数端点看得到两段的时长与时间（快照九键一个字没动，段读数走这里）
         listing = client.get("/api/sessions").json()
         row = next(item for item in listing["sessions"] if item["dir"] == str(workspace))
         assert [item["index"] for item in row["segments"]] == [1, 2]

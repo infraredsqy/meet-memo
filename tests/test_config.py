@@ -1,20 +1,4 @@
-"""`tests/test_config.py` —— 配置层（设计口径第 5 条 / §4.1 文件清单第 14 行）。
-
-覆盖：
-  - 优先级 env > config.json > 默认；
-  - 默认值表逐键（含 §3.12 四个阈值、`asr.*` 五个沿用 V1 实测值、`alarm.sound` 默认 `true`）；
-  - `asr.*` 五个热读键的清单；
-  - `timeout_seconds > max_segment_seconds` 这条键间校验；
-  - 环境变量映射（`MEETING_PORT` / `MEETING_LOG_DIR`，**不新增变量**；`MEETING_OUT_ROOT`
-    已随 `output.root` 配置键一并退场）；
-  - `config.json` **缺失**时用默认值照常起；
-  - `config.json` **损坏**时 `config.load()` 抛配置损坏错误（**进程内**，两支：非法 JSON / 同名目录）；
-  - **值非法 → `EXIT_REJECTED`**（子进程退出码；含 `web.port` 的类型 / 范围与 `asr` 的键间规则）；
-  - `config.json` 必须是**点号扁平键名的单层映射**：嵌套 `web` 对象被拦下并说清「嵌套形状
-    不合法」，点号键 `web.port` 反向证明合法（子进程 + 进程内两层断言）。
-
-`EXIT_STARTUP_UNMET` 的退出码断言**不在本文件里**（它唯一落在 `tests/test_logging_setup.py`，§4.4）。
-"""
+"""`tests/test_config.py` —— 配置层。"""
 
 from __future__ import annotations
 
@@ -30,9 +14,7 @@ from tests.conftest import CASE_HOME_DIR_NAME
 from meeting import config as config_module
 from meeting.cli import EXIT_REJECTED
 
-# ---------------------------------------------------------------------------
 # 进程内的读取层
-# ---------------------------------------------------------------------------
 
 
 def _redirect_home(monkeypatch, home) -> None:
@@ -56,7 +38,6 @@ def _load_with_env(monkeypatch, home, env: dict[str, str]):
 
 
 def test_default_values_match_the_frozen_table(tmp_path, monkeypatch):
-    """默认值表逐键核对（§3.11 的键全集，一个不多一个不少）。"""
     home = tmp_path / "home"
     home.mkdir()
     loaded = _load_with_env(monkeypatch, home, {})
@@ -77,11 +58,9 @@ def test_default_values_match_the_frozen_table(tmp_path, monkeypatch):
         "capture.backend": "auto",
         "transcriber.backend": "auto",
         "post.hook": "auto",
-        # 会后离线这一层的四个开关（定名）：缺省值取本机实测跑通的那一档
         "post.engine": "auto",
         "post.model": "OpenMOSS-Team/MOSS-Transcribe-Diarize",
         "post.dtype": "bfloat16",
-        # 分块块长取实测的安全档 450 秒（`0` = 显式关掉分块、整段一次跑）
         "post.chunk_seconds": 450,
         # 两个设备键位（定名）：没配就是 `None`
         "devices.mic": None,
@@ -182,12 +161,7 @@ def test_post_model_takes_a_repo_id_or_a_local_path():
 
 
 def test_post_chunk_seconds_defaults_to_the_measured_safe_length(tmp_path, monkeypatch):
-    """`post.chunk_seconds` 默认 450 秒，按普通整数键注册（`DEFAULT_VALUES` + 取值域 + 三分表）。
-
-    **默认 450 是对 spec「默认关闭」的一处有意偏离**：16 GB 卡上实测 600 s → 11.6 GiB、
-    900 s → 22.9 GiB（已越界换页）、1500 s → OOM，而验收素材是 5943 s；默认关闭等于每一场
-    真实会议都失败。理由写在 `config.py` 里那一格上面的注释里。
-    """
+    """默认 450 是对 spec「默认关闭」的一处有意偏离：默认关闭等于每一场真实会议都失败。"""
     home = tmp_path / "home"
     home.mkdir()
     loaded = _load_with_env(monkeypatch, home, {})
@@ -261,25 +235,17 @@ def test_missing_config_json_falls_back_to_defaults(tmp_path, monkeypatch):
     assert loaded.get("web.port") == 8765
 
 
-# ---------------------------------------------------------------------------
-# 夹具之间的家目录契约（**从 `tests/conftest.py` 搬来**，审查问题 m4：
-# 那个文件只放 fixture，用例一律落在 `test_*.py` 里；断言强度一字未改）
-# ---------------------------------------------------------------------------
+# 夹具之间的家目录契约
 
 
 def test_isolated_config_dir_and_app_client_share_one_home(
     tmp_path: Path, isolated_config_dir: Path, app_client: Any
 ):
-    """两个夹具同时使用时指向**同一个**本用例临时家目录（设计口径的家目录硬约束）。
+    """两个夹具同时使用时指向**同一个**本用例临时家目录（家目录硬约束）。
 
-    同时请求两个夹具：`isolated_config_dir` 归属的那个家目录（它的上一级目录），
-    与 `HOME` / `USERPROFILE` 两个环境变量、以及 `app_client` 实际落配置的那条路径，
-    必须逐字对上 —— 否则「隔离」这件事在两个夹具的视角里各落一处。
-
-    **这条用例为什么落在本文件**：它断的是配置层的落点（`<家目录>/.config/meeting/
-    config.json` 与 `log.dir` 的挂载点），与 `tests/conftest.py` 那两个夹具的契约直接对应；
-    放在本文件里也让它与 `tests/conftest.py` 里那几行「家目录取 `case_home()`、
-    `app_client` 用的是同一个」的说明互为判据。
+    `isolated_config_dir` 归属的那个家目录、`HOME` / `USERPROFILE` 两个环境变量、
+    与 `app_client` 实际落配置的那条路径必须逐字对上 ——
+    否则「隔离」这件事在两个夹具的视角里各落一处。
     """
     home = Path(os.environ["HOME"])
     assert home == tmp_path / CASE_HOME_DIR_NAME
@@ -296,8 +262,7 @@ def test_isolated_config_dir_and_app_client_share_one_home(
 
 def test_hot_keys_are_the_asr_five_plus_the_alarm_switch(tmp_path, monkeypatch):
     """热读键 = `asr.*` 五个 + `alarm.sound` + 设置抽屉那四项 + 会中切模型两键
-    （出声开关勾选那一刻生效；设备写完 `reprobe` 按新值挑，心跳与总结缺省档写盘即可见
-    ——；换一套预设当场生效 —— 本节点）。"""
+    （出声开关勾选那一刻生效；设备写完 `reprobe` 按新值挑，心跳与总结缺省档写盘即可见）。"""
     home = tmp_path / "home"
     home.mkdir()
     loaded = _load_with_env(monkeypatch, home, {})
@@ -335,10 +300,7 @@ def test_hot_keys_are_the_asr_five_plus_the_alarm_switch(tmp_path, monkeypatch):
 def test_summary_preset_keys_defaults_validation_and_cross_rule(tmp_path, monkeypatch):
     """会中切模型两键：默认空串、热读档、`presets_json` 的 JSON 数组校验、指针的键间规则。
 
-    `presets_json` 与 `extra_body_json` 同一个先例（一段 JSON 文本进单键）：空串 = 没配；
-    非空必须是 JSON 数组，每套一个对象，`name` 必填且不重名。指针指向的名字必须在
-    （本次一起改的或生效配置里的）清单里 —— 键间规则只拦 `settings_update` 的写前校验，
-    装载与读的一侧不拦（读的一侧回落平铺键，见 `tests/test_summary_settings.py`）。
+    键间规则只拦 `settings_update` 的写前校验，装载与读的一侧不拦。
     """
     home = tmp_path / "home"
     home.mkdir()
@@ -444,7 +406,7 @@ def test_priority_environment_beats_json_beats_default(tmp_path, monkeypatch):
     assert loaded.get("log.max_bytes") == 5 * 1024 * 1024
     assert loaded.source_of("log.max_bytes") == "默认"
 
-    # ② 环境变量压过 config.json（不存在「输出根」那一格了：它已随默认落点退场）
+    # ② 环境变量压过 config.json
     env_log = tmp_path / "logs_from_env"
     loaded = _load_with_env(
         monkeypatch,
@@ -461,12 +423,10 @@ def test_priority_environment_beats_json_beats_default(tmp_path, monkeypatch):
 
 
 def test_env_mapping_is_the_four_frozen_names_plus_the_summary_key():
-    """环境变量映射：契约 §3.11 的那四个 + 会中总结的密钥那一格。
+    """环境变量映射：四个冻结名 + 会中总结的密钥那一格。
 
-    `MEETING_SUMMARY_API_KEY`（设计定名）是第五个。它是密钥，因此唯一的
-    用法就是环境变量 —— 这一条钉住它走的是与另外四个**同一条**通路（同一个表、同一档
-    优先级），顺带钉住测试层的剔除清单会把它一起剔掉（那条派生见下一条用例）。
-    「输出根」那一条（`MEETING_OUT_ROOT` → `output.root`）已随默认落点退场。
+    `MEETING_SUMMARY_API_KEY` 是密钥，因此唯一的用法就是环境变量 ——
+    走的是与另外四个**同一条**通路（同一个表、同一档优先级）。
     """
     assert config_module.ENV_KEYS == {
         "MEETING_PORT": "web.port",
@@ -481,14 +441,7 @@ def test_env_mapping_is_the_four_frozen_names_plus_the_summary_key():
 
 
 def test_helpers_service_env_names_derive_from_the_frozen_names():
-    """测试层的剔除清单由这张表派生，与 §3.11 的清单逐名对齐（env-only 的排最后）。
-
-    `_helpers.SERVICE_ENV_NAMES` 原先手抄了一份副本；改成派生之后，这一条同时钉住两边：
-    派生结果**必须**恰好等于契约里那四个名字（顺序也照 §3.11）加密钥那一格、再加两个
-    env-only 变量（`MEETING_NO_BROWSER` / `MEETING_CONFIG_DIR`），因此手抄副本不再有
-    漏剔的余地，`ENV_KEYS` 将来多出键时这里会先红。
-    （`MEETING_OUT_ROOT` 随 `output.root` 退场，不再出现在清单里。）
-    """
+    """测试层的剔除清单由这张表派生（env-only 的排最后）：`ENV_KEYS` 将来多出键时这里会先红。"""
     assert helpers.SERVICE_ENV_NAMES == (
         "MEETING_PORT",
         "MEETING_LOG_DIR",
@@ -565,9 +518,7 @@ def test_illegal_values_raise_value_error_in_process(tmp_path, monkeypatch, valu
     assert error.key in str(error)
 
 
-# ---------------------------------------------------------------------------
-# 进程内的配置损坏（两支造法照 §3.11）
-# ---------------------------------------------------------------------------
+# 进程内的配置损坏
 
 
 def test_corrupt_json_raises_corrupt_error_with_path_and_line(tmp_path, monkeypatch):
@@ -595,9 +546,7 @@ def test_config_file_replaced_by_directory_raises_corrupt_error(tmp_path, monkey
     assert info.value.path == str(path)
 
 
-# ---------------------------------------------------------------------------
 # 进程内：值非法的细项
-# ---------------------------------------------------------------------------
 
 
 def test_json_unknown_key_is_rejected(tmp_path, monkeypatch):
@@ -614,10 +563,10 @@ def test_json_unknown_key_is_rejected(tmp_path, monkeypatch):
 
 
 def test_retired_output_root_key_is_ignored(tmp_path, monkeypatch):
-    """存量 config.json 残留 `output.root`（本节点已退场的键）→ 读到即忽略，不再抛错。
+    """存量 config.json 残留 `output.root` → 读到即忽略，不再抛错。
 
     既有的未知键严格拒绝**保留**（上面的 `web.host` 照样拦）；这个豁免只认
-    `output.root` 这一个退场键的字面键名。忽略时落一条 log，键不进生效值。
+    `output.root` 这一个键的字面键名。忽略时落一条 log，键不进生效值。
     """
     home = tmp_path / "home"
     home.mkdir()
@@ -636,9 +585,7 @@ def test_retired_output_root_key_is_ignored(tmp_path, monkeypatch):
     assert info.value.key == "output.rooot"
 
 
-# ---------------------------------------------------------------------------
-# 子进程：值非法 → EXIT_REJECTED（§4.4 的落点分工：这一档在本文件）
-# ---------------------------------------------------------------------------
+# 子进程：值非法 → EXIT_REJECTED
 
 
 @pytest.mark.parametrize(

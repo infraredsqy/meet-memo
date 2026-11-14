@@ -1,19 +1,8 @@
-"""`tests/test_transcriber_release.py` —— 会中模型**让出显存**的四条语义与收尾接线的顺序。
+"""会中模型**让出显存**的四条语义与收尾接线的顺序。
 
 这一份盯的是收尾第 4 步 `post` 之前那一次交接：`TranscriberBackend.release_gpu()` 让会中
 模型（GLM-ASR）退出显存，`meeting/service/runtime.py` 的 `_drain_post()` 在 `launch()` **之前**
 调它 —— 会后离线链（MOSSTD）的加载紧接着 `launch()` 就开始，放在它之后等于没做。
-
-四条语义各有独立断言（互不顺带覆盖）：
-
-  ① **没加载过就 no-op**：不报错、不 import `torch`、不写日志、不碰 `empty_cache()`；
-  ② **幂等**：连调两次只有第一次真的登记与清缓存，第二次安静地返回；
-  ③ **有界等待**：在飞推理收干净时不等满上界；真卡住时到点就照旧丢引用 + 记一条 warning，
-     不抛、不静默（上界由用例注入的小值显式钉住）；
-  ④ **释放后才 `empty_cache()`**：清缓存的那一刻，模型引用与它内部那两格已经空了。
-
-接线上另有三条：释放排在 `launch()` **之前**（**列表顺序断言**，不靠固定 `sleep` 赌时序）、
-替身后端（没有这个方法）走防御式取法是 no-op、释放抛异常时 `post` 仍落 `done`。
 
 **没有一条用例加载真模型、碰 GPU 或拉起会后链**：模型是注入的假件（`processor` /
 `transcriber` 两格 + `transcribe_segment()`），`torch` 是一个记事的假模块。
@@ -116,7 +105,6 @@ def loaded_backend(model) -> TranscriberBackend:
     return backend
 
 
-#: 被测 logger 的名字
 TRANSCRIBE_LOGGER_NAME = "meeting.backends.transcribe"
 
 
@@ -124,7 +112,7 @@ class CapturedLog(logging.Handler):
     """直接挂到被测 logger 上的记录器，用来看这一路真的写了什么。
 
     为什么不走 pytest 的 `caplog`：项目的"meeting"那一层 logger 是 `propagate = False`
-    （`meeting/logging_setup.py` 第 58 行，为的是不污染 torch / transformers 的日志），
+    （为的是不污染 torch / transformers 的日志），
     记录冒不到根上，`caplog` 因此一条都收不到。这里自己挂 handler，判据直接读实测文本。
     """
 
@@ -170,11 +158,6 @@ def run_in_background(target) -> threading.Thread:
     return thread
 
 
-# ---------------------------------------------------------------------------
-# ① 没加载过就 no-op
-# ---------------------------------------------------------------------------
-
-
 def test_release_without_a_loaded_model_is_a_silent_noop(monkeypatch):
     """`meeting post` 那个独立入口的现场：进程里没加载过会中模型，释放安静地什么都不做。
 
@@ -196,11 +179,6 @@ def test_release_without_a_loaded_model_is_a_silent_noop(monkeypatch):
     assert fake_torch.calls == 0, "没加载过模型时不该去碰 empty_cache()"
     assert written == [], f"没加载过模型时释放该一条日志都不写：{written}"
     assert elapsed < CASE_LIMIT_SECONDS, f"no-op 该当场返回，实测 {elapsed:.3f}s"
-
-
-# ---------------------------------------------------------------------------
-# ② 幂等
-# ---------------------------------------------------------------------------
 
 
 def test_release_is_idempotent(monkeypatch):
@@ -226,11 +204,6 @@ def test_release_is_idempotent(monkeypatch):
     assert fake_torch.calls == 1, f"第二次调不该再清一次缓存：{fake_torch.calls}"
     assert backend._transcriber is None
     assert model.processor is None and model.transcriber is None
-
-
-# ---------------------------------------------------------------------------
-# ③ 有界等待：收干净了就不等满；卡住了到点就放手（丢引用 + 一条 warning）
-# ---------------------------------------------------------------------------
 
 
 def test_release_waits_for_inflight_inference_then_drops_the_reference(monkeypatch):
@@ -302,11 +275,11 @@ def test_release_gives_up_at_its_own_small_bound_and_still_drops_the_reference(m
     assert not worker.is_alive()
 
 
-#: 新加的那一条用多久（秒）：真的等一次在飞推理（**不靠固定 sleep 赌时序** ——
-#: 放行是事件驱动的，这里只是给等待本身留出够用的窗口）
+#: 真的等一次在飞推理的窗口（秒）：**不靠固定 sleep 赌时序** ——
+#: 放行是事件驱动的，这里只是给等待本身留出够用的窗口
 INFLIGHT_HOLD_SECONDS = 0.3
 
-#: 新加的那一条注入的上界（秒）：明显大于上面那个窗口，于是「等到了」与「上界到点」两档
+#: 注入的上界（秒）：明显大于上面那个窗口，于是「等到了」与「上界到点」两档
 #: 在这一条里区分得开
 INFLIGHT_WAIT_SECONDS = 2.0
 
@@ -332,7 +305,6 @@ def test_release_really_waits_until_the_inflight_segment_returns(monkeypatch):
     assert model.entered.wait(CASE_LIMIT_SECONDS), "假模型该已经进到推理里"
 
     with recording_log() as log:
-        # 放行是**事件**：等在飞那一段的收工时刻上，不靠固定 sleep 赌时序
         model.release.set()
         began = time.monotonic()
         assert backend.release_gpu() is True
@@ -351,11 +323,6 @@ def test_release_really_waits_until_the_inflight_segment_returns(monkeypatch):
         f"这一档该是「等到了」，不该出现超时 warning：{written}"
     )
     assert fake_torch.calls == 1
-
-
-# ---------------------------------------------------------------------------
-# ④ 释放之后才 `empty_cache()`
-# ---------------------------------------------------------------------------
 
 
 def test_empty_cache_runs_only_after_the_references_are_gone(monkeypatch):
@@ -450,7 +417,7 @@ class FakePipeline:
         return 0
 
 
-#: ③ 用的一段假音频（内容无关紧要：假模型不看它）
+#: 用的一段假音频（内容无关紧要：假模型不看它）
 _FAKE_AUDIO = b"\x00\x00" * 1600
 
 
@@ -479,7 +446,7 @@ def test_release_touches_neither_stopped_nor_health(monkeypatch):
 
 @pytest.mark.parametrize("module_name", ["meeting.backends.transcribe"])
 def test_release_keeps_the_module_toplevel_light(module_name):
-    """`release_gpu()` 的落地没有把 `torch` 搬到模块顶层（AST 判据与设计那条同源）。"""
+    """`release_gpu()` 的落地没有把 `torch` 搬到模块顶层。"""
     import ast
     import importlib
     import inspect

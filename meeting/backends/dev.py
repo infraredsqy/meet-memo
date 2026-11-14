@@ -16,7 +16,7 @@
 `DevTranscriberBackend`（`transcriber.backend = dev` 按 **key 分流**解析到它，两档互不影响）
 是会中能出合成行的替身：不读盘、不加载模型，`stop()` 后一行不再产。**首发延迟取 2.0 秒**：
 开场后服务先喂满两路电平（15 根 × 100ms ≈ 1.5 秒）才抓快照，首行若几十毫秒内落地，
-`contract/fixtures/snapshot/recording.json` 的 `transcript.last_line_at` 会随抓取时机抖动。
+快照里 `transcript.last_line_at` 会随抓取时机抖动。
 """
 
 from __future__ import annotations
@@ -45,10 +45,8 @@ _log = logging.getLogger("meeting.backends.dev")
 #: 合成电平的确定性种子（**唯一来源**；随源码一起定版）
 DEV_LEVEL_SEED = 20250906
 
-#: dev 替身的帧间隔（秒）：每 100ms 一帧事实
 DEV_FRAME_INTERVAL_SECONDS = 0.1
 
-#: 故障注入的默认存活时长（秒）——`duration_seconds` 可省，缺省取它
 DEV_FAULT_DEFAULT_SECONDS = 30.0
 
 #: 三种故障（取值域；非其中之一一律 `invalid_setting`(400)）
@@ -57,14 +55,11 @@ DEV_FAULT_KINDS: tuple[str, ...] = ("silence", "stall", "lost")
 #: `silence` 故障下这一路的电平（−80 dBFS 以下并保持）
 DEV_SILENCE_DBFS = -90.0
 
-#: 合成电平的可闻区间（dBFS）
 DEV_LEVEL_MIN_DBFS = -60.0
 DEV_LEVEL_MAX_DBFS = -6.0
 
-#: dev 转写替身两行之间的间隔（秒）与首发延迟（秒）
-#:
-#: 首发延迟取 2.0 秒的理由写在模块 docstring 的最后一节（`contract/fixtures/snapshot/
-#: recording.json` 那一格的确定性：那一版快照在开场后约 1.5 秒抓取）。
+#: dev 转写替身两行之间的间隔（秒）与首发延迟（秒）：
+#: 首发延迟取 2.0 秒的理由见模块 docstring 的最后一节（快照抓取时机的确定性）。
 DEV_TRANSCRIPT_INTERVAL_SECONDS = 0.5
 DEV_TRANSCRIPT_INITIAL_DELAY_SECONDS = 2.0
 
@@ -122,8 +117,6 @@ class DevCaptureBackend:
             frame_interval=DEV_FRAME_INTERVAL_SECONDS, on_gap=self._report_gap
         )
 
-    # -- 协议 -------------------------------------------------------------
-
     def bind(self, emit: Callable[[Any], None], *, config: Any = None) -> None:
         """记下事实出口与只读配置视图（runtime 在 `probe()` 之前调一次）。"""
         self._emit = emit
@@ -166,8 +159,6 @@ class DevCaptureBackend:
         """**只登记**（不写真实音频）：音频字节的写入归。"""
         self.finalize_calls += 1
         _log.info("dev 替身 finalize()：只登记，不写真实音频（session=%s）", self._session_dir)
-
-    # -- 故障注入（dev-only 动作的唯一入口） ------------------------------
 
     def inject_fault(
         self,
@@ -239,8 +230,6 @@ class DevCaptureBackend:
             if (fault := self.fault_state(source, moment)) is not None
         }
 
-    # -- 合成电平 ---------------------------------------------------------
-
     def level_sequence(self, source: str, count: int) -> list[float]:
         """按种子算出 `count` 帧的电平序列（**确定性**：同种子同帧序逐帧相同）。
 
@@ -298,7 +287,7 @@ class DevCaptureBackend:
                 faults = {source: self.fault_state(source, now) for source in self._sources}
             if "stall" in faults.values():
                 # `stall` = 两路的事实帧整体停发（HTTP 照常应答；开场窗口内
-                # recording_alive 为 null、超窗才为 false，见 docs/contract.md 第 5 章）。
+                # recording_alive 为 null、超窗才为 false）。
                 # 这一拍没有任何帧出去，空洞自查记录也不记（恢复后第一拍一算就是真实时长）
                 tick += 1
                 time.sleep(DEV_FRAME_INTERVAL_SECONDS)
@@ -368,7 +357,7 @@ class DevCaptureBackend:
 class DevTranscriberBackend:
     """dev 转写替身：会中每隔 `interval_seconds` 秒产一行两路轮换的合成转写。
 
-    **非产品路径**（`transcriber.backend = dev` 才解析到它，见模块 docstring 的最后一节）。
+    **非产品路径**（`transcriber.backend = dev` 才解析到它）。
     它是一条「开发时能看见字幕在动」的稳定替身：不读归档、不加载模型、不写产物文件，
     只把 `TranscriptLine` 交给 `line_sink`（与真后端同一个出口形状）。
 

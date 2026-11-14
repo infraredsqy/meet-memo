@@ -1,11 +1,8 @@
-"""`tests/_capture_fakes.py` —— capture 测试层的共用假件与归档核对工具（**pytest 不收集本文件**）。
+"""capture 测试层的共用假件与归档核对工具（**pytest 不收集本文件**）。
 
-定位与挂件方式照 `tests/_drain_fakes.py`（跨文件共用假件的唯一落点）：`FakeCaptureSource`
-（含 `block()` 与块长常量）是引擎层共用的假采集源，按计划给块、可指定在第几块抛错；
-`audit_pcm()` 一族是归档的纯函数核对（逐帧电平重放 / 逐样本计数 / 逐字节比对 / 墙钟对齐），
-端到端与反例用例共用同一组。原先分别住在 `test_capture_engine.py` 与
-`test_capture_accounting.py`、被各用例文件互相 import 的正本搬到这里，用法一律
-`from tests._capture_fakes import ...`。
+`FakeCaptureSource`（含 `block()` 与块长常量）是引擎层共用的假采集源，按计划给块、
+可指定在第几块抛错；`audit_pcm()` 一族是归档的纯函数核对（逐帧电平重放 / 逐样本计数 /
+逐字节比对 / 墙钟对齐），端到端与反例用例共用同一组。
 """
 
 from __future__ import annotations
@@ -19,7 +16,7 @@ import numpy as np
 from meeting.capture.levels import frame_level
 
 
-#: 一块 0.1 秒的 16k / 单声道 / int16 样本（3200 字节；一秒 32000 字节的由来）
+#: 一块 16k / 单声道 / int16 样本
 CHUNK_FRAMES = 1600
 CHUNK_BYTES = CHUNK_FRAMES * 2
 
@@ -70,8 +67,6 @@ class FakeCaptureSource:
         self._stop = threading.Event()
         self._latest = np.empty(0, dtype=np.int16)
 
-    # -- CaptureSource 协议 ------------------------------------------------
-
     def start(self) -> None:
         """起这一路的采集（后端会在造完源之后调它；引擎自己起的那些用例不调）。"""
         self.started = True
@@ -101,8 +96,6 @@ class FakeCaptureSource:
         self.stopped = True
         self._stop.set()
 
-    # -- 给用例看的读数 ----------------------------------------------------
-
     @property
     def bytes_fed(self) -> int:
         return self.fed * len(self.chunk)
@@ -121,11 +114,6 @@ SILENCE_DBFS_THRESHOLD = -60.0
 
 #: 一个采集块的样本数（0.1 秒 @16k；「偏差在一个采集块以内」指的就是它）
 BLOCK_SAMPLES = 1600
-
-
-# ---------------------------------------------------------------------------
-# 核对函数（纯函数；端到端文件从这里 import 同一组）
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -280,7 +268,7 @@ def samples_within_one_block(
 ) -> bool:
     """「样本数」与「墙钟秒数 × 采样率」的偏差是否在一个采集块以内。
 
-    采集按块落盘（一块 0.1 秒 = 1600 样本），墙钟是连续量：两者的差被一个块宽吸收
-    （设计口径 §3 的口径）。边界值算在内（恰好差一个块 = 通过）。
+    采集按块落盘（一块 0.1 秒 = 1600 样本），墙钟是连续量：两者的差被一个块宽吸收。
+    边界值算在内（恰好差一个块 = 通过）。
     """
     return abs(int(samples) - float(wall_seconds) * sample_rate) <= block_samples

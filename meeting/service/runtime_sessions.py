@@ -35,17 +35,16 @@ from meeting.state import (
 _log = logging.getLogger("meeting.service.runtime")
 
 
-#: 会中模型「收 / 放」那两次调用专用的工作线程条数（`docs/design-intent.md` 第 21 条）。
+#: 会中模型「收 / 放」那两次调用专用的工作线程条数。
 #: 暂停 / 继续是要当场应答的按钮动作，而 `release_gpu()` / `acquire_gpu()` 要等在飞推理收
 #: 干净（上界 5 秒）或加载权重（秒级）——直接跑在事件循环上，那几秒里 `/api/heartbeat`、
-#: `/api/state`、SSE 与其它动作一起停摆，心跳探测会判「失联」（第 17 条）。取 1 是因为
+#: `/api/state`、SSE 与其它动作一起停摆，心跳探测会判「失联」。取 1 是因为
 #: 这两次调用是同一格模型引用上的一进一出，必须按用户按下的顺序 FIFO 排队
 #: （收尾那台池取 4 条，要的东西正相反）。
 MODEL_EXECUTOR_MAX_WORKERS = 1
 
 
 class RuntimeSessionsMixin:
-    """场次生命周期 mixin：起 / 停 / 静音 / 暂停 / 继续 / set_source / 写盘。"""
 
     def _session_record(
         self,
@@ -58,11 +57,11 @@ class RuntimeSessionsMixin:
     ) -> dict[str, Any]:
         """按当前快照组装一份 `session.json` 的内容（盘上那一版的唯一组装点）。
 
-        段记录从采集引擎现场取，并与开场读到的旧记录合并（续接第 9 条：旧段原记录不动，
+        段记录从采集引擎现场取，并与开场读到的旧记录合并（旧段原记录不动，
         本段追加在后面；引擎还没起时只把即将开出的段文件名按命名规则预告进去）。权威时长
-        `audio_duration_seconds`（第 7 条）= 合并后各段 `duration_seconds` 之和、未写完的段
+        `audio_duration_seconds` = 合并后各段 `duration_seconds` 之和、未写完的段
         不计入——它是这份文件里唯一被当判据的元信息，现算而不沿用旧合计，旧段残缺时能自愈。
-        场次身份四格续接档沿用开场那一次的值（一场会一个身份）；其余元信息一律不当判据（第 6 条）。
+        场次身份四格续接档沿用开场那一次的值（一场会一个身份）；其余元信息一律不当判据。
         """
         devices = {item.id: item.device_name for item in self.snapshot.sources}
         # `getattr` 而非属性访问：替身（null/dev）没有 `.session` 这一位，那一刻就是「还没有段」
@@ -135,7 +134,7 @@ class RuntimeSessionsMixin:
         """把当前快照写成盘上那一版 `session.json`（原子的那一处）。
 
         `interrupted=None`（普通调用点）时沿用盘上已写着的那一版——强制打断先落盘的
-        `interrupted: true` 不会被取消后的登记抹回（§3.5.6 三条不覆盖约束之一）。
+        `interrupted: true` 不会被取消后的登记抹回。
         `state=None` 时由 `_session_state_on_disk()` 经 `state_for()` 四档映射算出；只有
         取消路径显式传 `state="draining"` 钉住这一档——现场已有 `failed` 步时映射会算出
         `"failed"`，把 `mark_interrupted()` 刚写下的 `draining` 覆盖掉；四档映射本身是
@@ -161,24 +160,22 @@ class RuntimeSessionsMixin:
         """`start`：判态 → 校验落点与 `mode` → 判后端可用性 → 写第一版文件 → 进 `recording`。
 
         落点 = 请求**显式**给的目标工作区目录（`args.dir`，已存在的目录）：本方法**不建目录、
-        不按日期命名、没有默认落点**（`docs/design-intent.md` 第 3、4 条）。
+        不按日期命名、没有默认落点**。
 
-        目标目录里**已有** `session.json` 时这一场是**续接**（第 9 条：一段 = 一次录制，
+        目标目录里**已有** `session.json` 时这一场是**续接**（一段 = 一次录制，
         同一工作区再录一段）：开场先把旧记录读进来（`_resumed_record`），本段的段记录与
         旧段合并着写盘；旧段的归档一个字节不碰（采集引擎按下一个段号开**新**文件）。
         新一场与续接场的差别只在「有没有旧记录可合并」，后面的流程一条不分岔。
         """
         mode = DEFAULT_SESSION_MODE if mode is None else mode
 
-        # ① 判态三档：已录 / 收尾闸（收窄后）/ 硬闸（会后精细稿在飞）
         if self.snapshot.top_state in ("recording", "alert"):
             raise self._already_recording_error()
         if self.snapshot.top_state == "ended":
             self._reject_start_during_drain()
         self._reject_start_on_offline_post()
 
-        # ② 校验落点（**显式给、已存在**；不建目录）。已有记录的那一档 = 续接：
-        # 先把旧记录读进来（本场落盘的每一版都要跟它合并），再动任何东西
+        # 先把旧记录读进来：本场落盘的每一版都要跟它合并
         try:
             session_dir = resolve_workspace_dir(dir)
         except ValueError as exc:
@@ -194,7 +191,6 @@ class RuntimeSessionsMixin:
         # 本段将开出的段号（与引擎构造时同一条算式；此刻引擎还没建，盘上还没有本段文件）
         planned_segment = next_segment_number(session_dir, SOURCE_IDS)
 
-        # ② 校验 args（**在建目录之前**）
         if mode not in SESSION_MODES:
             raise ActionError(
                 "invalid_setting",
@@ -203,14 +199,12 @@ class RuntimeSessionsMixin:
                 detail={"key": "mode", "value": mode, "legal": list(SESSION_MODES)},
             )
 
-        # ③ 判后端可用性
         backend = self.capture_backend
         if backend is None:  # pragma: no cover - registry 保证有替身
             raise ActionError(
                 "capture_unavailable", "采集后端未接入：当前没有可用的采集实现", status=503
             )
 
-        # ④ **先把第一版 session.json 落稳** → 挂场次 log → 起采集 → 进 recording
         session = SessionInfo(
             id=session_id,
             dir=session_dir,
@@ -263,7 +257,7 @@ class RuntimeSessionsMixin:
         self.judge.reset_for_new_session()
         # 新一场从零开始：判定器那份提示级登记已经被上面清掉，快照那一格与本类那份键集合
         # 登记同步归零（三样一起清，见 `_clear_hints()`）—— 上一场的提示级不许跨场留下，
-        # 也不许让本场第一次刷新把它们当成「键集合没变」（复审 m3）。
+        # 也不许让本场第一次刷新把它们当成「键集合没变」。
         self._clear_hints()
         # 会中总结那两样同样从零开始（缓冲与记录表**走同一个入口**清，见
         # `_clear_session_summary()`）：上一场的行与那几次总结不许跟着进这一场。
@@ -274,7 +268,7 @@ class RuntimeSessionsMixin:
             session_id, session_dir, mode,
             f"，续接第 {planned_segment} 段（旧记录已合并）" if resuming else "",
         )
-        # `idle → recording` 的副作用会把两路 `health` 推到 `capturing`（设计口径），
+        # `idle → recording` 的副作用会把两路 `health` 推到 `capturing`，
         # 逐路落一条（阈值取 `mode`：本场采哪几路是这一档的口径）
         self._log_health_migrations(
             reason=f"场次开始（mode={mode}）",
@@ -405,7 +399,7 @@ class RuntimeSessionsMixin:
             session.id if session else "?", session.dir if session else "?", reason,
             round(session.elapsed_seconds, 3) if session else "?",
         )
-        # `→ ended` 的副作用把两路 `health` 推到 `stopped`（设计口径），逐路落一条
+        # `→ ended` 的副作用把两路 `health` 推到 `stopped`，逐路落一条
         self._log_health_migrations(
             reason=f"场次结束、进收尾（reason={reason}）",
             threshold="无阈值（收尾这一步不看阈值）",
@@ -425,8 +419,6 @@ class RuntimeSessionsMixin:
         self.judge.mute_session = True
         _log.info("本场已静音（会话级；下一场 start 自动复位，持久化开关 alarm.sound 未改）")
         self.commit()
-
-    # 暂停 / 继续 / 会中开关某一路（R24 / R25）
 
     def _recording_session(self, what: str) -> SessionInfo:
         """本场还没收尾的那一份 `session`（没有就回 `not_recording` 409）。
@@ -448,10 +440,10 @@ class RuntimeSessionsMixin:
     def _submit_model_lifecycle(self, method_name: str, *, what: str) -> None:
         """把一次「会中模型的收 / 放」提交到后台（暂停 → `release_gpu()`；继续 → `acquire_gpu()`）。
 
-        不在这里直接调：第 21 条要的是「当场结束」——释放与加载都是秒级工夫，花在事件
+        不在这里直接调：要的是「当场结束」——释放与加载都是秒级工夫，花在事件
         循环上会让暂停/继续那几秒里整个 HTTP 面停摆。提交进单线程池按用户按下的顺序 FIFO
-        排队。防御式取法：协议里这两个方法是可选成员（`docs/backend-protocols.md` 第 3 章），
-        替身后端取不到就跳过。线程体异常只落 log（R1：模型那侧出事不许拖失败按钮动作）。
+        排队。防御式取法：协议里这两个方法是可选成员，
+        替身后端取不到就跳过。线程体异常只落 log（模型那侧出事不许拖失败按钮动作）。
         """
         call = getattr(self.transcriber_backend, method_name, None)
         if not callable(call):
@@ -473,14 +465,14 @@ class RuntimeSessionsMixin:
             _log.exception("会中模型%s没能排进后台（如实登记，不静默）", what)
 
     def pause_session(self) -> None:
-        """`pause`：这一场暂停 —— 归档改写静音、不录内容（第 8 条）。
+        """`pause`：这一场暂停 —— 归档改写静音、不录内容。
 
         幂等（已经在暂停中时什么都不做）。快照里落在 `session.paused` 这一格上，
-        顶层四态一个字不动（第 3 条没有第五个状态）；暂停的那一段时间同时从时长读数里
+        顶层四态一个字不动；暂停的那一段时间同时从时长读数里
         扣掉（`_session_elapsed_seconds()`），并交给 `AlertJudge` 把静默判定冻住 ——
-        安静房间里暂停三分钟不该弹一条「这一路静默已达 180 秒」（第 17 条）。
+        安静房间里暂停三分钟不该弹一条「这一路静默已达 180 秒」。
 
-        **会中那个模型在这一刻结束**（第 21 条：暂停当场结束模型，继续时再拉起来）：
+        **会中那个模型在这一刻结束**（暂停当场结束模型，继续时再拉起来）：
         经 `_submit_model_lifecycle()` 把 `release_gpu()` 提交到后台，于是暂停这一段它
         退出显存，而按下的这一下当场应答。
         """
@@ -495,7 +487,7 @@ class RuntimeSessionsMixin:
         pauser = getattr(self.capture_backend, "pause", None)
         if callable(pauser):
             pauser()
-        # 会中那个模型**当场结束**（第 21 条）：暂停这一段它退出显存，继续时再拉起来。
+        # 会中那个模型**当场结束**：暂停这一段它退出显存，继续时再拉起来。
         # 调用提交到后台（见 `_submit_model_lifecycle()`）：释放要等在飞的推理收干净，
         # 而暂停这个按钮按下去要当场应答。
         self._submit_model_lifecycle("release_gpu", what="让出显存（暂停期间不占显卡）")
@@ -508,7 +500,7 @@ class RuntimeSessionsMixin:
     def resume_session(self) -> None:
         """`resume`：继续 —— 归档回到录内容，时长接着走（幂等）。
 
-        会中那个模型也在这一刻**重新拉起来**（第 21 条：又要用它了）：经
+        会中那个模型也在这一刻**重新拉起来**：经
         `_submit_model_lifecycle()` 把 `acquire_gpu()` 提交到后台，与暂停那一半配对。
         """
         session = self._recording_session("继续动作")
@@ -521,19 +513,19 @@ class RuntimeSessionsMixin:
         resumer = getattr(self.capture_backend, "resume", None)
         if callable(resumer):
             resumer()
-        # 继续 = 又要用它了：把会中模型重新拉起来（与暂停那一半配对，第 21 条）。
+        # 继续 = 又要用它了：把会中模型重新拉起来（与暂停那一半配对）。
         # 同样提交到后台：拉起来之后紧接着就是权重的加载，这个动作当场应答。
         self._submit_model_lifecycle("acquire_gpu", what="重新拉起（继续之后接着用）")
         _log.info("本场已继续：%s 的归档回到录内容（暂停 %ss 已计入时长）", session.id, round(session.paused_seconds, 3))
         self.commit()
 
     def set_source(self, args: dict[str, Any]) -> None:
-        """`set_source`：会中关掉某一路 / 重新打开某一路（第 9 条：那一路写静音，段不切）。
+        """`set_source`：会中关掉某一路 / 重新打开某一路（那一路写静音，段不切）。
 
         关掉：停流、改写静音，不报 `SourceLost`、不进告警（用户按的按钮与「真死了」是两
         件事）；关断即收场——这一路挂着的致命级当场清空，还有别的路真在 `lost` 时换挂那
         一路。重新打开：重挑设备、重开流；开不起来如实回 `capture_unavailable`(503)；
-        开成了就是干净开场（直接回 `capturing`，静默计数从零起算，机主拍板「恢复即收场」）。
+        开成了就是干净开场（直接回 `capturing`，静默计数从零起算）。
         快照落点复用现有的 `health = stopped` 档（不为它发明新取值）。
         """
         session = self._recording_session("会中开关某一路的动作")
@@ -576,7 +568,7 @@ class RuntimeSessionsMixin:
             item.lost_since = None
             # 关断即收场：这一路挂着的致命级当场清空（横幅要当场消失，不是「点了没反应」）。
             # 只清这一路自己的那一条；清完若还有别的路真在 `lost`，致命级换挂那一路、
-            # 顶层停在 `alert`（设计意图第 1 条：采不到的那一路不许被忽略）。
+            # 顶层停在 `alert`（采不到的那一路不许被忽略）。
             critical = self.snapshot.alerts.critical
             if critical is not None and critical.source == source:
                 self.snapshot.alerts.critical = None
@@ -612,9 +604,8 @@ class RuntimeSessionsMixin:
                 status=503,
                 detail={"source": source, "error": reason},
             ) from exc
-        # 重开 = 干净开场（机主拍板「恢复即收场」）：直接回 `capturing`，不落残留横幅，
-        # 静默计数从零起算。旧口径「关掉前还挂着致命级时回 lost 走自然恢复」随「关断即
-        # 收场」退场——关断已把这一路的致命级清空，重开那一刻不存在可恢复的横幅；
+        # 重开 = 干净开场：直接回 `capturing`，不落残留横幅，
+        # 静默计数从零起算。关断已把这一路的致命级清空，重开那一刻不存在可恢复的横幅；
         # 判定记录在关断那一刻已收走，这里再收一道是幂等的。
         self.judge.reset_source(source)
         item.health = "capturing"

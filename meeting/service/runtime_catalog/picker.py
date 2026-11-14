@@ -1,9 +1,4 @@
-"""RuntimeCatalogMixin 的「目录选择器」域分片：GET /api/dirs 与 POST /api/dirs。
-
-方法与方法间注释均自拆分前的 runtime_catalog.py 单文件 mixin 一字不改复制；
-本文件自写内容只有模块 docstring、import、_log 一行与类声明行（新建目录名的
-拒绝式校验与长度上限一并在此）。
-"""
+"""RuntimeCatalogMixin 的「目录选择器」域分片：GET /api/dirs 与 POST /api/dirs。"""
 from __future__ import annotations
 
 import logging
@@ -24,7 +19,7 @@ def checked_new_dir_name(name: Any) -> str:
     """把要新建的目录名过一遍**拒绝式**校验，合格原样交回，不合格给一句人话。
 
     与资料上传那套清洗（`runtime_materials.sanitize_material_name()`）相反：名字必须
-    **用户亲手起**（设计意图第 3、4 条的新口径——软件可以替你建目录，但仍不自动命名、
+    **用户亲手起**（软件可以替你建目录，但仍不自动命名、
     不自动挑落点），所以这里**不改写、只拒绝**：非法的名字当场 400 说清哪里不行，
     不悄悄清洗出一个别的名字落盘。
 
@@ -58,8 +53,6 @@ def checked_new_dir_name(name: Any) -> str:
 
 
 class RuntimeCatalogPickerMixin:
-    """「目录选择器」：目录浏览、就地新建一层（名字由人起，不清洗不改写）。"""
-
     def dirs_listing(self, dir: Any, with_files: bool = False) -> dict[str, Any]:
         """`GET /api/dirs` 的应答体：目录选择器的一个现场（起点是用户主目录）。
 
@@ -134,7 +127,7 @@ class RuntimeCatalogPickerMixin:
     def dirs_create(self, dir: Any, name: Any) -> dict[str, Any]:
         """`POST /api/dirs` 的本体：在指定的那一层里就地新建一个目录。
 
-        新口径（设计意图第 3、4 条：软件可以替你建目录，但仍不自动命名、不自动挑落点）：
+        新口径（软件可以替你建目录，但仍不自动命名、不自动挑落点）：
         落点是**正在浏览的这一层**（`dir` 省略时主目录，与 `GET /api/dirs` 同一起点）、
         名字必须用户给（`checked_new_dir_name()` 拒绝式校验，不清洗不改写）。只建一层、
         不递归；不做删除、不做改名。
@@ -143,14 +136,13 @@ class RuntimeCatalogPickerMixin:
 
         - 那一层不存在 / 读不动 → 400 `invalid_setting`（与 `GET /api/dirs` 同一档）；
         - 名字非法 → 400 `invalid_setting`（`detail.key = "name"`，`legal` 里是规则原话）；
-        - 同名已存在（目录或文件都算占位）→ 409 `dir_exists`——这一片自己的 `code`
-          （先例是资料的 `material_missing`、单场状态的 `session_dir_missing`）；
+        - 同名已存在（目录或文件都算占位）→ 409 `dir_exists`——这一片自己的 `code`；
         - 盘上出岔（无权限等）→ 500 `persist_failed`，盘上不落半截东西
           （`mkdir()` 单调用原子：建不出来就是什么都没有）。
 
         成功体里的 `directory` 是新建那一行的名目判读（刚建出来是 `empty`，判读照走
         同一套 `classify_workspace_dir()`，不替它下别的结论）；本写入**不提交、不涨
-        `revision`、不广播**——选择器的现场独立于四态快照（先例是资料四条端点）。
+        `revision`、不广播**——选择器的现场独立于四态快照。
         """
         raw = config_module.home_dir() if dir is None else str(dir)
         parent = Path(canonical_dir(raw))

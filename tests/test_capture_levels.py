@@ -1,11 +1,7 @@
 """`tests/test_capture_levels.py` —— 电平换算（`meeting/capture/levels.py`）。
 
 **纯函数、无硬件、无文件**：这一段验的是「三个数怎么算出来的」，口径与
-`meeting/state.py` 的 `push_level()`、`meeting/backends/dev.py` 的 `_emit_frame()` 对得上：
-
-  - 三个数都是 dBFS（负数）；
-  - `dbfs` 用这一帧窗口的均方根、`peak` 用窗口内绝对值最大样本、`bar = max(dbfs, peak)`；
-  - 静音窗口落到 `alert.silence_dbfs`（默认 `-60`）以下，写 `-120.0` 兜底。
+`meeting/state.py` 的 `push_level()`、`meeting/backends/dev.py` 的 `_emit_frame()` 对得上。
 """
 
 from __future__ import annotations
@@ -31,11 +27,6 @@ def sine(amplitude: float, count: int = 16000) -> np.ndarray:
     return (amplitude * np.sin(2.0 * np.pi * 440.0 * t / 16000.0)).astype(np.int16)
 
 
-# ---------------------------------------------------------------------------
-# 单个数：to_dbfs()
-# ---------------------------------------------------------------------------
-
-
 def test_to_dbfs_anchors_at_full_scale():
     """满量程是 0 dBFS 的参考点：`FULL_SCALE` 处算出来正好是 0。"""
     assert to_dbfs(FULL_SCALE) == 0.0
@@ -54,11 +45,6 @@ def test_to_dbfs_never_returns_negative_infinity():
     assert to_dbfs(0) == SILENCE_DBFS
     assert to_dbfs(-0.0) == SILENCE_DBFS
     assert np.isfinite(to_dbfs(0))
-
-
-# ---------------------------------------------------------------------------
-# 一块样本：rms_dbfs() / peak_dbfs()
-# ---------------------------------------------------------------------------
 
 
 def test_silent_window_sits_below_the_alert_threshold():
@@ -82,13 +68,12 @@ def test_rms_is_about_three_db_below_peak_for_a_sine():
     """正弦的均方根比峰值低约 3 dB（`−3.01 dB` 是 `1/√2` 的读数）。
 
     窗口取整数个周期（4400 个样本 = 121 个 440 Hz 周期）：窗口里留半截波形时，
-    均方根与峰值之比就不再是 `1/√2`，读数会偏离 3 dB（实测偏 1.3 dB）—— 这是窗口边界
+    均方根与峰值之比就不再是 `1/√2`，读数会偏离 3 dB —— 这是窗口边界
     落在哪里的事，换算本身没有错。
     """
     wave = sine(20000.0, count=4400)
     rms_value = rms_dbfs(wave)
     peak_value = peak_dbfs(wave)
-    # 峰值读数比均方根读数高约 3 dB（两个都是负数，差取正）
     assert 2.7 < (peak_value - rms_value) < 3.3
 
 
@@ -110,11 +95,6 @@ def test_a_constant_window_makes_rms_equal_peak():
     """常值窗口的均方根与峰值是同一个数（`x` 的 RMS 就是 `|x|`）。"""
     constant = np.full(1600, 3276, dtype=np.int16)
     assert abs(rms_dbfs(constant) - peak_dbfs(constant)) < 0.01
-
-
-# ---------------------------------------------------------------------------
-# 一帧：frame_level()
-# ---------------------------------------------------------------------------
 
 
 def test_frame_level_returns_rms_peak_and_their_maximum():

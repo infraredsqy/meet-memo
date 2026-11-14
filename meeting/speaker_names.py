@@ -1,10 +1,10 @@
-"""人名表：一场会目录里的「编号 → 人名」记录（节点，R10 第四条 / R30）。
+"""人名表：一场会目录里的「编号 → 人名」记录。
 
 一场会落一份 `meeting_speaker_names.json` 在场次目录根，只收用户确认过的 `(编号, 名字)` 对
-（跳过 = 不起名，不落任何状态）。纯记录：不做注册制声纹（R10 首句）、不做「应该有谁」的
-校验（`docs/design-intent.md` 第 6 条）；唯一用途是喂给下一次出纪要的提示词
+（跳过 = 不起名，不落任何状态）。纯记录：不做注册制声纹、不做「应该有谁」的校验；
+唯一用途是喂给下一次出纪要的提示词
 （`meeting/minutes/prompt.py` 的 `{{SPEAKER_NAMES}}`）。改这张表不改任何已生成的
-`meeting_final.md`（R13）、不拉起任何离线/纪要流程（R26）。
+`meeting_final.md`、不拉起任何离线/纪要流程。
 
 编号沿用既有字面量（`meeting/offline/artifacts.py` 的对照表）：离线编号 = `${source}:${local}`
 （如 `mic:S01`，两路不撞是结构保证）；没跑过离线聚类时身份 = 路本身（`mic` / `loopback`）。
@@ -144,9 +144,6 @@ def parse_names_document(document: Any) -> dict[str, Any]:
     return document
 
 
-# 读（只做结构解析；读不出就如实当作「没有」，不挡任何下游）
-
-
 def read_names_entries(session_dir: str | Path) -> dict[str, str] | None:
     """读回这一场的 `{编号: 名字}`（只读、不抛）。
 
@@ -180,7 +177,7 @@ def set_speaker_name(session_dir: str | Path, key: str, name: str) -> dict[str, 
     （写出去的必须读得回来）。原子写，界面与提示词随时来读都不会读到半份。
 
     表在盘上但读不出（坏 JSON / 未来主版本）时拒写：读不出还整份覆盖会把旧表里
-    用户逐条确认过的名字无声抹掉——读侧宽容只管渲染（缺表不挡纪要，d7），
+    用户逐条确认过的名字无声抹掉——读侧宽容只管渲染（缺表不挡纪要），
     写侧不拿这份宽容去覆盖待抢救的数据。抛 `SpeakerNamesError`，由调用方登记。
     """
     clean_key = qualified_key_shape(key)
@@ -199,9 +196,6 @@ def set_speaker_name(session_dir: str | Path, key: str, name: str) -> dict[str, 
     write_text_atomic(path, json.dumps(document, ensure_ascii=False, indent=2) + "\n")
     _log.info("人名表落盘：%s（%s → %s）", path, clean_key, clean_name)
     return {"key": clean_key, "name": clean_name}
-
-
-# 盘上身份集（单场状态端点与提示词共用的那一份读数）
 
 
 def _read_speaker_summary(artifact: Path) -> list[dict[str, Any]] | None:
@@ -244,11 +238,11 @@ def identity_rows(session_dir: str | Path) -> list[dict[str, Any]]:
 
     逐路各答一遍（照 `SOURCE_IDS` 的序）：对照表在且读得出、里面有编号 → 每个编号一行
     （键 `mic:S01` 这种限定名，`segments` 是出现段数）；对照表缺席 / 读不出 / 空表 →
-    这一路落成路本身一行（没跑过离线聚类时身份只有这两种，R10 第四条）。
+    这一路落成路本身一行（没跑过离线聚类时身份只有这两种）。
 
     每行五格：`key` / `source` / `label`（人话标签）/ `name`（没起过名或表读不出时
     `null`）/ `segments`（路级身份如实 `null`）。这一格是给人看的读数：不校验、不核对、
-    不改任何结论（`docs/design-intent.md` 第 6 条）。
+    不改任何结论。
     """
     session = Path(session_dir)
     names = read_names_entries(session) or {}

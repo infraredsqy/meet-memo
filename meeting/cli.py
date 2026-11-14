@@ -1,16 +1,16 @@
-"""命令行入口（设计口径 / §3.4 / R15）。
+"""命令行入口。
 
-命令词三个：`meeting web` / `meeting post` / `meeting replay`——每条仍是 `meeting <动词>`
-的两词命令形（R15）。`replay` 是重放验证工具，只验证、不是第二条生产路径。
+命令词三个：`meeting web` / `meeting post` / `meeting replay`——每条都是 `meeting <动词>`
+的两词命令形。`replay` 是重放验证工具，只服务验证；生产路径只认 `post`。
 
 参数面走 argparse（`_Parser`）：三个动作词各有一个解析器，`-h` / `--help` 打印说明后按
 `EXIT_OK` 收场；用法错不由 argparse 直接退（它默认打英文模板），而是抛 `ValueError`
 交回入口函数打用法说明、按 `EXIT_REJECTED` 收场——退出码与终端口径都不变。动作词的路由
 留在 `main()`：`post()` / `replay()` 是直接可调的入口（用例 seam），各自解析各自的串。
 
-五个退出码常量在本模块模块级定义（§3.4 冻结表），每个出口一律 `sys.exit(<常量>)`，
+五个退出码常量在本模块模块级定义，每个出口一律 `sys.exit(<常量>)`，
 log 写常量名——本模块不出现裸数字。`config.py` / `logging_setup.py` 不定义退出码常量，
-只抛已定的异常，由 `main()` 映射。配置与日志的时序四步定死（§3.5 第 1 条，不得对调）：
+只抛已定的异常，由 `main()` 映射。配置与日志的时序四步定死（不得对调）：
 ① 默认日志目录起 bootstrap 日志 → ② 读配置并值级校验 → ③ 按生效配置重建服务级日志 →
 ④ 生效 `log.dir` 写不进去即「主 log 不可写」。`meeting post` 的编排收在
 `meeting/post_run.py` 的 `run_post()`：**编排只有这一条入口**——收尾第 4 步不拉起任何
@@ -38,7 +38,7 @@ from meeting.post_run import (
 )
 from meeting.service import app as service_app
 
-# 退出码表（§3.4 冻结：标识符与取值都是冻结项）
+# 退出码表（标识符与取值都是冻结项）
 
 EXIT_OK = 0
 EXIT_FAILURE = 1
@@ -60,10 +60,8 @@ ACTIONS = ("web", "post", "replay")
 #: `post` 认的开关（**只有** `--force` 一个；它是唯一会再次花钱的开关）
 POST_FLAGS: tuple[str, ...] = ("--force",)
 
-#: `replay` 认的开关（三个都带取值）
 REPLAY_FLAGS: tuple[str, ...] = ("--seconds", "--chunks", "--out")
 
-#: 主解析器的描述（动作词清单与各自的一句话；RawDescription 原样排版）
 MAIN_DESCRIPTION = """\
 本地会议录制服务。动作词三个，每条都是 `meeting <动作词>` 的两词命令形（R15）：
 
@@ -74,8 +72,7 @@ MAIN_DESCRIPTION = """\
 每条命令都认 -h / --help，看各自那份更细的用法，例如 `meeting post --help`。
 """
 
-#: 主解析器的 epilog：五个退出码与各自触发条件（口径 = README「退出码」节的正本；
-#: 逐档触发条件与 Ctrl+C 两阶段语义见 docs/service.md）
+#: 主解析器的 epilog：五个退出码与各自触发条件（口径以 README「退出码」节为正本）。
 EXIT_CODE_EPILOG = """\
 退出码：
   0    正常收场（空闲态按 Ctrl+C 收场，或 `meeting post` 收尾干净）
@@ -84,10 +81,6 @@ EXIT_CODE_EPILOG = """\
   3    启动前提不成立（config.json 损坏、主 log 不可写）
   130  收尾中途第二次 Ctrl+C（立即中止，盘上绝不写 done）
 """
-
-# ---------------------------------------------------------------------------
-# argparse 参数面（用法说明的正本：`-h` / `--help` 与用法错时打的就是这一份）
-# ---------------------------------------------------------------------------
 
 
 class _UsageHelpFormatter(argparse.RawDescriptionHelpFormatter):
@@ -110,10 +103,10 @@ class _Parser(argparse.ArgumentParser):
     """本 CLI 的 argparse 解析器：用法错不进 argparse 的默认出口。
 
     argparse 默认的用法错出口是打一句英文模板然后按退出码 2 收场——退出码碰巧同
-    `EXIT_REJECTED`，但终端口径不是。这里改成 `error()` 抛 `ValueError`（那句话就是
-    终端要打的原因），由入口函数打印用法说明并按 `EXIT_REJECTED` 收场；`-h` / `--help`
-    仍走 argparse 本来的出口（打印说明、按 `EXIT_OK` 退）。`allow_abbrev` 关掉：
-    `--for` 这类缩写展开不是既有行为（手写解析那一版不认缩写，改了就是静默变行为）。
+    `EXIT_REJECTED`，终端打出来的却是另一套英文模板。这里改成 `error()` 抛 `ValueError`
+    （那句话就是终端要打的原因），由入口函数打印用法说明并按 `EXIT_REJECTED` 收场；
+    `-h` / `--help` 仍走 argparse 本来的出口（打印说明、按 `EXIT_OK` 退）。`allow_abbrev`
+    关掉：开关只认全名，`--for` 这类缩写按未知参数当场拒绝，行为与既有口径保持一致。
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -137,8 +130,7 @@ class _Parser(argparse.ArgumentParser):
     def _zh_message(self, message: str) -> str:
         """把 argparse 的英文模板翻成终端一直用的那几句中文（只翻本 CLI 会产生的几条）。
 
-        认不出的模板原样放行——与其翻错不如照实说。模板清单按 Python 3.13 的
-        argparse 实测（`tests/test_cli_post.py` 的参数面用例逐条压着这几句话）。
+        认不出的模板原样放行，让原文自己到终端说话。
         """
         if message.startswith("the following arguments are required: "):
             name = message.removeprefix("the following arguments are required: ")
@@ -288,15 +280,12 @@ def _build_replay_parser() -> _Parser:
 _HELP_FLAGS: tuple[str, ...] = ("-h", "--help")
 
 
-#: 收尾失败档退出时往终端倒的服务 log 行数（§5.4 行 256 的「最后几行」）
+#: 收尾失败档退出时往终端倒的服务 log 行数
 LOG_TAIL_LINES_ON_FAILURE = 20
 
 
 def _log() -> logging.Logger:
     return logging_setup.get_logger("cli")
-
-
-# 入口
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -343,15 +332,10 @@ def main(argv: list[str] | None = None) -> None:
     sys.exit(EXIT_REJECTED)
 
 
-# ---------------------------------------------------------------------------
-# `meeting post` —— 参数面（校验落在可被用例直接调用的函数上，不埋在 main() 里）
-# ---------------------------------------------------------------------------
-
-
 def _parse_post_args(argv: Sequence[str]) -> dict[str, Any]:
     """解析 `meeting post` 后面那一串（argparse）：交回 `{"dir": <path>, "force": <bool>}`。
 
-    **不猜目录、不挂菜单、不列目录内容**（R17 / 不做 TUI）：位置参数缺了就报用法，
+    **不猜目录、不挂菜单、不列目录内容**：位置参数缺了就报用法，
     给了就用它；指到不存在的路径就报那一条路径。`--force` 是唯一会再次花钱的开关，
     重复给也照收（幂等的布尔值）。
 
@@ -366,9 +350,6 @@ def _parse_post_args(argv: Sequence[str]) -> dict[str, Any]:
     return {"dir": directory.resolve(), "force": bool(namespace.force)}
 
 
-# `meeting post` —— 参数面（校验落在可被用例直接调用的函数上，不埋在 main() 里）
-
-
 def _load_config_or_exit(
     *,
     config_source_after_rebuild: bool = False,
@@ -376,7 +357,7 @@ def _load_config_or_exit(
 ) -> config_module.Config:
     """三入口（web / post / replay）共用的启动前奏：bootstrap 日志 → 读配置并生效 → 按生效配置重建服务级日志。
 
-    与 §3.5 的时序定死（不得对调）：配置损坏 → `EXIT_STARTUP_UNMET`；取值非法 →
+    时序不得对调：配置损坏 → `EXIT_STARTUP_UNMET`；取值非法 →
     `EXIT_REJECTED`；主 log 不可写 → `EXIT_STARTUP_UNMET`——异常一律在本函数里
     接住，不冒到解释器变成解释器默认码，终端话术与退出码三入口逐字同源。
 
@@ -444,7 +425,7 @@ def _load_config_or_exit(
             backup_count=loaded.get("log.backup_count"),
         )
     except OSError as exc:
-        # 主 log 不可写 → 拒绝启动（不再照 V1 那样静默降级）
+        # 主 log 不可写 → 拒绝启动
         print(
             f"启动前提不成立：主 log 不可写：{log_dir}（{type(exc).__name__}: {exc}）",
             file=sys.stderr,
@@ -493,7 +474,7 @@ def post(argv: Sequence[str] | None = None) -> None:
         sys.stdout.flush()
         sys.exit(EXIT_REJECTED)
 
-    # 配置层在幂等闸与花钱之前读进来（§3.5 第 1 条，与 `web()` 同源）：这一趟里每个取值
+    # 配置层在幂等闸与花钱之前读进来（与 `web()` 同源）：这一趟里每个取值
     # 都从它现读。启动前奏（bootstrap 日志 → 读配置 → 重建服务级日志）走三入口共用的那一份。
     loaded = _load_config_or_exit()
 
@@ -634,9 +615,6 @@ def _report_post_outcome(outcome: dict[str, Any], exit_code: int) -> None:
         )
 
 
-# `meeting replay` —— 重放验证工具（：只读素材、产物写自己的落地、绝不拉纪要）
-
-
 def _parse_replay_args(argv: Sequence[str]) -> dict[str, Any]:
     """解析 `meeting replay` 后面那一串（argparse）：交回 `{"dir", "seconds", "chunks", "out"}`。
 
@@ -752,10 +730,10 @@ def replay(argv: Sequence[str] | None = None) -> None:
 
 
 def web() -> None:
-    """`meeting web` —— 走 §3.5 的启动序列，前台跑到 `Ctrl+C`。
+    """`meeting web` —— 走启动序列，前台跑到 `Ctrl+C`。
 
-    **退出码有五条出口，全都显式 `sys.exit(<常量>)`**（§3.5「不许让异常冒到 uvicorn /
-    解释器那里变成解释器默认码」）：启动前提不成立 → `EXIT_STARTUP_UNMET`；配置值非法 /
+    **退出码有五条出口，全都显式 `sys.exit(<常量>)`**（不许让异常冒到 uvicorn /
+    解释器那里变成解释器默认码）：启动前提不成立 → `EXIT_STARTUP_UNMET`；配置值非法 /
     端口被占 / 用法错误 → `EXIT_REJECTED`；**起步这一路（组装应用、构造服务器对象）的
     意外异常 → `EXIT_FAILURE`**（同一档另落一行 error 与终端说明，不静默）；进到服务器
     主循环之后的退出码由 `_drain_exit_code()` 按本次关停落在哪一档挑。
@@ -811,8 +789,8 @@ def web() -> None:
             exit_code = EXIT_FAILURE
     except Exception:
         # `server.run()` 这一路之外的意外（组装应用、构造服务器对象这些起步步骤）：
-        # 按收尾失败档的同一个常量收场（§3.5「不许让异常冒到 uvicorn / 解释器」+ §8
-        # 「不许静默」）。起步步骤没进服务器主循环，但同样是一条退出路径。
+        # 按收尾失败档的同一个常量收场（不许让异常冒到 uvicorn / 解释器，也不静默）。
+        # 起步步骤没进服务器主循环，但同样是一条退出路径。
         logger.exception("服务起步失败（组装应用 / 构造服务器对象的这一路）")
         exit_code = EXIT_FAILURE
         print("服务起步失败：这一趟没能进到服务器主循环。", file=sys.stderr, flush=True)
@@ -846,8 +824,7 @@ def _drain_exit_code(runtime, *, fallback: int = EXIT_OK) -> int:
     `fallback` 带的是另一路信息——「服务自己有没有出事」（`server.run()` 抛异常时 `cli`
     的 `finally` 把 `EXIT_FAILURE` 传进来），与上面三档正交：收尾干净判不出「服务是不是
     异常退出」，因此原样沿用（服务异常退出 + 收尾干净的组合是 `EXIT_FAILURE`，不被收尾
-    干净那格抹成 `EXIT_OK`）。这条语义在 `tests/test_shutdown_signal.py` 的
-    `test_drain_exit_code_matrix_including_the_server_crash_fallback` 里逐档写死。
+    干净那格抹成 `EXIT_OK`）。
     退出码的合并到此为止：终端文案不跟着走，`_report_drain_outcome()` 按现场有没有
     `failed` 步挑话。
     """
@@ -873,17 +850,17 @@ def _drain_reported_failed(runtime) -> bool:
 
 
 def _report_drain_outcome(runtime, logger: logging.Logger, exit_code: int) -> None:
-    """退出时把现场打到终端——按真实档位说话，两档文案分开（§5.4 行 256、§3.5）。
+    """退出时把现场打到终端——按真实档位说话，两档文案分开。
 
     强制打断档（第二次 `Ctrl+C`）：盘上留在 `draining` + `interrupted`，说「收尾被强制
     打断」那一套——不是「服务不自杀」（此前不看档位只按现场挑话，会在「强制打断 + 现场
-    有 `failed` 步」打出误报，审查问题 M11）。收尾失败档（现场找得到 `failed` 步）：照
-    §5.4 行 256 倒 log 路径与服务 log 最后几行——判据看现场不看退出码（`EXIT_FAILURE`
+    有 `failed` 步」打出误报）。收尾失败档（现场找得到 `failed` 步）：倒 log 路径与服务
+    log 最后几行——判据看现场不看退出码（`EXIT_FAILURE`
     里还压着「`server.run()` 抛异常」这另一件事，那件事由 `web()` 自己说清）；其余情形
     一个字都不打。
     """
     if exit_code == EXIT_INTERRUPTED:
-        # 强制打断档：先说档位，再说盘上留在哪一格与出路（盘上那一版写法见 §3.5 行为表）。
+        # 强制打断档：先说档位，再说盘上留在哪一格与出路。
         print(
             "收尾被强制打断（盘上留在 draining + interrupted，未写 ended_at）；"
             f"log 路径：{runtime.log_path}",

@@ -1,17 +1,5 @@
 """`meeting/minutes/launch.py` 的契约用例：产物四条判据、三档失败、argv 只有短指针。
 
-要盯的六条（对应设计口径2 的完成判定与自检项）：
-
-  1. **产物四条判据逐条可触发**：文件不在 / 空文件 / 缺 `## 说话人附录` / 缺 `### 猜不出的` /
-     附录里没有数据行，五种坏形状都判失败；一份完整纪要判通过；
-  2. **三档失败分得开**：解析不到可执行文件 / 子进程退出码非 0 / 退出码 0 但产物没落盘
-     （第三档是 V1 踩过的坑，必须有测试钉住）；
-  3. **argv 里只有一段短指针**：正文一个字都不进 argv（`cmd.exe` 截断多行参数那条坑），
-     正文住 `working/run_prompt.md`；
-  4. **不交互**：本模块里没有 `input(`（无人值守路径上任何交互都在等一个不会来的回车）；
-  5. **子进程环境三格齐**：`DSH_PERMISSION_MODE` / `PYTHONIOENCODING` / `MEETING_MINUTES_CHILD`；
-  6. **每次拉起都留一份 log**：头一行是命令、cwd 与退出码。
-
 全部用例都用**假可执行文件**（`.cmd` shim + 一个 `sys.executable` 脚本），
 一条都不调用系统上的 `dsh`。假脚本里那个 `time.sleep` 是**子进程**在被掐掉之前做的事：
 用例侧等的是 `subprocess` 的超时事件本身，墙钟一到就返回。
@@ -61,7 +49,6 @@ pytestmark = [pytest.mark.usefixtures("allow_dsh_protocol_stubs")]
 #: 一条指着提示词的 argv（渲染器把它当指针用）
 PROMPT_ARG_RE = re.compile(r"`([^`]+)`")
 
-#: 假可执行文件驱动的场景（`--scenario` 之后那个词）
 SCENARIO_OK = "ok"
 SCENARIO_NO_FINAL = "no-final"
 SCENARIO_EMPTY_FINAL = "empty-final"
@@ -199,11 +186,6 @@ class ScriptRunner:
         return subprocess.run(argv, **kwargs)
 
 
-# ---------------------------------------------------------------------------
-# 一、产物四条判据
-# ---------------------------------------------------------------------------
-
-
 def test_the_four_checks_pass_on_a_complete_final(tmp_path: Path) -> None:
     """一份完整纪要（正文 + 附录表里一行数据行）四条判据全过。"""
     session = _session(tmp_path)
@@ -213,7 +195,7 @@ def test_the_four_checks_pass_on_a_complete_final(tmp_path: Path) -> None:
 
 
 def test_a_missing_final_is_the_first_check(tmp_path: Path) -> None:
-    """文件不在 → 报第一条（这一档就是 V1 那个「退出码 0 但没落盘」的现场）。"""
+    """文件不在 → 报第一条。"""
     session = _session(tmp_path)
 
     assert check_final_artifact(session) == (CHECK_FINAL_MISSING,)
@@ -325,11 +307,10 @@ def _final_with(table: str) -> str:
 def test_an_empty_appendix_table_is_rejected_whatever_the_first_header_cell_says(
     tmp_path: Path, header: str, separator: str
 ) -> None:
-    """**C1**：附录里只有表头 + 分隔行时，**表头第一格换成哪个词都判失败**。
+    """**附录里只有表头 + 分隔行时，表头第一格换成哪个词都判失败**。
 
-    早先认表头靠第一格的字面值（`cells[0] in ("路", "source")`）：模型把第一格换成「路径」
-    「说话人」，一张一条数据都没有的空附录就被当成了「有数据行」，四条判据全过、状态记 `done`。
-    这一档是 V1「退出码 0 但没做完」的近亲，因此每种表头写法 × 每种分隔行写法都钉一遍。
+    模型把第一格换成别的词，一张一条数据都没有的空附录不许被当成「有数据行」；
+    每种表头写法 × 每种分隔行写法都钉一遍。
     """
     session = _session(tmp_path)
     (session / FINAL_NAME).write_text(
@@ -473,18 +454,13 @@ def _template_fixed_block() -> str:
 def test_the_fixed_block_of_the_real_template_passes_the_check(tmp_path: Path) -> None:
     """**判据没被修严**：真模板里那段固定文字（五格表头 + 两行示例）照样判合格。
 
-    这一条盯的是「换个表头词的空表要判失败」这条修复的**反面风险**：判严了会让正常产物
-    被记成 failed，那比原病更坏。模板改一个字，这条跟着一起看。
+    这一条盯的是反面风险：判严了会让正常产物被记成 failed，那比漏判更坏。
+    模板改一个字，这条跟着一起看。
     """
     session = _session(tmp_path)
     (session / FINAL_NAME).write_text(_template_fixed_block() + "\n", encoding="utf-8")
 
     assert check_final_artifact(session) == ()
-
-
-# ---------------------------------------------------------------------------
-# 二、argv 只放短指针 / 环境三格 / 分支解析
-# ---------------------------------------------------------------------------
 
 
 def test_the_command_carries_only_a_short_pointer() -> None:
@@ -493,7 +469,6 @@ def test_the_command_carries_only_a_short_pointer() -> None:
 
     assert command == (r"C:\tools\dsh.cmd", "--profile", "headless", PROMPT_POINTER)
     assert len(command[-1]) < 120, "argv 里那段指针要短（cmd.exe 会截断长参数）"
-
 
 def test_the_child_env_has_the_three_explicit_values() -> None:
     """子进程环境：权限模式、IO 编码、再入标记三格都在。"""
@@ -538,11 +513,6 @@ def test_this_module_never_reads_stdin() -> None:
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
     }
     assert "input" not in called
-
-
-# ---------------------------------------------------------------------------
-# 三、三档失败 + 成功那一档（假可执行文件驱动）
-# ---------------------------------------------------------------------------
 
 
 def test_a_fake_dsh_that_writes_a_final_is_a_success(tmp_path: Path) -> None:
@@ -680,11 +650,6 @@ def test_every_launch_leaves_a_log_with_the_header(tmp_path: Path) -> None:
     assert f"# cwd：{session}" in log
     assert "# 退出码：0" in log
     assert "## stdout" in log and "## stderr" in log
-
-
-# ---------------------------------------------------------------------------
-# 四、跑得动真的那一条（真子进程 + 假脚本，仍不碰系统上的 dsh）
-# ---------------------------------------------------------------------------
 
 
 def test_a_real_subprocess_writes_the_final(tmp_path: Path) -> None:

@@ -2,9 +2,7 @@
 
 定位与挂件方式照 `tests/_drain_fakes.py`（跨文件共用假件的唯一落点）：`live()` 起一个
 进程内已启动的运行时 + ASGI 客户端，`post()` / `snapshot_of()` / `wait_for_done()` 是
-打在它上面的动作与读数。原先住在 `tests/test_api_actions.py`、被各用例文件互相 import
-的那一份正本搬到这里，用法一律 `from tests._app_drivers import ...`；各用例文件里
-重抄的弱副本已并进来（断言与行为以这一份为准）。
+打在它上面的动作与读数。
 """
 
 from __future__ import annotations

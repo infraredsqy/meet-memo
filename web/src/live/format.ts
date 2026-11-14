@@ -1,48 +1,39 @@
 /**
- * 会中视图的格式化：时长、墙钟时刻、dBFS 读数与柱高。
+ * 会中视图的格式化：时长、墙钟时刻、dBFS 读数与柱高。组件只摆位置，不做任何格式化判断。
  *
- * 全在这一份纯函数里：组件只摆位置，不做任何格式化判断（交付要求第 3 条）。
- *
- * **一条贯穿全篇的口径（设计章 8.10 门槛 10）**：从归档转抄来的时间一律**分钟级**
- * —— 转写行的 `[HH:MM]`、包络床右侧的时间戳，这些地方不出现秒。界面对服务发心跳、
- * 自己读自己的时钟，那两个时刻的精度是界面自己的，秒级在那儿才是对的（见 `heartbeat.ts`）。
+ * **一条贯穿全篇的口径**：从归档转抄来的时间一律**分钟级**（界面自己的心跳时刻才是秒级）。
  */
 
-/** 读数的减号用 U+2212（`−35.2 dBFS`），与设计稿刻度尺上的 `−20` / `−40` / `−60` 同一个字。 */
+/** 读数的减号用 U+2212。 */
 export const MINUS = '\u2212';
 
 /**
- * 路的显示名（`本地` / `远端`）：告警横幅、转写行、会后进度三处同一套叫法，
- * 唯一出处在这里（与会中状态格读契约给的 `source.label` 是两回事，那一格界面不造名）。
- * 契约里路只有 `mic` / `loopback` 两个取值；契约之外的串原样退回，不编名字。
+ * 路的显示名（`本地` / `远端`）：告警横幅、转写行、会后进度三处同一套叫法，唯一出处在这里
+ * （与会中状态格读契约给的 `source.label` 是两回事，那一格界面不造名）。
  */
 export function sourceDisplayName(source: string): string {
   return source === 'mic' ? '本地' : source === 'loopback' ? '远端' : source;
 }
 
-/** 电平表的刻度区间：低于 −60 dBFS 视为这一路在静默（设计章 4.4）。 */
+/** 电平表的刻度区间：低于 −60 dBFS 视为这一路在静默。 */
 export const DBFS_FLOOR = -60;
 export const DBFS_CEIL = 0;
 
-/** `0` → `0.0`、`−35.25` → `−35.3`：定长一位小数，负数用 U+2212。 */
 export function formatNumber(value: number): string {
   if (!Number.isFinite(value)) return `${MINUS}0.0`;
   const fixed = Math.abs(value).toFixed(1);
   return value < 0 ? `${MINUS}${fixed}` : fixed;
 }
 
-/** `−35.2 dBFS`。**没有读数时退成 `—`**，不把估出来的数字顶着（设计章 4.5 失联档）。 */
+/** **没有读数时退成 `—`**，不把估出来的数字顶着。 */
 export function formatDbfs(value: number | null | undefined): string {
   if (value === null || value === undefined) return '—';
   return `${formatNumber(value)} dBFS`;
 }
 
 /**
- * dBFS → 电平表高度百分比。
- *
- * 这是**唯一**允许前端做的换算：设计稿给的刻度区间是 −60…0 dBFS，
- * 界面只把服务给的读数线性映射到 0–100%（`docs/ui-design.md` 章 7.7 的 `--level`）。
- * 超出区间就夹住 —— 映射之外一根柱都不造。
+ * dBFS → 电平表高度百分比：这是**唯一**允许前端做的换算（设计稿给的刻度区间是 −60…0 dBFS，
+ * 界面只把服务给的读数线性映射到 0–100%）。超出区间就夹住 —— 映射之外一根柱都不造。
  */
 export function dbfsToPercent(value: number | null | undefined): number {
   if (value === null || value === undefined || !Number.isFinite(value)) return 0;
@@ -52,17 +43,13 @@ export function dbfsToPercent(value: number | null | undefined): number {
   return raw;
 }
 
-/** `630` → `10:30`；跨过 24 小时往下走（`90061` → `25:01:01` 是时长那一格的事，这里只管进位）。 */
 function two(n: number): string {
   return n < 10 ? `0${n}` : String(n);
 }
 
 /**
- * `已录 HH:MM:SS` 的那个数字。
- *
- * 服务给的 `session.elapsed_seconds` 是**重复小数**（服务侧 `round(…, 3)`），
- * 这里按秒向下取整 —— 向上取整会让「刚开始」的第一秒就显示 `00:00:01`。
- * 负数（时钟回拨之类）夹成 0，不显示 `-1:59:59` 这种没有意义的读数。
+ * `已录 HH:MM:SS` 的那个数字：按秒向下取整（向上取整会让「刚开始」的第一秒就显示 `00:00:01`），
+ * 负数（时钟回拨之类）夹成 0。
  */
 export function formatElapsed(seconds: number | null | undefined): string {
   if (seconds === null || seconds === undefined || !Number.isFinite(seconds) || seconds < 0) {
@@ -76,11 +63,8 @@ export function formatElapsed(seconds: number | null | undefined): string {
 }
 
 /**
- * ISO 时间戳 → 墙钟 `HH:MM`（分钟级）。
- *
- * 三条路，按可靠程度排：`Date.parse` 拿本机时区；`Date.parse` 不认的写法
- * 直接从字符串上截 `T` 后面那一段（服务产出的就是本地时区、秒精度，
- * 截出来的正是那一刻的钟点）；两样都不行就给 `—`，不猜。
+ * ISO 时间戳 → 墙钟 `HH:MM`（分钟级）：`Date.parse` 拿本机时区；它不认的写法直接从字符串上
+ * 截 `T` 后面那一段；两样都不行就给 `—`，不猜。
  */
 export function formatWallClock(iso: string | null | undefined): string {
   if (iso === null || iso === undefined || iso === '') return '—';
@@ -94,7 +78,7 @@ export function formatWallClock(iso: string | null | undefined): string {
   return '—';
 }
 
-/** ISO 时间戳 → 带秒的墙钟 `HH:MM:SS`（只给心跳失联那一档用，见门槛 10 的例外表）。 */
+/** ISO 时间戳 → 带秒的墙钟 `HH:MM:SS`（只给心跳失联那一档用）。 */
 export function formatWallClockSeconds(iso: string | null | undefined): string {
   if (iso === null || iso === undefined || iso === '') return '—';
   const ms = Date.parse(iso);
@@ -107,7 +91,7 @@ export function formatWallClockSeconds(iso: string | null | undefined): string {
   return '—';
 }
 
-/** `已丢 13 分钟` 里的那个数：分钟向下取整，不足一分钟按 1 分钟说（别写「已丢 0 分钟」）。 */
+/** 「已丢 N 分钟」里的那个数：不足一分钟按 1 分钟说（别写「已丢 0 分钟」）。 */
 export function formatLostMinutes(seconds: number | null | undefined): number {
   if (seconds === null || seconds === undefined || !Number.isFinite(seconds) || seconds <= 0) {
     return 1;
@@ -116,22 +100,15 @@ export function formatLostMinutes(seconds: number | null | undefined): number {
 }
 
 /**
- * 时长那一格。
+ * 时长那一格。录音中 / 告警：`已录 01:12:34`，**秒在走**；已结束：标签改成 `本场时长`，数字
+ * 冻结；空闲：`已录 00:00:00`，灰。
  *
- * - 录音中 / 告警：`已录 01:12:34`，**秒在走**；
- * - 已结束（收尾中 / 已完成 / 收尾失败）：标签改成 `本场时长`，数字冻结；
- * - 空闲：`已录 00:00:00`，灰。
- *
- * **「秒在走」是谁在走**：`session.elapsed_seconds` 是服务在**每一次提交快照**那一刻
- * 现算的读数，而录音途中快照并不每秒提交一次（`levels` / `transcript` 两路增量不占
- * `revision`）。所以界面在这一个读数上**加自己从收到这一份快照起走过的时间**
- * （`liveElapsed`）—— 两个数都是可核的事实，界面没有另造一条时间轴。
- * 快照一换新（含 `ended` 那次提交），`liveElapsed` 归零重算。
+ * **「秒在走」是谁在走**：界面在服务给的读数上**加自己从收到这一份快照起走过的时间** ——
+ * 两个数都是可核的事实，界面没有另造一条时间轴。快照一换新，`liveElapsed` 归零重算。
  */
 export interface ClockView {
   label: string;
   value: string;
-  /** 空闲态：数字退到后排（`.clock--faint`）。 */
   faint: boolean;
 }
 

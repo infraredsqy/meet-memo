@@ -5,7 +5,7 @@
 这里逐条记下请求、按登记的「回法」回一份 `server-response` 信封。
 
 **与真实 DSH 的关系**：它只照抄本层用到的那三条端点的**形状**（不含任何 DSH 代码）。
-真实那一套契约的实测口径写在 `meeting/minutes/dsh_web.py` 的模块头，用例靠这一件把
+用例靠这一件把
 「我们发出去的到底是什么」钉住 —— 真连 3080 那条路由 `tests/conftest.py` 的第七道兜底
 （`_no_real_dsh_web_call`）拦下。
 """
@@ -60,8 +60,6 @@ class FakeDshWeb:
         self.requests: list[dict[str, Any]] = []
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
-
-    # -- 生命周期 -----------------------------------------------------------
 
     def __enter__(self) -> "FakeDshWeb":
         fake = self
@@ -139,8 +137,6 @@ class FakeDshWeb:
         self._server.shutdown()
         self._server.server_close()
         self._thread.join(timeout=5)
-
-    # -- 读数 ---------------------------------------------------------------
 
     @property
     def url(self) -> str:

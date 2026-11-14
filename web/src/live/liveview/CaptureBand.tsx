@@ -4,7 +4,6 @@ import { SUMMARY_WINDOWS, summaryLogLabel, summaryRunningNote } from '../summary
 import type { SummaryController } from '../summary-controller';
 import type { ChannelView } from '../view';
 
-/** 一路电平表：刻度、填充、峰值保持指针、15 根历史包络、当前读数。 */
 function Channel({ channel }: { channel: ChannelView }): ReactNode {
   const id = useId();
   const { meter, health } = channel;
@@ -32,8 +31,7 @@ function Channel({ channel }: { channel: ChannelView }): ReactNode {
           <span className={`glyph ${health.glyph}`} aria-hidden="true" />
           {health.text}
         </span>
-        {/* 这一卡上没有开关：会中收音收在顶栏的四组合控件一处，
-            旧的那颗「关掉 / 打开」小按钮不再以任何形态留在这里 */}
+        {/* 这一卡上没有开关：会中收音收在顶栏的四组合控件一处 */}
       </div>
       <div className="m-grid">
         {/* 左格：竖电平 + 读数。两样裹在同一格里，读数才落在井的正下方
@@ -82,12 +80,6 @@ function Channel({ channel }: { channel: ChannelView }): ReactNode {
 );
 }
 
-/**
- * 采集带（ui-design 2.6）：两路左右并列，右侧三分之一给总结入口（方向 A）。
- * 本地 / 远端的名字与图形长在通道卡头行里，这里不再摆第二条图例。
- * 总结区那套控制（四档窗口 / 主按钮 / 本场记录入口）就住在这条带的右列 ——
- * 它们是「这次总结」的入口；结果与失败面板跟在带后（`./SummaryPanels`）。
- */
 export function CaptureBand({
   channels,
   summary,
@@ -97,13 +89,10 @@ export function CaptureBand({
   onToggleSummaryLog,
 }: {
   channels: ChannelView[];
-  /** 总结区那台状态机（窗口档位、进行中、按过的次数都读它）。 */
   summary: SummaryController;
   /** 能不能按：四态 + 心跳失联 + 采集已停 + 转写健康位，调用方算好。 */
   summaryReady: boolean;
-  /** 按不动时旁边那一句原因；跑起来时是 `null`（按钮位换成进行中那句）。 */
   summaryWhyText: string | null;
-  /** 本场总结记录那一块开着没有。 */
   summaryLogOpen: boolean;
   onToggleSummaryLog: () => void;
 }): ReactNode {
@@ -120,8 +109,7 @@ export function CaptureBand({
 ))}
           </div>
           <div className="live-tools">
-            {/* 四个窗口档位（设计章 2.3）。缺省选中的是「15 分钟」；按下之后请求里带的
-                取值来自 `SUMMARY_WINDOWS` —— 界面上写的是人话，请求里带的是契约取值 */}
+            {/* 四个窗口档位。缺省选中的是「15 分钟」 */}
             <div className="seg" role="group" aria-label="摘要时间范围">
               {SUMMARY_WINDOWS.map((item) => (
                 <button
@@ -136,7 +124,7 @@ export function CaptureBand({
                 </button>
 ))}
             </div>
-            {/* 主按钮：录音中 / 告警态可用；跑起来时按钮位换成进行中那一句（不显示倒计时、
+            {/* 主按钮：跑起来时按钮位换成进行中那一句（不显示倒计时、
                 不提前宣布失败）。其余各档按钮按不动，原因写在下面那一行 */}
             {summary.state().phase === 'running' ? (
               <p className="sumbar__note" id="summary-run">
@@ -161,7 +149,7 @@ export function CaptureBand({
 )}
             {/* 本场摘要记录：入口写着按过的次数，点开列每一次（时刻 + 窗口 + 那几条）。
                 那一行在**还没取过服务那份**时先写「还没有」—— 这一刻手上确实一条都没有；
-                取回来之后整行换成服务给的条目数。它是**本场**的，与结果面板两块内容各关各的 */}
+                取回来之后整行换成服务给的条目数 */}
             <button
               className="btn btn--ghost btn--block"
               type="button"

@@ -9,22 +9,19 @@ import {
 import { SUMMARY_WINDOWS } from './summary';
 
 /**
- * 设置抽屉那份**纯逻辑**（设置抽屉节点，`docs/design-intent.md` 第 15 条）。
+ * 设置抽屉那份**纯逻辑**。
  *
- * 这一层不碰 DOM、不碰 React、不持有权威状态：它认**服务推来的那份快照**（抽屉里每一格
- * 的当前值都从 `settings` 上读）与**服务给的那份设备清单**（`GET /api/devices` 的原文），
- * 算出抽屉该摆什么、哪一格按不动、按不动时旁边写什么。组件只把它摆到位置上。
+ * 它认**服务推来的那份快照**与**服务给的那份设备清单**，算出抽屉该摆什么、哪一格按不动、
+ * 按不动时旁边写什么。组件只把它摆到位置上。
  *
- * **三条边界写死在这里**（设计意图第 14、15 条与 `docs/contract.md` 第 7 章）：
+ * **三条边界写死在这里**：
  *
  * 1. **ASR 那五个参数一个都不进抽屉**（`DRAWER_ROW_IDS` 是抽屉的全部行，一个不多）；
- * 2. **会中（`recording` / `alert`）不换设备** —— 两路设备格禁用并写明原因，
- *    服务侧 `reprobe` 在这两态本来就回 `already_recording`；
+ * 2. **会中（`recording` / `alert`）不换设备** —— 两路设备格禁用并写明原因；
  * 3. **心跳 1–60 秒**，越界当场拒绝并说明原因（不发请求）。
  */
 
-/** 抽屉的全部行：设备两行 + 告警提示音 + 心跳频率 + 快速总结缺省档 + 总结模型预设。
- * **一个不多**。 */
+/** 抽屉的全部行。**一个不多**。 */
 export const DRAWER_ROW_IDS = [
   'device-mic',
   'device-loopback',
@@ -36,10 +33,10 @@ export const DRAWER_ROW_IDS = [
 
 export type DrawerRowId = (typeof DRAWER_ROW_IDS)[number];
 
-/** 心跳输入越界时旁边那句（`docs/ui-design.md` 章 5.1 的现成文案）。 */
+/** 心跳输入越界时旁边那句。 */
 export const HEARTBEAT_RANGE_HINT = `只能填 1 到 ${HEARTBEAT_INTERVAL_MAX_SECONDS} 秒。`;
 
-/** 会中两路设备格禁用时旁边那句（`docs/contract.md` 第 7 章的口径）。 */
+/** 会中两路设备格禁用时旁边那句。 */
 export const DEVICE_LOCKED_HINT = '会中不换设备：这一场的设备在开场前定下来。';
 
 /** 心跳输入的判读：1–60 的整数才放行；越界/非数一律当场拒，不发请求。 */
@@ -62,22 +59,19 @@ export function parseHeartbeatInput(text: string): HeartbeatInput {
   return { kind: 'ok', value };
 }
 
-/** 会中（`recording` / `alert`）两路设备格禁用；其余状态可改。 */
 export function deviceChangeLocked(topState: Snapshot['top_state']): boolean {
   return topState === 'recording' || topState === 'alert';
 }
 
-/** 设备下拉的一项：值是**设备名字符串**（配置键存的就是它），标签照原样摆。 */
+/** 设备下拉的一项：值是**设备名字符串**（配置键存的就是它）。 */
 export interface DeviceOption {
-  /** 送进 `settings_update` 的值（与 `settings.devices.*` 同一形状；去重靠它）。 */
+  /** 送进 `settings_update` 的值（去重靠它）。 */
   value: string;
-  /** 下拉里那一行的字（设备名 + host API 标注 + 系统默认标记）。 */
   label: string;
 }
 
 /**
- * 服务给的端点表 → 一路的下拉项。同名端点在多个 host API 下会重复出现
- * （本机实测同一块 Focusrite 在三个 host API 下同名），配置按**名字**挑，
+ * 服务给的端点表 → 一路的下拉项：同名端点在多个 host API 下会重复出现，配置按**名字**挑，
  * 选项按名字去重并在标签里把 host API 摆出来。
  */
 export function deviceOptionsOf(
@@ -105,7 +99,7 @@ export function deviceOptionsOf(
   return [{ value: '', label: '按默认策略挑' }, ...options];
 }
 
-/** 抽屉里快速总结缺省档那四档（与会中总结区同源的取值域与人话标签）。 */
+/** 抽屉里快速总结缺省档那四档（与会中总结区同源）。 */
 export const SUMMARY_DEFAULT_WINDOW_OPTIONS = SUMMARY_WINDOWS.map((item) => ({
   value: item.choice as SummaryWindowChoice,
   label: item.label,
@@ -118,18 +112,14 @@ export function normalizeDefaultWindow(value: string): SummaryWindowChoice {
     : '15m') as SummaryWindowChoice;
 }
 
-// ---------------------------------------------------------------------------
-// 会中切模型（本节点）：预设切换那一格的纯逻辑
-// ---------------------------------------------------------------------------
-
-/** 「不选预设」那一档的标签（值 `''`：总结用平铺四键那一路，存量配置零迁移）。 */
+/** 「不选预设」那一档的标签（值 `''`：总结用平铺四键那一路）。 */
 export const NO_PRESET_LABEL = '不选预设（用平铺四键）';
 
 /** 总结模型下拉的一项：值是**预设名字**（`summary.active_preset` 存的就是它）。 */
 export interface PresetOption {
   /** 送进 `settings_update` 的值（空串 = 不选预设）。 */
   value: string;
-  /** 下拉里那一行的字（预设的人读名字；不显示端点，更不显示密钥）。 */
+  /** 下拉里那一行的字（不显示端点，更不显示密钥）。 */
   label: string;
 }
 
@@ -141,32 +131,24 @@ export function presetOptionsOf(settings: Settings): PresetOption[] {
   ];
 }
 
-/**
- * 当前用哪一套的**生效值**在不在清单里（服务只在清单里报名字；形态上兜一道 ——
- * 指向的名字不在清单里时按「不选预设」读，与服务侧的回落口径一致）。
- */
+/** 当前用哪一套的**生效值**在不在清单里：指向的名字不在清单里时按「不选预设」读，与服务侧的回落口径一致。 */
 export function normalizeActivePreset(settings: Settings): string {
   const active = settings.summary_active_preset;
   return settings.summary_preset_names.includes(active) ? active : '';
 }
 
-// ---------------------------------------------------------------------------
-// change 事件的**结构式读法**
-//
-// 设置抽屉组件会被 `tests/` 那条 tsconfig（node 线，`lib` 里没有 DOM）顺着用例
-// import 进来，那一侧 `HTMLSelectElement` / `HTMLInputElement` 只有 @types/react
-// 给的空壳形状，`.value` / `.checked` 摸不着。事件载荷在这里按**结构**读
-// （用例也是按 `{ target: { value } }` 的形状喂的），两套 lib 下都成立。
-// ---------------------------------------------------------------------------
+// change 事件的**结构式读法**：设置抽屉组件会被 tests/ 那条 tsconfig（node 线，`lib` 里没有
+// DOM）顺着用例 import 进来，那一侧的 `HTMLSelectElement` 摸不着 `.value` —— 事件载荷在这里
+// 按**结构**读，两套 lib 下都成立。
 
-/** select / input 的 change 事件 → 取值（不是字符串就按空串读）。 */
+/** 不是字符串就按空串读。 */
 export function stringValueOf(event: { target?: unknown }): string {
   const target = event.target as { value?: unknown } | null | undefined;
   const value = target?.value;
   return typeof value === 'string' ? value : '';
 }
 
-/** checkbox 的 change 事件 → 勾选态（只有明写 `true` 才算勾上）。 */
+/** 只有明写 `true` 才算勾上。 */
 export function checkedOf(event: { target?: unknown }): boolean {
   const target = event.target as { checked?: unknown } | null | undefined;
   return target?.checked === true;

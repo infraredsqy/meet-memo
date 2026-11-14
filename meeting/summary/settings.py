@@ -12,10 +12,9 @@
   3. **给缺省档**：`ReadOnlyConfig` / `Config` / 一份裸 dict / `None` 四种来源都收，
      取不到键时用 `meeting/config.py` 的默认值表，因此用例塞一个残缺对象也不会炸。
 
-**端点四件套的取值**（`base_url` / `api_key` / `model` / `extra_body_json`）跟着
-`docs/v1-lineage.md` 的「模型端点与 preset 配置」那一条走：语义照搬 V1 的 preset，
-落到 V2 是四个**点号扁平键名**（`summary.*`），`extra_body` 那一段以**一个 JSON 字符串键**
-承载（V2 配置层装载时明确拒收 dict 值，为这一个键放开那条硬约束不划算）。
+**端点四件套**（`base_url` / `api_key` / `model` / `extra_body_json`）是四个**点号扁平键名**
+（`summary.*`），`extra_body` 那一段以**一个 JSON 字符串键**承载（配置层装载时明确拒收
+dict 值，为这一个键放开那条硬约束不划算）。
 
 **会中切模型（多套预设）**：端点四件套也可以整套装在 `summary.presets_json`（一个 JSON
 数组串，每套带 `name` 与四件套），`summary.active_preset` 指名当前用哪一套 —— 两个键都收在
@@ -45,7 +44,7 @@ WINDOW_SECONDS: dict[str, float | None] = {
     "full": None,
 }
 
-#: 缺省窗口（设计章 2.3「缺省窗口 = 15 分钟」；与配置键的默认值同值）
+#: 缺省窗口（与配置键的默认值同值）
 DEFAULT_WINDOW = "15m"
 
 #: 端点四件套 + 预算三件套的键名（`missing` 报的就是这一批里的名字）
@@ -159,7 +158,7 @@ class SummarySettings:
     """会中总结那一次调用要的全部配置（端点四件套 + 预算三件套）。
 
     冻结：一次总结跑起来之后，它用的就是构造那一刻的这份快照 —— 中途改配置不影响
-    在飞的这一次（与 V1 `_call_api()` 快照四个字段同一个立场）。
+    在飞的这一次。
 
     `from_preset` 记这次端点四件套**实际来自哪一套预设**（`summary.presets_json` 里的
     `name`）；空串 = 用的是老四键平铺那一档。它只用来把 `missing` 报到点上

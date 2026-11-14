@@ -1,15 +1,7 @@
-"""人名表（节点）的用例：文件契约、盘上身份集、改名动作、单场状态的 `speakers` 一格。
+"""人名表的用例：文件契约、盘上身份集、改名动作、单场状态的 `speakers` 一格。
 
-R10 第四条 / R30 的三条口径各有一组用例盯着：
-
-  - **存在这一场的目录里**：文件落在场次目录根（`meeting_speaker_names.json`），
-    一份记两路（键里带路，两路的「1 号」写不出同一个键）；
-  - **只存确认过的 (编号, 名字) 对**：没起过名的编号不进文件，跳过 = 不落任何状态；
-  - **读不出不挡下游**：人名表坏了记一行、如实当作「没有确认过的名字」，
-    提示词不带表、单场状态的名字一格 `null`，不报错、不改结论。
-
-改名动作（`speaker_rename`）的用例全走真运行时 + 真目录：**不拉离线、不拉纪要**
-（R26：动作只写表），断言 `post_jobs` 始终是空的。
+改名动作（`speaker_rename`）的用例全走真运行时 + 真目录：**不拉离线、不拉纪要**，
+断言 `post_jobs` 始终是空的。
 """
 
 from __future__ import annotations
@@ -57,7 +49,7 @@ class _LogRecorder(logging.Handler):
 
 @contextlib.contextmanager
 def _captured_speaker_names_log():
-    """抓 `meeting.speaker_names` 自己那几行 log（记一行 = 判据，读实测文本）。"""
+    """抓 `meeting.speaker_names` 自己那几行 log（记一行 = 判据）。"""
     logger = logging.getLogger("meeting.speaker_names")
     recorder = _LogRecorder()
     logger.addHandler(recorder)
@@ -65,10 +57,6 @@ def _captured_speaker_names_log():
         yield recorder
     finally:
         logger.removeHandler(recorder)
-
-# ---------------------------------------------------------------------------
-# 一、文件契约：形状、版本、坏文件
-# ---------------------------------------------------------------------------
 
 
 def test_build_and_parse_round_trip_preserves_the_confirmed_pairs() -> None:
@@ -134,11 +122,6 @@ def test_read_names_entries_answers_none_for_absent_and_broken(tmp_path: Path) -
     assert any(NAMES_FILE_NAME in message for message in recorder.messages)
 
 
-# ---------------------------------------------------------------------------
-# 二、改名 = 写表：覆盖、追加、两路各记各的
-# ---------------------------------------------------------------------------
-
-
 def test_set_speaker_name_appends_then_overwrites_in_place(tmp_path: Path) -> None:
     """第一次落追加、同键再落覆盖（改名 = 再起一次名），键序保持、盘上文件读得回来。"""
     set_speaker_name(tmp_path, "mic:S01", "老王")
@@ -151,7 +134,7 @@ def test_set_speaker_name_appends_then_overwrites_in_place(tmp_path: Path) -> No
 
 
 def test_two_roads_share_a_local_number_without_colliding(tmp_path: Path) -> None:
-    """完成判定的第 4 条读数：两路的「1 号」各是各的键，同盘共存、互不覆盖。"""
+    """两路的「1 号」各是各的键，同盘共存、互不覆盖。"""
     set_speaker_name(tmp_path, "mic:S01", "老王")
     set_speaker_name(tmp_path, "loopback:S01", "小李")
 
@@ -171,9 +154,8 @@ def test_set_speaker_name_refuses_when_the_table_is_on_disk_but_unreadable(
 ) -> None:
     """表在盘上但读不出（坏 JSON / 未来主版本）时**拒写**：旧文件一个字节不动。
 
-    读侧宽容（缺表不挡出纪要，d7）与写侧谨慎（不覆盖用户还没抢救出来的名字）
-    并存，各管各的方向（review-1 m2）：这一档原先拿空映射组新文档整份换上去，
-    旧表无声消失——现在拒写，交动作侧按既有 `invalid_setting` 登记回执。
+    读侧宽容（缺表不挡出纪要）与写侧谨慎（不覆盖用户还没抢救出来的名字）
+    并存，各管各的方向。
     """
     path = tmp_path / NAMES_FILE_NAME
     for broken in (
@@ -187,11 +169,6 @@ def test_set_speaker_name_refuses_when_the_table_is_on_disk_but_unreadable(
         with pytest.raises(SpeakerNamesError, match="拒写"):
             set_speaker_name(tmp_path, "mic:S01", "老王")
         assert path.read_bytes() == on_disk_before, "拒写的改名不碰盘上那份旧表"
-
-
-# ---------------------------------------------------------------------------
-# 三、盘上身份集（单场状态与提示词共用的那份读数）
-# ---------------------------------------------------------------------------
 
 
 def _write_live_transcript(session: Path, source: str, lines: int = 3) -> None:
@@ -293,11 +270,6 @@ def test_identity_rows_survive_a_broken_speakers_artifact(tmp_path: Path) -> Non
         {"key": "mic", "source": "mic", "label": "本地", "name": None, "segments": None}
     ]
     assert any("对照表" in message for message in recorder.messages)
-
-
-# ---------------------------------------------------------------------------
-# 四、运行时的 `speaker_rename` 动作（真运行时 + 真目录；不拉离线、不拉纪要）
-# ---------------------------------------------------------------------------
 
 
 def _runtime(tmp_path: Path, monkeypatch, **values):
@@ -413,7 +385,7 @@ def test_speaker_rename_refuses_a_directory_outside_the_workspace_list(
 def test_speaker_rename_refuses_while_the_session_is_still_recording(
     tmp_path, monkeypatch, restore_config
 ) -> None:
-    """本进程正在录的那一场拒掉（会中不提供改名，d11）。
+    """本进程正在录的那一场拒掉（会中不提供改名）。
 
     判据是「本进程此刻在录、就是快照里那一场」（与工作区清单三档口径同一支，
     `runtime_catalog/workspace.py` 的 `_is_actively_recording()`）：盘上停在 `recording` 的强杀残档

@@ -25,36 +25,22 @@ import {
 import type { MaterialItem } from '../contract';
 
 /**
- * 会议资料区（节点）：往这一场目录的 `meeting_materials/` 里放东西与管理的
- * 界面入口。会中工作台（`App.tsx`，目标目录 = 当前场次）与会后详情（`WorkspaceHome`，
- * 目标目录 = 选中那一行）各摆一块；服务端那一半是资料节点 的四条端点。
- *
- * **四个入口，摩擦都要低**（spec 口径）：
- * 1. **页面级粘贴**：`document` 上收 `paste`——剪贴板里是图片就收进资料；焦点在输入框 /
- *    文本域 / 可编辑元素里时不抢；纯文本不收（筛子与判据在 `./model`）；
- * 2. **拖拽**：文件拖进这一块即上传；
- * 3. **提交文字**：小弹窗，正文必填、标题可选；落成资料里的一个 md，标题即文件名、
- *    没填用时间戳名（`YYYYMMDD-HHMMSS.md`）；
- * 4. **文件选择器**：`DirPicker` 的文件模式——盘上的文件挑一条，「加入资料」把它
- *    原样拷进来（服务端 `?from=` 那一档；界面上没有那些字节）。
+ * 会议资料区：往这一场目录的 `meeting_materials/` 里放东西与管理的界面入口。
+ * 会中工作台（目标目录 = 当前场次）与会后详情（目标目录 = 选中那一行）各摆一块。
  *
  * 清单是 `GET /api/sessions/{id}/materials` 的原文（目录就是清单，界面不派生）；
- * 图片行走缩略图（`img src` 直接指到取原文件端点，服务不另做缩略文件）、点名字看原图
- * （浏览器端缩放）；多选删除走一次确认整批删（逐文件调 DELETE，硬删——工具内的
- * 保护本来就是软的）；单文件超过 100M 弹一句「确认要放进资料吗」，确认后照传——
- * 粘贴 / 拖拽 / 选文件三个上传入口同一道门，大小口径不按入口打折。
- * 逐文件给进行中 / 完成 / 失败的反馈，失败写明原因（网络 / 403 头哨 / 404 目录 /
- * 其他服务错误），不悄悄吞。
+ * 图片行走缩略图（`img src` 直接指到取原文件端点，服务不另做缩略文件）；多选删除走一次
+ * 确认整批删（逐文件调 DELETE，硬删——工具内的保护本来就是软的）；单文件超过 100M
+ * 弹一句「确认要放进资料吗」，确认后照传——粘贴 / 拖拽 / 选文件三个上传入口同一道门，
+ * 大小口径不按入口打折。逐文件给进行中 / 完成 / 失败的反馈，失败写明原因，不悄悄吞。
  */
 
-/** 提交文字的小弹窗：正文必填、标题可选。 */
 function SubmitTextDialog({
   sending,
   onSubmit,
   onClose,
 }: {
   sending: boolean;
-  /** 确认一颗：resolve `true` = 已放进资料（弹窗关）；`false` = 没放上去（弹窗留着，正文不丢）。 */
   onSubmit: (title: string, text: string) => Promise<boolean>;
   onClose: () => void;
 }): ReactNode {
@@ -119,7 +105,6 @@ function SubmitTextDialog({
 );
 }
 
-/** 大文件确认框压着的东西：粘贴 / 拖拽的一批 `File`，或选择器挑中的那一份盘上文件。 */
 type PendingConfirm =
   | { what: 'files'; files: File[] }
   | { what: 'pick'; pick: Extract<PickerPick, { what: 'file' }> };
@@ -129,28 +114,20 @@ export function MaterialsPanel({
   fetchImpl,
 }: {
   dir: string;
-  /** 覆盖 fetch（测试注入用）；缺省走全局。 */
   fetchImpl?: typeof fetch;
 }): ReactNode {
   const [items, setItems] = useState<MaterialItem[] | null>(null);
-  /** 清单取数失败那一行（如实画，不顶掉清单；给一颗重试）。 */
   const [listError, setListError] = useState<string | null>(null);
-  /** 勾中待删的名字集合（多选删除一次确认整批删）。 */
   const [checked, setChecked] = useState<ReadonlySet<string>>(new Set());
-  /** 逐文件的上传反馈（进行中 / 完成 / 失败；失败写明原因）。 */
   const [tasks, setTasks] = useState<UploadTask[]>([]);
-  /** 大文件确认框压着的那批 / 那份（确认后照传；取消就什么都不发）。 */
   const [pending, setPending] = useState<PendingConfirm | null>(null);
   const [textOpen, setTextOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  /** 删除那一趟的结果行（有没删成的把原因带上）。 */
   const [deleteNote, setDeleteNote] = useState<string | null>(null);
-  /** 原图查看（图片行点名字；关掉即收，不落任何东西）。 */
   const [viewer, setViewer] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [dragOver, setDragOver] = useState(false);
-  /** 文件模式的选择器取数（`?files=1`）。 */
   const { browse, browseError, browseInto, jumpTo, reset } = useDirBrowse(true);
 
   const refresh = useCallback((): void => {
@@ -175,10 +152,7 @@ export function MaterialsPanel({
     refresh();
   }, [refresh]);
 
-  // -- 上传那一条链 ---------------------------------------------------------
-
   const taskSeqRef = useRef(0);
-  /** 起一条任务并跑它：进行中 / 完成 / 失败（写明原因）三档逐文件反馈。 */
   const startTask = useCallback(
     (name: string, size: number, run: () => Promise<unknown>): Promise<boolean> => {
       taskSeqRef.current += 1;
@@ -209,7 +183,7 @@ export function MaterialsPanel({
     [],
 );
 
-  /** 一批文件逐个上传（顺序发，不并排压服务），全部落定后重取清单。 */
+  /** 一批文件逐个上传（顺序发，不并排压服务）。 */
   const runUpload = useCallback(
     (files: File[]): void => {
       if (files.length === 0) return;
@@ -225,7 +199,6 @@ export function MaterialsPanel({
     [dir, fetchImpl, refresh, startTask],
 );
 
-  /** 入口共用的那道门：混着超大文件就先弹确认，确认后照传（不弹硬拒）。 */
   const addFiles = useCallback(
     (files: File[]): void => {
       if (files.length === 0) return;
@@ -242,9 +215,8 @@ export function MaterialsPanel({
   addFilesRef.current = addFiles;
 
   /**
-   * 页面级粘贴（会中工作台 / 会后详情两页各有一块，一块恰一个面板）：焦点在输入框 /
-   * 文本域 / 可编辑元素里时不抢；**只有图片项才收**，纯文本不收。
-   * 挂载用例（react-test-renderer，node 环境）没有 document：没有监听挂点就跳过。
+   * 会中两页各有一块，一块恰一个面板：焦点在输入框 / 文本域 / 可编辑元素里时不抢；
+   * **只有图片项才收**，纯文本不收。挂载用例没有 `document`：没有监听挂点就跳过。
    */
   useEffect(() => {
     if (typeof document === 'undefined' || typeof document.addEventListener !== 'function') {
@@ -263,7 +235,6 @@ export function MaterialsPanel({
     return () => document.removeEventListener('paste', onPaste);
   }, []);
 
-  /** 提交文字：标题填了用它当文件名，没填用时间戳名；正文原样字节交上去。 */
   const submitText = useCallback(
     (title: string, text: string): Promise<boolean> => {
       const name = textMaterialName(title, new Date());
@@ -278,7 +249,6 @@ export function MaterialsPanel({
     [dir, fetchImpl, refresh, startTask],
 );
 
-  /** 文件模式挑中的那一份盘上文件：`?from=` 交给服务流式拷入（确认框确认后也走这里）。 */
   const uploadPick = useCallback(
     (pick: Extract<PickerPick, { what: 'file' }>): void => {
       void startTask(pick.name, pick.sizeBytes, () =>
@@ -295,7 +265,7 @@ export function MaterialsPanel({
       setPickerOpen(false);
       if (pick.what !== 'file') return;
       reset();
-      // 大小口径不按入口打折（spec）：选择器挑中的超过 100M 也弹同一句
+      // 大小口径不按入口打折：选择器挑中的超过 100M 也弹同一句
       // 「确认要放进资料吗」，确认后照传，取消则什么都不发。
       if (sizeOverLimit(pick.sizeBytes)) {
         setPending({ what: 'pick', pick });
@@ -305,8 +275,6 @@ export function MaterialsPanel({
     },
     [reset, uploadPick],
 );
-
-  // -- 删除与查看 -----------------------------------------------------------
 
   const deleteChecked = useCallback((): void => {
     const names = [...checked];
@@ -496,8 +464,6 @@ export function MaterialsPanel({
         </div>
 )}
 
-      {/* 大文件确认框（spec 口径：超过 100M 弹「确认要放进资料吗」，确认后照传；
-          粘贴 / 拖拽 / 选文件三个上传入口同一副门） */}
       {pending !== null && (
         <ConfirmDialog
           title="确认要放进资料吗"
@@ -536,7 +502,6 @@ export function MaterialsPanel({
       {textOpen && (
         <SubmitTextDialog
           sending={anyBusy}
-          /** 成功即收（弹窗的存亡归面板）；失败弹窗留着，正文还在输入框里。 */
           onSubmit={(title, text) =>
             submitText(title, text).then((ok) => {
               if (ok) setTextOpen(false);

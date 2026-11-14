@@ -63,8 +63,7 @@ SPEAKER_SHAPE_NOTES: dict[str, str] = {
     "offline": "带聚类编号（每行形如 `[HH:MM] **S01**: 正文`）",
 }
 
-#: 两份稿的人话标签。**只有这两份稿这一个维度，没有排序**：谁也不叫"权威"、谁也不"优先"
-#: （`docs/design-intent.md` 第 11 条、R11 / R12 —— 实测并不保证某一份稳定更好）。
+#: 两份稿的人话标签。**只有这两份稿这一个维度，没有排序**：谁也不叫"权威"、谁也不"优先"。
 KIND_LABELS: dict[str, str] = {
     "live": "会中稿",
     "offline": "会后稿",
@@ -78,7 +77,7 @@ KIND_FILE_TEMPLATES: dict[str, str] = {
 
 #: 只有一份稿的那两档（`live_only` / `offline_only`）缺席的是哪一份稿的人话标签。
 #: 说明段的四个同构分支（`mode_note_text()` 两档、`_note_sentence()` 两档）都从这里取词，
-#: 改一句只动这一处；输出逐字钉在 `tests/test_minutes_prompt.py`。
+#: 改一句只动这一处。
 _MISSING_DRAFT_LABELS: dict[str, str] = {
     "live_only": KIND_LABELS["offline"],
     "offline_only": KIND_LABELS["live"],
@@ -96,7 +95,7 @@ def shape_of(kind: str) -> str:
 def kind_for(kinds: Sequence[str]) -> str:
     """这一路**手上有哪几份稿** → `both` / `live_only` / `offline_only`。
 
-    只按「哪几份在」判，不排先后、不说哪一份更好（R11：两份平级）；映射本体在
+    只按「哪几份在」判，不排先后、不说哪一份更好；映射本体在
     `chunk.classify()`（三处共用那一份）。
     """
     present = set(kinds)
@@ -111,7 +110,7 @@ def kind_for(kinds: Sequence[str]) -> str:
 def _note_sentence(source: str, kinds: Sequence[str]) -> str:
     """说明段里**某一路**那一句：它这一路手上有哪几份稿、每一份长什么样。
 
-    逐条写清、不做排序（R11）；缺一条时如实写缺的是哪一份，
+    逐条写清、不做排序；缺一条时如实写缺的是哪一份，
     **不把缺的那一条说成不可信**。只有一份稿的两个档逐字同构、只差缺席稿的名字
     （`_MISSING_DRAFT_LABELS` 一处收敛）。
     """
@@ -145,7 +144,7 @@ class PromptInput:
     `transcript` 是**相对场次目录**的转写路径，`index` / `chunk_dir` 是那一份稿的分块产物
     （`working/<source>/<kind>/…`）；路径一律正斜杠（构造时经 `_posix()`，渲染器任何一处
     都不该把反斜杠漏出去）。**两条都在时它出现两次（两条各一条），谁也不替谁**
-    （R11：两份稿平级、一起喂给模型）；`kind` 由调用方给死，不拿文件名的子串猜。
+    （两份稿平级、一起喂给模型）；`kind` 由调用方给死，不拿文件名的子串猜。
     """
 
     source: str
@@ -208,17 +207,14 @@ def mode_note_text(mode: str, per_source: Sequence[tuple[str, str]]) -> str:
 
     `per_source` 是**逐 source 的稿型**（`InputsListing.kinds_per_source()` 那个形状），
     说明段逐 source 各写一句它这一路有哪几份稿。这一层是**事实陈述**：写出来的每句话都要在
-    清单里找得到依据，且**不出现任何「哪一份更可信 / 更权威」的排序**（R11、
-    `docs/design-intent.md` 第 11 条）——混合形状曾经渲染出自相矛盾的提示词
-    （说明段说「本次只有会中稿」，清单里却写着另一路「带聚类编号」）。
+    清单里找得到依据，且**不出现任何「哪一份更可信 / 更权威」的排序**。
     """
     if mode not in MODES:
         raise PromptTemplateError(f"档位只认 {MODES}，收到 {mode!r}")
     where = "、".join(source for source, _ in per_source) if per_source else "（没有输入）"
     if mode == "both":
         if all(kind == "both" for _, kind in per_source) and per_source:
-            # 两份都全这一档不再是空的：spec 完成判定第 3 条要求「说明段逐条写清
-            # 这一场手上有哪几份」，只有这一档原先什么都没写、那一格渲染成空白行。
+            # 两份都全这一档也逐条写清这一场手上有哪几份，说明段不留空白行。
             shape = "；".join(shape_of(item) for item in ("live", "offline"))
             return (
                 f"> 本次这两路两份都在（{where}）：{shape}。两份**平级、不合并**，"
@@ -226,7 +222,7 @@ def mode_note_text(mode: str, per_source: Sequence[tuple[str, str]]) -> str:
 )
         return "\n".join(_note_sentence(source, _kinds_of(kind)) for source, kind in per_source)
     # live_only / offline_only 两档逐字同构、只差缺席稿的名字（`_MISSING_DRAFT_LABELS`
-    # 一处收敛）：四段模型可见文案逐字钉在 `tests/test_minutes_prompt.py`。
+    # 一处收敛）。
     present = "live" if mode == "live_only" else "offline"
     return (
         f"> 本次两路都只有{shape_of(present)}。{_MISSING_DRAFT_LABELS[mode]}不在这台机器上，"
@@ -310,7 +306,7 @@ def build_inputs_text(listing: InputsListing) -> str:
 
     清单给两条读法：一段人话（一眼看清这一轮吃什么）与一份 JSON（模型与程序都能照字段读）。
     **逐份稿印一条**：同一路两条稿都在时它出现两行（会中稿一行、会后稿一行）——模型照清单
-    读得到两份，不必自己去猜另一份在哪（R11 / R29 的提示词这一侧）。
+    读得到两份，不必自己去猜另一份在哪。
     """
     lines = [
         f"本轮输入 {len(listing.sources)} 路、共 {len(listing.inputs)} 份稿，"
@@ -527,7 +523,7 @@ def listing_for_session(session_dir: str | Path, *, mode: str | None = None) -> 
 def _prompt_inputs(session: Path, spec: InputSpec) -> tuple[PromptInput, ...]:
     """一条输入的分块产物读数：**它手上每一份稿各答一条**（顺序恒为 `live` → `offline`）。
 
-    两份都在时交出两条 —— 清单与说明段因此逐份说清，模型读得到两份（R11 / R29）；
+    两份都在时交出两条 —— 清单与说明段因此逐份说清，模型读得到两份；
     某一份缺席时那一条不出现在返回值里（不编一份不在的稿）。
 
     块数与行数从**那一份稿自己的** `working/<source>/<kind>/00_index.md` 读

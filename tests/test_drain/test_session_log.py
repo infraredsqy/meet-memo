@@ -47,26 +47,11 @@ from tests.test_drain._common import (
     _warm_up_client,
 )
 
-#: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md`。
 pytestmark = pytest.mark.slow
-
-# ---------------------------------------------------------------------------
-# ⑪ 场次 log 挂摘
-# ---------------------------------------------------------------------------
 
 
 def test_session_log_attached_then_detached_with_end_marker(service_process, meeting_env):
-    """录音期场次 log 在长；收尾后该文件存在、**最后一行是结束标记**、且此后不再增长。
-
-    **「最后一行」照 §3.7 的严格口径断**（审查问题 M3）：标记所在行的**下标**必须等于最后
-    一个非空行的下标 —— 也就是**标记之后没有任何非空行**。⑫ 条用的 `marker_index` 与这里
-    同一个口径（那条看的是标记**之前**的每一类事件）。
-
-    **标记的内容逐字段核一遍**（审查问题 M8，§3.7「一行带**场次 id** 与收尾结果（含 `state`
-    与四步 `status` 概要）的记录」）：场次 id = 场次目录名、`state` = 盘上那一版、
-    四步概要按 `id=status` 逐项与盘上 `drain.steps` 对齐、服务级 log 路径与快照里的
-    `service.log_path` 一致。
-    """
+    """录音期场次 log 在长；收尾后该文件存在、**最后一行是结束标记**、且此后不再增长。"""
     proc = _start_service(service_process, meeting_env)
     proc.wait_ready()
 
@@ -74,7 +59,7 @@ def test_session_log_attached_then_detached_with_end_marker(service_process, mee
     session_dir = _session_dir_of_log(_service_log_text(meeting_env))
     session_log_path = Path(session_dir) / "meeting.log"
 
-    # **挂上**：`start` 成功之后场次 log 就在位（录音期本身没有 INFO 级事件，文件先空着）
+    # 录音期本身没有 INFO 级事件，文件先空着
     wait_until(session_log_path.exists, timeout=DRAIN_POLL_TIMEOUT_SECONDS)
     assert session_log_path.exists(), f"`start` 之后场次 log 该已经挂上：{session_log_path}"
 
@@ -84,7 +69,6 @@ def test_session_log_attached_then_detached_with_end_marker(service_process, mee
     session_log = _wait_end_marker(session_dir)
     lines = [line for line in session_log.splitlines() if line.strip()]
     assert lines, "场次 log 不该为空"
-    # 严格口径：标记所在行就是最后那个非空行（标记之后不再有任何非空行）
     marker_index = next(
         (index for index, line in enumerate(lines) if END_MARKER_TEXT in line), None
     )
@@ -94,7 +78,6 @@ def test_session_log_attached_then_detached_with_end_marker(service_process, mee
         f"而最后一个非空行是第 {len(lines)} 行\n{lines[marker_index:]}"
     )
 
-    # **标记逐字段核**（审查问题 M8、§3.7）：场次 id、`state`、收尾概要、服务级 log 路径。
     # 标记是 `log` 步**在它自己那一刻**写下的：那一刻 `state` 还是 `draining`（收尾没走完），
     # 四步概要是 `log=running`（正在写它）、`post=waiting`（还没开跑）。这两件事因此按
     # 「**在 `log` 步那一刻成立的取值**」逐项核 —— 而不是拿收尾走完之后盘上那一版去套，
@@ -102,15 +85,12 @@ def test_session_log_attached_then_detached_with_end_marker(service_process, mee
     record = read_session_json(session_dir)
     assert record is not None, f"盘上读不出 {session_dir}/session.json"
     marker = lines[marker_index]
-    # 场次 id：格式串里的 `session=%(session)s`（场次级 handler 的 `SessionFilter` 写的就是它）
     assert f"session={Path(session_dir).name} " in marker, (
         f"标记该带场次 id（= 场次目录名）：{marker!r}"
     )
-    # `state`：取值落在 `session.json` 的取值域里
     state = marker.split("场次结束：state=", 1)[1].split("；", 1)[0]
     assert state in SESSION_STATE_DOMAIN, f"标记里的 state 落在取值域之外：{state!r}（{marker!r}）"
-    # 收尾概要：**各档按 `DRAIN_STEP_IDS` 的原顺序**逐项报出（格式串把 `status` 列表按顺序
-    # 用 `, ` 连起来），每一项的 `status` 落在 `DRAIN_STEP_STATUS` 的取值域里
+    # 收尾概要：**各档按 `DRAIN_STEP_IDS` 的原顺序**逐项报出
     summary = marker.split("收尾步骤：", 1)[1].split("；", 1)[0]
     statuses = [item.strip() for item in summary.split(",")]
     assert len(statuses) == len(DRAIN_STEP_IDS), (
@@ -129,50 +109,30 @@ def test_session_log_attached_then_detached_with_end_marker(service_process, mee
         "done", "skipped", "waiting",
     }, record
     assert _step_statuses(_record_steps(record))["post"] == "waiting", record
-    # 服务级 log 路径：与本次启动的服务级日志路径逐字相同
     assert marker.rstrip().endswith(f"服务级 log：{snapshot['service']['log_path']}"), (
         f"标记末尾该是服务级 log 路径（{snapshot['service']['log_path']!r}）：{marker!r}"
     )
 
     size_after = session_log_path.stat().st_size
-    time.sleep(DRAIN_LOG_CLOSED_RECHECK_SECONDS)  # 摘掉之后这一场不再有新行
+    time.sleep(DRAIN_LOG_CLOSED_RECHECK_SECONDS)
     assert session_log_path.stat().st_size == size_after
 
 
-# ---------------------------------------------------------------------------
-# ⑫ 结束标记前逐类事件可查（G6 的自动化对应物）
-# ---------------------------------------------------------------------------
-
-
 def test_all_log_event_categories_findable_before_end_marker(service_process, meeting_env):
-    """结束标记**之前**这一场的事件逐类可查（设计口径 §6.3 行 304 的清单）。
+    """结束标记**之前**这一场的事件逐类可查。
 
-    事件由 dev 采集替身与采集后端的收尾调用造出来：**每一路健康迁移**与告警起止由
-    `MEETING_CAPTURE=dev` 的两路合成电平与 `dev_inject` 在**真服务子进程**里驱动，
-    收尾每一步的开始 / 结束 / 耗时与 `budget` / `backlog` 由设计的编排落。
-    阈值只**显式调小**（写进临时 home 的 `config.json`，**不改代码默认值**）。
+    事件由 dev 采集替身与采集后端的收尾调用造出来。阈值只**显式调小**（写进临时 home 的
+    `config.json`，**不改代码默认值**）。
 
-    **故障档取 `silence`**（审查问题 C1 的证据口径）：它一路把 loopback 从 `capturing`
-    推到 `lost`（阈值 `alert.silence_seconds`）、恢复判定再推到 `restored`，于是「每一路健康
-    迁移」这一类在一趟里出现**三段真实迁移**，且每段都带着是哪一路、从什么值到什么值、
-    原因与阈值。`lost` 那一档同样落这一类事件（`麦克风/回环 → lost`），但它一跳就到、看不出
-    `restored` 那一段，因此这里用 `silence` 把两段都留在场次 log 里（结束标记之前）。
+    **故障档取 `silence`**：它一路把 loopback 从 `capturing` 推到 `lost`（阈值
+    `alert.silence_seconds`）、恢复判定再推到 `restored`，于是「每一路健康迁移」这一类在一趟里
+    出现**三段真实迁移**。`lost` 那一档同样落这一类事件，但它一跳就到、看不出 `restored` 那
+    一段，因此这里用 `silence`。
 
-    **「场次开始与目录」这一类取服务级 log（审查问题 M3 的落地读法）**：场次 log 是 `start`
-    成功之后才挂上的 handler，而那一行按时间顺序落在挂上之前 —— 它进不了场次 log。契约点名的
-    这一条因此按**两类 log 联合**读：场次 log 里取本场的 session id / 目录 / 「场次结束」，
-    服务级 log 里取「场次开始」那一行（带同一个 id 与目录）。别为了迎合字面去场次 log 里
-    伪造一行。
-
-    **「挂载顺序」这件事与设计的核对结论（审查问题 m10，照实写清）**：`start` 里那一行
-    `场次开始：<id>（目录 <dir>，mode=…）` 落在 `logging_setup.attach_session_log(session_dir)`
-    **之前**，因此它只可能出现在服务级 log 里。这个顺序是 **设计的既成事实**：拿 HEAD 的
-    上一个提交核过 —— `git show :meeting/service/runtime.py` 的 `start_session()` 里
-    `_log.info("场次开始：…")` 同样排在 `attach_session_log(session_dir)` 之前；
-    `git diff --ignore-cr-at-eol  -- meeting/service/runtime.py` 在这个位置只多了一行
-    「每一路健康迁移」的登记（设计补的），**挂载顺序一处没动**（设计口径也没把
-    「重排 start 的挂载顺序」列进本项目的动作）。本项目因此照现行的两类 log 联合断言写，
-    没有把这一行搬进场次 log。
+    **「场次开始与目录」这一类取服务级 log**：场次 log 是 `start` 成功之后才挂上的 handler，
+    而那一行按时间顺序落在挂上之前 —— 它进不了场次 log。这一条因此按**两类 log 联合**读：
+    场次 log 里取本场的 session id / 目录 / 「场次结束」，服务级 log 里取「场次开始」那一行
+    （带同一个 id 与目录）。别为了迎合字面去场次 log 里伪造一行。
     """
     plugin = fakes.write_fake_module(meeting_env.home)
     plugin.config.update(
@@ -228,25 +188,12 @@ def test_all_log_event_categories_findable_before_end_marker(service_process, me
         assert needle in before, f"结束标记之前查不到「{label}」（{needle}）：\n{before}"
 
     session_id = session_dir.rsplit("\\", 1)[-1].rsplit("/", 1)[-1]
-    # **「场次开始与目录」这一类事件按时间顺序只可能落在服务级 log**（审查问题 M3 的口径，
-    # 写在这里是为了不让人对着契约那半句去找一条不存在的场次 log 行）：场次 log 是 `start`
-    # 成功之后才挂上的 handler，而「场次开始：<id>（目录 <dir>，mode=…）」这一行落在挂上之前
-    # —— 场次 log 里能找到的是**同一场的**「场次结束：<id>（目录 …）」与 session id / 目录本身。
-    # 两类 log 因此**联合断言**：本场身份（id 与目录）两边各取一半，合起来覆盖契约点名的这一条。
-    #
-    # **这个顺序的出处（审查问题 m10）**：它是 **设计的挂载顺序**，
-    # `git show :meeting/service/runtime.py` 的 `start_session()` 里
-    # `_log.info("场次开始：…")` 就已排在 `attach_session_log(session_dir)` 之前；
-    # `git diff --ignore-cr-at-eol  -- meeting/service/runtime.py` 在这个位置只多了一行
-    # 「每一路健康迁移」的登记，**挂载顺序一处没改**（设计未动）。下面这条联合断言因此
-    # 照现行顺序写，没有把这一行搬进场次 log（搬了反而会与设计的既成事实对不上）。
     check("场次结束：", "场次结束与目录（本场那一份里的收尾痕迹）")
     check(session_id, "场次 id")
     check(session_dir, "场次目录路径")
     check("告警起：", "告警起")
     check("状态迁移：alert -> recording", "告警止（恢复）")
     check("alarm.sound", "出声开关（抑制口径）")
-    # **每一路健康迁移**（契约点名的必落 log 事件；审查问题 C1 补上的那一类）。
     # 断言按路写：**mic 那一行**在场（它整场都在采，这一档不掺别的路的话就查不到），
     # 以及 loopback 那一路的三段真实迁移 —— 采集替身注入的静默把它从 `capturing` 推到
     # `lost`（阈值 `alert.silence_seconds` 已被显式调小），恢复判定再把它推到 `restored`，
@@ -273,9 +220,7 @@ def test_all_log_event_categories_findable_before_end_marker(service_process, me
         check(f"收尾步骤开始：{step_id}", f"{step_id} 的开始")
         check(f"收尾步骤结束：{step_id}", f"{step_id} 的结束")
 
-    # 服务级 log 那半边：**「场次开始与目录」落在这里**（理由见上面 session_id 那一段的注释
-    # —— 场次 log 是 `start` 成功之后才挂上的，这一行按时间顺序在它之前），加上两路设备探测
-    # 与各步齐备的收尾记录。字段级断言：这一行要带**本场的 id 与目录**，与场次 log 里那一半对上。
+    # 服务级 log 那半边：**「场次开始与目录」落在这里**，加上两路设备探测与各步齐备的收尾记录。
     service_log = _service_log_text(meeting_env)
     assert "场次开始：" in service_log, "服务级 log 缺「场次开始」"
     assert session_id in service_log, "服务级 log 的「场次开始」该带本场的 id"

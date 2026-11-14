@@ -1,10 +1,6 @@
 """`tests/test_capture_archive.py` —— PCM 归档写入器与 PCM→MP3 转码（`meeting/capture/archive.py`）。
 
-**无硬件**：这里只碰文件与 `pydub` / `ffmpeg`（`ffmpeg` 在本机 PATH 上）。三块：
-
-  1. `open_pcm()` —— 追加模式 + **无缓冲**（`buffering=0`，强杀最多丢最后一个块）；
-  2. `PcmArchiveWriter` —— 自己的写线程、取一块写一块、`close()` 幂等且带 `fsync`；
-  3. `convert_to_mp3()` —— 非空转出可解的 MP3、空的**不产出** MP3、转不动时**PCM 原样留下**。
+**无硬件**：这里只碰文件与 `pydub` / `ffmpeg`（`ffmpeg` 在本机 PATH 上）。
 """
 
 from __future__ import annotations
@@ -26,7 +22,7 @@ from meeting.capture.archive import (
     open_pcm,
 )
 
-#: 一块 0.1 秒的 16k / 单声道 / int16 样本（3200 字节，与真实采集块同尺寸）
+#: 一块 0.1 秒的 16k / 单声道 / int16 样本（与真实采集块同尺寸）
 CHUNK_BYTES = 3200
 
 
@@ -40,11 +36,6 @@ def pcm_payload(chunks: int = 3, value: int = 1000) -> bytes:
     return pcm_chunk(value) * chunks
 
 
-# ---------------------------------------------------------------------------
-# open_pcm()
-# ---------------------------------------------------------------------------
-
-
 def test_open_pcm_writes_without_buffering(tmp_path: Path):
     """无缓冲写：`write()` 一返回，字节就已经在盘上（不等缓冲区满、不等进程退出）。
 
@@ -56,17 +47,11 @@ def test_open_pcm_writes_without_buffering(tmp_path: Path):
         assert isinstance(handle, io.FileIO)
         assert not hasattr(handle, "buffering")
         handle.write(pcm_chunk())
-        # 句柄还开着，此刻盘上就该有这 3200 字节
         assert path.stat().st_size == CHUNK_BYTES
 
 
 def test_open_pcm_truncates_stale_leftovers(tmp_path: Path):
-    """段文件**只装本段**：同名残留（上一场崩在同一目录的半截段）被截掉，不被悄悄接上。
-
-    「续接 = 追加到旧文件末尾」是 V1 的旧口径，已被 `docs/design-intent.md` 第 9 条翻案：
-    续接是下一个序号的新段文件，不追加旧文件。这里钉住翻案后的形状——第二次打开写出的
-    内容从字节 0 开始，旧内容一个字节都不留。
-    """
+    """段文件**只装本段**：同名残留（上一场崩在同一目录的半截段）被截掉，不被悄悄接上。"""
     path = tmp_path / "meeting_audio_loopback_001.pcm"
     with open_pcm(path) as handle:
         handle.write(pcm_chunk(111))
@@ -75,11 +60,6 @@ def test_open_pcm_truncates_stale_leftovers(tmp_path: Path):
     data = path.read_bytes()
     assert len(data) == CHUNK_BYTES
     assert data == pcm_chunk(222)
-
-
-# ---------------------------------------------------------------------------
-# PcmArchiveWriter
-# ---------------------------------------------------------------------------
 
 
 def test_writer_writes_every_fed_chunk(tmp_path: Path):
@@ -177,7 +157,7 @@ def test_writer_silence_feed_writes_zeros_and_keeps_the_ledger_split(tmp_path: P
     """静音块落盘的是**等长数字零**：内容量与静音量分开记，总量是落盘字节数。
 
     「暂停 = 写静音」的隐私线落在写侧这一格：队列里就算投进来真音频，
-    `silence=True` 的块到盘上也是零（`docs/design-intent.md` 第 8 条）。
+    `silence=True` 的块到盘上也是零。
     """
     path = tmp_path / "meeting_audio_mic_001.pcm"
     writer = PcmArchiveWriter(path, label="mic")
@@ -203,7 +183,7 @@ def test_writer_survives_a_simulated_hard_kill(tmp_path: Path):
     """模拟强杀：不调 `close()`，句柄随进程消失 —— 无缓冲写让最后一个块也已经在盘上。
 
     这里用「不关句柄、直接从盘上读」来验：无缓冲（`buffering=0`）时前一拍的块已经落盘，
-    丢的只会是还在队列里的那一块（§3 的取舍）。
+    丢的只会是还在队列里的那一块。
     """
     path = tmp_path / "meeting_audio_mic.pcm"
     writer = PcmArchiveWriter(path, label="mic")
@@ -213,14 +193,8 @@ def test_writer_survives_a_simulated_hard_kill(tmp_path: Path):
     deadline = time.monotonic() + 2.0
     while writer.bytes_written < CHUNK_BYTES * 3 and time.monotonic() < deadline:
         time.sleep(0.01)
-    # 不调 close()：句柄还开着，盘上已经是完整的三块
     assert path.stat().st_size == CHUNK_BYTES * 3
     writer.close()
-
-
-# ---------------------------------------------------------------------------
-# convert_to_mp3()
-# ---------------------------------------------------------------------------
 
 
 def test_mp3_path_swaps_the_extension(tmp_path: Path):
@@ -233,7 +207,6 @@ def test_mp3_path_swaps_the_extension(tmp_path: Path):
 def test_non_empty_pcm_becomes_a_decodable_mp3(tmp_path: Path):
     """非空 PCM 转出**可解**的 MP3：`ffmpeg` 读得回来，时长与 PCM 对得上。"""
     pcm = tmp_path / "meeting_audio_mic.pcm"
-    # 1 秒 440 Hz 正弦（16k / int16）
     t = np.arange(16000, dtype=np.float64)
     pcm.write_bytes((12000 * np.sin(2 * np.pi * 440.0 * t / 16000.0)).astype(np.int16).tobytes())
     mp3 = mp3_path_for(pcm)
@@ -249,7 +222,7 @@ def test_non_empty_pcm_becomes_a_decodable_mp3(tmp_path: Path):
 
 
 def test_transcode_keeps_the_pcm(tmp_path: Path):
-    """**转完不删 PCM**（与 V1 的唯一差别）：`session.json` 声明的是那份 PCM。"""
+    """**转完不删 PCM**：`session.json` 声明的是那份 PCM。"""
     pcm = tmp_path / "meeting_audio_loopback.pcm"
     payload = pcm_payload(4)
     pcm.write_bytes(payload)
@@ -313,14 +286,14 @@ def test_ffmpeg_failure_keeps_the_pcm_bytes(tmp_path: Path, monkeypatch: pytest.
 
 
 def test_transcode_bitrate_default_is_v1_sixty_four_k(tmp_path: Path):
-    """码率默认值照 V1（`64k`），产物落在同名 `.mp3` 上。"""
+    """码率默认值（`64k`），产物落在同名 `.mp3` 上。"""
     assert MP3_BITRATE == "64k"
     pcm = tmp_path / "meeting_audio_mic.pcm"
     pcm.write_bytes(pcm_payload(8))
     mp3 = mp3_path_for(pcm)
     assert convert_to_mp3(pcm, mp3) is True
     assert mp3.exists()
-    # 64k 的 1 秒音频体积在 8KB 上下（粗口径：只验「不是空壳、也不是原始 PCM」）
+    # 粗口径：只验「不是空壳、也不是原始 PCM」
     assert 1000 < mp3.stat().st_size < pcm.stat().st_size
 
 
@@ -342,11 +315,6 @@ def test_open_pcm_keeps_the_bytes_identical_after_a_round_trip(tmp_path: Path):
     with open_pcm(path) as handle:
         handle.write(payload)
     assert path.read_bytes() == payload
-
-
-# ---------------------------------------------------------------------------
-# 与 V1 的四处差别：每一处都逐条钉住（搬运动作的「diff 一遍」那一节）
-# ---------------------------------------------------------------------------
 
 
 def test_from_raw_gets_the_frozen_pcm_shape(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -376,9 +344,9 @@ def test_from_raw_gets_the_frozen_pcm_shape(tmp_path: Path, monkeypatch: pytest.
 
 
 def test_transcode_never_unlinks_the_pcm(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """**转码这一路一次都不 `unlink`**（V1 在结尾与空文件两处各删一次）。
+    """**转码这一路一次都不 `unlink`**。
 
-    「转完不删 PCM」是 §3 里预先批准的那一处有意改动：`session.json` 的
+    「转完不删 PCM」：`session.json` 的
     `sources[*].archive` 声明的是那份 `.pcm`。这里把 `Path.unlink` 全程换成一个记录器，
     转码走完一遍之后它必须是空的 —— 空文件那一档同理。
     """

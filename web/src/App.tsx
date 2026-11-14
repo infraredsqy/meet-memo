@@ -6,7 +6,6 @@ import type { Snapshot } from './contract';
 import { HomeGate } from './home/HomeGate';
 import { createEventsSource } from './home/events-source';
 
-/** 错误边界：主视图崩了就画一页说明，别留白屏。 */
 class ShellErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   constructor(props: { children: ReactNode }) {
     super(props);
@@ -38,8 +37,8 @@ class ShellErrorBoundary extends Component<{ children: ReactNode }, { error: Err
 export function App(): ReactNode {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   /**
-   * 那条唯一 SSE 连接的接线盘（web-homegate-dual-sse）：全页恰一个 `EventSource` ——
-   * 连接本体在这里 connect/close；快照同时喂判屏（gate 的 state）与源侧转手槽位。
+   * 全页恰一个 `EventSource` —— 连接本体在这里 connect/close；快照同时喂判屏（gate 的 state）
+   * 与源侧转手槽位。
    */
   const { source, clientHandlers } = useMemo(() => createEventsSource(setSnapshot), [setSnapshot]);
   const clientRef = useRef<ReturnType<typeof createEventsClient> | null>(null);

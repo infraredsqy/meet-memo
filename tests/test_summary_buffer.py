@@ -1,18 +1,7 @@
-"""`tests/test_summary_buffer.py` —— 会中总结那条内存缓冲的接线（设计）。
+"""会中总结那条内存缓冲的接线。
 
-这一份盯的是设计口径的「缓冲与生命周期」那一节，逐条对着完成判定第 3 条：
-
-  1. **转写行经 `bind_transcriber()` 那个 sink 进缓冲**：假转写后端喂 N 行，
-     `summarize` 拿到的窗口行数对得上，喂进去的正文原样在消息里；
-  2. **只进一次**：`bind()` 被调两次之后，生产路径上喂进来的同一行只收一趟（`== 1`），
-     另有一条对照证明「两个 sink 都被调时确实会收两遍」（`== 2`）—— 两条合起来，
-     断言的方向才站得住；
-  3. **`start_session()` 之后缓冲与记录都空**：两笔走**同一个入口**清
-     （`_clear_session_summary()`），只清一边会留下「记录里的那几次还挂着、取回的窗口早没了」；
-  4. **`shutdown()` 一并清掉**（会话级内存不跟着进程尾巴走）；
-  5. **转写行不参与状态迁移**这条既有口径没被这一层碰坏：喂行不涨 `revision`。
-
-假转写后端从注入点进（`runtime.transcriber_backend` + `bind()`），**一个真实端点请求都不发**。
+假转写后端从注入点进（`runtime.transcriber_backend` + `bind()`），
+**一个真实端点请求都不发**。
 """
 
 from __future__ import annotations
@@ -28,7 +17,6 @@ from tests._app_drivers import post
 from tests._helpers import wait_until
 from tests._summary_fakes import FakeTranscriber, live
 
-#: 慢档标记：本文件与 `tests/test_api_actions.py` 同档（起真应用 + 真 lifespan）。
 pytestmark = pytest.mark.slow
 
 def a_line(index: int, *, ts: float | None = None) -> TranscriptLine:
@@ -44,9 +32,8 @@ def a_line(index: int, *, ts: float | None = None) -> TranscriptLine:
 def start_session(client, *, mode: str | None = None) -> None:
     """开一场（收尾还没落定时 `start` 会被 `draining` 挡下，这里等到落定再开）。
 
-    **`waiting` 算落定**（与运行时 `drain_has_settled()` 同口径）：第 4 步 `post` 按
-    「结束录音」之后不自动拉起会后（R26），做完该做的就停在 `waiting`（＝等你动手），
-    那一格正是收尾跑完时的正常读数。
+    **`waiting` 算落定**（与运行时 `drain_has_settled()` 同口径）：第 4 步 `post`
+    做完该做的就停在 `waiting`（＝等你动手），那一格正是收尾跑完时的正常读数。
     """
     wait_until(
         lambda: (lambda snap: True if snap["ended"] is None or all(
@@ -66,11 +53,6 @@ def feed(backend, lines) -> None:
     assert sink is not None, "假转写后端还没被 bind() 上，喂不进任何一行"
     for line in lines:
         sink(line)
-
-
-# ---------------------------------------------------------------------------
-# 收：转写行进缓冲
-# ---------------------------------------------------------------------------
 
 
 def test_transcript_lines_reach_the_buffer_through_the_sink(tmp_path):
@@ -123,11 +105,6 @@ def test_the_window_count_matches_what_was_fed(tmp_path):
         assert "第 18 行内容" in stub.messages[-1]["content"]
         # 缓冲本身仍是全部 19 行（切窗口发生在读的时候）
         assert len(runtime.summary_buffer) == 19
-
-
-# ---------------------------------------------------------------------------
-# 只进一次：`bind()` 调两次
-# ---------------------------------------------------------------------------
 
 
 def test_two_binds_do_not_collect_the_same_line_twice(tmp_path):
@@ -214,11 +191,6 @@ def test_feeding_lines_does_not_touch_the_revision(tmp_path):
         assert runtime.revision == before
 
 
-# ---------------------------------------------------------------------------
-# 生命周期：新的一场 / 关停
-# ---------------------------------------------------------------------------
-
-
 def test_start_session_clears_both_the_buffer_and_the_records(tmp_path):
     """新的一场 `start` 把缓冲与记录表**一起**清空（两笔走同一个入口）。"""
     with live(tmp_path) as (client, runtime, backend, _stub):
@@ -236,7 +208,6 @@ def test_start_session_clears_both_the_buffer_and_the_records(tmp_path):
         start_session(client)
         assert len(runtime.summary_buffer) == 0
         assert runtime.summary_records == []
-        # 可观察面同样归零：窗口里一行都没有 + 记录空
         listing = client.get("/api/summaries").json()
         assert listing["entries"] == []
         response = post(client, "summarize", {"window": "15m"})
@@ -271,11 +242,6 @@ def test_shutdown_clears_both_slots(tmp_path):
         asyncio.run(runtime.shutdown())
         assert len(runtime.summary_buffer) == 0
         assert runtime.summary_records == []
-
-
-# ---------------------------------------------------------------------------
-# 缓冲这一层自己的性质（不进运行时的那些）
-# ---------------------------------------------------------------------------
 
 
 def test_the_runtime_uses_the_package_buffer_type(tmp_path):

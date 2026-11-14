@@ -1,21 +1,21 @@
-"""归档 PCM 的字节级读取与换算、数字静音门（自 `meeting/offline/runner` 编排主模块拆出）。
+"""归档 PCM 的字节级读取与换算、数字静音门。
 
 四件事住这里：
 
 - **满量程换算**（`full_scale_counts()` / `samples_to_count_floats()`）：归一化波形
   （`[-1, 1]`）与 int16 计数放上同一条**浮点、不截断**的尺子，int16 与 float32 落同一条
-  分界——直接 `int()` 会把真有声的 float 波形截成全零（复跑第一版实测，19 块全跳）；
+  分界——直接 `int()` 会把真有声的 float 波形截成全零；
 - **PCM 字节读取**（`pcm_sample_chunk_counts()` / `_pcm_span_scan()`）：跨段按字节定位
   读，内存里永远只有一个块；
 - **数字静音门**（`is_digital_silence()` / `measure_span()`）：峰值低于半格
   （`SILENT_PEAK_FLOOR`）且长度够 `MIN_GATE_SAMPLES` 的块不送引擎——引擎在样本全零的块
-  上会编出整段假正文（`250906` 实测 69% 假字）；判不了（解不开、读不全）照常送引擎并记
+  上会编出整段假正文；判不了（解不开、读不全）照常送引擎并记
   `gate = "unjudged"`，与健康运行分得开；
 - **临时 wav 写盘**（`write_chunk_wav()`）：float32 必须先乘 32767 再转 int16，直接
   `.astype("<i2")` 会把 `[-1, 1]` 波形截成全 0，写出一份数字静音的 wav。
 
 与 `meeting/asr/glm.py` 的 `_is_noise_segment` 分工：会中预筛按概率丢，会后闸门按全零丢。
-重依赖惰性：`numpy` 一律在函数体内 import（照包级纪律，`tests/test_post_hook.py` 盯着）。
+重依赖惰性：`numpy` 一律在函数体内 import。
 """
 
 from __future__ import annotations
@@ -33,17 +33,15 @@ if TYPE_CHECKING:  # pragma: no cover - 只为类型标注，运行时不 import
 
 _log = logging.getLogger("meeting.offline.runner.pcm")
 
-
-
 #: 数字静音判据：峰值低于半格（**开区间**，正好半格算有声）算静音。峰值按
 #: `samples_to_count_floats()` 换算成满量程格数且不截断，int16 与 float32 落同一条
-#: 分界。取值依据见模块头：实测全零块上引擎编假正文，峰值为 ±1（-90.3 dB）照样可能有声。
+#: 分界。峰值为 ±1 照样可能有声，不能拿「有非零样本」当判据。
 SILENT_PEAK_FLOOR = 0.5
 
 #: 门只判够 0.1 秒的一段：更短的不替引擎下结论，宁可多花一次引擎调用。
 MIN_GATE_SAMPLES = PCM_SAMPLE_RATE // 10
 
-#: 按字节块扫 PCM：省的是**内存**（2 小时的会归档 260 MB），不是时间。
+#: 按字节块扫 PCM：内存里一次只握住一个块，会再长也压得住。
 _PCM_SCAN_BLOCK_BYTES = 1 << 22
 
 #: 翻译表把非零字节映成 `\x01`：`block.translate(...).count(1)` 一次算出非零字节数。
@@ -68,11 +66,10 @@ GATE_METHOD_DECODE_NOW = "decode_now"
 def full_scale_counts(samples: Any) -> Any:
     """归一化波形（`[-1, 1]`）→ **满量程格数**（clip ±1 × 32767，浮点、不截断）。
 
-    满量程换算的唯一出处（offline-float-scale-duplicated）：写 wav（`write_chunk_wav()`）、
+    满量程换算的唯一出处：写 wav（`write_chunk_wav()`）、
     判据（`samples_to_count_floats()`）与重放写盘（`meeting/offline/replay.py`）都从
     这一条换算，32767 与 32768 的分歧在别处长不出来。乘 32767 而不是 32768：±1 满量程
-    对称映回 ±32767，不过冲 int16 的范围（用例 `test_write_chunk_wav_keeps_the_signal`
-    盯着）。
+    对称映回 ±32767，不过冲 int16 的范围。
     """
     import numpy as np
 
@@ -84,9 +81,8 @@ def write_chunk_wav(path: Path | str, samples: "np.ndarray") -> Path:
     """把一段 16k 单声道波形写成 wav（引擎的 `decode_audio()` 吃它）。
 
     ⚠ **float32 必须先乘 32767 再转 int16**：直接 `.astype("<i2")` 会把 `[-1, 1]`
-    波形截成全 0，写出一份数字静音的 wav——模型对静音照样吐 `[0.5][S01]…`
-    （设计实测坑，用例 `test_write_chunk_wav_keeps_the_signal` 盯着）。换算走
-    `full_scale_counts()`（满量程换算的唯一出处）。
+    波形截成全 0，写出一份数字静音的 wav——模型对静音照样吐 `[0.5][S01]…`。
+    换算走 `full_scale_counts()`（满量程换算的唯一出处）。
     「写出来全零」不作产品代码错误判据：真正安静的会议写出来本来就是零，
     自检只在**调引擎之前**的静音门上做。`wave` / `numpy` 函数体内 import（惰性纪律）。
     """

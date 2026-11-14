@@ -1,24 +1,10 @@
-"""`contract/fixtures/` 的采集、掩码与落盘比对（设计；pytest 不收集本文件）。
-
-**定位**：测试支持模块 —— 文件名不以 `test_` 开头，pytest 不收集；不是 `conftest.py`，
-不提供 fixture。三样职责（与 `tests/_service.py` / `tests/_drain_fakes.py` 同形的分工）：
-
-  - `normalize()`：**易变字段掩码**（规则正文在 `contract/README.md` 与 `docs/contract.md`
-    的附录；占位符全部自描述，一眼看出是被掩码的）；
-  - `emit()`：`--regen-contract` 时重写 fixtures；默认模式逐文件比对，不一致即 fail
-    （漂移测试的判红落点）；
-  - `write_transcriber_stub()`：把「定时产一行转写」的假转写后端写进临时目录，经
-    `PYTHONPATH` + 配置键 `transcriber.backend` 的 `module:Class` 语法挂进真服务子进程
-    （采集侧该语法的既有口径见 `meeting/backends/registry.py`）。
+"""`contract/fixtures/` 的采集、掩码与落盘比对（pytest 不收集本文件）。
 
 **确定性是掩码的全部目的**：fixtures 由真实服务路径采集，但采集里的墙钟、路径、端口、
 电平值每次都不同；掩码之后，同一份代码连跑两次 `--regen-contract` 落盘的字节必须逐字相同
 （`revision` 保留真实值 —— 它由固定的迁移与提交次数决定，同样确定）。
 
-**占位符要形状诚实**（设计复审的那一格）：`session.id` 与失败 `detail.session_id` 在真服务
-里是**裸场次目录名**（`260921`），它的形状落在目录名字上 —— 早先它们与 `dir` 同掩成 `<path>`，
-于是「掩码通过」冒充了「真值通过」（前端 schema 曾按路径形状写，真值两半都过不了）。现在这一格
-掩成 `<session-id>`，占位符自己就说明「这里放的是目录名」。
+**占位符要形状诚实**：这一格掩成 `<session-id>`，占位符自己就说明「这里放的是目录名」。
 """
 
 from __future__ import annotations
@@ -33,21 +19,14 @@ from tests._helpers import REPO_ROOT
 #: fixtures 落点（仓库根下新建的 `contract/fixtures/`，git 跟踪）
 FIXTURES_ROOT = REPO_ROOT / "contract" / "fixtures"
 
-# ---------------------------------------------------------------------------
-# 占位符（自描述：一眼看出这一格是被掩码的）
-# ---------------------------------------------------------------------------
-
 #: ISO 时间戳（started_at / since / lost_since / last_line_at / server_time …）
 ISO_PLACEHOLDER = "<iso>"
-#: 路径 / 场次目录路径（`log_path` / `dir` / `session_dir`；`out_root` 已随默认输出根退场）
+#: 路径 / 场次目录路径（`log_path` / `dir` / `session_dir`）
 PATH_PLACEHOLDER = "<path>"
 #: 场次目录**名**（`session.id` 与失败 `detail.session_id`）：人给的工作区目录名，形状任意
 SESSION_ID_PLACEHOLDER = "<session-id>"
-#: 端口
 PORT_PLACEHOLDER = "<port>"
-#: 服务 URL
 URL_PLACEHOLDER = "<url>"
-#: 电平类取值（dBFS 数值本身易变，只保结构与长度）
 LEVEL_PLACEHOLDER = "<dbfs>"
 
 #: ISO 时间戳的整串形状（`now_iso()` 的秒精度 + 时区；容忍带小数与 `Z` 的写法）
@@ -61,8 +40,6 @@ _ISO_RE = re.compile(
 #: `<盘符>:/` 与 `<盘符>:\` 两种开端。POSIX 形态（`/home/...`）与 UNC（`\\server\...`）
 #: **不在判据里** —— 收进来只会让「内嵌路径」这条规则在非 Windows 上悄悄改口径，而 fixtures
 #: 是随仓库进版本控制的确定性产物，判据一旦随平台变，同一份代码在不同平台落盘的字节就不同。
-#: 前两条 `_INLINE_PATH_RE` 的判据与 `web/src/contract/primitives.ts` 的 `pathStringSchema`
-#: 因此只在「盘符 / 反斜杠 UNC / POSIX 根」这几种开端上对齐，见那一处的说明。
 _INLINE_PATH_RE = re.compile(
     r"(?<![A-Za-z0-9])[A-Za-z]:[/\\][^\s，。；！？：、「」『』【】《》\"']+"
 )
@@ -74,18 +51,17 @@ ZERO_KEYS = frozenset(
 )
 #: 这些键是电平（dBFS），值换占位
 LEVEL_KEYS = frozenset({"level_dbfs", "peak_dbfs", "dbfs", "peak", "bar"})
-#: 这些键是路径 / 场次目录路径（`session_id` **不在其中**：它是目录名，见 `SESSION_ID_KEYS`；
-#: `materials_dir` 是会议资料那一片的资料目录，资料节点）
+#: 这些键是路径 / 场次目录路径（`session_id` **不在其中**：它是目录名，见 `SESSION_ID_KEYS`）
 PATH_KEYS = frozenset({"log_path", "dir", "session_dir", "materials_dir"})
 #: 这些键是**场次目录名**（裸 `YYMMDD` / `YYMMDD-N`）：`session.id` 的键名是 `id`、靠键路径判，
 #: 而动作失败 `detail.session_id` 直接以键名出现，两者掩成同一个形状诚实的占位符 `<session-id>`。
 SESSION_ID_KEYS = frozenset({"session_id"})
-#: 包络数组（只保结构与长度：15 根柱逐根换占位）
+#: 包络数组（只保结构与长度）
 ENVELOPE_KEY = "envelope"
 
 
 def normalize(value: Any, *, key: str = "", path: tuple[str, ...] = ()) -> Any:
-    """按掩码规则递归重写一份 JSON 形态的值（规则清单见模块 docstring 与 README）。
+    """按掩码规则递归重写一份 JSON 形态的值。
 
     `key` 是当前这一格的键名、`path` 是从根到这一格的键路径 —— `session.id` 之所以能
     与 `sources[*].id` 区分开，靠的就是路径（前者掩码、后者是取值域字面量，必须保留）。
@@ -97,16 +73,16 @@ def normalize(value: Any, *, key: str = "", path: tuple[str, ...] = ()) -> Any:
         }
     if isinstance(value, list):
         if key == ENVELOPE_KEY:
-            # 只保结构：长度不变、逐根换占位（`bar == envelope[-1]` 的结构断言仍成立）
+            # 只保结构（`bar == envelope[-1]` 的结构断言仍成立）
             return [LEVEL_PLACEHOLDER] * len(value)
         return [normalize(item, key=key, path=path) for item in value]
     if isinstance(value, str):
         if key in PATH_KEYS:
             return PATH_PLACEHOLDER
         if key in SESSION_ID_KEYS:
-            return SESSION_ID_PLACEHOLDER  # 动作失败 detail.session_id：工作区目录名
+            return SESSION_ID_PLACEHOLDER
         if key == "id" and len(path) >= 2 and path[-2] == "session":
-            return SESSION_ID_PLACEHOLDER  # session.id 的工作区目录名
+            return SESSION_ID_PLACEHOLDER
         if key == "url":
             return URL_PLACEHOLDER
         if _ISO_RE.match(value):
@@ -128,21 +104,12 @@ def normalize(value: Any, *, key: str = "", path: tuple[str, ...] = ()) -> Any:
 
 
 def normalize_frame(frame: dict[str, Any]) -> dict[str, Any]:
-    """把 `parse_sse_frame()` 的产物收成 fixtures 形态：`{event, id, data}`（data 掩码）。
-
-    `id` 保留线上形状（字符串；`levels` / `transcript` 不带 id 即 `None`）；`raw` / 帧级
-    解析标记不入 fixtures。
-    """
+    """把 `parse_sse_frame()` 的产物收成 fixtures 形态（`data` 掩码）。"""
     return {
         "event": frame.get("event"),
         "id": frame.get("id"),
         "data": normalize(frame.get("data")),
     }
-
-
-# ---------------------------------------------------------------------------
-# 落盘与比对
-# ---------------------------------------------------------------------------
 
 
 def fixture_path(rel: str) -> Path:
@@ -151,12 +118,10 @@ def fixture_path(rel: str) -> Path:
 
 
 def _dump_text(obj: Any) -> str:
-    """fixtures 的落盘文本（UTF-8、两空格缩进、ensure_ascii=False、结尾一个换行）。"""
     return json.dumps(obj, ensure_ascii=False, indent=2) + "\n"
 
 
 def emit(records: dict[str, Any], *, regen: bool) -> None:
-    """`--regen-contract`：重写；默认：逐文件比对，缺文件 / 内容不一致即 fail。"""
     if regen:
         for rel in sorted(records):
             target = fixture_path(rel)
@@ -190,10 +155,6 @@ def emit(records: dict[str, Any], *, regen: bool) -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# 会中总结的两个假件（`summarize` 与 `GET /api/summaries` 那两份样本的来源）
-# ---------------------------------------------------------------------------
-
 #: 假总结客户端答的那份固定输出（三条固定标签齐备；与窗口文本无关，因此样本逐字确定）
 SUMMARY_STUB_CONTENT = (
     '{"bullets": ["【讲什么】在过下周的排期", "【讲到哪】说到第三项",'
@@ -204,9 +165,7 @@ SUMMARY_STUB_CONTENT = (
 class SummaryStub:
     """**假总结客户端**（会中总结的注入点 `runtime.summary_client` 收到的那一个）。
 
-    只实现 `run_summary()` 用到的 `complete()`，答一份固定输出：样本里的三小段因此与窗口
-    内容无关、逐字确定（真端点那一档由一次性探针跑，契约样本记的是**形状**，
-    模型的话归那一档）。`calls` 只用于用例自检。
+    真端点那一档由一次性探针跑，契约样本记的是**形状**，模型的话归那一档。
     """
 
     def __init__(self, content: str = SUMMARY_STUB_CONTENT) -> None:
@@ -219,13 +178,8 @@ class SummaryStub:
         return self.content
 
 
-# ---------------------------------------------------------------------------
-# 假转写后端（transcript 帧样本的来源；经 module:Class 挂进真服务子进程）
-# ---------------------------------------------------------------------------
-
 #: 写出去的那份模块名（`transcriber.backend` 取 `<名>:PeriodicTranscriber`）
 TRANSCRIBER_STUB_MODULE_NAME = "meeting_contract_transcriber"
-#: 假后端每两行之间的间隔（秒）
 STUB_EMIT_INTERVAL_SECONDS = 0.3
 
 _STUB_MODULE_SOURCE = '''\
@@ -285,7 +239,7 @@ class PeriodicTranscriber:
 
 
 def write_transcriber_stub(directory: Path) -> str:
-    """把假转写后端写进 `directory`，返回配置键 `transcriber.backend` 的 `module:Class` 取值。
+    """把假转写后端写进 `directory`。
 
     调用方负责把 `directory` 拼进子进程的 `PYTHONPATH`（仓库根 + 该目录）。
     """

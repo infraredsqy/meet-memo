@@ -1,26 +1,12 @@
-"""`tests/test_capture_gaps.py` —— 帧空洞的「留痕」链（gil-stall-hole 节点）。
+"""帧空洞的「留痕」链。
 
-问题（`.work/issues/specs/opening-window-false-capture-alarm.md:52-53` 实测）：录中发生
-GIL 饿死 / 整进程冻结时，采帧与判停的线程**一起冻住**，解冻后服务侧的帧时刻立刻刷新，
-`recording_alive` 全程 `true` —— 内容丢了 2.4s，记录上不留痕。
+录中发生 GIL 饿死 / 整进程冻结时，采帧与判停的线程**一起冻住**，解冻后服务侧的帧时刻
+立刻刷新，`recording_alive` 全程 `true` —— 内容丢了，记录上不留痕。
 
-修法（设计已拍板）：**检测点在生产侧** —— 发帧线程每次产帧先与上一拍做差（墙钟不冻，
+**修法**：**检测点在生产侧** —— 发帧线程每次产帧先与上一拍做差（墙钟不冻，
 解冻后第一拍就得到真实空洞时长），超过既有窗口（`meeting/state.py` 的
 `max(2.0s, 3 × frame_interval)`，公式不新造）记为一次空洞事件，**再**刷新时刻；记录走
-心跳应答的新增字段 `capture_gaps`（`recording_alive` 的语义一个字不动）。
-
-覆盖：
-
-  ① 检测器纯逻辑（`meeting/capture/gaps.py`，时钟注入）：首帧前不记；窗内不记；
-     超窗报一次；同一回合的后续拍不连记；`reset()` 清基准；窗口就是那把尺。
-  ② 引擎刻度线接线（`_SourceWorker._emit_level`）：先报 `FrameGap` 再发电平帧；
-     下一拍不连记。
-  ③ 运行时记录（`ServiceRuntime._apply_frame_gap`）：两路同回合合并为一条、秒数正确；
-     两个回合各算一条；最近列表有界（10 条）而累计数不设界；恢复后
-     `recording_alive == true` 且空洞仍在；新一场清空记录；录音态之外不登记。
-  ④ dev 假采集档的区分：`silence`（发零电平**帧**）不构成空洞；单路 `lost`（另一路
-     帧照发）不构成空洞；`stall` / 两路真断流才构成 —— 端到端一条（慢档：真实停发
-     3.5s 超过 2.0s 窗口，恢复后记录里一条、`recording_alive` 回 `true`）。
+心跳应答的字段 `capture_gaps`（`recording_alive` 的语义一个字不动）。
 
 快档红线：除慢档那条端到端外，全部用注入时钟 / 直调事实出口，无 sleep、无真子进程。
 """
@@ -63,11 +49,6 @@ def live(tmp_path: Path, values: dict | None = None):
         yield client, client.app.state.runtime
 
 
-# ---------------------------------------------------------------------------
-# ① 检测器纯逻辑（时钟注入）
-# ---------------------------------------------------------------------------
-
-
 class _GapLog:
     """记录 `on_gap` 调用的sink（`(seconds, detected)` 二元组列表）。"""
 
@@ -88,7 +69,6 @@ def test_detector_first_observe_only_sets_the_baseline():
     detector, log = make_detector()
     assert detector.observe(now=1000.0) is None
     assert log.calls == []
-    # 紧接着的一拍在窗内，同样不报
     assert detector.observe(now=1000.5) is None
     assert log.calls == []
 
@@ -105,7 +85,6 @@ def test_detector_reports_one_hole_per_freeze_round():
     assert detector.observe(now=1002.9) is None
     assert detector.observe(now=1003.4) is None
     assert len(log.calls) == 1
-    # 很久之后的第二次冻结：新的一回合
     assert detector.observe(now=1010.0) == pytest.approx(6.6)
     assert len(log.calls) == 2
 
@@ -123,11 +102,6 @@ def test_detector_ignores_gaps_inside_the_window_and_resets():
     # 基准清掉之后的第一拍重新立基准，跨过 reset 的间隔不追认
     assert detector.observe(now=2000.0) is None
     assert log.calls == []
-
-
-# ---------------------------------------------------------------------------
-# ② 引擎刻度线接线
-# ---------------------------------------------------------------------------
 
 
 class _LatestOnly:
@@ -170,11 +144,6 @@ def test_engine_tick_reports_the_gap_before_the_level_frame(monkeypatch):
     clock[0] += 0.5
     worker._emit_level()
     assert len([f for f in facts if isinstance(f, FrameGap)]) == 1, "解冻后的节拍不连记"
-
-
-# ---------------------------------------------------------------------------
-# ③ 运行时记录
-# ---------------------------------------------------------------------------
 
 
 def test_runtime_ledger_records_merges_and_keeps_totals(tmp_path):
@@ -268,26 +237,20 @@ def test_runtime_gap_ledger_resets_with_the_session(tmp_path):
         }
 
 
-# ---------------------------------------------------------------------------
-# ④ dev 假采集档的区分
-# ---------------------------------------------------------------------------
-
-
 def _kinds(received: list[object], kind: type) -> list[object]:
     return [fact for fact in received if isinstance(fact, kind)]
 
 
 def test_dev_silence_keeps_the_beat_and_records_no_gap():
-    """④ `silence` 发的是零电平**帧**、节拍没断：不构成空洞。"""
+    """`silence` 发的是零电平**帧**、节拍没断：不构成空洞。"""
     backend = DevCaptureBackend()
     backend.inject_fault(source="mic", fault="silence", after_seconds=0.0, duration_seconds=10.0)
     received = backend.collect_frames(6, timeout=5.0)
     assert _kinds(received, LevelFrame), "silence 档照常发帧（零电平）"
     assert _kinds(received, FrameGap) == [], "帧没断就没有空洞"
 
-
 def test_dev_single_route_lost_is_not_a_session_gap():
-    """④ 单路 `lost`：另一路的帧照发，「任意存活路」的整档口径下不构成空洞。
+    """单路 `lost`：另一路的帧照发，「任意存活路」的整档口径下不构成空洞。
 
     那一路的断流由 `SourceLost` 的致命级在报，空洞记录不重复记这句话。
     """
@@ -302,11 +265,11 @@ def test_dev_single_route_lost_is_not_a_session_gap():
 
 @pytest.mark.slow
 def test_dev_stall_records_one_merged_gap_end_to_end(tmp_path):
-    """④ 端到端（慢档）：`stall` 停发 3.5s（超 2.0s 窗口）→ 恢复后记录里一条。
+    """端到端（慢档）：`stall` 停发 3.5s（超 2.0s 窗口）→ 恢复后记录里一条。
 
     dev 的发帧线程恢复后第一拍把真实空洞时长算出来，两路各报一条、服务侧合并成一条；
     `recording_alive` 回 `true` 且空洞仍在 —— 「留痕」与「现在采不采得到」各管一头。
-    真实停发要超过 2.0s 的窗口才能被观测，这一条因此进慢档（收尾跑）。
+    真实停发要超过 2.0s 的窗口才能被观测，这一条因此进慢档。
     """
     with live(tmp_path) as (client, _runtime):
         assert post(client, "start").status_code == 200

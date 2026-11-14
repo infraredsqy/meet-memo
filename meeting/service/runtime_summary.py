@@ -1,4 +1,4 @@
-"""会中总结 mixin：会中「按一下总结」那一次模型调用及其等待/记录（自 meeting/service/runtime.py 机械拆分，逐行照抄）。"""
+"""会中总结 mixin：会中「按一下总结」那一次模型调用及其等待/记录。"""
 
 from __future__ import annotations
 
@@ -21,10 +21,10 @@ from meeting.summary import (
 
 _log = logging.getLogger("meeting.service.runtime")
 
-#: 会中总结那一次模型调用专用的工作线程条数（设计的复审裁定）。
+#: 会中总结那一次模型调用专用的工作线程条数。
 #: 那次模型调用是一条同步的 `urllib.request`，跑在事件循环上会把 `/api/state`、三个 SSE
-#: 通道、心跳与健康节拍一起按住（复审实测：假客户端 sleep 3 秒，另一条 `GET /api/state`
-#: 等了 2.70 秒）——设计章 4.5 的「其余照常」要避免的正是这个。取 2 而不是 1：
+#: 通道、心跳与健康节拍一起按住——会中总结跑的时候其余请求照常应答，这正是它要守住的。
+#: 取 2 而不是 1：
 #: deadline 到点时 `_summary_wait()` 放弃的是等待、已在飞的那次照跑到底，弃等之后紧接着
 #: 按下的第二次总结需要另有一条线程可用，否则自己的预算全白等在队列里。
 
@@ -55,12 +55,12 @@ class _AttemptsSeen:
 class RuntimeSummaryMixin:
     """会中总结 mixin。"""
 
-
     def summaries_dict(self) -> dict[str, Any]:
         """`GET /api/summaries` 的应答体：本场按过的、**成功产出的**那几次（按时间先后）。
 
         没有场次或一次都没按过时 `session_id` 为 `null`、`entries` 是空数组。每一格的形状由
-        设计口径的接口口径写死（`window` / `window_label` / `at` / `elapsed_seconds` /
+        每一格的形状由
+        接口口径写死（`window` / `window_label` / `at` / `elapsed_seconds` /
         `what` / `where` / `lost` —— **没有 `lines` 与 `bullets`**）。
         """
         return {
@@ -142,7 +142,7 @@ class RuntimeSummaryMixin:
     async def summarize(self, args: dict[str, Any]) -> dict[str, Any]:
         """`summarize`：按一下，把最近这段时间的实时转写读一遍，给回三小段。
 
-        **判定的先后是固定的**（照 `start` 的先例，设计口径的接口口径）：
+        **判定的先后是固定的**：
 
           1. 判态 —— 没有在录的场次（`idle` / `ended`）→ `not_recording`(409)；
           2. 校验 `window` —— 取值不在四档里 → `invalid_setting`(400)（**不静默落缺省档**：
@@ -156,17 +156,15 @@ class RuntimeSummaryMixin:
         读数为 0）。第 3 / 4 档的读数在读到的当口就判掉：判定与动手之间不再把后端或配置问第二遍。
 
         **这是一条协程，而且「动手」那一段经 `_summary_wait()` 丢进工作线程**
-        （复审 minor 6 的直接修复）：`run_summary()` 是一次**同步**调用（真客户端是
+        **这是一条协程，而且「动手」那一段经 `_summary_wait()` 丢进工作线程**：
         `urllib.request`），放在事件循环上跑就把 `/api/state`、三个 SSE 通道、心跳与健康节拍
-        一起按住 —— 真端点预算默认 25 秒就是按住 25 秒，而设计章 4.5 对 `summary-running`
+        一起按住 —— 真端点预算默认 25 秒就是按住 25 秒。
         那一档写的正是「总结区 `正在总结刚才的 15 分钟…`；**其余照常**」。
-        挪出循环之后，总结期间别处的请求照常应答（判据见
-        `tests/test_summary_action.py` 里那条量往返耗时的用例）。
+        挪出循环之后，总结期间别处的请求照常应答。
 
         **预算语义一个字不改**：那一次调用的等待上限就是配置里那条
         `summary.deadline_seconds`（默认 25 秒），与内核 `run_summary()` 现算剩余量时用的
-        是同一条线；到点时报的还是 `{elapsed_seconds, attempts}` 那一档（契约 4.7 与
-        `docs/contract.md` 章 4 的 `summary_failed` 表）。
+        是同一条线；到点时报的还是 `{elapsed_seconds, attempts}` 那一档。
 
         **总结是只读的**：成功与失败两条路都不调 `commit()`、不涨 `revision`、不广播 ——
         快照里一个字都不变（结果走这个应答体，记录走 `GET /api/summaries`）。
@@ -260,7 +258,7 @@ class RuntimeSummaryMixin:
             int(outcome.attempts), entry["elapsed_seconds"],
         )
         # **只记成功产出的那几次**（失败没有「那几条」可记）；记录活在内存里，不落文件。
-        # 记录这一条按 `GET /api/summaries` 写死的形状来（设计口径那一份没有 `lines`），
+        # 记录这一条按 `GET /api/summaries` 写死的形状来，
         # 与上面交给应答体的那一份是**两个形状**：应答体多一格窗口行数。
         self.summary_records.append(self._summary_entry(outcome))
         return entry

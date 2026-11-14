@@ -1,14 +1,5 @@
 """逐块进度记录与它的现场读数（`meeting/offline/progress.py` + `runner.run_session(progress=…)`）。
 
-本文件盯住四件事：
-
-  - **一块跑完，那一块的字就在盘上**：记录里的行在每一块跑完之后就该到，不必等整路跑完；
-  - **分母按路各算一份**：`chunks_total` 来自这一路的切块计划，静音跳过的块与失败的块
-    都算"跑过了一块"，四档结果各记各的；
-  - **正式稿的写时机一个字不改**：跑到一半时场次目录里没有
-    `meeting_offline_transcript_<source>.md`（`has_offline` 那一格不许因此提前变真）；
-  - **读数是现场读数**：跑到一半去读，读得到"第几块 / 共几块、正在跑哪一路、已经跑了多久"。
-
 全部用假引擎；「跑到一半」那一档靠 `FakeEngine(gate=…)` 把某一路卡在块中间，
 不靠真等待（`tests/conftest.py` 的单条用例 5 秒看门狗）。
 """
@@ -75,11 +66,6 @@ class CountingEngine(FakeEngine):
         ]
 
 
-# ---------------------------------------------------------------------------
-# 一、一块跑完，那一块的字与落点就在盘上
-# ---------------------------------------------------------------------------
-
-
 def test_every_chunk_lands_in_the_ledger_with_its_text(tmp_path) -> None:
     """整趟跑完：两路各 3 行，行上有这一块的文字、落点与结果档。"""
     session = chunked_session(tmp_path)
@@ -132,7 +118,6 @@ def test_the_ledger_is_readable_while_a_source_is_still_running(tmp_path) -> Non
     try:
         assert engine.reached.wait(timeout=GATE_TIMEOUT_SECONDS), "引擎没跑到 mic 的第 2 块"
 
-        # 跑到一半的现场读数：第 1 块跑完了、此刻在跑第 2 块
         snapshot = ledger.snapshot()
         assert snapshot["state"] == "running"
         assert snapshot["current_source"] == "mic"
@@ -144,14 +129,12 @@ def test_the_ledger_is_readable_while_a_source_is_still_running(tmp_path) -> Non
         assert loopback["current_chunk"] is None
         assert mic["counts"] == {"transcribed": 1, "silent": 0, "failed": 0, "unjudged": 0}
 
-        # 盘上那一份记录也是同一个读数：第 1 块的字已经在盘上读得到了
         rows = ledger_rows(session, "mic")
         assert [row["chunk"] for row in rows] == [1]
-        # 行格式与正式稿同款，块内编号带 `cNN:` 命名空间（还没整路编号）
         assert rows[0]["text"].startswith("[00:00] **c01:S01**: ")
         assert rows[0]["segments"] == 2
         assert ledger_rows(session, "loopback") == []
-        # 而这一路此刻**还没有**正式稿（正式稿整路跑完一次写），R29 那一格照旧是假
+        # 而这一路此刻**还没有**正式稿（正式稿整路跑完一次写）
         assert not (session / "meeting_offline_transcript_mic.md").exists()
         assert has_offline_transcript(session) is False
     finally:
@@ -159,7 +142,6 @@ def test_the_ledger_is_readable_while_a_source_is_still_running(tmp_path) -> Non
         thread.join(timeout=GATE_TIMEOUT_SECONDS)
     assert not thread.is_alive(), "那一趟没收工"
 
-    # 跑完之后：两路各 3 行、状态收在终态上，正式稿这才出现
     _header, rows = read_ledger(session)
     assert len(rows) == 6
     assert ledger.snapshot()["state"] == "done"
@@ -214,8 +196,8 @@ def test_a_silent_chunk_and_a_failed_chunk_both_count_as_one_chunk_run(tmp_path)
 def test_a_load_failure_still_leaves_a_row_with_the_denominator(tmp_path) -> None:
     """引擎**加载失手**那一场：记录里照旧有一行，读方从盘上读得到分母（`total` 不从 N 塌成 null）。
 
-    `total` 是这一路切了几块（切块计划定下来的那个数），**不因某一块失败而增减**
-    （`docs/contract.md` 4.9）。这一档从前一块都没进逐块循环、记录里只剩表头，进程不在场的
+    `total` 是这一路切了几块（切块计划定下来的那个数），**不因某一块失败而增减**。
+    这一档从前一块都没进逐块循环、记录里只剩表头，进程不在场的
     读方（服务重启后、命令行跑完回头翻这一场）因此看到 `done=0`、`total=null` —— 与
     「这一路一块都没跑」分不开。补的这一行与**兄弟路径**（切法都算不出来那一条，见
     `runner._run_one_source()`）同一个理由，行上的块号取**触发探测的那一块**（加载失手
@@ -272,11 +254,6 @@ def test_the_ledger_does_not_touch_the_status_file(tmp_path) -> None:
         "schema_version", "session_id", "state", "started_at", "finished_at",
         "sources", "artifacts", "partial", "silent", "silent_spans", "gate", "error",
     }
-
-
-# ---------------------------------------------------------------------------
-# 二、盘上那份记录的读法与写法
-# ---------------------------------------------------------------------------
 
 
 def test_read_progress_tolerates_a_half_written_ledger(tmp_path) -> None:
@@ -369,7 +346,6 @@ def test_the_ledger_write_failure_does_not_take_the_run_down(tmp_path) -> None:
     assert calls, "writer 一次都没被调到"
     assert summary["state"] == "done"
     assert (session / "meeting_offline_transcript_mic.md").exists()
-    # 记录没落成，但这不影响现场读数与正片产物
     assert ledger.snapshot()["sources"][0]["done"] == 3
 
 

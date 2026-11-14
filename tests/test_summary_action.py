@@ -10,7 +10,7 @@
     一条记录都不写**（用登记的假客户端读数为 0 钉住）；
   - **只读**：打一次 `summarize` 前后取两次快照，`revision` 与顶层十键逐字相同（`summary` 键
     一个字都不许进快照）；`GET /api/summaries` 同样不涨 `revision`；
-  - **不挡别人**（复审 minor 6）：假客户端在 `complete()` 里原地停住，同一刻另一条
+  - **不挡别人**：假客户端在 `complete()` 里原地停住，同一刻另一条
     `GET /api/state` 的往返仍压在毫秒量级 —— 那一次模型调用跑在工作线程上，
     事件循环照旧转（判据见 `test_other_requests_are_not_blocked_while_summarizing()`）；
   - **记录**：只记成功产出的那几次，按时间先后；没有场次时 `session_id` 为 `null`；
@@ -47,7 +47,6 @@ pytestmark = pytest.mark.slow
 
 #: 停在 `complete()` 里的那个假客户的闸门最多等多久（用例自己放它走的不走这一档）
 GATE_TIMEOUT_SECONDS = 5.0
-#: 「总结期间另一条请求」的往返上限：修好之后实测毫秒量级，被按住时就是这个闸门的时长
 STATE_PROBE_LIMIT_SECONDS = 2.0
 #: 超时那一档用的墙钟预算（秒；配置层下界是 1.0，用例不真等满默认的 25 秒）
 SHORT_DEADLINE_SECONDS = 1.0
@@ -73,7 +72,7 @@ TOP_LEVEL_KEYS = {
 class GatedClient:
     """**会停住的假总结客户端**：进 `complete()` 就亮灯，然后在闸门上等用例放行。
 
-    复审 minor 6 那一幕的假件（真场景里等的是 25 秒的模型端点）：`entered` 让用例知道
+    假件（真场景里等的是 25 秒的模型端点）：`entered` 让用例知道
     「这一次总结真的动手了」，`release` 由用例放（用例自己收尾，不留固定 sleep）。
     """
 
@@ -124,9 +123,7 @@ def start_recording(client, *, mode: str | None = None) -> None:
     assert response.status_code == 200, response.text
 
 
-# ---------------------------------------------------------------------------
 # 动作名与 code 表的冻结清单（新增两项）
-# ---------------------------------------------------------------------------
 
 
 def test_summarize_is_in_the_action_dispatch(tmp_path):
@@ -138,9 +135,7 @@ def test_summarize_is_in_the_action_dispatch(tmp_path):
         assert response.json()["ok"] is True
 
 
-# ---------------------------------------------------------------------------
 # 成功体
-# ---------------------------------------------------------------------------
 
 
 def test_summarize_returns_the_three_sections_on_the_common_envelope(tmp_path):
@@ -266,9 +261,7 @@ def test_the_window_keeps_only_the_rows_inside_it(tmp_path):
         assert "第 40 行内容" in text
 
 
-# ---------------------------------------------------------------------------
 # 五档失败（判定次序固定）
-# ---------------------------------------------------------------------------
 
 
 def test_summarize_is_not_recording_outside_a_session(tmp_path):
@@ -518,7 +511,7 @@ def test_every_failure_branch_leaves_the_revision_alone(tmp_path):
 
 
 def test_other_requests_are_not_blocked_while_summarizing(tmp_path):
-    """总结进行期间，另一条 `GET /api/state` 仍在毫秒量级往返（复审 minor 6 的钉子）。
+    """总结进行期间，另一条 `GET /api/state` 仍在毫秒量级往返。
 
     那一趟模型调用是**同步**的（真客户端是 `urllib.request`）：跑在事件循环上时它把
     `/api/state`、三个 SSE 通道、心跳与健康节拍一起按住（复审实测：假客户端原地 sleep 3 秒，
@@ -591,9 +584,7 @@ def test_a_wedged_client_is_cut_off_by_the_wall_clock_budget(tmp_path):
             pool.shutdown(wait=False)
 
 
-# ---------------------------------------------------------------------------
 # 只读：快照一个字都不变
-# ---------------------------------------------------------------------------
 
 
 def test_summarize_does_not_touch_the_snapshot(tmp_path):
@@ -633,9 +624,7 @@ def test_the_two_new_codes_do_not_leak_into_the_snapshot(tmp_path):
         assert snapshot_of(client)["revision"] == before
 
 
-# ---------------------------------------------------------------------------
 # GET /api/summaries
-# ---------------------------------------------------------------------------
 
 
 def test_summaries_returns_the_successful_runs_in_order(tmp_path):
@@ -742,9 +731,7 @@ def test_the_summaries_endpoint_keeps_the_middleware_guards(tmp_path):
         assert response.headers["cache-control"] == "no-store"
 
 
-# ---------------------------------------------------------------------------
 # 会中切模型：预设当场切换，坏的那一套给出可读失败原因（本节点）
-# ---------------------------------------------------------------------------
 
 
 #: 两套预设：主力走一个没人在听的回环端口，备用（必败）走 `127.0.0.1:1`（连接必败的

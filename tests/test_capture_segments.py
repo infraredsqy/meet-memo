@@ -1,17 +1,9 @@
-"""`tests/test_capture_segments.py` —— 分段落盘与时间明细的验收（spec 完成判定的那一场戏）。
+"""分段落盘与时间明细的验收。
 
 **全程假采集**：`capture.backend = tests._capture_faulty:FaultyCaptureBackend`
 （真后端 + 假端点表 + 带剧本的假源，归档/电平/收尾全是生产代码），进程内真
 `ServiceRuntime`，不起子进程、不碰真声卡、不放音。暂停与「关一路」的驱动能力做在
-采集引擎/服务层（`CaptureBackend.pause()` / `resume()`），动作面与 web 界面本轮不动。
-
-两场戏：
-
-  1. **喂真素材、中间带一次暂停**：归档里出现按序号命名的段；两路的段起止时间一致；
-     暂停窗口逐样本为零、时间轴照常增长；`session.json` 的段列表、暂停区间、权威时长
-     都与盘上事实对得上（权威时长 = 各段在录时长之和，写端唯一的自洽式）。
-  2. **墙钟改错**：把 `session.json` 的墙钟字段与段戳改成胡话，程序的读法与结论一个
-     字都不变（元信息除权威时长外一律不当判据，`docs/design-intent.md` 第 6 条）。
+采集引擎/服务层（`CaptureBackend.pause()` / `resume()`）。
 """
 
 from __future__ import annotations
@@ -37,16 +29,14 @@ from tests._capture_faulty import (
 from tests._app_drivers import live, post, snapshot_of
 from tests._helpers import wait_until
 
-#: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md`。
 pytestmark = pytest.mark.slow
 
-#: 进程内用例的轮询超时（收尾三步跑在收尾线程池里；与既有端到端同档）
 POLL_TIMEOUT_SECONDS = 15.0
 
-#: 暂停前后各采这么多块（0.1 秒一块）：素材量级与 e2e ① 同档，MP3 与段记录都有得比
+#: 暂停前后各采这么多块（MP3 与段记录都有得比）
 EDGE_CHUNKS = 10
 
-#: 暂停窗口最少写到的静音量（3 块 = 0.3 秒；判据挂在写侧的静音记录里，不靠猜时序）
+#: 暂停窗口最少写到的静音量（判据挂在写侧的静音记录里，不靠猜时序）
 PAUSE_SILENCE_CHUNKS = 3
 
 
@@ -83,7 +73,7 @@ def test_a_pause_records_silence_and_the_ledger_adds_up(tmp_path: Path, monkeypa
     # 交付上限钉住终点：喂满之后再收尾，核对因此是确定的
     monkeypatch.setenv(DELIVER_MIC_ENV, str(2 * EDGE_CHUNKS + PAUSE_SILENCE_CHUNKS + 5))
     monkeypatch.setenv(DELIVER_LOOPBACK_ENV, str(2 * EDGE_CHUNKS + PAUSE_SILENCE_CHUNKS + 5))
-    # 这一场只验采集与段记录：转写与会后钩子都显式取 null 替身（同 e2e ① 的理由）
+    # 这一场只验采集与段记录：转写与会后钩子都显式取 `null` 替身
     with live(
         tmp_path,
         {
@@ -108,7 +98,7 @@ def test_a_pause_records_silence_and_the_ledger_adds_up(tmp_path: Path, monkeypa
             timeout=POLL_TIMEOUT_SECONDS,
             what="两路先各喂满一段",
         )
-        # —— 暂停（服务层出口；动作面没有这一格，本轮也不加） ——
+        # —— 暂停（服务层出口；动作面没有这一格） ——
         backend.pause()
         assert session.paused is True
         content_at_pause = {source: session.content_bytes(source) for source in ("mic", "loopback")}
@@ -119,7 +109,6 @@ def test_a_pause_records_silence_and_the_ledger_adds_up(tmp_path: Path, monkeypa
             timeout=POLL_TIMEOUT_SECONDS,
             what="两路的暂停静音都写到量",
         )
-        # —— 继续 ——
         backend.resume()
         assert session.paused is False
         # 暂停窗在盘上的长度：resume 那一刻的总量 − 暂停时的内容量（含 ≤1 块的在途抖动）
@@ -131,7 +120,7 @@ def test_a_pause_records_silence_and_the_ledger_adds_up(tmp_path: Path, monkeypa
         )
         assert post(client, "stop").status_code == 200
         done = _wait_for_done(client)
-        # `post` 那一格按 R26 落 `waiting`；转码已摘出收尾序列，flush 落定自动在后台另起
+        # `post` 那一格落 `waiting`；转码已摘出收尾序列，flush 落定自动在后台另起
         assert _drain_steps(done) == {
             "flush": "done", "log": "done", "post": "waiting",
         }
@@ -152,11 +141,10 @@ def test_a_pause_records_silence_and_the_ledger_adds_up(tmp_path: Path, monkeypa
             what="转码独立工序落 done",
         )
         # ① 按序号命名的段：两路各一个段 1，外加各自的 MP3、场次文件与转码工序的三层记录。
-        # 转码收工那一趟 `_persist()` 先写 status 再写逐段进度记录（两笔都是 atomicio 的
-        # 同目录临时名原子换名）：`read_status == "done"` 读到时，最后一笔进度记录的
-        # 在途 `.tmp` 仍可能躺在同目录里（批 2 实测的偶发红就是它撞上本断言）。
-        # 断言**逐名全等、不放宽**：等目录静默到恰好这十项再交回（事件驱动轮询；
-        # 收工之后工序不再写盘，等到即是稳态）。
+        # 转码收工那一趟 `_persist()` 先写 status 再写逐段进度记录（两笔都是同目录临时名
+        # 原子换名）：`read_status == "done"` 读到时，最后一笔进度记录的在途 `.tmp`
+        # 仍可能躺在同目录里。断言**逐名全等、不放宽**：等目录静默到恰好这十项再交回
+        # （事件驱动轮询；收工之后工序不再写盘，等到即是稳态）。
         expected_names = sorted(
             [
                 SESSION_FILE_NAME,

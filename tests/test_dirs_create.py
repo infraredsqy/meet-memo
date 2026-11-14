@@ -1,18 +1,6 @@
 """`tests/test_dirs_create.py` —— 目录选择器的新写入口 `POST /api/dirs` 与
-「向上 / 当前这一层」的新口径（目录选择器节点）。
+「向上 / 当前这一层」的新口径（目录选择器）。
 
-覆盖：
-
-  - 端到端：在选择器里新建目录 → 目录在盘上带着用户起的名字 → `workspace_open`
-    登记 → `GET /api/sessions` 清单里有这一行（spec 完成判定的 e2e）；
-  - 建失败三档，各给一句人话、不留半截状态：同名已存在（409 `dir_exists`，
-    目录与文件都算占位）/ 非法名（400 `invalid_setting`，不清洗不改写）/
-    无权限（500 `persist_failed`）；外加父层不存在那一档；
-  - 「建完直接选中」的服务端一侧：成功体 `directory` 是新建那一行的名目判读
-    （刚建出来是 `empty`），选定与登记走既有链路；
-  - 写端点头哨：缺 `X-Meeting-Service: 1` 403，请求没走到端点；
-  - `up` 到盘根才置灰 / `here` 是正在浏览这一层自己的名目（服务端口径，
-    界面用例在 `web/tests/dir-picker.test.tsx`）。
 """
 
 from __future__ import annotations
@@ -73,7 +61,6 @@ def test_dirs_create_then_open_registers_workspace(api, tmp_path: Path):
     # 盘上真有一个目录，名字就是用户起的那一份（软件不自动命名）
     assert (place / "跟老王聊周会").is_dir()
 
-    # 选定之后的确认走既有链路：empty 直接登记
     opened = client.post(
         "/api/actions",
         json={"action": "workspace_open", "args": {"dir": body["directory"]["dir"]}},
@@ -113,7 +100,6 @@ def test_dirs_create_rejection_tiers_leave_no_half_state(api, tmp_path: Path):
         assert refused.json()["code"] == "invalid_setting"
         assert refused.json()["detail"]["key"] == "name"
         assert refused.json()["message"], f"{bad!r} 得带一句能看懂的话"
-    # 名字参数缺席同档
     missing_name = _create(client, place, None)
     assert missing_name.status_code == 400
     assert missing_name.json()["detail"]["key"] == "name"
@@ -138,7 +124,6 @@ def test_dirs_create_rejection_tiers_leave_no_half_state(api, tmp_path: Path):
     assert denied.json()["code"] == "persist_failed"
     assert "PermissionError" in denied.json()["detail"]["error"]
 
-    # 半截状态核对：失败的每一档之后，盘上都只有动手前就有的那几样
     assert sorted(item.name for item in place.iterdir()) == ["已有", "报告.pdf"]
 
 
@@ -157,7 +142,6 @@ def test_dirs_create_missing_name_and_parent_shapes(api, tmp_path: Path):
     client, home = api
     created = _create(client, None, "主目录下的一个")
     assert created.status_code == 200, created.text
-    # `dir` 省略时与 GET /api/dirs 同一个起点（用户主目录）
     assert created.json()["directory"]["dir"] == str(home / "主目录下的一个")
     assert (home / "主目录下的一个").is_dir()
 
@@ -176,10 +160,8 @@ def test_dirs_listing_up_reaches_drive_root_and_here_row(api, tmp_path: Path):
     assert listed.status_code == 200
     body = listed.json()
     assert body["up"] == str(deep.parent)
-    # here：正在浏览的这一层自己（空层如实 empty）
     assert body["here"] == {"name": "c", "dir": str(deep), "kind": "empty", "suspected": False}
 
-    # 一路向上：c → b → a → tmp 根 → 盘根（up 逐层给上一层，到盘根落 null）
     layer = deep
     seen_ups: list[str | None] = []
     for _ in range(40):
@@ -192,13 +174,11 @@ def test_dirs_listing_up_reaches_drive_root_and_here_row(api, tmp_path: Path):
     assert layer == Path(deep.anchor), f"逐层向上应停在盘根，停在了 {layer}"
     assert len(seen_ups) >= 3
 
-    # 带会议材料的一层，here 的名目判读跟着走（meeting 档）
     meeting = tmp_path / "带材料的层"
     meeting.mkdir()
     (meeting / SESSION_FILE_NAME).write_text("{}", encoding="utf-8")
     payload = client.get(f"/api/dirs?dir={quote(str(meeting), safe='')}").json()
     assert payload["here"]["kind"] == "meeting"
 
-    # 真主目录起点同样能向上（实机读数的进程内对照档）
     from_home = client.get("/api/dirs").json()
     assert from_home["up"] == str(Path(os.environ["HOME"]).resolve().parent)

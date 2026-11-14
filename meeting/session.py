@@ -1,6 +1,6 @@
 """场次目录与 `session.json` 的原子写。
 
-口径（「没有默认落点」定稿，`docs/design-intent.md` 第 3、4 条）：没有输出根，一场会的
+口径：没有输出根，一场会的
 落点 = start 显式给出的工作区目录（已存在）；本模块不建目录、不解析目录名、不按日期命名。
 `session.id` 就是目录名；日期是元信息（`session.json` 的 `date` 字段，从开场时刻取），
 从目录名语义里退出来。`session.json` 原子写（同目录临时文件 + `os.replace` + `flush`），
@@ -33,9 +33,9 @@ SEGMENT_NUMBER_WIDTH = 3
 def archive_name(source: str, segment: int = 1) -> str:
     """一路一段的归档文件名 = `meeting_audio_<source>_<段号:03d>.pcm`。
 
-    段的口径（`docs/design-intent.md` 第 9 条）：一段 = 一次录制（start→finalize），序号从 1
+    段的口径：一段 = 一次录制（start→finalize），序号从 1
     起；暂停、会中关某一路、某一路没开都不切段——那一路写静音而已。续接用下一个序号开新
-    文件，不追加旧文件（追加是 V1 旧口径，已被第 9 条翻案）。
+    文件，不追加旧文件。
     """
     return f"meeting_audio_{source}_{int(segment):0{SEGMENT_NUMBER_WIDTH}d}.pcm"
 
@@ -115,11 +115,11 @@ def next_segment_number(
 def state_for(*, top_state: str, ended_phase: str | None = None, has_failed_step: bool = False) -> str:
     """顶层状态 / 收尾阶段 → `session.json` 的 `state`（映射的唯一落点）。
 
-    设计口径高危点 1，四档固定：`recording` / `alert` → `recording`（告警不是盘上的
+    四档固定：`recording` / `alert` → `recording`（告警不是盘上的
     一档，会话还在录）；`ended.phase == "draining"` → `draining`；`done` 且无失败步 →
     `done`；有 `failed` 步 → `failed`。`idle` 与认不出的取值在这里抛 `ValueError`：
     盘上的 `state` 描述的是真开过的那一场，兜底成 `recording` 会留下一版「写着在录、
-    实际没录」的记录（R2 最不能犯的错）。
+    实际没录」的记录。
     """
     if top_state == "recording":
         return "recording"
@@ -155,8 +155,8 @@ def build_session_record(
 ) -> dict[str, Any]:
     """组装一份字段一个不省的 `session.json`（三步各一条、每条四键齐）。
 
-    `date` 是元信息字段（`docs/design-intent.md` 第 3、6 条）：从开场时刻取，只记录、
-    不参与寻址与校验。段记录两件套（第 6、7、9 条）：`segments` 每段一条（序号、起止、
+    `date` 是元信息字段：从开场时刻取，只记录、
+    不参与寻址与校验。段记录两件套：`segments` 每段一条（序号、起止、
     哪几路、段内暂停区间、在录时长），一段 = 一次录制、暂停不切段，未写完的段
     `ended_at` 与 `duration_seconds` 为 `None`；`audio_duration_seconds` 是权威时长 =
     实际录到的音频时长（不含暂停），写端唯一的自洽式是它 = 各段 `duration_seconds` 之和；
@@ -234,7 +234,7 @@ def resolve_workspace_dir(value: Any) -> str:
     """把 start 请求 / 命令行给的目标工作区目录算成绝对路径（不建目录）。
 
     校验两件事：必给、目录已存在，一条不符合就抛 `ValueError`（message 直接进动作层的
-    `invalid_setting`）。目录里已有 `session.json` 不再拒绝（第 9 条翻案）：对着录过的
+    `invalid_setting`）。目录里已有 `session.json` 不再拒绝：对着录过的
     目录按 start 就是续接，段记录与权威时长由 runtime 合并（`start_session()`）。
     """
     text = None if value is None else str(value).strip()
@@ -280,7 +280,7 @@ class SessionStore:
     def mark_interrupted(self, session_dir: str, record: dict[str, Any]) -> str:
         """强制打断的先落盘入口：把 `state: "draining"` + `interrupted: true` 那一版写到盘上。
 
-        薄封装（设计口径 / §4）：只覆盖三个参数（`state` / `interrupted` / `ended_at=None`），
+        薄封装：只覆盖三个参数（`state` / `interrupted` / `ended_at=None`），
         其余走 `write_session_json()` 同一原子写、不新开句柄。原 `steps` 原样保留、
         不伪造终态、不写 `done`、不写 `ended_at`。
         """

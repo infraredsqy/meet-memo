@@ -5,7 +5,7 @@
   - 带 ```json 围栏的样本 → 去掉围栏后正常解析；
   - 前面带解释文字的样本 → 靠 `\\{.*\\}` 那一份候选抠出来；
   - `bullets` 里混了数字的样本 → `None`（触发重试）；
-  - `{"bullets": []}` → **空列表**（B15 的「空数组合法」，不算失败）。
+  - `{"bullets": []}` → **空列表**（「空数组合法」，不算失败）。
 
 **第二组**（`split_sections`）盯三条固定标签的归段：认出的进对应段并去掉标签、认不出的进
 第一段并计数、一条都认不出来时调用方（`all_sections_unlabeled()`）能看出来该重试。
@@ -93,7 +93,7 @@ def test_parse_bullets_accepts_an_empty_array() -> None:
 
 
 def test_parse_bullets_rejects_elements_that_are_not_strings() -> None:
-    """`bullets` 里混了数字：整段判失败（元素是字符串是 B15 的信封口径）。"""
+    """`bullets` 里混了数字：整段判失败（元素是字符串是信封口径）。"""
     assert parse_bullets('{"bullets": ["正文", 42]}') is None
     assert parse_bullets('{"bullets": [1, 2]}') is None
 
@@ -189,7 +189,7 @@ def test_all_sections_unlabeled_flags_the_retry_case() -> None:
 
 
 def test_section_labels_match_the_design_wording() -> None:
-    """三条标签逐字对齐设计章 2.3 的三小段（界面照它排）。"""
+    """三条标签逐字对齐三小段（界面照它排）。"""
     assert SECTION_LABELS == {
         "what": "【讲什么】",
         "where": "【讲到哪】",

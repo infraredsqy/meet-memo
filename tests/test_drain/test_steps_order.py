@@ -46,18 +46,13 @@ from tests.test_drain._common import (
     _warm_up_client,
 )
 
-#: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md`。
 pytestmark = pytest.mark.slow
-
-# ---------------------------------------------------------------------------
-# ① 四步顺序与终态
-# ---------------------------------------------------------------------------
 
 
 def test_drain_step_order_and_terminal_states(service_process, meeting_env):
     """`stop` 后 `ended.phase` 经 `draining` 到 `done`；四步顺序与终态照契约。
 
-    **`draining` 这一格在盘上与状态接口上都真的被观察到、也真的被断言**（审查问题 C2）：
+    **`draining` 这一格在盘上与状态接口上都真的被观察到、也真的被断言**：
     骨架构建下四步几乎瞬间跑完，靠抢时间窗口去读 `draining` 会 flaky —— 这里用**在工作线程里
     睡 `DRAIN_BLOCKING_STEP_SECONDS`** 的假采集件把第 1 步 `flush` 钉在 `running` 上
     （`finalize()` 那一格就是收尾第 1 步的调用），收尾因此在这 `DRAIN_BLOCKING_STEP_SECONDS`
@@ -66,7 +61,7 @@ def test_drain_step_order_and_terminal_states(service_process, meeting_env):
     本用例末尾把那两次读到的相位与 `ENDED_PHASE_DOMAIN` 逐项对上 —— `draining` 与 `done`
     两格都由这一趟收尾自己走过。
 
-    **第 4 步 `post` 不再被任何钩子接住**：按「结束录音」之后会后一个动作都不自动跑（R26），
+    **第 4 步 `post` 不再被任何钩子接住**：按「结束录音」之后会后一个动作都不自动跑，
     那一步做完它该做的（释放会中模型）就停在 `waiting`（＝界面上那句"等你动手"）。
     采集侧是 dev 替身（`config.json` 里 `capture.backend = "dev"`，**非产品路径**）：
     它不写真实音频，`finalize` / `transcode` 两项能力如实为假，因此 `flush` / `transcode`
@@ -74,8 +69,7 @@ def test_drain_step_order_and_terminal_states(service_process, meeting_env):
     四步 `status` 全部收在 `DRAIN_STEP_STATUS` 的成员上。
     """
     plugin = fakes.write_fake_module(meeting_env.home)
-    # 第 1 步 `flush` 由假采集件的 `finalize()` 拖住（原先钉的是第 4 步的会后钩子，
-    # 而按「结束录音」之后会后一个动作都不自动跑 —— R26，那一格已经不再被调用）
+    # 第 1 步 `flush` 由假采集件的 `finalize()` 拖住
     plugin.config["capture.backend"] = plugin.module("FakeCaptureBackend")
     plugin.extra_env[fakes.FINALIZE_DELAY_SECONDS_ENV] = str(float(DRAIN_BLOCKING_STEP_SECONDS))
     fakes.write_plugin_config(meeting_env.home, plugin)
@@ -83,7 +77,7 @@ def test_drain_step_order_and_terminal_states(service_process, meeting_env):
     proc = _start_service(service_process, meeting_env, plugin)
     proc.wait_ready()
     _pin_fake(plugin)
-    # 把用例自己那条 HTTP 连接先建好：观察点才落得进收尾那扇窗口（见 `_warm_up_client`）
+    # 把用例自己那条 HTTP 连接先建好：观察点才落得进收尾那扇窗口
     _warm_up_client(proc)
     _start(proc)
 
@@ -110,7 +104,6 @@ def test_drain_step_order_and_terminal_states(service_process, meeting_env):
     assert _step_statuses(during["ended"]["steps"])["flush"] in ("waiting", "running")
     assert read_session_json(during["session"]["dir"])["state"] == "draining"
 
-    # 窗口关上之后才走到终态：`done`
     snapshot = _wait_done(proc)
     ended = snapshot["ended"]
     assert ended["phase"] == "done"
@@ -130,24 +123,11 @@ def test_drain_step_order_and_terminal_states(service_process, meeting_env):
     assert snapshot["session"]["frozen"] is True
 
 
-# ---------------------------------------------------------------------------
-# ② `done` 判据
-# ---------------------------------------------------------------------------
-
-
 def test_drain_reaches_done_when_no_step_failed(service_process, meeting_env):
     """四步全落在 `done` / `skipped` → `ended.phase == "done"`；`top_state` 停在 `ended`。
 
     同一趟顺带核盘上那一版（`state` / `ended_at` / `interrupted` / `drain.steps`）与「本场时长
     冻结」（收尾之后 `elapsed_seconds` 与 `frozen` 都不再变）。
-
-    「`budget` 与每一步的耗时逐条进 log」这一类口径归**第 ⑦ 条**
-    （`test_drain_logs_budget_and_elapsed`）：契约的 ② 与 ⑦ 是两条独立口径，各占一个函数名，
-    读 log 那一段因此写在 ⑦ 里按它自己的口径走（两条用例各起一个子进程、各自只做自己那一遍
-    必需的现场操作 —— 这样两条的墙钟都留得住余量）。
-
-    `ended.phase` 的取值域（只许取自 `draining` / `done`）由 ① 用同一趟收尾里真实走过的两格
-    钉住；失败那一档停在 `draining` 由 ③ 与 ⑧ 各自咬住。
     """
     proc = _start_service(service_process, meeting_env)
     proc.wait_ready()
@@ -155,19 +135,15 @@ def test_drain_reaches_done_when_no_step_failed(service_process, meeting_env):
 
     snapshot = _wait_done(proc)
     ended = snapshot["ended"]
-    # 前三步照契约落 `done` / `skipped`；第 4 步 `post` 停在 `waiting`
-    # （按「结束录音」之后会后一个动作都不自动跑，R26）
     assert all(step["status"] in ("done", "skipped", "waiting") for step in ended["steps"])
     assert _step_statuses(ended["steps"])["post"] == "waiting"
-    # 本档落在取值域里 `done` 那一格；另一格（失败后停在 `draining`）与整个取值域
-    # 由 ① / ③ / ⑧ 三条各自用实测现场咬住（`ENDED_PHASE_DOMAIN` 上写着出处）
     assert ended["phase"] == "done"
 
     assert snapshot["top_state"] == "ended"
     assert snapshot["session"] is not None
     frozen_elapsed = snapshot["session"]["elapsed_seconds"]
     frozen_frozen = snapshot["session"]["frozen"]
-    time.sleep(DRAIN_FROZEN_RECHECK_SECONDS)  # 本场时长冻结：再读一次不该变大
+    time.sleep(DRAIN_FROZEN_RECHECK_SECONDS)
     reread = proc.snapshot()["session"]
     assert reread["elapsed_seconds"] == frozen_elapsed
     assert reread["frozen"] is frozen_frozen is True
@@ -178,11 +154,6 @@ def test_drain_reaches_done_when_no_step_failed(service_process, meeting_env):
     assert record["ended_at"]
     assert record["interrupted"] is False
     assert [step["id"] for step in _record_steps(record)] == list(DRAIN_STEP_IDS)
-
-
-# ---------------------------------------------------------------------------
-# ③ `skipped` vs `failed` 的边界
-# ---------------------------------------------------------------------------
 
 
 def test_skipped_and_failed_follow_registry_resolution_without_exception_swallowing(

@@ -49,9 +49,7 @@ def _document(**overrides) -> dict:
     return artifacts.build_speakers_document(**base)
 
 
-# ---------------------------------------------------------------------------
 # 一、对照表：形状与必填字段
-# ---------------------------------------------------------------------------
 
 
 def test_document_carries_the_contract_fields() -> None:
@@ -206,9 +204,7 @@ def test_speaker_rows_keep_the_raw_engine_label() -> None:
     ]
 
 
-# ---------------------------------------------------------------------------
 # 二、读方的三个拒绝面（每条都真的去读一次）
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -323,9 +319,7 @@ def test_builder_keeps_a_valid_source_verbatim() -> None:
     assert [row["id"] for row in document["speakers"]] == ["loopback:S01", "loopback:S02"]
 
 
-# ---------------------------------------------------------------------------
 # 三、转写：行格式与分钟级时间戳
-# ---------------------------------------------------------------------------
 
 
 def test_transcript_lines_are_minute_level_with_a_bold_speaker(tmp_path) -> None:
@@ -400,9 +394,7 @@ def test_empty_transcript_is_an_empty_file(tmp_path) -> None:
     assert artifacts.read_transcript_lines(target) == []
 
 
-# ---------------------------------------------------------------------------
 # 四、报告与状态文件
-# ---------------------------------------------------------------------------
 
 
 def _metrics() -> list[artifacts.SourceMetrics]:
@@ -861,7 +853,7 @@ CONCURRENT_WRITE_ROUNDS = 20
 
 
 def test_concurrent_writers_to_one_target_both_succeed(tmp_path) -> None:
-    """两个写方同时写同一个目标：两边都成功，盘上留下的是一份**读得回来**的内容（审查问题 m1）。
+    """两个写方同时写同一个目标：两边都成功，盘上留下的是一份**读得回来**的内容。
 
     旧写法把临时文件叫 `<名字>.tmp`：两个写方共用它，先落地的 `os.replace` 把它消费掉，
     另一边的 `os.replace` 随即抛 `FileNotFoundError` —— 那条异常逃出了只认

@@ -1,7 +1,6 @@
-"""前端产物挂载、产物缺失说明页与 `/debug` 自检页的读取（设计口径；设计口径摘除注册）。
+"""前端产物挂载、产物缺失说明页与 `/debug` 自检页的读取。
 
-- 构建产物目录由 `web.dist_dir` 指定，**默认 `web/dist`**（的 React 工程放 `web/`，
-  产物落 `web/dist`）。
+- 构建产物目录由 `web.dist_dir` 指定，**默认 `web/dist`**。
 - 目录存在 → `/` 走 `StaticFiles(html=True)`；**目录不存在 → 服务照常起**，`/` 给一页
   看得懂的说明。启动时目录在不在，都会**在终端与 log 各写一行**当时看到的情形。
 - **`/` 的目录存在性按每请求判定**（不再钉死在启动时刻）：产物目录一建好，刷新即可见；
@@ -10,9 +9,8 @@
 - **`/` 的挂载是二选一的条件分支**；**注册次序的硬约束**：静态 / 说明页的挂载函数必须在
   应用组装里**最后调用**，否则会把 API 与自检页一起吃走。
 - 说明页**不许**写成 catch-all 把 `/api/*` 与 `/debug` 也接走。
-- **`/debug` 这条路由的唯一注册点在 `meeting/service/routes.py`**（设计口径）：
-  本模块只负责**从包内读出那一页**（`read_debug_page()`，走 `package-data`，不依赖 `web/dist`），
-  设计挂在这里的旧注册已摘除。
+- **`/debug` 这条路由的唯一注册点在 `meeting/service/routes.py`**：
+  本模块只负责**从包内读出那一页**（`read_debug_page()`，走 `package-data`，不依赖 `web/dist`）。
 """
 
 from __future__ import annotations
@@ -55,7 +53,7 @@ def read_debug_page() -> str:
 
 
 def debug_routes() -> list:
-    """**已摘除**：`/debug` 的唯一注册点搬到了 `meeting/service/routes.py`（设计口径）。
+    """空路由：`/debug` 的唯一注册点在 `meeting/service/routes.py`。
 
     保留这个函数只为一个明确的目的：它**不返回任何路由**，于是任何还照着旧写法
     `routes.extend(static_module.debug_routes())` 挂载的地方都挂不上第二条 `GET /debug`。
@@ -79,7 +77,7 @@ class _RootByRequest:
     """`/` 的**每请求判定器**：产物目录在 → `StaticFiles`；不在 → 说明页。
 
     说明页文案承诺「产物一建好，刷新即可见」，于是目录存在性不能钉死在启动时刻：
-    这里每个请求现场判一次。两侧的行为与旧的两分支逐一对应 —— 产物在：整个 `/` 子树
+    这里每个请求现场判一次。产物在：整个 `/` 子树
     交给 `StaticFiles(html=True)`（实例**预建**、`check_dir=False`，建实例不判目录，
     目录晚建也能服务）；产物不在：只有 `GET/HEAD /` 本身给说明页，其余路径与末端 404
     同形回 `Not Found`（不把说明页写成 catch-all）。
@@ -117,9 +115,8 @@ class _RootByRequest:
 def static_routes(dist_dir: str) -> list:
     """`/` 挂**每请求判定**的分派器：产物在 → `StaticFiles(html=True)`；不在 → 说明页。
 
-    启动时仍按当时看到的情形落一行 log（产物在：info；不在：warning + 终端 print，
-    文案与行为都不变），但**目录存在性不再钉死在启动时刻** —— 之后建出 / 删掉产物目录，
-    每个 `GET /` 都按当下情形作答。
+    启动时按当时看到的情形落一行 log（产物在：info；不在：warning + 终端 print）；
+    目录存在性按每请求判定 —— 之后建出 / 删掉产物目录，每个 `GET /` 都按当下情形作答。
 
     **必须在应用组装里最后调用**（这个挂载吃 `/` 下所有路径，API 与自检页要先注册）。
     """

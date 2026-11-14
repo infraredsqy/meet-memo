@@ -51,9 +51,7 @@ FRAME_LEN = 480
 ONE_SECOND = 16000
 
 
-# ---------------------------------------------------------------------------
 # 假件（都只实现被测代码真正用到的那几样）
-# ---------------------------------------------------------------------------
 
 
 class _FakeTensor:
@@ -135,9 +133,7 @@ class _Clock:
         self.now += seconds
 
 
-# ---------------------------------------------------------------------------
 # 夹具与装配
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture(autouse=True)
@@ -186,9 +182,7 @@ def _loud_noise() -> "object":
     return (rng.standard_normal(ONE_SECOND) * 1000.0).astype(np.int16)
 
 
-# ---------------------------------------------------------------------------
 # 一、新解释器里的 import 链：重依赖一个都不许被拉进来
-# ---------------------------------------------------------------------------
 
 #: 在子进程里跑的一行：只 import 被测模块，再报出**重依赖**与接缝名。
 _IMPORT_CHAIN_CODE = (
@@ -227,9 +221,7 @@ def test_import_chain_pulls_no_heavy_dependency():
     assert lines[1] == "seam=GlmAsrTranscriber", output
 
 
-# ---------------------------------------------------------------------------
 # 二、测试接缝本身：patch 必须打在被调用的那份模块对象上
-# ---------------------------------------------------------------------------
 
 
 def test_loader_seam_is_the_module_namespace_itself():
@@ -243,9 +235,7 @@ def test_loader_seam_is_the_module_namespace_itself():
     assert glm.GlmAsrTranscriber._load_transcriber.__globals__ is glm.__dict__
 
 
-# ---------------------------------------------------------------------------
 # 三、成功路径：文本 / token 数 / 惰性加载只加载一次
-# ---------------------------------------------------------------------------
 
 
 def test_transcribe_segment_returns_text_and_token_count(monkeypatch):
@@ -270,9 +260,7 @@ def test_transcribe_segment_returns_text_and_token_count(monkeypatch):
     assert len(model.calls) == 2
 
 
-# ---------------------------------------------------------------------------
 # 四、四层防护真的挂上了（generate 收到的那份 kwargs）
-# ---------------------------------------------------------------------------
 
 
 def test_generate_kwargs_carry_the_four_layers(monkeypatch):
@@ -330,9 +318,7 @@ def test_segment_parameters_come_from_config(monkeypatch, tmp_path):
     assert 0.0 < kwargs["logits_processor"][0]._deadline - time.monotonic() <= 5.0
 
 
-# ---------------------------------------------------------------------------
 # 五、噪声预筛（第 0 层：省掉一次生成）
-# ---------------------------------------------------------------------------
 
 
 def test_silence_segment_is_skipped_as_noise_and_never_generates(monkeypatch):
@@ -349,7 +335,7 @@ def test_silence_segment_is_skipped_as_noise_and_never_generates(monkeypatch):
 
 
 def test_segment_shorter_than_one_frame_is_noise():
-    """不足一帧（30ms @ 16kHz）一律判噪声（V1 `recorder.py:259-260`）。"""
+    """不足一帧（30ms @ 16kHz）一律判噪声。"""
     import numpy as np
 
     assert glm._is_noise_segment(np.zeros(FRAME_LEN - 1, dtype=np.int16)) is True
@@ -366,9 +352,7 @@ def test_loud_noise_is_not_treated_as_silence(monkeypatch):
     assert len(model.calls) == 1
 
 
-# ---------------------------------------------------------------------------
 # 六、超时与判环：都不落部分文本
-# ---------------------------------------------------------------------------
 
 
 def test_over_budget_duration_fails_the_segment(monkeypatch):
@@ -441,14 +425,12 @@ def test_loop_guard_call_signature_is_exactly_three_names():
     """**硬形状**：`_LoopGuard.__call__` 的参数恰好是 `(self, input_ids, scores)`，一个都不多。
 
     为什么单独立一条：transformers 5.x 的 `LogitsProcessorList` 会**内省签名**
-    （`logits_process.py:87-93`：参数个数 > 2 时，把第 3 个起的参数名当成必传 kwargs 去校验），
+    （参数个数 > 2 时，把第 3 个起的参数名当成必传 kwargs 去校验），
     多写一个 `**kwargs` 就会在 `generate` 内部抛
     `ValueError: Make sure that all the required parameters ... are passed`，
-    **而堆栈指向 transformers**，很容易被误判成「这个模型不支持那个参数」
-    （`docs/v1-lineage.md` 的 C8 / E8、设计口径的「必须保住的形状」第 1 条）。
+    **而堆栈指向 transformers**，很容易被误判成「这个模型不支持那个参数」。
 
-    这条形状原先**没有任何用例盯着**（设计复审 minor-5：把签名改成
-    `(self, input_ids, scores, **kwargs)` 之后 30 条用例全绿）—— 运行时零影响的那类改动
+    运行时零影响的那类改动
     会在真机 `generate` 里才炸，所以这里按参数**逐个点名**，`VAR_KEYWORD` 也一并禁掉：
     `inspect.signature` 对 `*args` / `**kwargs` 会报 `VAR_POSITIONAL` / `VAR_KEYWORD`，
     光比名字列表会漏掉它们。
@@ -480,9 +462,7 @@ def test_loop_guard_deadline_forces_eos_on_a_real_tensor():
     assert float(out[0, 0]) == float("-inf")
 
 
-# ---------------------------------------------------------------------------
 # 七、文本级兜底（第 4 层）：长周期循环样本必须被砍掉
-# ---------------------------------------------------------------------------
 
 
 def test_text_level_fallback_strips_the_loop_line(monkeypatch):
@@ -510,9 +490,7 @@ def test_normal_transcript_line_survives_the_fallback(monkeypatch):
     assert transcriber.transcribe_segment(_loud_noise()).text == line
 
 
-# ---------------------------------------------------------------------------
 # 八、`no_repeat_ngram_size` 的降级记忆
-# ---------------------------------------------------------------------------
 
 
 def test_unsupported_no_repeat_ngram_falls_back_once_and_remembers(monkeypatch):
@@ -555,9 +533,7 @@ def test_other_generate_errors_propagate_when_switch_is_off(monkeypatch):
     assert len(model.calls) == 1
 
 
-# ---------------------------------------------------------------------------
 # 九、`_load_from_hub`：离线优先，只捕 `OSError`
-# ---------------------------------------------------------------------------
 
 
 def test_load_from_hub_tries_local_cache_first_then_falls_back():

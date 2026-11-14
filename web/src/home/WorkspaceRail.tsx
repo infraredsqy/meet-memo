@@ -32,9 +32,8 @@ function readStoredRailWidth(): string | null {
 }
 
 /**
- * 「显卡忙不忙」那一格（R31）：读法与判据在 `home/progress.ts` 的 `gpuBusyView()`，
- * 画法只有这一份 —— 会中屏顶栏（LiveTopBar.tsx 的 topbar__right）与这条栏的栏底两处同款
- * （web-gpucell-markup-duplicated）。全站没有全局进度条 —— 进度跟着各自的工作区走。
+ * 「显卡忙不忙」那一格：读法与判据在 `home/progress.ts` 的 `gpuBusyView()`，画法只有这一份 ——
+ * 会中屏顶栏与这条栏的栏底两处同款。全站没有全局进度条 —— 进度跟着各自的工作区走。
  */
 export function GpuCell({ gpu }: { gpu: GpuBusyView }): ReactNode {
   return (
@@ -50,21 +49,15 @@ export function GpuCell({ gpu }: { gpu: GpuBusyView }): ReactNode {
 }
 
 /**
- * 常驻工作区栏（左栏那条，`home__list`）：会中屏与工作台**共用同一条**——
- * 两屏读起来像同一个应用的两面。这一条里住着：铭牌、添加工作区、清单、（可选的）
- * 选中那一场的小详情、栏底那格忙闲；目录选择器与收编 / 移除两只确认弹窗也从这里走。
+ * 常驻工作区栏（左栏那条）：会中屏与工作台**共用同一条**。这一条里住着：铭牌、添加工作区、
+ * 清单、选中那一场的小详情、栏底那格忙闲；目录选择器与收编 / 移除两只确认弹窗也从这里走。
  *
- * 判据与动作的分界：**登记类动作（`workspace_open` / `workspace_remove`）归这条栏**，
- * 做完经 `onReload()` 让调用方重取列表、经 `onFailure()` 把失败交给调用方的失败块；
- * **行激活归调用方**（`onRowActivate`）—— 工作台点行是本地选中，会中屏点行要先发
- * `workspace_open`（成功后才切详情），两屏语义不同，这条栏不替它们拍板。
+ * **登记类动作（`workspace_open` / `workspace_remove`）归这条栏**，做完经 `onReload()` 让
+ * 调用方重取列表、经 `onFailure()` 把失败交给调用方的失败块；**行激活归调用方**
+ * （`onRowActivate`）—— 两屏语义不同，这条栏不替它们拍板。
  *
- * `detail` 是会中屏塞进来的那一小块（选中工作区的读数 + 那颗开始录音钮）；
- * 工作台不给 —— 它的详情是右栏那整块 `wspane`。
- *
- * 栏宽可拖（`./railWidth`）：拖柄是右沿那条分隔线本身，两屏共用同一条宽度
- * （读根节点上的 `--rail-w`）、上下限夹住、拖完记住（只记宽度这一件事）、
- * 双击回默认；窄屏那一档不摆拖柄。
+ * 栏宽可拖：两屏共用同一条宽度（读根节点上的 `--rail-w`）、上下限夹住、拖完记住、双击回
+ * 默认；窄屏那一档不摆拖柄。
  */
 export function WorkspaceRail({
   sessions,
@@ -83,7 +76,6 @@ export function WorkspaceRail({
   gpu: GpuBusyView;
   /** 调用方的忙（它自己的动作在飞时，这条栏的按钮一并按不动）。 */
   busy: boolean;
-  /** 行被激活（点击 / 回车 / 空格）。 */
   onRowActivate: (dir: string) => void;
   /** 登记动作落地后重取列表（调用方的列表是唯一一份）。 */
   onReload: () => void;
@@ -91,7 +83,7 @@ export function WorkspaceRail({
   detail?: ReactNode;
 }): ReactNode {
   const [picker, setPicker] = useState(false);
-  /** 选择器的取数（换层 / 跳层 / 失败那一行）——本体在 `./DirPicker`（目录模式）。 */
+  /** 选择器的取数 —— 本体在 `./DirPicker`（目录模式）。 */
   const dirBrowse = useDirBrowse(false);
   /** 待确认的两只弹窗：收编非空目录 / 从列表移除。 */
   const [confirm, setConfirm] = useState<
@@ -101,11 +93,9 @@ export function WorkspaceRail({
   const [railBusy, setRailBusy] = useState(false);
   const busyOr = busy || railBusy;
 
-  // -- 栏宽（可拖，两屏共用一条） -------------------------------------------
   /**
-   * 这条栏的宽度：存档说了算，没存过按默认档。宽度是界面偏好，只记这一件事 ——
-   * 写盘只有 `RAIL_WIDTH_STORAGE_KEY` 一格，不记任何会话状态；两屏各自挂载都读
-   * 同一份存档，所以在哪一屏拖完另一屏也是那一档。三档与夹法在 `./railWidth`。
+   * 这条栏的宽度：存档说了算，没存过按默认档。宽度是界面偏好，只记这一件事 —— 写盘只有
+   * `RAIL_WIDTH_STORAGE_KEY` 一格，不记任何会话状态。
    */
   const [railWidth, setRailWidth] = useState<number>(
     () => storedRailWidth(readStoredRailWidth, remPixelSize()) ?? railWidthBoundsPx(remPixelSize()).def,
@@ -113,14 +103,12 @@ export function WorkspaceRail({
   /** 拖动 listeners 要拿「此刻的宽度」，走 ref 转手，闭包不握旧值。 */
   const railWidthRef = useRef(railWidth);
   railWidthRef.current = railWidth;
-  /** 拖柄的出身：宽屏分栏那档才有；窄屏（左栏摞到内容上面）没有可拖的两栏。 */
+  /** 拖柄的出身：宽屏分栏那档才有；窄屏没有可拖的两栏。 */
   const [gripAllowed, setGripAllowed] = useState(railGripAllowedNow);
-  /** 拖动的起点（按下那一刻的指针位置与栏宽）。 */
   const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const [dragging, setDragging] = useState(false);
 
-  // 宽度落到根节点的 `--rail-w` 上：工作台 `.home` 与会中 `.wsbar-page` 两处 grid
-  // 列宽都读这一个变量（live.css），两屏天然同一条宽度。
+  // 宽度落到根节点的 `--rail-w` 上：两屏的两处 grid 列宽都读这一个变量，两屏天然同一条宽度。
   useEffect(() => {
     const rootEl = typeof document !== 'undefined' ? document.documentElement : null;
     if (!rootEl) return; // node 侧挂载用例没有真 DOM（document 是个空壳）
@@ -154,8 +142,7 @@ export function WorkspaceRail({
     }
   };
 
-  // 拖动中：指针横移多少，栏宽就在存档那档上跟着走多少，越界夹住；松手才写盘
-  // （写盘只在拖完那一刻，拖动过程不折腾 localStorage）。
+  // 拖动中：指针横移多少，栏宽就在存档那档上跟着走多少，越界夹住；松手才写盘。
   useEffect(() => {
     if (!dragging) return;
     const start = dragRef.current;
@@ -269,9 +256,7 @@ export function WorkspaceRail({
                     <span className="wslist__path num">{row.dir}</span>
                     {/* 盘上录到的总时长：清单里一眼看出这一场多长 */}
                     {dur !== null && <span className="wslist__dur num">{dur}</span>}
-                    {/* 行四档：空白工作区 / 尚未开始 / 录音中 / 录音结束，
-                        另有「目录不存在」如实保留。字 + 图形两条通道并存，
-                        颜色只是冗余的那一半。判据在 `home/progress.ts` 的 `rowStatusView()`。 */}
+                    {/* 行四档，另有「目录不存在」如实保留。字 + 图形两条通道并存，颜色只是冗余的那一半 */}
                     <span
                       className={`wslist__state wslist__state--${cell.tone} ${
                         cell.dim ? 'wslist__state--dim' : ''
@@ -302,18 +287,13 @@ export function WorkspaceRail({
         {/* 会中屏塞进来的那小块：选中工作区的读数与那颗开始录音钮（工作台不给） */}
         {detail}
 
-        {/* 忙闲一格住在这一列的末尾（R31）：读法在 `home/progress.ts` 的
-            `gpuBusyView()`，画法与顶栏共用同一份（`GpuCell`）。 */}
+        {/* 忙闲一格住在这一列的末尾：读法在 `home/progress.ts` 的 `gpuBusyView()`，画法与顶栏共用同一份 */}
         <div className="home__foot">
           <GpuCell gpu={gpu} />
         </div>
       </aside>
 
-      {/* 拖柄 = 左栏右沿那条分隔线本身：1px 的线不长大，把手是线上一层透明的
-          命中区（`live.css` 的 `.railgrip`，7px 一档），光标左右箭头；拖动改宽度
-          （两屏共用、上下限夹住、松手记住），双击回到默认档。它是这条栏的兄弟
-          而不是子元素：挂在两屏的 grid 容器上（`.home` / `.wsbar-page`），贴着
-          `--rail-w` 那条分界整高铺开，窄屏摞成一栏的那档不出（gripAllowed）。 */}
+      {/* 拖柄 = 左栏右沿那条分隔线本身：把手是线上一层透明的命中区，光标左右箭头；拖动改宽度，双击回到默认档。它是这条栏的兄弟而不是子元素，窄屏摞成一栏的那档不出 */}
       {gripAllowed && (
         <div
           className="railgrip"
@@ -361,7 +341,7 @@ export function WorkspaceRail({
           onConfirm={() => {
             const dir = confirm.dir;
             setConfirm(null);
-            // 收编这一问过了（R20）：登记不打断任何在飞的活（一刀切已废），直接登记。
+            // 登记不打断任何在飞的活（一刀切已废），直接登记。
             onFailure(null);
             setRailBusy(true);
             void confirmWorkspaceOpen(dir, {

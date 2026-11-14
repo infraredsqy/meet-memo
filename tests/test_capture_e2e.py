@@ -1,30 +1,9 @@
-"""`tests/test_capture_e2e.py` —— 端到端（假源）：录下的东西能不能信（设计口径）。
+"""端到端（假源）：录下的东西能不能信。
 
-形态照 `tests/test_capture_backend.py` 那两条端到端：**进程内真 `ServiceRuntime`** +
-真采集路径，唯一换掉的是最外面那层声卡库——配置键
-`capture.backend = "tests._capture_faulty:FaultyCaptureBackend"`（`module:Class` 是
-registry 的既有口径）把假端点表与带剧本的假源挂进真后端，读线程 / 写线程 / 电平刻度 /
-收尾三步与转码独立工序 / `session.json` 全是生产代码。不起子进程（时间预算），不碰真声卡
-（`tests/conftest.py` 的看门原样在用）。
-
-三场戏：
-
-  1. **一场正常会，逐帧核对**：收尾 phase 走到 `done`（第 4 步 `post` 按 R26 停
-     `waiting`，会后等你按按钮）；场次目录里两路 `.pcm` + 两个
-     `.mp3` 都在；两路样本数与「喂进去的块数 × 每块样本数」相符、与「start 到 stop
-     之间的墙钟秒数 × 16000」偏差在一个采集块以内、字节数为偶；归档字节与假源的
-     喂块记录**逐字节一致**（丢 0 秒）；按 0.5 秒重跑电平换算，帧序号连续无空洞，
-     「有声帧 / 静音帧」两个计数落进证据（`-s` 可见）；两个 MP3 用 `ffprobe` 读出的
-     时长与对应 PCM 时长相符。
-  2. **半路掉一路**：loopback 真跑起来、喂满 10 块之后才抛错 → 该路 `lost`、
-     `top_state` 进 `alert`；mic 的归档字节数在掉线前后**都在增长**；收尾照常
-     `done`、mic 的 MP3 照样出得来；loopback 留下恰好那 10 块、逐字节可对。
-  3. **转码吞吐**：10 分钟合成 PCM 量一次真 `transcode()` 的秒数，线性外推两小时，
-     对 30 秒收尾预算说话（设计口径 §3 给了开工前基线 1.69 秒，两个数摆在一起比）。
-
-设计口径 §3 写「loopback 在 3 秒后抛错」；为守住「单条用例 ≤ 5 秒」的看门红线
-（`tests/conftest.py`），第 2 场改成「喂满 10 块（1.0 秒）后抛错」——语义同一档：
-那一路真的起来、真的在采之后才死（`fed == 10` 当场断言），而非启动失败。
+进程内真 `ServiceRuntime` + 真采集路径，唯一换掉的是最外面那层声卡库——配置键
+`capture.backend = "tests._capture_faulty:FaultyCaptureBackend"` 把假端点表与带剧本的
+假源挂进真后端，读线程 / 写线程 / 电平刻度 / 收尾三步与转码独立工序 / `session.json`
+全是生产代码。不起子进程（时间预算），不碰真声卡。
 """
 
 from __future__ import annotations
@@ -53,20 +32,17 @@ from tests._app_drivers import live, post, snapshot_of
 from tests._helpers import wait_until
 from tests._capture_fakes import FakeCaptureSource, audit_pcm, replay_level_frames, samples_within_one_block
 
-#: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md`。
 pytestmark = pytest.mark.slow
 
-#: 进程内用例的轮询超时（收尾三步跑在收尾线程池里；与既有端到端同档）
 E2E_POLL_TIMEOUT_SECONDS = 15.0
 
-#: 「两路先攒出这么多块再收尾」（1.6 秒：3 个整 0.5 秒帧 + 尾数，MP3 时长也有得比）
+#: 「两路先攒出这么多块再收尾」（量级得够 MP3 时长有得比）
 RECORD_CHUNKS = 16
 
-#: 两路的固定次序（核对循环与段记录断言共用）
 SOURCE_ORDER = ("mic", "loopback")
 
-#: MP3 与 PCM 的时长容差（秒）。MP3 按帧编解码（16k 下一帧 576 样本 ≈ 36ms），编码器
-#: 首尾各垫小半帧 —— 实测差距见 `设计/evidence/`（本机 8.1 的 lame 对 1.6 秒素材差 0）。
+#: MP3 与 PCM 的时长容差（秒）。MP3 按帧编解码（16k 下一帧 576 样本 ≈ 36ms），
+#: 编码器首尾各垫小半帧。
 MP3_DURATION_TOLERANCE_SECONDS = 0.1
 
 
@@ -108,7 +84,7 @@ def _wait_for_done(client) -> dict:
 
 
 def _wait_transcode_done(session_dir: Path) -> dict:
-    """等转码独立工序收工（flush 落定自动起的那一道；判据是盘上状态文件，与读数同源）。"""
+    """等转码独立工序收工（flush 落定自动起的那一道）。"""
     from meeting.capture import transcode as transcode_module
 
     def _settled():
@@ -124,31 +100,20 @@ def _wait_transcode_done(session_dir: Path) -> dict:
     )
 
 
-# ---------------------------------------------------------------------------
-# ① 一场正常会：逐帧核对 + MP3 能解 + 帧序号连续
-# ---------------------------------------------------------------------------
-
-
 def test_a_full_session_reconciles_frame_by_frame(tmp_path: Path, monkeypatch):
     """假源的一场正常会：收尾三步落定、转码独立工序收工，两路归档逐字节、逐帧、逐样本全部对上。
 
     墙钟核对的确定性手段：两路的交付上限都钉在 `RECORD_CHUNKS`（喂满之后活着但不再
     出块）。于是「取墙钟读数」的那一刻，最后一块已经落定、之后不可能再有块进来 ——
-    偏差不会随「stop 赶没赶上下一块」翻转（旋钮的说明见 `tests/_capture_faulty.py`）。
+    偏差不会随「stop 赶没赶上下一块」翻转。
     """
     monkeypatch.setenv(PACE_SECONDS_ENV, "0.1")
     monkeypatch.setenv(DELIVER_MIC_ENV, str(RECORD_CHUNKS))
     monkeypatch.setenv(DELIVER_LOOPBACK_ENV, str(RECORD_CHUNKS))
     # 这一场只验采集侧的记录：`transcriber.backend` 显式取 `null` 替身。
-    # 不写这一项的话产品缺省 `auto` 会解析到 `meeting.backends.transcribe:TranscriberBackend`
-    # （设计落地之后它就在场了），而这一场喂进去的是**真音频**——
-    # 于是那条流水线会真的去加载 GLM 权重（实测把本用例拖到 7 秒，越过单条用例的 5 秒看门，
-    # 也违背「任何用例都不许加载真模型」这条硬要求）。
-    #
-    # `post.hook` 同样显式取 `null`（缺席档）：缺席档下收尾第 4 步直接记 `skipped`，
-    # 场次目录里落什么由采集侧独自决定。R26 之后产品缺省 `auto` 也不再自动跑会后——
-    # 那一格做完释放会中模型就停在 `waiting`，不起线程、不往场次目录落产物；
-    # 会后链自己的记录在 `tests/test_post_hook.py` 与 `tests/test_offline_runner.py` 里验。
+    # 不写这一项的话产品缺省 `auto` 会解析到 `meeting.backends.transcribe:TranscriberBackend`，
+    # 而这一场喂进去的是**真音频**——那条流水线会真的去加载 GLM 权重，违背
+    # 「任何用例都不许加载真模型」这条硬要求。
     with live(
         tmp_path,
         {
@@ -179,9 +144,9 @@ def test_a_full_session_reconciles_frame_by_frame(tmp_path: Path, monkeypatch):
         done = _wait_for_done(client)
 
         steps = _drain_steps(done)
-        # `post` 那一格按 R26 落 `waiting`（会后不自动跑，等你按按钮），`done` 是收尾 phase 的终态。
+        # `post` 那一格落 `waiting`（会后不自动跑，等你按按钮），`done` 是收尾 phase 的终态；
         # 转码已摘出收尾序列：flush 落定那一刻它在后台自动起（真后端带 transcode 能力），
-        # 这里等独立工序自己收工（状态文件落 done），再核对它的产物。
+        # 这里等独立工序自己收工，再核对它的产物。
         assert steps == {
             "flush": "done", "log": "done", "post": "waiting",
         }
@@ -195,7 +160,6 @@ def test_a_full_session_reconciles_frame_by_frame(tmp_path: Path, monkeypatch):
                 archive_name("mic"), archive_name("loopback"),
                 "meeting_audio_mic_001.mp3", "meeting_audio_loopback_001.mp3",
                 "meeting.log",
-                # 转码独立工序的三层盘上记录（照离线层先例的命名）
                 "meeting_transcode_status.json", "meeting_transcode_progress.jsonl",
                 "meeting_transcode_mic_001.json", "meeting_transcode_loopback_001.json",
             ]
@@ -209,20 +173,17 @@ def test_a_full_session_reconciles_frame_by_frame(tmp_path: Path, monkeypatch):
 
         for source, data in (("mic", mic_pcm), ("loopback", loop_pcm)):
             fed = backend.fed_chunks(source)
-            assert fed == RECORD_CHUNKS  # 交付上限钉死了终点：收尾时不多不少就是这些块
+            assert fed == RECORD_CHUNKS
             audit = audit_pcm(
                 data,
                 expected_bytes=expected_archive_bytes(source, fed),
                 expected_samples=fed * CHUNK_FRAMES,
             )
             audits[source] = audit
-            # 样本数 = 喂进去的块数 × 每块样本数；与墙钟的偏差在一个采集块以内
             assert audit.sample_gap == 0
             assert samples_within_one_block(audit.samples, wall_seconds)
-            # 字节完整：与假源的喂块记录逐字节一致（丢 0 秒），且为偶数字节
             assert audit.even_bytes and audit.trailing_bytes == 0
             assert audit.byte_match is True
-            # 逐帧：0.5 秒一帧重跑电平，帧序号连续、没有空洞
             assert audit.frame_indices == list(range(audit.frames))
             assert audit.missing_frame_indices == []
             readings = replay_level_frames(data)
@@ -237,12 +198,10 @@ def test_a_full_session_reconciles_frame_by_frame(tmp_path: Path, monkeypatch):
                 "voiced_frames": audit.voiced_frames,
                 "silent_frames": audit.silent_frames,
             }
-            # MP3 能解且时长对得上
             duration = _mp3_duration(session_dir / f"meeting_audio_{source}_001.mp3")
             assert abs(duration - audit.seconds) <= MP3_DURATION_TOLERANCE_SECONDS
             evidence[source]["mp3_duration"] = round(duration, 3)
 
-        # `session.json` 的终态与四步记录，与上面从快照看到的一致
         record = json.loads((session_dir / SESSION_FILE_NAME).read_text(encoding="utf-8"))
         assert record["state"] == "done"
         assert record["interrupted"] is False
@@ -251,7 +210,7 @@ def test_a_full_session_reconciles_frame_by_frame(tmp_path: Path, monkeypatch):
         assert [item["archives"] for item in record["sources"]] == [
             [archive_name("mic")], [archive_name("loopback")],
         ]
-        # 段记录：一场恰好一段，段起止、在录时长都落了；权威时长 = 在录时长之和
+        # 段记录：一场恰好一段，权威时长 = 在录时长之和
         assert len(record["segments"]) == 1
         segment = record["segments"][0]
         assert segment["index"] == 1
@@ -351,19 +310,5 @@ def test_a_route_dying_midrun_leaves_the_other_route_intact(tmp_path: Path, monk
         _wait_transcode_done(session_dir)
         assert (session_dir / "meeting_audio_mic_001.mp3").exists()
         assert (session_dir / "meeting_audio_loopback_001.mp3").exists()
-
-
-# ---------------------------------------------------------------------------
-# ③ 转码吞吐：10 分钟合成 PCM 实测一次，线性外推两小时
-# ---------------------------------------------------------------------------
-
-#: 吞吐素材的长度（分钟）。设计口径 §3 的基线量的是 10 分钟 / 19.2MB，同规格复量才可比
-THROUGHPUT_MINUTES = 10
-
-#: 一分钟多少块（一块 0.1 秒）
-_CHUNKS_PER_MINUTE = 600
-
-#: 收尾预算的 30 秒是给**整趟收尾**的（`docs/state.md`）；两小时外推不得越过它
-TWO_HOUR_BUDGET_SECONDS = 30.0
 
 

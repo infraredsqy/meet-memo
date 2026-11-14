@@ -1,9 +1,9 @@
-"""日志（设计口径，R16）。
+"""日志。
 
 服务级 `~/.config/meeting/logs/meeting.log`（`log.dir` / `MEETING_LOG_DIR` 可改）；
-场次级 `<场次目录>/meeting.log`，`start` 时挂上、收尾 `log` 步 flush 后摘掉（R16 的 log
-要能按场查）。三处必改：主 log 不可写即抛 `OSError`（映射 `EXIT_STARTUP_UNMET`），
-不做 V1 的静默降级；轮转保留整份旧文件；服务级 + 场次级两层。
+场次级 `<场次目录>/meeting.log`，`start` 时挂上、收尾 `log` 步 flush 后摘掉
+（log 要能按场查）。主 log 不可写即抛 `OSError`（映射 `EXIT_STARTUP_UNMET`），
+不做静默降级；轮转保留整份旧文件；服务级 + 场次级两层。
 
 轮转参数一律从配置取（`log.max_bytes` / `log.backup_count`），不许写死；记录器命名
 `meeting` + `propagate = False`（不污染 torch / transformers 的日志），幂等初始化。
@@ -51,9 +51,6 @@ class SessionFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:  # noqa: A003 - logging 的固定接口名
         record.session = self.session
         return True
-
-
-# 轮转处理器
 
 
 def build_rotating_handler(
@@ -225,7 +222,6 @@ def get_logger(name: str | None = None) -> logging.Logger:
 def read_log_tail(path: str, *, lines: int = 20) -> list[str]:
     """读一个日志文件的最后 `lines` 行（读不出来就回空列表）。
 
-    调用点：收尾失败档退出时 `cli.py` 要把「服务 log 的最后几行」打到终端（§5.4 行 256）。
     先 flush 本模块自己的 handler，免得刚写下去的那几行还压在缓冲区里没落盘。
     """
     for key in ("handler", "session_handler"):
@@ -241,9 +237,6 @@ def read_log_tail(path: str, *, lines: int = 20) -> list[str]:
     except OSError:
         return []
     return content.splitlines()[-int(lines):]
-
-
-# 场次级 log 的挂 / 摘
 
 
 def attach_session_log(session_dir: str, *, level: str | None = None) -> RotatingFileHandler:
@@ -315,8 +308,6 @@ def detach_session_log() -> None:
 def session_log_dir() -> str | None:
     return _state["session_dir"]
 
-
-# 收尾 `log` 步：flush -> 写这一场的结束标记 -> 摘掉（设计口径）
 
 #: 这一场的结束标记（场次 log 的最后一行，测试照这条断言）。
 #: 占位符：`{state}`（`session.json` 的 `state`）、`{steps}`（收尾各步 `status` 概要）、

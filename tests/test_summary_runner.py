@@ -1,15 +1,5 @@
 """`meeting/summary/runner.py` 的契约用例：一次会中总结的编排、deadline 与失败分档。
 
-盯的是六件事（对应设计口径的完成判定与给复审的自检项）：
-
-  - **成功那一档**：窗口切好、提示词装配好、端点答回那几条、三小段归位；
-  - **空数组合法**：`{"bullets": []}` 照成功那一档收场（`ok=True` 且三段都是空的）；
-  - **窗口里一行都没有**：同样 `ok=True`，并且**一个请求都不发**；
-  - **配置缺键**：`ok=False`、`detail["missing"]` 点名缺的键，请求**在出门前就停住**；
-  - **deadline 落在墙钟预算上**：用假钟量 —— 总耗时贴近那条 deadline，
-    而不是「尝试次数 × 单次超时」；报出来的 `elapsed_seconds` 与实测值对得上；
-  - **失败分档的形状**：`{"elapsed_seconds", "attempts"}` 两格恒在，端点的错误原文进 `error`。
-
 假客户端把每次调用的超时与消息都记下来，因此「每次请求的超时是剩余预算」这件事也量得到。
 全部用例都不碰网络，单条压在看门线以内。
 """
@@ -198,8 +188,8 @@ def test_full_window_takes_every_line() -> None:
 def test_a_stalled_transcript_still_gets_its_window() -> None:
     """转写停转时窗口照旧有内容：末行 `ts` 早于此刻 20 分钟，`run_summary()` 仍能拿到那几行。
 
-    场景（C1 的回归钉）：实时转写停了一会儿，缓冲里最后一行已经是 20 分钟前的事。
-    窗口的锚点是**缓冲末行的 `ts`**（task.md 的接口契约），`run_summary()` 恒传的当前墙钟
+    场景：实时转写停了一会儿，缓冲里最后一行已经是 20 分钟前的事。
+    窗口的锚点是**缓冲末行的 `ts`**，`run_summary()` 恒传的当前墙钟
     只在缓冲为空时兜底。旧写法拿此刻当锚点，这里会切出 0 行：`ok=True`、`attempts=0`、
     一个请求都不发 —— 用户按了按钮却收到一个静默的空结果。
     """
@@ -281,7 +271,7 @@ def test_a_missing_window_falls_back_to_the_configured_default() -> None:
 
 
 def test_the_four_window_labels_match_the_design_wording() -> None:
-    """四档的标签逐字对齐设计章 2.3 的四个按钮。"""
+    """四档的标签对齐四个按钮。"""
     assert WINDOW_CHOICES == ("5m", "15m", "30m", "full")
     assert WINDOW_LABELS_BY_CHOICE == {
         "5m": "5 分钟",

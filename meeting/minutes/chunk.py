@@ -1,25 +1,24 @@
-"""按行切块 + 行号区间表（spec「交付物形状」里的
-`working/<source>/<kind>/chunks/chunk_NN.md` 与 `working/<source>/<kind>/00_index.md`）。
+"""按行切块 + 行号区间表（`working/<source>/<kind>/chunks/chunk_NN.md` 与
+`working/<source>/<kind>/00_index.md`）。
 
-这个模块服务 spec 里这一条：主 agent 不读原始转写，由子 agent 分工读**块**；块与行号的对应
+主 agent 不读原始转写，由子 agent 分工读**块**；块与行号的对应
 关系落在 `00_index.md` 的区间表里，读块的人因此随时能说出「这一句在原文件的第几行」。
 
-**落盘路径本轮钉死一套**（V1 三种写法并存全是错的）：块在
+**落盘路径钉死一套**：块在
 `working/<source>/<kind>/chunks/chunk_NN.md`，区间表在 `working/<source>/<kind>/00_index.md`。
 
-**`<kind>` 那一层是「两份稿子对拍」的承载**（`docs/design-intent.md` 第 11 条、R11）：
+**`<kind>` 那一层是「两份稿子对拍」的承载**：
 `live` 是会中稿（`meeting_transcript_<source>.md`）、`offline` 是会后稿
 （`meeting_offline_transcript_<source>.md`）。两条都在时**两份都切、都留在盘上**，
 两路永不合并、两份稿也永不合并；某一档缺席时那一档不切（不伪造空块目录）。
 两路的行号空间各算各的，两份稿的行号空间同样各算各的（各自数自己那一路的行）。
 
-三条与 V1 脚本（`split_chunks.py`，A5）不同的地方，各自都有理由：
+三条做法，各自都有理由：
 
-  - **块文件里只有原始行**，不加任何头。V1 早那份会写一行 `<!-- source: … -->`，250906 那份写
-    三行头，两者都让「块文件的行号」与「源文件的行号」错位；区间表已经把这件事说清楚了。
+  - **块文件里只有原始行**，不加任何头——加了头，「块文件的行号」与「源文件的行号」
+    就会错位；区间表已经把这件事说清楚了。
   - **先清本源的块目录再写**：重跑时会议变短会让上一次跑剩下的 `chunk_09.md` 留在盘上，
-    子 agent 照 `chunk_*.md` 通配去读就会读到一段不存在的会议。V1 只做 `"w"` 覆盖，没有这一步。
-  - **切块不解析行格式**：块就是原始行的搬运（与 V1 同口径）。行数口径归
+  - **切块不解析行格式**：块就是原始行的搬运。行数口径归
     `meeting.minutes.lines`（`count_lines()` 是区间表与契约校验共用的分母）。
 """
 
@@ -39,7 +38,7 @@ from meeting.minutes.lines import count_lines
 LIVE_TRANSCRIPT_TEMPLATE = "meeting_transcript_{source}.md"
 OFFLINE_TRANSCRIPT_TEMPLATE = "meeting_offline_transcript_{source}.md"
 
-#: 两路的取值（spec：这一段落的 `<source>` 只有这两个值）
+#: 两路的取值
 SOURCE_IDS: tuple[str, ...] = ("mic", "loopback")
 
 #: 两份稿的取值（**平级**，没有任何一份更可信的排序）：`live` 会中稿 / `offline` 会后稿。
@@ -147,7 +146,7 @@ class InputSpec:
 
     文件名按上游契约算出来（`meeting_transcript_<source>.md` /
     `meeting_offline_transcript_<source>.md`），`None` 表示那个文件**不在盘上**。
-    一个名字都没有的输入不会进分块流程（spec：「一条都没有」这一档不启动 DSH）。
+    一个名字都没有的输入不会进分块流程。
     """
 
     source: str
@@ -167,7 +166,7 @@ class InputSpec:
 
 
 def read_transcript_text(path: str | Path) -> str:
-    """读一份转写（`utf-8` + `errors="replace"`，与 V1 脚本同口径）。
+    """读一份转写（`utf-8` + `errors="replace"`）。
 
     `errors="replace"` 是**有意**的：转写里混进半个坏字节时，整场会的纪要流程不该因此停摆；
     替换字符会如实出现在产物里，比一条 `UnicodeDecodeError` 更容易被人看见。
@@ -199,7 +198,7 @@ def build_index_text(
 ) -> str:
     """拼 `00_index.md` 的全文（`# Chunk Index` + 五条 bullet + 区间表）。
 
-    形状照 V1 的 `split_chunks.py:34-43`：读块的人先看 bullet 就知道「切的是哪一份、一共几行、
+    形状：读块的人先看 bullet 就知道「切的是哪一份、一共几行、
     几行一块、共几块、块在哪个目录」，再照表逐块读。
     """
     rows = [
@@ -293,7 +292,7 @@ def discover_inputs(session_dir: str | Path) -> tuple[InputSpec, ...]:
     """按名字在场次目录里找两条转写（按 `SOURCE_IDS` 的序，两路各自一条 `InputSpec`）。
 
     只回答「盘上有哪几份」，不判档位：档位由调用方拿着一到两条输入去定
-    （一条都没有 → `none`，这条在 spec「只喂一条也退化工作」一节里定死了）。
+    （一条都没有 → `none`）。
     两路都没有的 `InputSpec` 不会出现在返回值里。
     """
     session = Path(session_dir)
@@ -310,7 +309,7 @@ def discover_inputs(session_dir: str | Path) -> tuple[InputSpec, ...]:
 
 
 def classify(live: bool, offline: bool) -> str:
-    """这一路手上有哪几条稿的**唯一**映射（原来三处各存一份，现在都折到这里）。
+    """这一路手上有哪几条稿的**唯一**映射。
 
     两条都在 → `both`、只有会中稿 → `live_only`、只有会后稿 → `offline_only`；两份都不在
     是**不存在的组合** → `ValueError`。三处调用方（`chunk.source_kind()` /
@@ -331,8 +330,8 @@ def classify(live: bool, offline: bool) -> str:
 def source_kind(spec: InputSpec | Mapping[str, object]) -> str:
     """这一条输入自己有哪几条稿：`both` / `live_only` / `offline_only`。
 
-    **按输入的语义字段判**（`InputSpec.offline` / `InputSpec.live` 在不在）：文件名里有没有
-    `offline` 这个子串不是判据（`设计` 第 0 节 M2 的定案）。两种输入形状都收，与
+    **按输入的语义字段判**（`InputSpec.offline` / `InputSpec.live` 在不在）：文件名里
+    带不带 `offline` 子串都不作数。两种输入形状都收，与
     `_transcript_of()` 同一套：`InputSpec` 直接读字段，`inputs.json` 的逐条映射按
     `live` / `offline` 两格在不在判。映射本体在 `classify()`（三处共用那一份）；
     两份都不在时照原话抛 `ChunkError`。
@@ -350,7 +349,7 @@ def source_kind(spec: InputSpec | Mapping[str, object]) -> str:
 def mode_for(inputs: Sequence[InputSpec]) -> str | None:
     """这份输入清单落在哪一档（**逐 source 判、再取两路合并后的公共档位**）。
 
-    规则（spec「只喂一条也退化工作」+ `设计` 第 0 节 M1 的定案）：
+    规则：
 
       - 每一条输入各自判它自己有哪几条稿（`source_kind()`）；
       - 整体档位取「两路合并后的公共档位」：两路都 `both` → `both`；只有会中稿 → `live_only`；
@@ -384,8 +383,8 @@ def chunk_session(
     `inputs` 既收 `InputSpec`，也收 `inputs.json` 里那种逐条映射（`{"source": …, "live": {"file": …}}`），
     因此设计可以直接把自己写下的那份清单交进来。
 
-    **两条稿都在时两份都切、都留在盘上**（R11 / `docs/design-intent.md` 第 11 条）：
-    这一层不再挑「哪一份更可信」，挑了就等于替模型下结论，而实测并不保证某一份稳定更好。
+    **两条稿都在时两份都切、都留在盘上**：
+    这一层不再挑「哪一份更可信」，挑了就等于替模型下结论。
     某一份不在盘上时那一格不出现在返回值里（不建空目录、不伪造一份空块）。
     """
     session = Path(session_dir)
@@ -410,8 +409,7 @@ def _transcripts_of(spec: InputSpec | Mapping[str, object]) -> list[tuple[str, s
     只取在盘上写着名字的那几份：某一份文件名缺席时它不出现在返回值里 —— 「切一份」与
     「这一份不在」是两件事，只有后者才该少切一套。
 
-    `offline` 优先的旧口径（`spec.offline or spec.live`）在这里退场：它把「会后那份是权威」
-    写死在代码里，而 R11 要的是两份放在一起对拍、由模型按内容判。
+    不挑「哪一份更权威」：两份放在一起对拍、由模型按内容判。
     """
     if isinstance(spec, InputSpec):
         source = spec.source

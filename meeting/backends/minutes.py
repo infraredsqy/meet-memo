@@ -1,4 +1,4 @@
-"""纪要钩子（设计）：会后纪要生成那一格的解析落点。
+"""纪要钩子：会后纪要生成那一格的解析落点。
 
 `registry.resolve_minutes_hook()` 按 `minutes.hook` 找的就是本模块的 `MinutesHook`
 （`DEFAULT_PATHS["minutes.hook"]` 那条约定路径）。**拉起它的地方有两处**：
@@ -62,11 +62,7 @@ CHILD_FLAG = "MEETING_MINUTES_CHILD"
 
 
 class MinutesHook:
-    """会后纪要生成的钩子：**起线程就返回**。
-
-    `minutes.hook` 的四档取值里 `auto` 落在这里；`null` 落 `registry._AbsentMinutesHook`
-    （缺席档，那是另一个档位的事）。
-    """
+    """会后纪要生成的钩子：**起线程就返回**。"""
 
     def claim(self, session_dir: str) -> None:
         """**同步**地把「这一层在飞」落到盘上；盘上已停着一版 `running` 就当场抛

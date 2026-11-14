@@ -33,22 +33,16 @@ from tests.test_shutdown_signal._common import (
     case_env,
 )
 
-#: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md`。
 pytestmark = pytest.mark.slow
-
-# ---------------------------------------------------------------------------
-# ⑤ 收尾有步骤 `failed` → 收尾失败档
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.slow
 def test_failed_drain_exits_one_and_prints_log_path(service_process, case_env):
     """收尾有步骤 `failed` → 收尾失败档退出码，且终端上出现 log 路径与 `meeting post`。
 
-    同一趟顺带断言**服务级 log** 里可查到启动与端口 / URL、以及退出原因与退出码
-    （设计口径 §6.3 行 304 清单的服务级那半边）。失败手段是共用支持模块里的
-    `FakeCaptureBackend`（`finalize()` 抛错 → 第 1 步 `flush` 落 `failed`，
-    经 `PYTHONPATH` + `capture.backend` 配进子进程），`dev_inject` 那三档故障
+    同一趟顺带断言**服务级 log** 里可查到启动与端口 / URL、以及退出原因与退出码。
+    失败手段是共用支持模块里的 `FakeCaptureBackend`（`finalize()` 抛错 → 第 1 步 `flush`
+    落 `failed`，经 `PYTHONPATH` + `capture.backend` 配进子进程），`dev_inject` 那三档故障
     只改事实流、造不出收尾失败。
     """
     case_started = time.monotonic()
@@ -78,14 +72,11 @@ def test_failed_drain_exits_one_and_prints_log_path(service_process, case_env):
     assert "log 路径：" in combined, f"终端上那一行该写清是 log 路径：\n{combined[-2000:]}"
     assert "meeting post" in combined, f"终端上要出现那条可复制的命令：\n{combined[-2000:]}"
 
-    # **正向断言：终端确实把「服务 log 最后 20 行」那一节打出来了**（审查问题 m7a）。
-    # 此前这一档只有片段式的判据（「终端上出现 log 路径」这类），`read_log_tail()` 就算回空
-    # 列表、那一节整段不打，上面几条也照绿。这里按 `cli.py` 的两处常量把这一节钉住：
-    # 小节标题（含 `LOG_TAIL_LINES_ON_FAILURE`）在场，标题之下**紧跟着那 20 行 log 的正文**
+    # **正向断言：终端确实把「服务 log 最后 20 行」那一节打出来了**：小节标题
+    # （含 `LOG_TAIL_LINES_ON_FAILURE`）在场，标题之下**紧跟着那 20 行 log 的正文**
     # —— 逐行剥掉 `cli.py` 加的两个空格缩进之后，**每行都逐字出现在这份服务 log 里**。
     # 这样比「与文件尾部逐行相等」松一档但足够严：`cli.py` 倒完这一节之后还会再写两行 log
-    # （「收尾失败档退出…」与退出码那一行），按「滚动窗口」去对齐反而会假红；而 20 行正文
-    # 一行不少、且确实来自这份 log，正是「这一节真的落了内容」要的那件事。
+    # （「收尾失败档退出…」与退出码那一行），按「滚动窗口」去对齐反而会假红。
     from meeting.cli import LOG_TAIL_LINES_ON_FAILURE
 
     tail_header = f"服务 log 最后 {LOG_TAIL_LINES_ON_FAILURE} 行："
@@ -127,11 +118,6 @@ def test_failed_drain_exits_one_and_prints_log_path(service_process, case_env):
     _finish_case(case_started, "⑤ 收尾失败档")
 
 
-# ---------------------------------------------------------------------------
-# ⑥ 两路信号同形
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.slow
 def test_sigint_and_sigbreak_share_one_handler(service_process, case_env):
     """`SIGBREAK` 与 `SIGINT` 走**同一个处理函数**，两边的结果字段与退出码逐项一致。
@@ -149,7 +135,7 @@ def test_sigint_and_sigbreak_share_one_handler(service_process, case_env):
       ③ **进程级**：两个真服务子进程各收一次信号 —— 一个走 `CTRL_BREAK_EVENT`
          （`os.kill` 在 Windows 上可靠送达的那一路），一个在子进程里由主线程
          `signal.raise_signal(signal.SIGINT)` **自己给自己发**（走的是真实的 `Ctrl+C`
-         路径，理由见文件顶部说明）—— 两者的退出码、盘上 `state` / `interrupted` /
+         路径）—— 两者的退出码、盘上 `state` / `interrupted` /
          `ended_at` / 四步 `status`、以及各自那行服务级 log 逐字段一致。
     """
     case_started = time.monotonic()
@@ -158,12 +144,10 @@ def test_sigint_and_sigbreak_share_one_handler(service_process, case_env):
     target = service_app._shutdown_target
     try:
         service_app.install_shutdown_signal_handlers()
-        # ① 两个信号号 → 同一个函数对象
         assert signal.getsignal(signal.SIGINT) is service_app.handle_shutdown_signal
         assert hasattr(signal, "SIGBREAK"), "SIGBREAK 是本服务要接管的那第二个信号"
         assert signal.getsignal(signal.SIGBREAK) is service_app.handle_shutdown_signal
 
-        # ② 同一个处理函数被两个信号各调一次：计数器在它内部自增、第二次是强制打断那一档
         service_app.reset_shutdown_press_count()
         service_app.clear_shutdown_target()
         assert service_app.shutdown_press_count() == 0
@@ -180,7 +164,6 @@ def test_sigint_and_sigbreak_share_one_handler(service_process, case_env):
         signal.signal(signal.SIGINT, previous_int)
         signal.signal(getattr(signal, "SIGBREAK", signal.SIGINT), previous_break)
 
-    # ③ 两个真服务子进程：一路 CTRL_BREAK_EVENT、一路子进程自己发 SIGINT
     results: dict[str, dict[str, Any]] = {}
     for label, self_signal in (("sigbreak", False), ("sigint", True)):
         home = case_env.parent / f"home-{label}"
@@ -225,12 +208,10 @@ def test_sigint_and_sigbreak_share_one_handler(service_process, case_env):
         assert results["sigbreak"][field] == results["sigint"][field], (
             f"两路信号的结果字段在 {field} 上不一致：{results}"
         )
-    # 两路都真的收尾干净（收尾干净档那一副面孔）
     assert results["sigbreak"]["state"] == "done", results
     assert results["sigbreak"]["interrupted"] is False, results
     assert results["sigbreak"]["ended_at_written"], results
     assert results["sigbreak"]["step_ids"] == list(DRAIN_STEP_IDS), results
-    # 四步都落定：前三步各自的终态，第 4 步如实停在「等你按按钮」那一格（R26）
     assert all(
         status in ("done", "skipped", "waiting") for status in results["sigbreak"]["steps"]
     ), results

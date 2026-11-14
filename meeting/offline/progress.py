@@ -1,13 +1,11 @@
 """会后离线转写的**逐块进度记录**（`meeting_offline_progress.jsonl`）与它的现场读数。
 
-每跑完一块就补一行（这一块的文字 + 落点），一块的字当场可读（design-intent 第 12 条、
-R27）。三条边界照做别放宽：
+每跑完一块就补一行（这一块的文字 + 落点），一块的字当场可读。三条边界照做别放宽：
 
 1. **正式稿另有一份**：`meeting_offline_transcript_<source>.md` 的写时机不改、也不许
-   提前建——`has_offline_transcript()` 只看名目，提前建会让 R29 提前变真；本文件
-   前缀刻意对不上正式稿。
-2. **它是给人看的读数，不带校验性质**：任何代码不许拿它核对、报错、改结论
-   （design-intent 第 6、7 条）；也不参与 cli 幂等闸（那道闸读 `meeting_offline_status.json`）。
+   提前建；本文件前缀刻意对不上正式稿。
+2. **它是给人看的读数，不带校验性质**：任何代码不许拿它核对、报错、改结论；
+   也不参与 cli 幂等闸（那道闸读 `meeting_offline_status.json`）。
 3. **落盘失败不带走这一趟**：写不下去只记 log，正片照跑。
 
 形状：第一行表头（`kind: ledger`）+ 一行一块的 JSON Lines；`chunks_total` 是**这一路**
@@ -184,8 +182,7 @@ def _per_source_readings(
     current: str | None = None,
     running: bool = False,
 ) -> list[dict[str, Any]]:
-    """逐路读数拼装的**唯一出处**（offline-progress-snapshot-duplicated；形状挂
-    `docs/contract.md` 4.9 的 `sources` 数组）：路名收集（记录里多出来的路补在声明的
+    """逐路读数拼装的**唯一出处**：路名收集（记录里多出来的路补在声明的
     后面）、按路过滤、分母逐行回退取 `chunks_total` 都只写这一遍——现场版
     （`snapshot()`）与盘上版（`snapshot_of()`）共用，改一处两处同步。
     """
@@ -232,7 +229,6 @@ class OfflineProgressLedger:
         self._writer = writer
         self._lock = threading.Lock()
         #: 起点（单调钟）：只用来算「已经跑了多久」，这一格只作附注
-        #: （`docs/design-intent.md` 第 6、7 条）
         self._started = float(clock())
         self._current_source: str | None = None
         self._totals: dict[str, int] = {}
@@ -240,8 +236,6 @@ class OfflineProgressLedger:
         #: `started_at` / `finished_at` 是**墙钟**（跨进程的读方只能靠它），`None` = 还没开跑
         self.started_at: str | None = None
         self.finished_at: str | None = None
-
-    # -- 写 ---------------------------------------------------------------
 
     def start(self, *, started_at: str) -> None:
         """这一趟开跑：记下墙钟起点，并落一份只有表头的记录（盘上这一刻就有「在跑、
@@ -294,16 +288,13 @@ class OfflineProgressLedger:
                 ledger_path(self.session_dir), exc_info=True,
             )
 
-    # -- 读 ---------------------------------------------------------------
-
     def elapsed_seconds(self) -> float:
         """这一趟从开跑到此刻的墙钟秒数（**只作附注**，不许拿它核对）。"""
         with self._lock:
             return max(0.0, round(float(self._clock()) - self._started, 3))
 
     def snapshot(self) -> dict[str, Any]:
-        """此刻的现场读数（不读盘）；形状见 `docs/contract.md` 4.9，
-        `GET /api/sessions/{id}` 的 `offline` 格就是它。
+        """此刻的现场读数（不读盘）；`GET /api/sessions/{id}` 的 `offline` 格就是它。
         """
         with self._lock:
             started_at = self.started_at

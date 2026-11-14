@@ -34,12 +34,7 @@ from tests.test_contract_fixtures._common import (
     make_client,
 )
 
-#: 慢档标记（收尾轮）：真服务/真样本采集的收尾验收，不进每次迭代圈。
 pytestmark = pytest.mark.slow
-
-# ---------------------------------------------------------------------------
-# idle：快照、心跳、拒绝动作
-# ---------------------------------------------------------------------------
 
 
 def test_capture_idle_baseline(tmp_path, make_client, contract_regen):
@@ -50,9 +45,9 @@ def test_capture_idle_baseline(tmp_path, make_client, contract_regen):
     _assert_snapshot_shape(snapshot, top_state="idle", envelope_filled=False)
     assert snapshot["session"] is None
     assert snapshot["ended"] is None
-    # 空闲态**不发提示级**（`docs/ui-design.md` 章 2.5 那张表：空闲态告警区不出现）。
-    # 这一格与下面的 `transcript.health == "stopped"` 说的是两件事：那一格报的是「真转写
-    # 后端还没起过场次」，提示级说的是「录音中转写跟不上了」。
+    # 空闲态**不发提示级**。这一格与下面的 `transcript.health == "stopped"`
+    # 说的是两件事：那一格报的是「真转写后端还没起过场次」，提示级说的是「录音中转写
+    # 跟不上了」。
     assert snapshot["alerts"] == {"critical": None, "hints": []}
     assert snapshot["transcript"]["last_line_at"] is None
     assert all(item["health"] == "ready" for item in snapshot["sources"])
@@ -83,10 +78,10 @@ def test_capture_idle_baseline(tmp_path, make_client, contract_regen):
 def test_capture_action_failures_on_idle(tmp_path, make_client, monkeypatch, contract_regen):
     """七类失败动作里的五类（idle 即可触发）+ `settings_update` 成功体。
 
-    **采集后端显式取 `null` 替身**（原先写的是 `auto`）：`auto` 在本节点落地之后就是**真采集
-    后端**，`start` 会去真枚举、真试开设备 —— golden 样本既会带上这台机器的设备名，又会在有
-    声卡的机器上真的打开一次麦克风。`null` 替身的 `start()` 照样抛 `CaptureUnavailable`，
-    `detail` 的三键形状与 `message` 文案逐字不变，golden 样本因此不漂移。
+    **采集后端显式取 `null` 替身**：`auto` 是真采集后端，`start` 会去真枚举、真试开
+    设备 —— golden 样本既会带上这台机器的设备名，又会在有声卡的机器上真的打开一次麦克风。
+    `null` 替身的 `start()` 照样抛 `CaptureUnavailable`，`detail` 的三键形状与 `message`
+    文案逐字不变，golden 样本因此不漂移。
     """
     client = make_client({"capture.backend": "null"})
 
@@ -135,8 +130,7 @@ def test_capture_action_failures_on_idle(tmp_path, make_client, monkeypatch, con
     assert set(persist_body["detail"]) == {"error"}
     assert "注入的写盘失败" in persist_body["detail"]["error"]
 
-    emit(
-        {
+    emit(        {
             "actions/fail-invalid-setting-unknown-action.json": _action_record(
                 unknown, "definitely_not_an_action", {}
             ),
@@ -158,11 +152,6 @@ def test_capture_action_failures_on_idle(tmp_path, make_client, monkeypatch, con
         },
         regen=contract_regen,
     )
-
-
-# ---------------------------------------------------------------------------
-# recording：成功动作、心跳、already_recording、resync 帧
-# ---------------------------------------------------------------------------
 
 
 def test_capture_recording_group(tmp_path, make_client, contract_regen):
@@ -325,11 +314,6 @@ def test_capture_heartbeat_capture_gaps(tmp_path, make_client, contract_regen):
     emit({"heartbeat/capture-gap.json": normalize(gapped)}, regen=contract_regen)
 
 
-# ---------------------------------------------------------------------------
-# alert / ended·done / ended·draining
-# ---------------------------------------------------------------------------
-
-
 def test_capture_alert_snapshot(tmp_path, make_client, contract_regen):
     """告警态快照（小静默阈值 + dev_inject(loopback, silence) 的真实动作路径）。"""
     client = make_client({"capture.backend": "dev", "alert.silence_seconds": 1})
@@ -368,9 +352,9 @@ def test_capture_alert_snapshot(tmp_path, make_client, contract_regen):
 def test_capture_ended_done(tmp_path, make_client, contract_regen):
     """ended·done 快照 + stop 成功体（收尾前三步走完、第 4 步停在「等你动手」的终态）。
 
-    按「结束录音」之后会后一个动作都不自动跑（R26）：第 4 步 `post` 做完它该做的
+    按「结束录音」之后会后一个动作都不自动跑：第 4 步 `post` 做完它该做的
     （释放会中模型）就如实停在 `waiting`，这一格与 `post.hook` 取什么值无关 ——
-    大会后那两趟活归工作台上那两个按钮（`post_offline` / `post_minutes`）。
+    会后那两趟活归工作台上那两个按钮（`post_offline` / `post_minutes`）。
     """
     client = make_client({"capture.backend": "dev"})
 
@@ -405,9 +389,9 @@ def test_capture_ended_done(tmp_path, make_client, contract_regen):
 def test_capture_ended_draining(tmp_path, make_client, monkeypatch, contract_regen):
     """ended·draining 停留档快照 + draining 拒绝（进程内把 `log` 那一步的落点换成抛错的替身）。
 
-    失败步的工具箱：第 4 步 `post` 现在**不再自动拉起会后**（R26），它每次都停在 `waiting`
+    失败步的工具箱：第 4 步 `post` 现在**不再自动拉起会后**，它每次都停在 `waiting`
     —— 拿它演不出失败档。这一条改把 `log` 那一步写**场次日志结束标记**的落点换成抛错的替身：
-    「有实现却抛错 → `failed`」这一档（§3.0 的边界）照旧在收尾里看得见，`post` 那一格仍是
+    「有实现却抛错 → `failed`」这一档照旧在收尾里看得见，`post` 那一格仍是
     `waiting`。快照样本记的是**形状**（哪一步 failed、`detail` 有哪几键），
     那句话的内容不逐字进 golden。
     """
@@ -435,7 +419,7 @@ def test_capture_ended_draining(tmp_path, make_client, monkeypatch, contract_reg
         def settled(snap):
             """收尾前三步都落定、第 4 步如实停在「等你动手」那一格。
 
-            判据把 `waiting` 算作落定（那一格就是 `post` 的终态，R26），`running` 不算。
+            判据把 `waiting` 算作落定（那一格就是 `post` 的终态），`running` 不算。
             """
             steps = (snap.get("ended") or {}).get("steps") or []
             if not steps or any(step["status"] == "running" for step in steps):

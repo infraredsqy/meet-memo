@@ -4,9 +4,8 @@
 （行格式 `[HH:MM] **S01**: 正文`，分钟级）、对照表 `meeting_offline_speakers_<source>.json`
 （秒级浮点，机器读）、运行报告 `meeting_offline_report.md`、状态文件 `meeting_offline_status.json`。
 
-字段契约（键表、拒收判据、五档状态、`headcount` 口径、四档留痕）的**正本在 `docs/state.md`
-的会后产物一节**；逐块结论词词表（`REASON_*`）住本模块；门尺子词表见 `meeting/offline/runner/pcm.py` 的 `GATE_METHOD_*`。
-本模块是写入与读取的唯一实现。
+逐块结论词词表（`REASON_*`）住本模块；门尺子词表见 `meeting/offline/runner/pcm.py` 的
+`GATE_METHOD_*`。本模块是写入与读取的唯一实现。
 
 纯标准库；原子写共用 `meeting/atomicio.py`。
 """
@@ -22,7 +21,6 @@ from typing import Any, Iterable, Mapping, Sequence
 # 原子写实现只住在 meeting.atomicio 一处，这里留同名转发别名，调用方照旧可用。
 from meeting.atomicio import write_text_atomic
 
-#: 三份按路落盘的产物的文件名模板
 TRANSCRIPT_NAME_TEMPLATE = "meeting_offline_transcript_{source}.md"
 SPEAKERS_NAME_TEMPLATE = "meeting_offline_speakers_{source}.json"
 REPORT_NAME = "meeting_offline_report.md"
@@ -31,16 +29,15 @@ STATUS_NAME = "meeting_offline_status.json"
 #: 对照表的模式版本。**主版本号读方认识才收**：结构变了就抬它，读方据此拒收。
 SCHEMA_VERSION = 1
 
-#: 本实现认识的主版本号（读方按它拒收）
 KNOWN_SCHEMA_MAJOR = 1
 
 #: 状态文件自己的模式版本
 STATUS_SCHEMA_VERSION = 1
 
-#: V1 会后回放的实测实时率（`v1-lineage` B16）：报告里拿它当对照基线
+#: 报告里印的实时率对照基线。
 V1_RTF_BASELINE = 0.39
 
-#: `[HH:MM]` 的形状：5 个字符的分钟级时间戳（`HH` 在超过 99 分钟时照样是数字，长度会变长）
+#: 分钟级时间戳（`HH` 在超过 99 分钟时照样是数字，长度会变长）
 _LINE_RE = re.compile(r"^\[(?P<stamp>\d{2}:\d{2})\] \*\*(?P<speaker>[^*]+)\*\*: (?P<text>.*)$")
 
 #: 转写第一行那条注释（缺了一段的说明）的判据：整行以它开头就算注释，`read_transcript_lines()`
@@ -49,8 +46,7 @@ _LINE_RE = re.compile(r"^\[(?P<stamp>\d{2}:\d{2})\] \*\*(?P<speaker>[^*]+)\*\*: 
 TRANSCRIPT_NOTE_PREFIX = "<!--"
 TRANSCRIPT_NOTE_SUFFIX = "-->"
 
-#: 合法状态。`partial` 是**一路整条没交回、另一路跑成了**那一档（见 `write_status()`）：
-#: 从前这一档与「两路都成」在顶层这一格上都写 `done`，读方只看 `state` 分不开。
+#: 合法状态。`partial` 是**一路整条没交回、另一路跑成了**那一档（见 `write_status()`）。
 #: `interrupted` 是**跑到块边界被人停**那一档（「打断会后」节点）：它也是终态
 #: （这一趟不会再自己往下跑了），与 `running`（还有东西在跑）分开写 —— 「杀了进程就
 #: 永远停在在跑」那种状态里，「被打断」这一格是治它的那一半。
@@ -75,7 +71,7 @@ REASON_NO_SEGMENTS = "no_segments"
 #: 分块下每一块都失败：一段都没留下来（与「一块坏、别的块还在」的 `partial` 分开）
 REASON_ALL_CHUNKS_FAILED = "all_chunks_failed"
 #: 跑到块边界被取消旗标停：已跑块保留，未跑块进 `missing_spans`
-#: （缺口只供人读，不进任何判定——design-intent 第 6 条）。
+#: （缺口只供人读，不进任何判定）。
 REASON_INTERRUPTED = "interrupted"
 #: 数字静音门跳过的块。不是失败：只进 `reasons` 分布，不进缺失区间。
 REASON_DIGITAL_SILENCE = "digital_silence"
@@ -107,7 +103,7 @@ class ArtifactContractError(ValueError):
 
 
 def minute_stamp(seconds: float) -> str:
-    """秒 → `HH:MM`（分钟级，向下取整；负数收成 `00:00`，口径同 `ui-design.md` 门槛 10）。"""
+    """秒 → `HH:MM`（分钟级，向下取整；负数收成 `00:00`）。"""
     total = int(max(0.0, float(seconds)) // 60)
     return f"{total // 60:02d}:{total % 60:02d}"
 
@@ -157,11 +153,10 @@ def _round(value: Any) -> float:
 
 
 def default_source_gate() -> dict[str, Any]:
-    """逐路 `gate` 格的**缺省形状**（唯一出处，offline-gate-default-duplicated）：一路还
+    """逐路 `gate` 格的**缺省形状**（唯一出处）：一路还
     没跑出门结论时（更早的一步已经落了失败）就落这一个值。`SourceMetrics.gate` 的
     缺省值与 `runner._chunk_gate()` 的空 runs 分支都从这里取——两份手写各漂一份
-    （缺 `method` 键）的事从此长不出来。键表见 `docs/state.md` 的会后产物一节
-    （逐路 `gate` 格：`applied` / `method` / 各计数）。
+    （缺 `method` 键）的事从此长不出来。
     """
     return {
         "applied": False,
@@ -176,7 +171,7 @@ def default_source_gate() -> dict[str, Any]:
 
 
 def chunk_row(run: Mapping[str, Any]) -> dict[str, Any]:
-    """对照表逐块行的 **11 键契约投影**（唯一出处，offline-chunk-row-projection-redundant）：
+    """对照表逐块行的 **11 键契约投影**（唯一出处）：
     从逐块登记（`runner.ChunkRun.to_dict()` 的形状）挑对照表要带的键。
     `build_speakers_document()` 与 runner 落对照表那一次投影都走这一条——
     新增逐块字段只改这一处。
@@ -540,10 +535,10 @@ def write_report(
     metrics: Sequence[SourceMetrics],
     total_wall_seconds: float,
 ) -> Path:
-    """落运行报告：B16 的三项（段耗时分布 / 失败原因分布 / 实时率）+ 本场基本事实。
+    """落运行报告：三项（段耗时分布 / 失败原因分布 / 实时率）+ 本场基本事实。
 
-    实时率两格两种口径：逐路是 `SourceMetrics.rtf`（墙钟 ÷ 音频，与 V1 的 0.39× 基线
-    同向）；整场是「音频合计 ÷ 总耗时」，算式逐字写在括号里。两格互为倒数，方向写在
+    实时率两格两种口径：逐路是 `SourceMetrics.rtf`（墙钟 ÷ 音频，与对照基线同向）；
+    整场是「音频合计 ÷ 总耗时」，算式逐字写在括号里。两格互为倒数，方向写在
     括号里免得被当成矛盾；总耗时为 0 落「算不出」。段耗时分布落在「每次引擎调用」粒度
     （MOSSTD 主场是整段批处理，逐段耗时在这一层不存在）。没声跳过、零时长段、缺段
     各单列一节：报告是人读这一场跑成什么样的地方，混在一处会读成「这一场坏过」。

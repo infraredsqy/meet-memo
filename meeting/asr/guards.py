@@ -1,8 +1,8 @@
 """token 级判环 / 墙钟超时 / 文本级重复剥离 —— 四层防护里**零重依赖**的三层。
 
-职责分工（`docs/v1-lineage.md` 的 A1 / A2）：本模块是判定内核，纯标准库 + duck-typed 张量，
+职责分工：本模块是判定内核，纯标准库 + duck-typed 张量，
 **零 numpy / torch / transformers import**；把钩子挂进 `generate()` 与重依赖惰性 import
-都在 `glm.py`。搬移出处见 `docs/v1-lineage.md` 第 11 章「原 1.0 第 5 条」。
+都在 `glm.py`。
 """
 
 from __future__ import annotations
@@ -12,11 +12,9 @@ import time
 
 from meeting import config as config_module
 
-#: 本项目自己的 logger（V1 那一行是 `logging.getLogger("meeting")`）
 log = logging.getLogger("meeting.asr.guards")
 
 
-# 搬自 V1 mnotes_core/recorder.py:20-25
 # GLM-ASR tokenizer 是字符级的（1 汉字 ≈ 1 token），token 窗口可直接按"字数"理解
 _LOOP_TOKEN_WINDOW = 96     # 参与循环检测的尾部窗口（token）
 _LOOP_TOKEN_MIN_UNIT = 2    # 最短重复单位（token）
@@ -25,7 +23,6 @@ _LOOP_TOKEN_MIN_COUNT = 6   # 非重叠出现次数下限
 _LOOP_TOKEN_COVERAGE = 0.7  # 覆盖率下限
 
 
-# 搬自 V1 mnotes_core/recorder.py:47-146
 class _LoopGuard:
     """token 级循环检测 + 墙钟硬超时（logits_processor 钩子，每步调用一次）。
 
@@ -52,7 +49,7 @@ class _LoopGuard:
                           if timeout_seconds else None)
 
     # transformers 5.x 的 LogitsProcessorList 会内省签名：`len(params) > 2` 时，
-    # 把第 3 个起的参数名当成**必传 kwargs** 去校验（logits_process.py:87-93），
+    # 把第 3 个起的参数名当成**必传 kwargs** 去校验，
     # 于是 *args/**kwargs 也会被当成必传而抛
     # ValueError: Make sure that all the required parameters ... are passed。
     # 因此这里只能有 (self, input_ids, scores) 两个参数，多一个都不行。
@@ -128,13 +125,12 @@ class _LoopGuard:
         return False
 
 
-# 搬自 V1 mnotes_core/recorder.py:149-172
 class _DeadlineStop:
     """墙钟硬超时（StoppingCriteria 钩子，每生成一个 token 调用一次）。
 
     model.generate() 本身没有 timeout 参数，这是在不换模型、不改架构的前提下
-    唯一能做到"精确到 1 个 token"的硬超时手段。实测 30 秒段正常生成需 13-15 秒、
-    10 秒段约 4 秒，因此默认 20 秒对 10 秒段有 ≥5 倍裕量，正常段不会被误杀。
+    唯一能做到"精确到 1 个 token"的硬超时手段；默认 20 秒对 10 秒段裕量充足，正常段
+    不会被误杀。
     """
 
     def __init__(self, seconds: float):
@@ -155,10 +151,7 @@ class _DeadlineStop:
         return max(0.0, self._deadline - time.monotonic())
 
 
-# 搬自 V1 mnotes_core/recorder.py:177-187
-# 旧实现只扫"周期 2~4 字的单位连续重复 ≥7 次"，但退化循环的周期常见 5~7 字
-# （回归样本：周期 7 ×399、周期 5 ×663），旧搜索空间一个字都没删掉。
-# 现改为"周期上限 40 + 覆盖率判据"：找出覆盖率最高的重复单位，
+# 判环口径：周期上限 40 + 覆盖率判据——找出覆盖率最高的重复单位，
 # 覆盖率 ≥ 阈值即判循环，只保留一组。
 _REPEAT_LOOP_MIN_UNIT = 2      # 重复单位最短长度（2 字起步，避免误删"哈哈哈哈哈"）
 _REPEAT_LOOP_MAX_UNIT_FLOOR = 4  # 周期上限至少扫到这里（兼容旧行为）
@@ -167,7 +160,6 @@ _REPEAT_LOOP_MIN_TEXT = 100    # 输出 ≤100 字符时直接跳过（短文本
 _REPEAT_SCAN_BUDGET = 12_000_000  # 周期×长度运算预算，超预算的长文本只扫小周期
 
 
-# 搬自 V1 mnotes_core/recorder.py:190-226
 def _loop_coverage(text: str, max_unit: int | None = None):
     """找覆盖率最高的重复单位。返回 (best_unit|None, 计数, 覆盖率)。
 
@@ -178,7 +170,7 @@ def _loop_coverage(text: str, max_unit: int | None = None):
     if n <= 0:
         return None, 0, 0.0
     if max_unit is None:
-        # V2 的参数一律从配置读（V1 是 import 时求值一次的模块常量）；这两个键都是热读键。
+        # 这两个键都是热读键，一律从配置读。
         max_unit = int(config_module.get("asr.repeat_max_unit"))
     max_unit = max(_REPEAT_LOOP_MAX_UNIT_FLOOR, int(max_unit))
     max_unit = min(max_unit, n // _REPEAT_LOOP_MIN_COUNT)
@@ -208,12 +200,11 @@ def _loop_coverage(text: str, max_unit: int | None = None):
     return best_unit, best_count, best_cov
 
 
-# 搬自 V1 mnotes_core/recorder.py:229-249
 def _strip_repeat_loops(text: str, max_unit: int | None = None,
                         min_coverage: float | None = None) -> str:
     """砍掉"某个 ≤max_unit 字单位重复到覆盖大部分文本"的循环，只留一组。
 
-    判据（实测标定：命中真实故障行 0 误报）：
+    判据：
       1) 该单位非重叠出现次数 ≥ _REPEAT_LOOP_MIN_COUNT
       2) k*u/len(text) ≥ min_coverage（默认 0.5）
     命中后从每个出现处删到只剩第一次（保留原文前导正文），
@@ -222,7 +213,7 @@ def _strip_repeat_loops(text: str, max_unit: int | None = None,
     if len(text) <= _REPEAT_LOOP_MIN_TEXT:
         return text
     if min_coverage is None:
-        # 改自 V1 `:242`：默认值同为 0.5，改从 meeting.config 的 asr.repeat_min_coverage 读。
+        # 默认值 0.5，从 meeting.config 的 asr.repeat_min_coverage 读。
         min_coverage = float(config_module.get("asr.repeat_min_coverage"))
     unit, count, cov = _loop_coverage(text, max_unit=max_unit)
     if unit is None or cov < min_coverage:

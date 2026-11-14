@@ -10,7 +10,7 @@ DSH GUI 里落在「未分组」里，用户不知道纪要跑到哪儿了。
 `session/create` 的契约是「`workspaceId` 与 `cwd` 只能给一个」，而**只给 `cwd` 也不进
 工作区分组** —— 要让它出现在场次目录对应的那个工作区里，只有「先 `workspace/create`
 （幂等）、再**只带 `workspaceId`** 建会话、最后 `session/prompt`」这一条路。它走 DSH 的
-`/api`，因此这一层要抄三样协议细节（2026-09-28 按 DSH 0.1.5-rc.2 实测校准）：
+`/api`，因此这一层要抄三样协议细节：
 
   ① **端点写斜杠形式**（`workspace/create` 这类）：点号写法回 not found，而且
      `workspace.list` 这个一元方法**根本不存在**（工作区清单走 `workspace/follow` 那条流）
@@ -83,7 +83,6 @@ DEFAULT_DSH_URL = "http://127.0.0.1:3080"
 PROBE_TCP_TIMEOUT_SECONDS = 2.0
 PROBE_RPC_TIMEOUT_SECONDS = 3.0
 
-#: 单次 `/api` 调用的超时
 RPC_TIMEOUT_SECONDS = 10.0
 
 #: 交付这一步的整段墙钟上限（`runner` 递下来的 `minutes.timeout_seconds` 是几小时那一档，
@@ -109,7 +108,6 @@ REQUEST_WIRE = "request"
 
 #: 交付失败的分档（读方按它分档，不必去解析错误消息）。`FAILURE_TIMEOUT` 的唯一定义点
 #: 在 `status.py`（两条分支的失败词落进同一格 `dsh.failure`，同名词必须同值）。
-#:
 #: 第一档说的是**凭据**：这一层唯一在握手之前就能断掉的环节是自签 cookie（读不到
 #: `~/.dsh/.credentials.yaml`、那条记录不在、密钥长度不对）。连不上服务端那一档不在这里
 #: —— 走不到交付这一步（`probe()` 已经把「没在跑」判在前面了）。
@@ -184,9 +182,6 @@ class HandoffResult:
         }
 
 
-# --- 自签 cookie ------------------------------------------------------------
-
-
 def _b64url_encode(raw: bytes) -> str:
     """base64url（去掉 `=` 填充）：cookie 的名字与三段值都用这个口径。"""
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
@@ -246,9 +241,6 @@ def signing_cookie(
         hmac.new(key, body.encode("ascii"), hashlib.sha256).digest()
 )
     return f"{name}=v1.{body}.{signature}"
-
-
-# --- HTTP 出口与 RPC --------------------------------------------------------
 
 
 def _post_json(
@@ -359,9 +351,6 @@ def _short(text: str, limit: int = 200) -> str:
 _sleep: Callable[[float], None] = time.sleep
 
 
-# --- 存活探针 ---------------------------------------------------------------
-
-
 def probe(
     url: str = DEFAULT_DSH_URL,
     *,
@@ -410,9 +399,6 @@ def probe(
     except WebHandoffError as exc:
         return False, f"只读探针 {LIVENESS_METHOD} 没通过：{exc}"
     return True, ""
-
-
-# --- 交付 -------------------------------------------------------------------
 
 
 def handoff(

@@ -1,8 +1,4 @@
-"""RuntimeCatalogMixin 的「单场状态」域分片：GET /api/sessions/{id} 的进度区读数。
-
-方法与方法间注释均自拆分前的 runtime_catalog.py 单文件 mixin 一字不改复制；
-本文件自写内容只有模块 docstring、import 与类声明行（模块级的会后现场读数小函数一并在此）。
-"""
+"""RuntimeCatalogMixin 的「单场状态」域分片：GET /api/sessions/{id} 的进度区读数。"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -72,10 +68,6 @@ def _offline_status_document(directory: str | Path) -> dict[str, Any] | None:
 
 
 class RuntimeCatalogSessionViewMixin:
-    """「单场状态」：这一场此刻跑到哪儿了（纯读，不提交、不涨 revision、不广播）。"""
-
-    # 单场状态（`GET /api/sessions/{id}`：会后视图的进度区）
-
     def _offline_job_running(self, directory: str) -> bool:
         """这一场**此刻有没有离线那一趟在本进程里跑**（`GET /api/sessions/{id}` 的
         `offline.in_process` 那一格，判据与 `post_jobs_state()` 同源）。
@@ -90,8 +82,8 @@ class RuntimeCatalogSessionViewMixin:
     def session_status_dict(self, target: Any) -> dict[str, Any]:
         """`GET /api/sessions/{id}` 的应答体：**这一场此刻跑到哪儿了**。
 
-        `{id}` 是**这一场的目录路径**（URL 编码的绝对路径）：目录名就是这一场会的名字
-        （`docs/design-intent.md` 第 3 条），`GET /api/sessions` 每一行也以 `dir` 为主键。
+        `{id}` 是**这一场的目录路径**（URL 编码的绝对路径）：目录名就是这一场会的名字，
+        `GET /api/sessions` 每一行也以 `dir` 为主键。
         路径要过与那只清单端点同一套判据（规范化后的绝对路径比对）：目录已不在原地、
         或不在工作台清单里，都按 404 如实回一句（`_require_session_dir()`，
         两档判读的唯一出处）。
@@ -102,8 +94,7 @@ class RuntimeCatalogSessionViewMixin:
         `speakers` 那一格是**这一场盘上的身份集**（人名节点）：每个身份一行
         （限定键 / 路 / 人话标签 / 现名或 `null` / 可得的次数读数），名字读这一场目录里
         的 `meeting_speaker_names.json`。它同样是**给人看的读数**：人名表读不出就如实
-        当作「没有确认过的名字」（名字一格 `null`），不报错、不挡这只端点
-        （`docs/design-intent.md` 第 6 条）。
+        当作「没有确认过的名字」（名字一格 `null`），不报错、不挡这只端点。
 
         `offline` 那一格是**会后离线的进度读数**，两路各一份：跑过几块 / 共几块、
         此刻在跑哪一路、从起跑到现在过了多久。三样东西合起来就是会后视图那一片进度区
@@ -115,10 +106,9 @@ class RuntimeCatalogSessionViewMixin:
             「已经跑了多久」由它按单调钟当场算；
           - **本进程没在跑这一趟**（服务重启过、命令行跑的那一趟、跑完很久了）→ 读场次
             目录里那份 `meeting_offline_progress.jsonl` 记录，起点与终点问状态文件。
-            跨进程算不出单调钟的差值，那一格如实交回 `null`（它本来就只作附注，
-            见 `docs/design-intent.md` 第 6、7 条）。
+            跨进程算不出单调钟的差值，那一格如实交回 `null`（它本来就只作附注）。
 
-        `offline` 里**两块回答的是两件事**，各有各的判据（契约 4.9）：`state` 照盘上那份
+        `offline` 里**两块回答的是两件事**，各有各的判据：`state` 照盘上那份
         如实答（状态文件写着 `running` 就答 `running`，写着 `partial` / `failed` /
         `interrupted` 就照它那一档答），`in_process` 答「**本进程里此刻有没有这一趟
         活**」。两块合起来才分得清「真的在跑」与「盘上停着一版 `running`、其实谁都没在
@@ -138,7 +128,7 @@ class RuntimeCatalogSessionViewMixin:
         state, date, mode = self._disk_record_cells(record, directory)
         wanted = canonical_dir(directory)
         probe = classify_workspace_dir(directory)
-        # 契约 4.9：这张清单只收 `post_offline` / `post_minutes` 两趟；转码那一趟不进
+        # 这张清单只收 `post_offline` / `post_minutes` 两趟；转码那一趟不进
         # （它的读数在下面的 `transcode` 格）——收工后留在 `post_jobs` 里的那一格不外泄。
         post = [
             _post_flight_view(job, directory)
@@ -168,7 +158,7 @@ class RuntimeCatalogSessionViewMixin:
 
         **两块分开说，别混**：
 
-          - `offline.state` 照**盘上那份**如实答（契约 4.9：`running` / `done` / `partial` /
+          - `offline.state` 照**盘上那份**如实答（`running` / `done` / `partial` /
             `failed` / `interrupted` / `idle`，外加「盘上有记录、而这一趟既不在飞、也没有状态文件回答」那一档
             `ledger`）。状态文件写着 `done` / `partial` / `failed` / `interrupted` 就照它自己那一档答，
             写着 `running` 也照它自己那一档答；**进程崩在半路的那一场因此如实答
@@ -222,7 +212,7 @@ class RuntimeCatalogSessionViewMixin:
         `meeting_minutes_status.json`（`meeting/minutes/status.py`，读方逐字段校验）
         回答跑到哪一档（`running` / `done` / `failed` / `delivered`）；文件不在、读不动
         或形状不合契约时如实答 `idle` —— 纪要那一层的现状读数是**给人看的**，读不出来
-        就是不认为有，不挡这只端点（`docs/design-intent.md` 第 6 条）。「本进程里此刻
+        就是不认为有，不挡这只端点。「本进程里此刻
         有没有这一趟」不另立一格：`post` 清单里 `kind: "minutes"` 的那一项带着
         `running`，两处合起来才分得清「真的在跑」与「盘上停着一版 `running`」。
 

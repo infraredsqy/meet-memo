@@ -1,18 +1,18 @@
 """把任意音频容器解成 16k 单声道 float32 波形（会后离线路径的入口）。
 
 **一帧一帧地用 PyAV 解**，不走 `transformers.audio_utils.load_audio` 的字符串路径：
-那一条在本机（没装 `librosa`）会落到 `requires_backends(..., ["librosa"])` 上直接抛错，
+那一条在没装 `librosa` 的机器上会落到 `requires_backends(..., ["librosa"])` 上直接抛错，
 mp3 与 wav 都一样。`meeting/offline/engine.py` 因此把**波形以 ndarray 传进 processor**，
 本模块就是产出那个 ndarray 的地方。
 
-重依赖惰性：`av` 与 `numpy` 都在函数体内 import（`meeting/asr/glm.py` 的既有纪律）。
+重依赖惰性：`av` 与 `numpy` 都在函数体内 import。
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-#: 离线路径的采样率：与采集/会中转写同一档（`docs/v1-lineage.md` 的 B8）
+#: 离线路径的采样率：与采集/会中转写同一档
 SAMPLE_RATE = 16000
 
 #: 归档 PCM 的后缀（`meeting/offline/runner/pcm.py` 的静音门与编排主模块的切块按同一个后缀分流）
@@ -61,9 +61,8 @@ def decode_audio(path: str | Path) -> "np.ndarray":
 def _open_container(av, path: str | Path):
     """按容器形态开 PyAV 输入：归档 PCM 走**显式格式**，别的容器照旧让 PyAV 探测。
 
-    归档 PCM 是**无头裸流**，`av.open()` 的探测在它上面必然失败（实测
-    `InvalidDataError`）——这与文件好坏无关，同一个文件按显式格式打开整份样本都解得出来
-    （`260928` 的 900224 字节归档 PCM 解出 450112 样本，`450112 * 2 == 900224`）。
+    归档 PCM 是**无头裸流**，`av.open()` 的探测在它上面必然失败（`InvalidDataError`）——
+    这与文件好坏无关，同一个文件按显式格式打开整份样本都解得出来。
     分流只认后缀，口径与 `meeting/offline/runner/pcm.py` 的静音门、编排主模块的切块同一条。
     """
     if Path(path).suffix.lower() == PCM_SUFFIX:
@@ -76,7 +75,6 @@ def _open_container(av, path: str | Path):
 
 
 def _as_frames(resampled) -> list:
-    """把 `AudioResampler.resample()` 的返回值统一成帧列表（`None` 收成空列表）。"""
     if resampled is None:
         return []
     if isinstance(resampled, list):

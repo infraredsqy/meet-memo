@@ -1,24 +1,8 @@
-"""`tests/test_pause_model_lifecycle.py` —— 暂停当场结束会中模型，继续时再拉起来（第 21 条）。
+"""暂停当场结束会中模型，继续时再拉起来。
 
-`docs/design-intent.md` 第 21 条点名的四个时刻里，**暂停**是这一个节点管的那一格：按下暂停，
-会中那个模型当场退出显存（不是「陪着整段休息」），按继续时再把它拉回来。两半分别落在：
-
-  - `meeting/backends/transcribe.py` 的 `acquire_gpu()`（与既有的 `release_gpu()` 成对）；
-  - `meeting/service/runtime.py` 的 `pause_session()` / `resume_session()`：经
-    `_submit_model_lifecycle()` 把这两次调用**提交到后台的单线程执行器**，按钮当场应答
-    （释放要等在飞的推理收干净、拉起之后紧接着是权重的加载，这两段工夫花在事件循环上会把
-    心跳与 SSE 一起按住）。
-
-四组读数：
-
-  ① **后端那一半的语义**：没释放过就是安静 no-op（不重复造第二份识别器）、释放之后经
-     **同一个 factory** 重造一份、造不出来只留一条 warning（继续这个动作照常）；
-  ② **暂停窗那一截仍然一行都不产**：把「内容 → 暂停窗（数字零）→ 内容」喂进**生产的切段器**，
-     中间插一次 `release_gpu()` / `acquire_gpu()`，看识别器手上会收到什么 —— 暂停窗那 1.2 秒
-     连续零整截都进不去，继续之后的素材照常出段、照常经**新造的那一份**识别；
-  ③ **接线**：经真的运行时动作（`pause_session()` / `resume_session()`）驱动，替身后端按顺序
-     收到 release 与 acquire，幂等动作不重复交；真后端上那两个方法确实经这两条线被喊到；
-  ④ **不把事件循环钉住**：替身把释放 / 拉起各自按住 3 秒，动作本身的墙钟仍是毫秒级。
+这两次调用经 `_submit_model_lifecycle()` 提交到后台的单线程执行器，按钮当场应答
+（释放要等在飞的推理收干净、拉起之后紧接着是权重的加载，这两段工夫花在事件循环上会把
+心跳与 SSE 一起按住）。
 
 **没有一条用例加载真模型、碰 GPU 或打开真实录音设备**：模型是注入的假件（`transcriber_factory`
 造一份登记用的替身）、`torch` 是一个记事的假模块、采集走 `dev` 替身（`capture.backend = dev`），
@@ -41,10 +25,6 @@ from meeting.asr.glm import TranscribeResult
 from meeting.asr.pipeline import SAMPLE_RATE, VoiceActivitySegmenter
 from meeting.backends.transcribe import TranscriberBackend
 
-# ---------------------------------------------------------------------------
-# 常量与假件
-# ---------------------------------------------------------------------------
-
 #: 用例的看门（秒）：单条用例的墙钟要留在「单个测试文件 ≤5 秒」那条线以内
 CASE_LIMIT_SECONDS = 3.0
 
@@ -54,10 +34,9 @@ ACTION_ANSWER_LIMIT_SECONDS = 0.5
 #: 替身按住一次模型调用多久（秒）：明显大于上面那条上界，「动作等了它」当场读得出来
 HOLD_SECONDS = 3.0
 
-#: 等一次后台调用落地的窗口（秒）
 SETTLE_TIMEOUT_SECONDS = 5.0
 
-#: 假采集的节奏：一块 0.1 秒（与 `tests/_capture_faulty.py` 的 `CHUNK_BYTES` 同值）
+#: 假采集的节奏：一块 0.1 秒
 BLOCK_BYTES = 3200
 BLOCK_SECONDS = 0.1
 
@@ -72,7 +51,7 @@ SEGMENTER_SILENCE_SECONDS = 0.3
 #: 暂停窗在盘上是 1.2 秒的连续零，明显长过这条上界 —— 于是「整截暂停进了识别器」当场红
 RECOGNIZER_SILENCE_BOUND_SECONDS = SEGMENTER_SILENCE_SECONDS + BLOCK_SECONDS + 0.05
 
-#: 暂停窗写成多少块数字静音（12 块 = 1.2 秒）
+#: 暂停窗写成多少块数字静音
 PAUSE_WINDOW_BLOCKS = 12
 
 #: 两个 logger 的名字（用例直接挂 handler 读实测文本）
@@ -227,7 +206,7 @@ def test_acquire_without_a_release_is_a_silent_noop(monkeypatch):
     """**已经在手就什么都不做**：不重复造识别器、不写日志、不碰缓存。
 
     判据取三格实测读数：工厂只被调过一次、返回 `False`、这一路上一条日志都没有
-    —— 反复按继续不该造出第二份权重（每份约 4.3 GiB）。
+    —— 反复按继续不该造出第二份权重。
     """
     monkeypatch.delitem(sys.modules, "torch", raising=False)
     created: list[FakeGlm] = []
@@ -287,7 +266,7 @@ def test_a_factory_that_cannot_come_back_leaves_the_resume_working(monkeypatch):
     """**拉不起来不抛**：如实记一条 warning，返回 `False`，继续这个动作照常。
 
     真机上的现场是依赖没装 / 权重不在本地缓存 / 显存不够：那几档都不许把「继续」这个按钮
-    拖失败（R1 的立场），下一次真出段时照旧经同一条路再试一遍。
+    拖失败，下一次真出段时照旧经同一条路再试一遍。
     """
     monkeypatch.delitem(sys.modules, "torch", raising=False)
     created: list[FakeGlm] = []
@@ -348,11 +327,6 @@ def test_acquire_touches_neither_the_running_pipeline_nor_health(monkeypatch):
     assert backend.health() == before, "健康度读数不该因为这一轮而变"
 
 
-# ---------------------------------------------------------------------------
-# ② 暂停窗那一截：一行都不产（跨过一次释放与一次重拉）
-# ---------------------------------------------------------------------------
-
-
 def test_a_pause_window_still_reaches_no_recognizer_across_the_release_and_reacquire(
     monkeypatch,
 ):
@@ -371,7 +345,7 @@ def test_a_pause_window_still_reaches_no_recognizer_across_the_release_and_reacq
         return model
 
     backend = TranscriberBackend(transcriber_factory=factory)
-    first = backend._transcriber_or_create()  # 本场已经在转写：模型在手
+    first = backend._transcriber_or_create()
     feed = SegmentFeed()
 
     # ① 暂停之前录到的那一段内容：照常转写（VAD 的收尾窗口跟着暂停的头几块一起把它切出来）
@@ -381,7 +355,6 @@ def test_a_pause_window_still_reaches_no_recognizer_across_the_release_and_reacq
     backend._transcribe_segment(feed.handed[0])
     assert first.calls == 1
 
-    # ② 按下暂停：会中模型当场退出显存
     assert backend.release_gpu() is True
     assert backend._transcriber is None
     handed_at_pause = len(feed.handed)
@@ -393,7 +366,6 @@ def test_a_pause_window_still_reaches_no_recognizer_across_the_release_and_reacq
         f"{len(feed.handed) - handed_at_pause} 段"
     )
 
-    # ④ 按下继续：经同一个 factory 重造一份，继续之后的素材照常经它转写
     assert backend.acquire_gpu() is True
     assert len(created) == 2 and backend._transcriber is created[1]
     feed.speech(3)
@@ -411,11 +383,6 @@ def test_a_pause_window_still_reaches_no_recognizer_across_the_release_and_reacq
             f"第 {index + 1} 段交到识别器手上的音频里带着 {longest:.2f} 秒连续静音"
             f"（暂停窗那 {PAUSE_WINDOW_BLOCKS * BLOCK_SECONDS:.1f} 秒零本不该整截进识别器）"
         )
-
-
-# ---------------------------------------------------------------------------
-# ③ 接线：经真的运行时动作（暂停 / 继续）驱动
-# ---------------------------------------------------------------------------
 
 
 class RecordingSpy:
@@ -437,7 +404,6 @@ class RecordingSpy:
 def live_runtime(tmp_path: Path, monkeypatch, *, extra: dict | None = None):
     """装配一个**进程内**的运行时：`dev` 采集替身 + 一场真开着的会话（不起服务、不碰声卡）。
 
-    形状照 `tests/test_post_hook.py` 的 `_post_wiring()`：解析后端 → 起一场 → 交给用例。
     收场时把模块级配置放回原样，并收掉用例自己那台单线程池。
     """
     from meeting.service.app import build_runtime
@@ -492,7 +458,6 @@ def test_pausing_hands_the_model_back_and_resuming_pulls_it_up_again(tmp_path, m
         assert spy.events == ["release"], f"暂停该让模型退出显存：{spy.events}"
         assert runtime.snapshot.session.paused is True
 
-        # 幂等：已经在暂停中时再按一次，不重复释放
         runtime.pause_session()
         _settle_model_calls(runtime)
         assert spy.events == ["release"], f"第二次暂停不该再释放一遍：{spy.events}"
@@ -502,7 +467,6 @@ def test_pausing_hands_the_model_back_and_resuming_pulls_it_up_again(tmp_path, m
         assert spy.events == ["release", "acquire"], f"继续该把模型重新拉起来：{spy.events}"
         assert runtime.snapshot.session.paused is False
 
-        # 幂等：没在暂停中时再按一次继续，不重复拉起
         runtime.resume_session()
         _settle_model_calls(runtime)
         assert spy.events == ["release", "acquire"], f"第二次继续不该再拉一遍：{spy.events}"
@@ -537,7 +501,7 @@ def test_the_pause_and_resume_actions_answer_without_waiting_for_the_model(tmp_p
     读数是两条实测时刻：动作返回的耗时，以及「这一刻那次调用确实还被按着」。
     把提交改成直接调用（在事件循环上等），这两条耗时会当场涨到替身按住的那个 3 秒 ——
     那几秒里 `/api/heartbeat`、`/api/state` 与三个 SSE 通道会一起停摆，界面的心跳探测
-    因此判成「失联」（第 17 条那一条致命级）。
+    因此判成「失联」。
     """
     spy = HeldModelCalls()
     with live_runtime(tmp_path, monkeypatch) as runtime:
@@ -608,8 +572,7 @@ def test_the_product_transcriber_backend_really_takes_both_lanes(tmp_path, monke
 def test_a_backend_without_the_lifecycle_members_pauses_and_resumes_as_usual(tmp_path, monkeypatch):
     """替身后端（生产那一份 `null` 档）没有这两个成员：暂停与继续照常，且**一个线程都不起**。
 
-    协议里没有这两个方法（`docs/backend-protocols.md` 把它们记成可选成员），
-    防御式取法因此是必须的：取不到就跳过，动作一个字都不许失败。
+    协议里没有这两个方法，防御式取法因此是必须的：取不到就跳过，动作一个字都不许失败。
     """
     from meeting.backends.null import NullTranscriberBackend
 

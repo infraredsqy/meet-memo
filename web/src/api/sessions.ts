@@ -23,19 +23,15 @@ import {
 import { createPollerLoop } from './polling';
 
 /**
- * 工作区注册表、目录选择器与单场状态的读端点（`docs/contract.md` 4.8 / 4.9），
- * 以及选择器那只新建目录的写入口（`POST /api/dirs`）。
+ * 工作区注册表、目录选择器与单场状态的读端点，以及选择器那只新建目录的写入口。
  *
- * 读端点**不带那两个必需头**（三道防线是给「改状态」的请求设的），也不写任何东西：
- * 读它们不涨 `revision`、不广播。界面拿到的就是服务给的原文，不派生、不缓存、
- * 不落本地存储（注册表只能住服务端，前端只读）。写入口按头哨规矩带
- * `X-Meeting-Service: 1`；它同样不进四态快照。
+ * 读端点**不带那两个必需头**（三道防线是给「改状态」的请求设的），也不写任何东西：不涨
+ * `revision`、不广播。写入口照头哨规矩带 `X-Meeting-Service: 1`。
  */
 
 export const SESSIONS_URL = '/api/sessions';
 export const DIRS_URL = '/api/dirs';
 
-/** 应答体形状不对。 */
 export class SessionsProtocolError extends ProtocolError {
   constructor(what: string, status: number, raw: string, cause: unknown) {
     const reason = cause instanceof Error ? cause.message : String(cause);
@@ -44,7 +40,6 @@ export class SessionsProtocolError extends ProtocolError {
   }
 }
 
-/** 取不到（网络层失败、服务没应答）。 */
 export class SessionsUnavailableError extends UnavailableError {
   constructor(what: string, cause: unknown) {
     super(`取不到${what}：${cause instanceof Error ? cause.message : String(cause)}`);
@@ -57,7 +52,6 @@ export interface FetchSessionsOptions {
   url?: string;
 }
 
-/** 取一份工作区注册表；形状不对/取不到分别抛 Protocol / Unavailable。 */
 export async function fetchSessions(
   options: FetchSessionsOptions = {},
 ): Promise<SessionsResponse> {
@@ -73,19 +67,13 @@ export async function fetchSessions(
 export interface BrowseDirsOptions {
   fetchImpl?: typeof fetch;
   url?: string;
-  /** `?files=1`（资料界面的选择器文件模式要的）：应答体多一个 `files` 键。 */
+  /** `?files=1`：应答体多一个 `files` 键。 */
   withFiles?: boolean;
 }
 
 /**
- * 取一层目录；起点（`dir` 省略时）就是用户主目录。
- * `dir` 不存在时服务回 400 —— 这里照契约如实拒（`DirsHttpError`，信封 `message`
- * 原话在 `.message` 上），不编一个空层。
- */
-/**
  * `GET /api/dirs` 的 HTTP 拒答（400：要浏览的目录不存在 / 读不动）。信封读得出时
- * `message` 就是信封 `message` 的原话（「要浏览的目录不存在：…」）——地址栏跳层
- * 失败要当场说清人话，协议话术不顶到选择器上。
+ * `message` 就是信封 `message` 的原话 —— 地址栏跳层失败要当场说清人话。
  */
 export class DirsHttpError extends HttpRejectError {
   constructor(status: number, code: string | null, note: string | null, raw: string) {
@@ -100,7 +88,6 @@ export class DirsHttpError extends HttpRejectError {
   }
 }
 
-/** 4xx/5xx 信封读法走公共的那一份（`api/common.ts`），这里只管把它装进自己的错误类。 */
 function dirsHttpError(status: number, text: string): DirsHttpError {
   const { code, note } = readFailureEnvelope(text);
   return new DirsHttpError(status, code, note, text);
@@ -110,8 +97,7 @@ export async function browseDirs(
   dir: string | null = null,
   options: BrowseDirsOptions = {},
 ): Promise<DirsResponse> {
-  // `?files=1` 只在文件模式那档带上（`BrowseDirsOptions.withFiles`）：老路径的请求
-  // 串一个字节不动，服务也就照旧不摆 `files` 键。
+  // `?files=1` 只在文件模式那档带上：老路径的请求串一个字节不动。
   const filesParam = options.withFiles === true ? 'files=1' : null;
   const query = [dir === null ? null : `dir=${encodeURIComponent(dir)}`, filesParam]
     .filter((part): part is string => part !== null)
@@ -127,23 +113,14 @@ export async function browseDirs(
   });
 }
 
-/** 目录判读三档：chooser/确认弹窗都按它走（`suspected` 照收编那一档处理）。 */
 export type ProbeDecision = 'empty' | 'meeting' | 'need-confirm';
 
-/**
- * 名目 → 三档处理的判据（spec 的三情形：空 / 会议材料 / 非空无材料；这是唯一的出处）。
- * `missing` 到不了判断层——选择器里只摆存在的目录、不存在的路径由 `workspace_open`
- * 回 400 再画失败块。
- */
+/** 名目 → 三档处理的判据（这是唯一的出处）。`missing` 到不了判断层。 */
 export function probeDecision(kind: DirKind): ProbeDecision {
   if (kind === 'empty') return 'empty';
   if (kind === 'meeting') return 'meeting';
   return 'need-confirm';
 }
-
-// ---------------------------------------------------------------------------
-// 新建目录（`POST /api/dirs`）：选择器里就地建一个，建完直接选中
-// ---------------------------------------------------------------------------
 
 /** `POST /api/dirs` 的 HTTP 拒答（400 非法名 / 409 同名已存在 / 500 盘上出岔等）。 */
 export class DirCreateHttpError extends HttpRejectError {
@@ -167,9 +144,8 @@ export interface CreateDirOptions {
 }
 
 /**
- * 在 `parent` 那一层里新建一个名字叫 `name` 的目录（服务不清洗不改写：名字必须
- * 用户亲手起，非法的服务给一句人话拒回来）。写端点头哨 `X-Meeting-Service: 1`
- * 由这里带；不涨 `revision`（选择器的现场独立于四态快照）。
+ * 在 `parent` 那一层里新建一个名字叫 `name` 的目录（服务不清洗不改写：名字必须用户亲手起）。
+ * 写端点头哨由这里带；不涨 `revision`。
  */
 export async function createDir(
   parent: string | null,
@@ -213,11 +189,7 @@ export async function createDir(
   return parsed.data;
 }
 
-// ---------------------------------------------------------------------------
-// 单场状态（4.9）：进度区的取数与轮询（会后进度界面节点）
-// ---------------------------------------------------------------------------
-
-/** 单场状态那一档服务回的错误（404：目录不在原地 / 不在清单里；失败体是通用信封）。 */
+/** 单场状态那一档服务回的错误（404 两档；失败体是通用信封）。 */
 export class SessionStatusHttpError extends HttpRejectError {
   constructor(status: number, code: string | null, raw: string) {
     super(
@@ -240,10 +212,8 @@ export interface FetchSessionStatusOptions {
 /**
  * 取一份单场状态（`{id}` 是这一场的目录路径，URL 编码后原样指到这一场）。
  *
- * 失败分两档：网络层失败 / 形状不对照 `fetchSessions` 同一套
- * （`SessionsUnavailableError` / `SessionsProtocolError`）；HTTP 非 200（4.9 的
- * 两档 404）回 `SessionStatusHttpError`，`code` 从失败信封里读、读不出信封就是 `null`
- * —— 界面按「有没有 `code`」分两句写，不按 `message` 做字符串匹配（契约 6.7）。
+ * HTTP 非 200 回 `SessionStatusHttpError`，`code` 从失败信封里读、读不出就是 `null` ——
+ * 界面按「有没有 `code`」分两句写，**不按 `message` 做字符串匹配**。
  */
 export async function fetchSessionStatus(
   dir: string,
@@ -262,16 +232,11 @@ export async function fetchSessionStatus(
   });
 }
 
-/** 进度区轮询一次的读数（成功那一跳带 `status`，失败那一跳带 `error`）。 */
 export type SessionStatusTick =
   | { kind: 'status'; dir: string; status: SessionStatus }
   | { kind: 'error'; dir: string; error: Error };
 
-// ---------------------------------------------------------------------------
-// 稿子正文（4.13）：会后区两份稿的取数
-// ---------------------------------------------------------------------------
-
-/** 稿子正文那一档服务回的错误（404 两档：目录不在原地 / 不在清单里；失败体是通用信封）。 */
+/** 稿子正文那一档服务回的错误（404 两档；失败体是通用信封）。 */
 export class SessionTranscriptsHttpError extends HttpRejectError {
   constructor(status: number, code: string | null, raw: string) {
     super(
@@ -292,11 +257,10 @@ export interface FetchSessionTranscriptsOptions {
 }
 
 /**
- * 取一份这一场的稿子正文（4.13；`{id}` 是这一场的目录路径，URL 编码后原样指到这一场）。
+ * 取一份这一场的稿子正文（`{id}` 是这一场的目录路径，URL 编码后原样指到这一场）。
  *
- * 失败分两档：网络层失败 / 形状不对照 `fetchSessions` 同一套；HTTP 非 200（4.13 的
- * 两档 404，与单场状态同一套失败口径）回 `SessionTranscriptsHttpError`，`code` 从
- * 失败信封里读、读不出信封就是 `null` —— 界面按「有没有 `code`」分两句写。
+ * HTTP 非 200 回 `SessionTranscriptsHttpError`，`code` 从失败信封里读、读不出就是 `null` ——
+ * 界面按「有没有 `code`」分两句写。
  */
 export async function fetchSessionTranscripts(
   dir: string,
@@ -321,25 +285,19 @@ export interface SessionStatusPollerOptions {
 }
 
 /**
- * 按心跳的样板自排轮询单场状态（排程骨架与 `createHeartbeatClient` 共用同一份，
- * `api/polling.ts`：`setTimeout` 自我重排 —— 周期改了即时生效，不必等当前这一轮走完）。
+ * 按心跳的样板自排轮询单场状态（骨架在 `api/polling.ts`：`setTimeout` 自我重排 —— 周期改了
+ * 即时生效，不必等当前这一轮走完）。
  *
- * **它只管「问一次、交一次」**：什么时候开、什么时候停由组件按读数决定
- * （有活动才轮询，不空转）。周期随快照的 `settings.heartbeat_interval_seconds` 走
- * （与心跳同一个可配节奏，clamp 1–60）。
+ * **它只管「问一次、交一次」**：什么时候开、什么时候停由组件按读数决定（有活动才轮询，不空转）。
+ * 周期随快照的 `settings.heartbeat_interval_seconds` 走（clamp 1–60）。
  */
 export interface SessionStatusPoller {
-  /** 用快照里的 `settings.heartbeat_interval_seconds` 设周期（clamp 1–60 秒）。 */
   setIntervalFromSnapshot(seconds: number): void;
-  /** 当前周期（秒）。 */
   intervalSeconds(): number;
-  /** 立刻问一次（不经 `start()` 的排程），读数交给回调。 */
   tick(dir: string): Promise<SessionStatusTick>;
   /** 开始轮询这一场；已在轮询时先换目标再继续。 */
   start(dir: string): void;
-  /** 停止轮询。 */
   stop(): void;
-  /** 是否在轮询。 */
   running(): boolean;
 }
 
@@ -348,7 +306,7 @@ export function createSessionStatusPoller(
   options: SessionStatusPollerOptions = {},
 ): SessionStatusPoller {
   const doFetch = options.fetchImpl ?? fetch;
-  /** 正在轮询的那一场（`start()` 换目标；骨架的 `ready` 闸按它放行）。 */
+  /** 正在轮询的那一场（骨架的 `ready` 闸按它放行）。 */
   let target: string | null = null;
 
   const tick = async (dir: string): Promise<SessionStatusTick> => {

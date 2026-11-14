@@ -1,5 +1,4 @@
-"""`tests/test_static.py` —— 静态产物、`/debug`、三道防线与完整版快照（设计口径第 3 / 8 条；
-设计口径 / §2.3 的同源替换落在本文件）。
+"""`tests/test_static.py` —— 静态产物、`/debug`、三道防线与完整版快照。
 
 ASGI 层断言一律用 `with TestClient(app, base_url="http://127.0.0.1")` 的**上下文管理器形式**
 （只有 `with` 才触发应用的生命周期钩子，`ServiceRuntime.startup()` 与快照的服务信息字段
@@ -116,9 +115,7 @@ def client_factory(tmp_path):
         stack.close()
 
 
-# ---------------------------------------------------------------------------
 # `/` 的二选一分支
-# ---------------------------------------------------------------------------
 
 
 def test_root_serves_explanation_page_when_dist_missing(tmp_path, client_factory):
@@ -208,7 +205,6 @@ def test_debug_page_is_served_from_the_package(tmp_path, client_factory):
     # 非产品路径标注保留（设计口径）
     assert "非产品界面" in text
     assert "不承担任何告警职责" in text
-    # 两块占位已接通：动作端点 + 事件流（设计口径 / §5.1 的静态断言口径）
     assert "/api/actions" in text
     assert "X-Meeting-Service" in text
     assert "EventSource" in text
@@ -233,9 +229,7 @@ def test_api_paths_carry_no_store(tmp_path, client_factory):
         assert response.headers.get("access-control-allow-origin") is None
 
 
-# ---------------------------------------------------------------------------
-# 启动序列第 5 步「打开浏览器」（§1.1 / §3.5 第 5 条）
-# ---------------------------------------------------------------------------
+# 启动序列第 5 步「打开浏览器」
 
 
 def _started_client_and_log(client, home):
@@ -264,8 +258,7 @@ def test_browser_is_not_opened_when_disabled(tmp_path, monkeypatch, client_facto
 def test_browser_is_opened_when_enabled(tmp_path, monkeypatch, client_factory):
     """不设该变量 → 这一步真的拿 `service.url` 去开浏览器（启动照旧完成），且**成功留一行 INFO**。
 
-    三支各自留痕（契约 §3.13「必须落 log 的事件」含启动与选中的 URL；§1.1 / §6「不许静默」）：
-    跳过（`MEETING_NO_BROWSER=1`）、失败（另一条用例）、**成功**（本用例）。
+    三支各自留痕：跳过（`MEETING_NO_BROWSER=1`）、失败（另一条用例）、**成功**（本用例）。
     """
     monkeypatch.delenv("MEETING_NO_BROWSER", raising=False)
 
@@ -321,9 +314,7 @@ def test_launch_browser_helper_reports_failure(tmp_path, monkeypatch):
     assert calls == ["http://127.0.0.1:8765"]
 
 
-# ---------------------------------------------------------------------------
 # 三道最低防线
-# ---------------------------------------------------------------------------
 
 
 def test_host_check_rejects_evil_host(tmp_path, client_factory):
@@ -411,13 +402,11 @@ def test_action_request_with_both_headers_gets_a_real_answer(tmp_path, client_fa
     assert unknown.json()["code"] == "invalid_setting"
 
 
-# ---------------------------------------------------------------------------
 # `GET /api/state` 的最小版结构
-# ---------------------------------------------------------------------------
 
 
 def test_api_state_shape_is_the_full_one(tmp_path, client_factory):
-    """顶层键全集齐、嵌套字段按冻结形状、取值取到**真值**（设计口径 / §2.3 第 1 / 2 / 3 / 4 条）。"""
+    """顶层键全集齐、嵌套字段按冻结形状、取值取到**真值**。"""
     home = tmp_path / "home_for_state"
     home.mkdir()
     # 采集后端显式取 `null` 替身：**测试不许碰真声卡**，这一条验的是空闲态快照的形状
@@ -465,7 +454,7 @@ def test_api_state_shape_is_the_full_one(tmp_path, client_factory):
     assert snapshot["alerts"] == {"critical": None, "hints": []}
     assert set(snapshot["transcript"]) == TRANSCRIPT_KEYS
     # 空闲态的 `health` 是**从转写后端读来的**真值：这一场还没起过任何场次，真实现如实报
-    # `stopped`（`设计` 复审 m3 定的口径「空闲 = stopped」；`normal` 是 dataclass 默认值，
+    # `stopped`（「空闲 = stopped」；`normal` 是 dataclass 默认值，
     # 服务起来那一刻就不再是它了）。另三格空闲态就是零。
     assert snapshot["transcript"] == {
         "health": "stopped",
@@ -599,7 +588,7 @@ def test_heartbeat_handler_keeps_the_service_literal_without_runtime():
 
 
 def test_snapshot_is_not_available_before_the_runtime_is_assembled(tmp_path, monkeypatch):
-    """未装配即取快照 → 抛错，不留退化的空值（契约 §3.5 第 4 条）。"""
+    """未装配即取快照 → 抛错，不留退化的空值。"""
     from meeting import config as config_module
     from meeting.service import app as service_app
 

@@ -1,12 +1,12 @@
-"""输入清单（spec「交付物形状」里的 `working/inputs.json`）。
+"""输入清单（`working/inputs.json`）。
 
-这一层回答一个问题：**这一场会有哪几条转写、每条几行、走的是哪一档**。名字按 spec 那张
-上游冻结的表找（会中 `meeting_transcript_<source>.md`、会后
+这一层回答一个问题：**这一场会有哪几条转写、每条几行、走的是哪一档**。名字按上游冻结的
+表找（会中 `meeting_transcript_<source>.md`、会后
 `meeting_offline_transcript_<source>.md`，`<source> ∈ mic / loopback`），**不猜**；两条都
 不在的 `<source>` 不进清单。
 
-产出那份 `inputs.json` 的读者有两类：程序（设计的 runner 拿它判「要不要启动 DSH」、
-设计的验收脚本拿它核「这一轮喂了几条」）与人（打开场次目录想知道这一场到底有什么）。
+产出那份 `inputs.json` 的读者有两类：程序（拿它判「要不要启动 DSH」）与人
+（打开场次目录想知道这一场到底有什么）。
 因此形状是**两份都在一份文件里**说清的：`mode` 那一格说明整场走的是哪一档，
 `sources[*].live` / `sources[*].offline` 两格分别说明每一条转写在不在、几行。
 
@@ -18,9 +18,8 @@
   - **两个来源一条都没有 → `mode = "none"`**：调用方据此不启动 DSH、状态文件记 `failed` +
     原因。**不许静默出一份空纪要** —— 一份没有输入的纪要会以「这场会什么都没定」的样子交出去；
   - **写盘原子**：先写一份本调用独占的临时文件再 `os.replace` 换上去。读方（界面、下游程序）
-    随时可能来读，半份 JSON 比晚一点落地坏得多。这一份实现与 `meeting.offline.artifacts`
-    那一份逐行同构，因此提成了**两包共用**的小模块 `meeting.atomicio`（实现只留一份，
-    这里留同名转发别名，本包内外的调用方一个都不用改）。
+    随时可能来读，半份 JSON 比晚一点落地坏得多。实现走**两包共用**的小模块
+    `meeting.atomicio`（实现只留一份）。
 """
 
 from __future__ import annotations
@@ -63,7 +62,7 @@ INPUTS_NAME = "inputs.json"
 class InputsError(ValueError):
     """输入清单这一层自己的错误（输入清单坏掉、写盘失败）。
 
-    继承 `ValueError`，与 `meeting` 里别的「值不对」错误同档：调用方（设计的 runner）
+    继承 `ValueError`，与 `meeting` 里别的「值不对」错误同档：调用方
     据此把这一趟记成 `failed` + 原因。
     """
 
@@ -91,9 +90,8 @@ class SourceEntry:
     def kind(self) -> str:
         """这一路自己有哪几条稿（`both` / `live_only` / `offline_only`）。
 
-        映射本体在 `chunk.classify()`（三处共用那一份）。两份都不在的条目照旧答
-        `offline_only`：本层从不构造这样的条目（`entries_for_session()` 只收盘上真有的稿），
-        这里的空态答案沿用从前那一版的原行为，一个字不变。
+        映射本体在 `chunk.classify()`。两份都不在的条目照旧答
+        `offline_only`：本层从不构造这样的条目（`entries_for_session()` 只收盘上真有的稿）。
         """
         if not self.live and not self.offline:
             return "offline_only"
@@ -219,7 +217,7 @@ def write_inputs_for_session(
 ) -> dict[str, Any]:
     """找输入 → 组清单 → 落盘，返回那份清单（`runner` 的第一步走的就是它）。
 
-    落点：`<场次目录>/working/inputs.json`（spec 交付物表钉死的）。
+    落点：`<场次目录>/working/inputs.json`。
 
     `mode` 落 `none` 时清单**照落**：读方要看得见「这一场查过了、确实什么都没有」；
     但「这一档不启动 DSH、状态记 `failed` + 原因，不许静默出一份空纪要」的闸门
@@ -235,11 +233,6 @@ def write_inputs_for_session(
 def inputs_path(session_dir: str | Path) -> Path:
     """`inputs.json` 的落点（相对场次目录）。"""
     return Path(session_dir) / WORKING_DIR / INPUTS_NAME
-
-
-#: `os.replace` 的瞬时失败判定、独占临时文件名与退避重试：与 `meeting.offline.artifacts`
-#: 共用同一份实现，住在 `meeting/atomicio.py`（`REPLACE_RETRIES` 是它的重试次数常量，
-#: 这里转发导出，`__all__` 与既有调用方一个不动）。
 
 
 __all__ = [

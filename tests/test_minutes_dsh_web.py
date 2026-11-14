@@ -1,18 +1,5 @@
 """`meeting/minutes/dsh_web.py`（web 分支的交付层）的契约用例。
 
-要钉住的四件事：
-
-  1. **自签 cookie**：名字按 authority 算、值是 `v1.<body>.<hmac>`，签名能被同一枚密钥验回来；
-     凭据读不到 / 密钥长度不对时当场报错，不拿半枚 cookie 去撞 401；
-  2. **存活探针**：只读的 `session/modelCatalog`、**回环上的假端点**上通过；401 / 端口没人听 /
-     签不出 cookie 三档都交回「没在跑」并且**说明是实话**（不许把鉴权失败写成「DSH 没在跑」）；
-  3. **交付三步**：次序固定（`workspace/create` → `session/create` → `session/prompt`）、
-     信封是 `payload.args.request`、`session/create` **只带 `workspaceId`**（带 `cwd` 会被网关拒、
-     而且会话不进工作区分组）、提示词带 `requestId` 与 `mode=queue`；盘上落 `working/run_prompt.md`
-     与 `working/minutes-run.log` 两份记录；
-  4. **失败分档**：中途任一步失败都如实交回 `failure`，**不偷偷改走 headless**；连接层抖动重试，
-     401 / 404 与 `ok=false` 一律不重试。
-
 一条用例都不连真实的 3080：假端点起在回环临时端口上（`tests/_dsh_web_fake.py`），
 真往 3080 打那条路由 `tests/conftest.py` 的第七道兜底拦下。
 """
@@ -40,11 +27,9 @@ from tests._dsh_web_fake import (
 #: 照旧管用：下面的调用一律显式传 `allow_dsh=True`。真端口那一侧由第七道守卫兜着。
 pytestmark = [pytest.mark.usefixtures("allow_dsh_protocol_stubs")]
 
-#: 测试自造的签名密钥（32 字节）与它在凭据文件里的写法
 SECRET = bytes(range(32))
 SECRET_B64 = base64.urlsafe_b64encode(SECRET).decode("ascii").rstrip("=")
 
-#: 一份形状与真实那份相同的凭据文件
 CREDENTIALS_TEXT = (
     "other-record:\n"
     "  secret: nope\n"
@@ -77,11 +62,6 @@ def credentials(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def _no_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
     """退避那一格换成「让出一次就接着走」：用例不必真的等 1 秒。"""
     monkeypatch.setattr(dsh_web, "_sleep", lambda seconds: None)
-
-
-# ---------------------------------------------------------------------------
-# 一、自签 cookie 与凭据
-# ---------------------------------------------------------------------------
 
 
 def test_cookie_name_follows_the_authority_and_the_signature_verifies(
@@ -142,11 +122,6 @@ def test_a_short_secret_is_reported(tmp_path: Path) -> None:
 
     with pytest.raises(dsh_web.WebHandoffError, match="32"):
         dsh_web.load_signing_secret(path)
-
-
-# ---------------------------------------------------------------------------
-# 二、存活探针
-# ---------------------------------------------------------------------------
 
 
 def test_probe_passes_on_a_live_endpoint(credentials: Path) -> None:
@@ -210,11 +185,6 @@ def test_probe_reports_unreadable_credentials(tmp_path: Path, monkeypatch: pytes
     assert alive is False
     assert "cookie" in detail, detail
     assert fake.methods() == [], "签不出 cookie 就不该往端点上发请求"
-
-
-# ---------------------------------------------------------------------------
-# 三、交付三步
-# ---------------------------------------------------------------------------
 
 
 def test_handoff_walks_the_three_steps_in_order(tmp_path: Path, credentials: Path) -> None:
@@ -361,11 +331,6 @@ def test_the_four_hour_budget_never_becomes_an_http_timeout(
     assert result.ok is True, result.error
     assert len(seen) == 3, seen
     assert all(0.0 < value <= dsh_web.RPC_TIMEOUT_SECONDS for value in seen), seen
-
-
-# ---------------------------------------------------------------------------
-# 四、重试那一条线
-# ---------------------------------------------------------------------------
 
 
 def test_a_transport_blip_is_retried_then_succeeds(credentials: Path) -> None:

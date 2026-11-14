@@ -32,17 +32,15 @@ from meeting.capture.devices import DeviceEndpoint, OpenAttempt, measure_samples
 from tests import _helpers as helpers
 from tests._app_drivers import live, post, snapshot_of
 
-# ---------------------------------------------------------------------------
 # 假端点表与假试开（真机实测的形状：见 meeting/capture/devices.py 的模块注释）
-# ---------------------------------------------------------------------------
 
 WAVE = [0, 120, -300, 44, 900, -12, 7, -400, 220, 0]
 SILENCE = [0] * 120
 
-#: 假端点表摆成**本机实测的那副样子**：同一块 Focusrite 在 WASAPI / DirectSound / MME
+#: 假端点表：同一块 Focusrite 在 WASAPI / DirectSound / MME
 #: 三个 host API 下同名（`_resolve_mic_device` 的排序与试开那段就是为这个形状写的），
-#: 外加一条抓取型虚拟端点 `CABLE Output`。MME 那条带 `is_default=True` = 系统默认输入端点
-#: （本机只读实测 `sd.default.device[0] == 1`）；序号最小的则是 MME #0 的 WAVE_MAPPER。
+#: 外加一条抓取型虚拟端点 `CABLE Output`。MME 那条带 `is_default=True` = 系统默认输入端点；
+#: 序号最小的则是 MME #0 的 WAVE_MAPPER。
 FAKE_MIC_NAME = "假-Focusrite Analogue 1 + 2"
 FAKE_INPUTS: tuple[DeviceEndpoint, ...] = (
     DeviceEndpoint(FAKE_MIC_NAME, "MME", "input", index=0, channels=4, is_default=True),
@@ -149,7 +147,7 @@ class FakeSources:
 def probe_with(config_values: dict | None = None, **fake_kwargs) -> tuple[list, FakeSources, Any]:
     """造一个真 `CaptureBackend` + 一份只读配置视图，跑一次 `probe()`。
 
-    假件缺省摆成**本机实测的那副样子**：同一块 Focusrite 在 WASAPI 下开不了（`Invalid
+    假件缺省的样子：同一块 Focusrite 在 WASAPI 下开不了（`Invalid
     sample rate`）、在 DirectSound 下能打开却交回全零、在 MME 下有真实波形 —— 于是
     「选中 MME 那条」这件事只有在试开真的读回样本时才成立（光看 host API 名字会挑到
     DirectSound）。loopback 那一侧同理：系统默认 render 端点交回全零（能打开），
@@ -157,7 +155,6 @@ def probe_with(config_values: dict | None = None, **fake_kwargs) -> tuple[list, 
     """
     from meeting.backends.base import ReadOnlyConfig
 
-    #: 本机实测那副样子：WASAPI 开不了、DirectSound 能开但交回全零
     silent_inputs = {
         f"{FAKE_MIC_NAME}@Windows WASAPI": refuse_attempt(),
         f"{FAKE_MIC_NAME}@Windows DirectSound": silence_attempt(),
@@ -189,9 +186,7 @@ def probe_with(config_values: dict | None = None, **fake_kwargs) -> tuple[list, 
     return backend.probe(), fake, backend
 
 
-# ---------------------------------------------------------------------------
 # ① probe() 的形状与真探测
-# ---------------------------------------------------------------------------
 
 
 def test_probe_returns_one_conclusion_per_source():
@@ -231,7 +226,7 @@ def test_probe_picks_the_first_opened_endpoint_when_no_waveform_shows_up():
     """一条有波形的都没有（房间安静 / 远端没出声）：取**第一条打开了**的端点，仍报 `ready`。
 
     三条同名候选中 WASAPI 那条在 16k 开不了、DirectSound 与 MME 都能打开但交回全零 ——
-    中选的是排序后第一条**打开了**的 DirectSound（设计口径 §3 第 5 条）。
+    中选的是排序后第一条**打开了**的 DirectSound。
     """
     probes, fake, _backend = probe_with(
         input_attempts={
@@ -274,7 +269,7 @@ def test_probe_honours_an_explicitly_configured_device():
 
 
 def test_probe_mic_falls_back_while_loopback_reports_probe_failed():
-    """全都开不了时两路各走各的：mic 按设计口径 §3 第 6 条落 `probe_failed`，loopback 同样如实落。
+    """全都开不了时两路各走各的：mic 落 `probe_failed`，loopback 同样如实落。
 
     mic 这一侧就是复审核定的那一条：同名三条候选一条都没打开 → **一个能打开的端点都没有**，
     `device_name` 为 `None`、`detail` 逐条写明试过哪几条、各自为什么没成（**不回落**一个从没
@@ -344,10 +339,8 @@ def test_probe_reads_the_loopback_setting_too():
     assert fake.loopback_calls == ["假-扬声器 (Focusrite USB Audio)@"]
 
 
-# ---------------------------------------------------------------------------
 # ② 采集引擎的接线（真起两路 / 真写归档 / 收尾真落盘与真转码见
 #    `tests/test_capture_backend.py`；这里只验「挑不出端点就没得采」这一档）
-# ---------------------------------------------------------------------------
 
 
 def test_start_refuses_when_no_endpoint_can_be_opened():
@@ -396,9 +389,7 @@ def test_frame_interval_is_declared():
     assert backend.frame_interval == 0.5
 
 
-# ---------------------------------------------------------------------------
 # ③ 选择面：解析、配置键、动作
-# ---------------------------------------------------------------------------
 
 
 def test_auto_resolves_to_the_real_capture_backend():
@@ -531,15 +522,11 @@ def test_reprobe_action_is_reachable_through_the_http_endpoint(tmp_path: Path):
         assert "reprobe" in unknown.json()["detail"]["known"]
 
 
-# ---------------------------------------------------------------------------
 # ④ 服务侧也走注入：起真服务时把两路探测换成假端点表
-# ---------------------------------------------------------------------------
 #
 # **这一段不碰真声卡**（用户明确要求：没有知情同意就不许打开他机器上的输入设备）。
 # `startup()` 里的 `probe()` 由**注入的假端点表 + 假试开函数**交回结论，于是「服务真把
 # 探测结果落进快照两路」这件事照样验得到，而一个音频流都不会被打开。
-# `.work` 下那两个侦察脚本（`_diag_devices.py` / `_diag_waveform.py`）是这条约束之前写的，
-# 已经删掉；设计口径 §6 的命令 ② 因此作废（见实测记录第 3 条）。
 
 
 def _install_fake_probe(monkeypatch: pytest.MonkeyPatch, fake: FakeSources) -> None:
@@ -689,9 +676,7 @@ def test_reprobe_action_re_runs_the_injected_probe(tmp_path, monkeypatch):
         ]
 
 
-# ---------------------------------------------------------------------------
 # ⑤ 纯逻辑那一侧的 import 边界（`devices.py` 不许 import 声卡库）
-# ---------------------------------------------------------------------------
 
 
 def test_devices_module_has_no_module_level_audio_imports():
@@ -710,9 +695,7 @@ def test_devices_module_has_no_module_level_audio_imports():
     assert roots.isdisjoint({"sounddevice", "soundcard", "numpy", "pydub"})
 
 
-# ---------------------------------------------------------------------------
 # ⑥ `list_input_endpoints()` 给**系统默认输入端点**打标记（C1 的接线口）
-# ---------------------------------------------------------------------------
 #
 # 这一节的读数是许可以内的那一档：**只读枚举**（`query_devices` / `query_hostapis` /
 # `default.device`），一次流都不开。真库在这里被换成替身，所以本节连真机枚举都不碰。
@@ -729,7 +712,7 @@ class _FakeDefault:
 class _FakeSoundDevice:
     """`sounddevice` 枚举面的替身：`query_devices()` / `query_hostapis()` / `default.device`。
 
-    表照本机实测那副样子摆：`#0` 是 MME 的 `Microsoft 声音映射器 - Input`（WAVE_MAPPER，
+    表的样子：`#0` 是 MME 的 `Microsoft 声音映射器 - Input`（WAVE_MAPPER，
     跟随系统默认输入设备）、`#1` 是 MME 的 Focusrite（**系统默认输入**）、另有一条
     `max_input_channels=0` 的播放端点（枚举时就该被滤掉）。
     """
@@ -808,9 +791,7 @@ def test_mic_without_config_lands_on_the_enumerated_default(monkeypatch):
     assert matched_prefix is False
 
 
-# ---------------------------------------------------------------------------
 # ⑦ 看门抛的异常穿得过试开那两步（`sources.py` 的两处 `except` 口径）
-# ---------------------------------------------------------------------------
 
 #: 看门装的桩的记号（`tests/conftest.py` 的 `_forbid_real_capture()` 里那个内层函数名）
 GUARD_STUB_QUALNAME_TOKEN = "blocked"

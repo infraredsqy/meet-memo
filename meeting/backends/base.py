@@ -1,4 +1,4 @@
-"""三个后端协议与数据结构 —— 下游往这儿插（设计口径，设计口径 §7.1 / §7.2 / §7.3）。
+"""三个后端协议与数据结构 —— 下游往这儿插。
 
 本模块**只放协议与数据结构**，实现全在下游自己的模块里。
 
@@ -8,7 +8,7 @@
     meeting.backends.transcribe:TranscriberBackend  # 实现
     meeting.backends.post:PostProcessHook        # 实现
 
-注入与构造规则（本节点定，下游照这个接，落地时不改本节点一行代码）：
+注入与构造规则：
   - `registry` 读 `config.capture.backend`：`auto`（默认）按上面那条约定路径找，
     也可以是 `null` / `dev` / `module:Class` 这样的显式值。
   - 取到的是**类**就**无参实例化**（后端构造函数不许有必填参数，运行期依赖一律走 `bind()`）；
@@ -17,12 +17,12 @@
     `loop.call_soon_threadsafe(...)`，后端不必知道事件循环在哪，也不许自己碰状态。
   - `LevelFrame.ts` **由后端给**：它是采集线程看到那一刻的时间，runtime 只拿它做窗口比较。
 
-**导入顺序契约（C10，模型节点落地时仍然成立）**：先 `import transformers`，再
+**导入顺序契约**：先 `import transformers`，再
 `import speechbrain`；反过来会让 speechbrain 抢在 transformers 之前完成自己的
 依赖探测，出现难以定位的版本不匹配。本项目不实现模型层，只把这条记在这里，
 别等装了模型才想起来。
 
-**门限只有一处**（§3.12 第 2 条）：静默秒数由 `alerts.py` 按 `alert.silence_dbfs` 逐帧累计
+**门限只有一处**：静默秒数由 `alerts.py` 按 `alert.silence_dbfs` 逐帧累计
 `LevelFrame` 的**帧时间戳**（不拿墙钟做差，慢机器上不虚报）；后端**不报**「静默了多少秒」，
 协议里也没有这个字段 —— 后端只报原始事实，不判告警、不带阈值语义。
 """
@@ -180,7 +180,7 @@ class TranscriberBackend(Protocol):
         """
 
     def start(self, mode: str, session_dir: str) -> None:
-        """起转写。起步失败**不阻塞录音**（转写坏了可以重跑，R1 的立场）。"""
+        """起转写。起步失败**不阻塞录音**（转写坏了可以重跑）。"""
 
     def stop(self) -> None:
         """停转写。"""

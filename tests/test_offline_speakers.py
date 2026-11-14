@@ -4,7 +4,7 @@
 
   - **首次出现顺序**决定 `S01` / `S02`（同一批输入反复跑给同一份编号）；
   - `qualified` 形如 `loopback:S01`，`source` 一直在场；
-  - **跨路隔离**（R10）：同一批分段分别按 `mic` / `loopback` 编号，两路的 `S01` 各自存在、
+  - **跨路隔离**：同一批分段分别按 `mic` / `loopback` 编号，两路的 `S01` 各自存在、
     限定名不同，且**没有任何一条路径能把两路合并**——这条要落到具体断言上，
     只比「两路的类数一样」撑不起它。
 """
@@ -52,11 +52,6 @@ SHARED_INPUT = [
 ]
 
 
-# ---------------------------------------------------------------------------
-# 一、首次出现顺序决定编号
-# ---------------------------------------------------------------------------
-
-
 def test_first_appearance_decides_the_numbering() -> None:
     """引擎标签 `S02` / `S01` / `S07` 按首次出现顺序规范化成 `S01` / `S02` / `S03`。"""
     spans = number_speakers("mic", SHARED_INPUT)
@@ -101,11 +96,6 @@ def test_spans_keep_the_interval_and_text() -> None:
     assert [(s.start, s.end, s.text) for s in spans] == [
         (s.start, s.end, s.text) for s in SHARED_INPUT
     ]
-
-
-# ---------------------------------------------------------------------------
-# 二、跨路隔离：两路的 S01 各自存在，限定名不同
-# ---------------------------------------------------------------------------
 
 
 def test_same_input_on_two_sources_yields_two_distinct_qualified_names() -> None:
@@ -159,30 +149,21 @@ def test_no_code_path_can_merge_the_two_sources() -> None:
     loop_first = number_speakers("loopback", SHARED_INPUT)
     mic_again = number_speakers("mic", SHARED_INPUT)
 
-    # 1. 表不跨调用共享：两路都把同一个引擎标签编成 S01，且再跑一次不受前两次影响
     assert mic_first[0].local == loop_first[0].local == "S01"
     assert mic_again == mic_first
 
-    # 2. source 只进限定名：换 source 不改变本路编号，只改变限定名
     assert [s.local for s in mic_first] == [s.local for s in loop_first]
     assert [s.qualified for s in mic_first] != [s.qualified for s in loop_first]
 
-    # 3. 模块级名字逐个点名（多一个名字就要在这里说清它是干什么的）
     assert sorted(_module_level_names(speakers_module)) == [
         "SpeakerSpan",
         "number_speakers",
         "speaker_summary",
     ]
 
-    # 4. 源码里没有跨 source 的比较写法（`local ==` / `source !=` 之类）
     source = re.sub(r"#.*", "", inspect.getsource(speakers_module))
     for forbidden in ("local ==", "local !=", "qualified ==", "source ==", "source !="):
         assert forbidden not in source, f"出现可疑的跨 source 比较：{forbidden}"
-
-
-# ---------------------------------------------------------------------------
-# 三、汇总：段数与秒数加总正确
-# ---------------------------------------------------------------------------
 
 
 def test_summary_counts_segments_and_seconds_per_speaker() -> None:

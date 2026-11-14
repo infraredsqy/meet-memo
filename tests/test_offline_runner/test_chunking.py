@@ -44,12 +44,7 @@ from tests.test_offline_runner._common import (
     report_row,
 )
 
-#: 慢档标记（收尾轮）：会后离线链的契约验收，归收尾跑。
 pytestmark = pytest.mark.slow
-
-# ---------------------------------------------------------------------------
-# 五、分块（`post.chunk_seconds`）：真被切开、块内命名空间、时间轴、缺段露出来
-# ---------------------------------------------------------------------------
 
 def read_chunk_wav(path: Path) -> bytes:
     """读回临时分块 wav 的**原始帧字节**（用例据此确认切出来的是那块音频）。"""
@@ -60,7 +55,7 @@ def read_chunk_wav(path: Path) -> bytes:
 
 
 def test_write_chunk_wav_keeps_the_signal(tmp_path) -> None:
-    """`write_chunk_wav()` 的 float32 → int16 换算不把信号压成零（`设计` 踩过的那个坑）。
+    """`write_chunk_wav()` 的 float32 → int16 换算不把信号压成零。
 
     这一条**刻意不放进产品代码**：真正安静的块写出来就是零，拿「全零」当错误判据会把
     安静的会议误判成故障。这条换算的正确性因此由用例直接盯。
@@ -76,7 +71,6 @@ def test_write_chunk_wav_keeps_the_signal(tmp_path) -> None:
     assert samples.any(), "写出来的 wav 是数字静音（float32 波形没乘 32767）"
     # 满量程那一档按 32767 换算，不过冲
     assert samples.max() == 16383 and samples.min() == -16383
-    # 零就是零（安静的那几帧照实写零）
     silent = np.zeros(160, dtype=np.float32)
     quiet = np.frombuffer(read_chunk_wav(write_chunk_wav(tmp_path / "q.wav", silent)), dtype="<i2")
     assert not quiet.any()
@@ -85,9 +79,9 @@ def test_write_chunk_wav_keeps_the_signal(tmp_path) -> None:
 class SlicingEngine:
     """假引擎：按收到的分块文件认出它是第几块，交回那一块的标签，并记下每次调用。
 
-    块的归属读**文件名**里的序号（`chunk_02.wav` → 第 2 块；`runner.chunk_file()` 就用这个
-    命名），再拿 `ranges` 核对这一块的字节数对不对 —— 于是「第几块被调了」「这一块是不是
-    切在该在的位置」两件事都查得出来。每块交回 `S01` 与 `S02` 各一段，末块再多一段 `S03`。
+    块的归属读**文件名**里的序号（`chunk_02.wav` → 第 2 块），再拿 `ranges` 核对这一块的
+    字节数对不对 —— 于是「第几块被调了」「这一块是不是切在该在的位置」两件事都查得出来。
+    每块交回 `S01` 与 `S02` 各一段，末块再多一段 `S03`。
     """
 
     #: 引擎抛错那一档：`boom_chunks` 里的块号抛，别的块照常交回
@@ -163,7 +157,6 @@ def test_plan_chunks_splits_only_above_the_threshold() -> None:
         (2, 450.0, 450.0),
         (3, 900.0, 100.0),
     ]
-    # 连续、不重叠：后一块的起点正好等于前一块的终点
     for earlier, later in zip(long.chunks, long.chunks[1:]):
         assert earlier.offset + earlier.seconds == later.offset
     assert long.chunks[-1].offset + long.chunks[-1].seconds == 1000.0
@@ -175,9 +168,9 @@ def test_plan_chunks_splits_only_above_the_threshold() -> None:
 
 
 def test_read_chunk_seconds_reads_the_config_key() -> None:
-    """块长从 `post.chunk_seconds` 读；`0` 表示关掉，配置缺席时退回实测安全档 450。"""
+    """块长从 `post.chunk_seconds` 读；`0` 表示关掉，配置缺席时退回安全档 450。"""
     assert read_chunk_seconds(FakeConfig(**{"post.chunk_seconds": 0})) == 0.0
-    # 残缺的配置对象（没有这一格 / 值不是数字）：退回默认档，不抛
+
     class Bare:
         def get(self, key, default=None):
             return default
@@ -199,16 +192,13 @@ def test_long_audio_is_chunked_and_short_audio_is_not(tmp_path, monkeypatch) -> 
         "chunk_02.wav",
         "chunk_03.wav",
     ]
-    # 每块的长度与切法一致（10s / 10s / 10s），没有重叠；切出来的是那块音频（有信号）。
-    # 末块正好把音频读到末尾（`SlicingEngine` 会拿字节区间核对每一次切出来的长度）。
+    # 末块正好把音频读到末尾（`SlicingEngine` 会拿字节区间核对每一次切出来的长度）
     lengths = [len(engine.chunk_bytes[call]) for call in engine.calls]
     assert lengths == [10 * SAMPLE_RATE * 2] * 3
     assert all(any(engine.chunk_bytes[call]) for call in engine.calls)
     assert summary["transcripts"]["mic"]["segments"] == 7
-    # 跑完不留临时块
     assert not (session / CHUNK_DIR_NAME).exists()
 
-    # 短音频：一块装得下 → 单趟，引擎拿到的是原始归档路径
     short_session = tmp_path / "short"
     short_session.mkdir()
     synth_session(short_session, sources=("mic",), seconds=3.0)
@@ -236,7 +226,7 @@ def test_chunk_local_labels_are_namespaced_and_never_merged(tmp_path, monkeypatc
       1. `number_speakers()` 亲眼看到的每一个键都带块命名空间（在它身上挂观察者）；
       2. 每块的 `label_raw` 全落在自己那一块的命名空间里，跨块的集合交集为空；
       3. 类数 = 各块类数之和（同一块的 `S01` 与别块的 `S01` 各占一个全局编号，
-         于是同一个人被算成两个编号 —— spec 明写的取舍）。
+         于是同一个人被算成两个编号）。
     """
     from meeting.offline import runner as runner_module
     from meeting.offline import speakers as speakers_module
@@ -254,13 +244,11 @@ def test_chunk_local_labels_are_namespaced_and_never_merged(tmp_path, monkeypatc
 
     run_session(session, engine=engine, config=FakeConfig(**{"post.chunk_seconds": CHUNK_SECONDS}))
 
-    # 1. 编号那一步看到的键全是带命名空间的（`cNN:Sxx`），一个裸 `Sxx` 都没有
     assert len(seen_keys) == 1, "同一路只该编号一次（一次跑完整路）"
     assert all(key.startswith("c") and key[1:3].isdigit() and ":" in key for key in seen_keys[0])
     assert seen_keys[0] == {"c01:S01", "c01:S02", "c02:S01", "c02:S02", "c03:S01", "c03:S02", "c03:S03"}
 
     document = artifacts.read_speakers_artifact(session / "meeting_offline_speakers_mic.json")
-    # 2. 每块的原始标签落在自己那一块的命名空间里
     chunk_count = len(chunk_ranges(30.0))
     chunk_of = {f"c{index:02d}": set() for index in range(1, chunk_count + 1)}
     for row in document["speakers"]:
@@ -270,27 +258,22 @@ def test_chunk_local_labels_are_namespaced_and_never_merged(tmp_path, monkeypatc
         "c02": {"c02:S01", "c02:S02"},
         "c03": {"c03:S01", "c03:S02", "c03:S03"},
     }
-    # 块与块之间的原始标签集合两两不相交（没有一处把别块的标签映射进来）
     assert chunk_of["c01"] & chunk_of["c02"] == set()
     assert chunk_of["c01"] & chunk_of["c03"] == set()
     assert chunk_of["c02"] & chunk_of["c03"] == set()
 
-    # 3. 全局编号按「去重后的带命名空间键」逐个发：7 个键 → S01…S07，类数 = 各块之和
     locals_in_order = [row["local"] for row in document["speakers"]]
     assert locals_in_order == ["S01", "S02", "S03", "S04", "S05", "S06", "S07"]
     assert len(locals_in_order) == len(set(locals_in_order))
     assert len(document["speakers"]) == 2 + 2 + 3
-    # 同一个块内的 `S01` 与 `S02` 拿到了不同的全局编号，别块的 `S01` 又是第三个编号
     c01 = {row["label_raw"]: row["local"] for row in document["speakers"] if row["label_raw"].startswith("c01")}
     c02 = {row["label_raw"]: row["local"] for row in document["speakers"] if row["label_raw"].startswith("c02")}
     assert c01["c01:S01"] != c01["c01:S02"]
     assert c01["c01:S01"] != c02["c02:S01"]
-    # 转写里用的是全局编号，一行都不带 `cNN:`
     lines = artifacts.read_transcript_lines(session / "meeting_offline_transcript_mic.md")
     assert {row["speaker"] for row in lines} == {
         "S01", "S02", "S03", "S04", "S05", "S06", "S07",
     }
-    # 对照表逐块记着这一路切了几块、每块多少段
     assert [item["index"] for item in document["chunks"]] == [1, 2, 3]
     assert [item["segments"] for item in document["chunks"]] == [2, 2, 3]
     assert [item["offset_seconds"] for item in document["chunks"]] == [0.0, 10.0, 20.0]
@@ -314,7 +297,7 @@ def test_chunk_timestamps_move_onto_the_whole_recording_timeline(tmp_path) -> No
         # 第 3 块（20s 起）：挪到 21.0–22.0、22.5–23.0、24.0–24.5
         (21.0, 22.0), (22.5, 23.0), (24.0, 24.5),
     ]
-    # 转写正文照旧分钟级：20 秒那一块的第一句落在 00:00、第三块的开头落在 00:21
+    # 转写正文照旧分钟级
     lines = artifacts.read_transcript_lines(session / "meeting_offline_transcript_mic.md")
     assert [row["stamp"] for row in lines] == [
         "00:00", "00:00", "00:00", "00:00", "00:00", "00:00", "00:00",
@@ -330,10 +313,8 @@ def test_chunk_timestamps_move_onto_the_whole_recording_timeline(tmp_path) -> No
     long_document = artifacts.read_speakers_artifact(
         long_session / "meeting_offline_speakers_mic.json"
     )
-    # 第 2 块（600s 起）的第一段：块内 1.0–2.0 → 整场 601.0–602.0
     starts = [item["start"] for item in long_document["segments"]]
     assert starts[:5] == [1.0, 2.5, 601.0, 602.5, 1201.0]
-    # 末块只有 50 秒（1200–1250s），不是整整 600 秒
     assert long_document["chunks"][-1]["seconds"] == 50.0
     assert long_document["audio"]["seconds"] == 1250.0
     long_lines = artifacts.read_transcript_lines(
@@ -348,8 +329,7 @@ def test_chunk_timestamps_move_onto_the_whole_recording_timeline(tmp_path) -> No
 def test_a_failed_chunk_surfaces_as_partial_with_the_missing_span(tmp_path) -> None:
     """有一块没成 → 那一路落 `partial`，缺的那一段在四个地方都写得出来。
 
-    这是 C1 的另一半：从前一块抛错只留在报告里，转写照样缺 10 秒却报 `done`。
-    现在的行为是：产物照落（跑成的部分不废掉），但**缺了哪一段**必须露在
+    产物照落（跑成的部分不废掉），但**缺了哪一段**必须露在
     转写第一行、对照表、运行报告、状态文件四处。
     """
     session, ranges = chunked_session(tmp_path, seconds=30.0)
@@ -365,7 +345,6 @@ def test_a_failed_chunk_surfaces_as_partial_with_the_missing_span(tmp_path) -> N
     assert "mic" in status["error"]
     assert "10.0–20.0s" in status["error"]
     assert REASON_ENGINE_ERROR in status["error"]
-    # 缺的那一段确实没有转写：只有第 1、3 块的内容
     lines = artifacts.read_transcript_lines(session / "meeting_offline_transcript_mic.md")
     assert [row["text"] for row in lines] == [
         "块 1 的甲", "块 1 的乙", "块 3 的甲", "块 3 的乙", "块 3 的丙",
@@ -374,7 +353,6 @@ def test_a_failed_chunk_surfaces_as_partial_with_the_missing_span(tmp_path) -> N
     head = (session / "meeting_offline_transcript_mic.md").read_text(encoding="utf-8").splitlines()[0]
     assert head.startswith(artifacts.TRANSCRIPT_NOTE_PREFIX)
     assert "10.0–20.0s" in head
-    # 对照表：`audio.missing_spans` + 逐块的失败原因
     document = artifacts.read_speakers_artifact(session / "meeting_offline_speakers_mic.json")
     assert document["audio"]["partial"] is True
     assert document["audio"]["missing_spans"] == [[10.0, 20.0]]
@@ -385,7 +363,6 @@ def test_a_failed_chunk_surfaces_as_partial_with_the_missing_span(tmp_path) -> N
     ]
     assert [item["segments"] for item in document["chunks"]] == [2, 0, 3]
     assert summary["transcripts"]["mic"]["missing_spans"] == [[10.0, 20.0]]
-    # 报告单独一节写明缺了哪几段
     report = (session / artifacts.REPORT_NAME).read_text(encoding="utf-8")
     assert "## 缺了哪几段（这一路的转写不完整）" in report
     assert "mic：缺 1 段（10.0–20.0s）" in report
@@ -396,8 +373,8 @@ def test_a_failed_chunk_surfaces_as_partial_with_the_missing_span(tmp_path) -> N
 def test_every_chunk_failing_takes_the_source_down(tmp_path) -> None:
     """每一块都没成 → 这一路落 `failed`，两块产物照落、空表上明写终态与原因。
 
-    M8：这一路在场次目录里**留下的是一份说明「一段都没转出来」的空表**。留下旧表不动
-    会让读方把上一趟的成功结果当成这一趟的（`250906` 两路跑进同一个目录时撞过这一类事）。
+    这一路在场次目录里**留下的是一份说明「一段都没转出来」的空表**。留下旧表不动
+    会让读方把上一趟的成功结果当成这一趟的。
     """
     session, ranges = chunked_session(tmp_path, seconds=30.0)
     engine = SlicingEngine(ranges, boom_chunks=(1, 2, 3))

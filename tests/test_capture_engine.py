@@ -37,12 +37,11 @@ from meeting.session import archive_name
 
 from tests._capture_fakes import CHUNK_BYTES, CHUNK_FRAMES, FakeCaptureSource, block
 
-#: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md`。
 pytestmark = pytest.mark.slow
 
 #: 「安静的一路照样发帧」那条用例的等待口径：至少等到的电平帧数，与等待的超时（秒）。
-#: 本机实测 0.05 的 `frame_interval` 约 15 拍/秒（`Event.wait()` 被 Windows 定时器粒度
-#: 上取整到 ~62ms），等到 3 帧约 0.19 秒 —— 5 秒超时有 ~26 倍余量。
+#: `Event.wait()` 被 Windows 定时器粒度上取整到 ~62ms，
+#: 等到 3 帧约 0.19 秒 —— 5 秒超时有 ~26 倍余量。
 MIN_SILENCE_FRAMES = 3
 FRAME_WAIT_TIMEOUT_SECONDS = 5.0
 
@@ -92,9 +91,7 @@ def wait_for(predicate, timeout: float = 3.0) -> bool:
     return predicate()
 
 
-# ---------------------------------------------------------------------------
 # ① 归档核对
-# ---------------------------------------------------------------------------
 
 
 def test_sources_for_mode_is_the_frozen_domain():
@@ -150,9 +147,7 @@ def test_both_archives_exist_from_the_first_moment(tmp_path: Path):
     session.stop()
 
 
-# ---------------------------------------------------------------------------
 # ② 单路死亡：另一路照跑
-# ---------------------------------------------------------------------------
 
 
 def test_one_dead_route_reports_source_lost_and_the_other_keeps_writing(tmp_path: Path):
@@ -235,9 +230,7 @@ def test_a_dead_route_stops_reporting_itself_alive(tmp_path: Path):
     session.finalize()
 
 
-# ---------------------------------------------------------------------------
 # ③ mode 过滤
-# ---------------------------------------------------------------------------
 
 
 def test_mic_mode_leaves_the_loopback_route_alone(tmp_path: Path):
@@ -304,9 +297,7 @@ def test_an_unselected_route_gets_only_a_silence_pacer(tmp_path: Path):
     session.stop()
 
 
-# ---------------------------------------------------------------------------
 # ③½ 暂停与关一路：写静音，不录内容；段不切段
-# ---------------------------------------------------------------------------
 
 
 def test_pause_writes_silence_and_does_not_record_content(tmp_path: Path):
@@ -542,9 +533,7 @@ def test_segment_account_before_finalize_has_no_closing_stamp(tmp_path: Path):
     assert session.audio_duration_seconds() > 0.0
 
 
-# ---------------------------------------------------------------------------
 # ④ 电平刻度与事实
-# ---------------------------------------------------------------------------
 
 
 def test_level_frames_keep_coming_on_their_own_rhythm(tmp_path: Path):
@@ -571,9 +560,8 @@ def test_a_quiet_route_keeps_sending_silence_frames(tmp_path: Path):
 
     **等法按事件驱动**：早先这一条是 `frame_interval=0.02` + `time.sleep(0.2)` + `>= 4`，
     在 Windows 上站不住 —— `_tick_loop()` 用 `self._stop.wait(frame_interval)` 打点，
-    `Event.wait()` 受 15.6ms 定时器粒度影响**只会上取整**（本机实测 `wait(0.02)` 实际睡
-    ~23–32ms、`wait(0.05)` ~62ms），0.2 秒窗口里只够 3–6 拍，于是这条会随机红。现在改成
-    「帧数到了就返回」的等待，并按实测节拍留足余量：0.05 的间隔本机实测约 15 拍/秒，
+    `Event.wait()` 受 15.6ms 定时器粒度影响**只会上取整**，0.2 秒窗口里只够 3–6 拍，
+    于是这条会随机红。现在改成「帧数到了就返回」的等待，并按实测节拍留足余量：
     等到 3 帧约需 0.19 秒，5 秒超时有 ~26 倍余量。静音源也给了节拍（`pace_seconds`）：
     不带节拍的假源会以远快于真采集的速度灌块、与打点线程抢 GIL。
     """
@@ -597,7 +585,6 @@ def test_a_quiet_route_keeps_sending_silence_frames(tmp_path: Path):
     assert all(frame.dbfs == -120.0 for frame in frames)
     assert all(frame.peak == -120.0 for frame in frames)
     assert all(frame.bar == -120.0 for frame in frames)
-    # 电平帧真的随时间在发（最后一帧与第一帧之间隔着实测节拍量级的时间）
     assert frames[-1].ts - frames[0].ts >= 0.06
     # ……而源一直在供上全零块：静音这一档里素材照给，只是没有波形
     assert silent.fed >= 2
@@ -668,9 +655,7 @@ def test_facts_only_come_on_the_tick(tmp_path: Path):
     assert session.bytes_written("mic") == 2 * CHUNK_BYTES
 
 
-# ---------------------------------------------------------------------------
 # 收尾：finalize / transcode / stop
-# ---------------------------------------------------------------------------
 
 
 def test_finalize_stops_the_sources_and_the_threads(tmp_path: Path):

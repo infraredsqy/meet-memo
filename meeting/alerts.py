@@ -1,13 +1,13 @@
-"""告警判定与阈值（设计口径）——服务侧是告警的唯一判定者。
+"""告警判定与阈值——服务侧是告警的唯一判定者。
 
 纯判定：输入是帧 / 事实与阈值配置，输出判定结果；不持有快照、不写状态、不广播，
-可脱离服务单独单测。口径（逐条照设计口径）：
+可脱离服务单独单测。口径：
 
 - 门限只有这一处：静默秒数按 `alert.silence_dbfs` 逐帧累计，一律用帧自己的时间戳
   （`LevelFrame.ts`），不拿墙钟做差（慢机器上不虚报）；
 - 静默累计与恢复累计是两条独立的连续计数；恢复期间出现一帧低于门限 → 恢复计数清零，
   但不改 `top_state`；
-- 暂停区间不计入这两条计数（`docs/design-intent.md` 第 17 条：告警不许一惊一乍），
+- 暂停区间不计入这两条计数（告警不许一惊一乍），
   恢复后的第一帧从零起算；
 - 提示级进 `alerts.hints`：合并键是 `(level, source, message)` 三元组、上限 3，
   合并沿用原 `since` 只刷新 `duration_seconds`，超限的键在合并那一刻就从登记里回收；
@@ -15,8 +15,7 @@
 - 致命级进 `alerts.critical`，同时只留一条；`muted` = 会话级静音 ∨ 抑制窗口
   （按「哪一路 + 故障类型」跟踪，帧时间戳口径推进），首发那一帧给 `false`（界面据此响一声）；
 - `muted` 的唯一入口是 `AlertJudge.refresh_muted()`，每次提交快照时按当下重算；
-  窗口到点本身不发广播，「窗口已过、下一次提交还没来」那段快照上仍是旧值
-  （口径见 `docs/state.md` 第 5 章）；
+  窗口到点本身不发广播，「窗口已过、下一次提交还没来」那段快照上仍是旧值；
 - 服务侧只许用更大的阈值，不许用更小的值兜底（阈值只从配置读）。
 """
 
@@ -112,11 +111,9 @@ class _SourceTrack:
     #: 先算 `muted`、后写这个字段，于是首发算出来是 `False`（该响一声），此后重算才 `True`。
     last_raise_ts: float | None = None
     #: 刚起、还没被广播出去的那一条致命级（首发帧）。
-    #:
     #: `commit()` 写下锚点后会重算一遍 `muted`，那次重算就发生在锚点刚开的同一刻——
     #: 没有这个记号的话首发帧会被自己刚开的窗口压成 `muted: true`（界面一声不响）。
     #: `refresh_muted()` 认出「正是这一条还没出去」就原样放行并清空记号。
-    #:
     #: 隐含前提：每次 raise 之后必有一次提交。同一路连 raise 两次中间没提交时，第二次
     #: 会覆盖第一次的引用，那条广播出去时已被压成 `true`（静默退回旧行为，不报错）。
     #: 当前到不了这条路径（raise 与紧随的 `commit()` 之间没有 `await`），留这段是把前提
@@ -130,7 +127,7 @@ class AlertJudge:
 
     thresholds: AlertThresholds = field(default_factory=AlertThresholds)
     mute_session: bool = False
-    #: 本场暂停中：暂停区间不计入静默 / 恢复两条累计（`docs/design-intent.md` 第 17 条）。
+    #: 本场暂停中：暂停区间不计入静默 / 恢复两条累计。
     #: 置位期间 `on_level_frame()` 只回答「什么都没变」；`resume_session()` 清掉每条计数
     #: 的基准，恢复后第一帧从零起算，暂停那一段不会以「一帧跨几分钟」的形式补记进去。
     paused: bool = False
@@ -184,7 +181,7 @@ class AlertJudge:
         """新一场开场：清空两条计数与全部提示级（会话级状态不复用上一场）。
 
         提示级的两份登记（`_hints` 与 `_hint_started_at`）一并清干净——只清一份的话，
-        下一场开场之后旧登记还会影响新一场的合并判据（复审 m3）。暂停那格同样复位。
+        下一场开场之后旧登记还会影响新一场的合并判据。
         """
         self.reset_session_mute()
         self.paused = False
@@ -216,7 +213,7 @@ class AlertJudge:
     def on_level_frame(self, source: str, ts: float, dbfs: float) -> SourceJudgement:
         """收一帧电平事实，回答「这一路现在该起致命级 / 该恢复 / 都没变」。
 
-        暂停区间什么都不判（`docs/design-intent.md` 第 17 条）：暂停期间电平帧照发
+        暂停区间什么都不判：暂停期间电平帧照发
         （`recording_alive` 与界面电平都靠它），但两条累计一格不动。
         """
         if self.paused:
@@ -298,7 +295,7 @@ class AlertJudge:
     def _frame_moment(self, track: _SourceTrack) -> float:
         """帧时间戳口径的「此刻」：这一路最近一帧的时刻；一帧都没来过时退回服务侧的钟。
 
-        抑制窗口按帧时间戳推进（§3.3.1 的累计口径），判断窗口到点用同一口径。
+        抑制窗口按帧时间戳推进，判断窗口到点用同一口径。
         """
         if track.last_ts is not None:
             return float(track.last_ts)
@@ -411,7 +408,8 @@ class AlertJudge:
 
         文案里不写当前段数：`message` 是故障类型标识、也是合并键的一部分，写进变化的段数
         就等于每次都是新键、合并永不发生（段数只进 log 与 `/debug`）。回落要对称地清掉，
-        否则提示条会在队列清空后还挂在快照上（`docs/state.md` 第 6 章两条清除路径之一）。
+        就等于每次都是新键、合并永不发生（段数只进 log 与 `/debug`）。回落要对称地清掉，
+        否则提示条会在队列清空后还挂在快照上。
         """
         if int(depth) < BACKLOG_HINT_THRESHOLD:
             dropped = self._drop_hints(BACKLOG_HINT_MESSAGES)
@@ -446,7 +444,7 @@ class AlertJudge:
     def _merge_hint(self, *, level: str, source: str, message: str) -> Alert:
         """按 `(level, source, message)` 三元组合并：沿用原有那条的 `since`，刷新 `duration_seconds`。
 
-        超出上限的键在合并这一步就回收（`_evict_over_the_limit()`，复审 m4）：
+        超出上限的键在合并这一步就回收（`_evict_over_the_limit()`）：
         只让 `hints()` 截断返回值的话，被挤掉的那条会永远留在登记里。
         """
         key = (level, source, message)
@@ -458,7 +456,7 @@ class AlertJudge:
             existing.muted = self.mute_session
             return existing
         self._hint_started_at[key] = now
-        # 新起的那条走 `build_hint()`（提示级组装的唯一一处，复审 #4）
+        # 新起的那条走 `build_hint()`（提示级组装的唯一一处）
         alert = build_hint(
             source=source,
             message=message,

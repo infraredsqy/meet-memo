@@ -1,12 +1,5 @@
 """`meeting/minutes/chunk.py` 的契约用例：切块、区间表、重跑清旧块、档位判定。
 
-盯的是四件事：
-
-  - 块文件里**只有原始行**（`"\\n".join(块的行) + "\\n"`），行号因此与源文件对得上；
-  - `00_index.md` 的形状照 V1（`# Chunk Index` + 五条 bullet + 区间表），且表里的
-    `line_start` / `line_end` / `lines` 与块文件的**真实内容**逐条相等；
-  - 重跑（源文件变短）之后，块目录里没有上一次剩下的旧块；
-  - 档位按盘上有哪几份转写判定：两条都在 `both`、只有一条 `live_only` / `offline_only`。
 """
 
 from __future__ import annotations
@@ -61,11 +54,6 @@ def transcript(tmp_path: Path) -> Path:
     return path
 
 
-# ---------------------------------------------------------------------------
-# 一、切块与区间表
-# ---------------------------------------------------------------------------
-
-
 def test_chunk_source_writes_chunks_with_exact_raw_lines(transcript: Path, tmp_path: Path) -> None:
     """5 行一块：块文件内容与源文件逐行相等，文件名从 `chunk_01.md` 起、两位。"""
     report = chunk_source("loopback", transcript, tmp_path / "out", chunk_lines=10)
@@ -76,7 +64,6 @@ def test_chunk_source_writes_chunks_with_exact_raw_lines(transcript: Path, tmp_p
     second = (tmp_path / "out" / "chunks" / "chunk_02.md").read_text(encoding="utf-8")
     assert first == "\n".join(SAMPLE_LINES[:10]) + "\n"
     assert second == "\n".join(SAMPLE_LINES[10:]) + "\n"
-    # 块文件里只有原始行：没有头、没有注释
     assert not first.startswith("<!--")
     assert "<!--" not in first
 
@@ -212,11 +199,6 @@ def test_chunk_source_reports_a_missing_transcript(tmp_path: Path) -> None:
         chunk_source("loopback", missing, tmp_path / "out")
 
 
-# ---------------------------------------------------------------------------
-# 二、场次目录：落盘路径与档位
-# ---------------------------------------------------------------------------
-
-
 def _write_session(session: Path, *, live: bool = True, offline: bool = False, source: str = "loopback") -> None:
     """造一个 V2 形状的场次目录（按需放会中稿与会后稿）。"""
     session.mkdir(parents=True, exist_ok=True)
@@ -232,7 +214,7 @@ def _write_session(session: Path, *, live: bool = True, offline: bool = False, s
 def test_chunk_session_writes_under_working_per_source_and_kind(tmp_path: Path) -> None:
     """落盘路径钉死：`working/<source>/<kind>/chunks/` 与 `working/<source>/<kind>/00_index.md`。
 
-    两条稿都在时**两份都切、各占一个目录**（R11 的两份稿对拍靠的就是这一层）。
+    两条稿都在时**两份都切、各占一个目录**。
     """
     session = tmp_path / "250919"
     _write_session(session, live=True, offline=True)
@@ -353,11 +335,6 @@ def test_input_spec_counts_lines_per_kind(tmp_path: Path) -> None:
 
     assert spec.line_count(tmp_path, "live") == 15
     assert spec.line_count(tmp_path, "offline") == 12
-
-
-# ---------------------------------------------------------------------------
-# 三、命令行入口（不加载 meeting.config）
-# ---------------------------------------------------------------------------
 
 
 def test_main_chunks_a_session_and_reports_the_mode(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:

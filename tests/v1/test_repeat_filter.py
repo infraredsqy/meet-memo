@@ -8,7 +8,7 @@
 import os
 import sys
 
-# 本文件从 `tests/` 挪到 `tests/v1/` 之后，仓库根要往上数**两级**（`tests/v1/` → `tests/` → 仓库根）：
+# 仓库根要往上数**两级**（`tests/v1/` → `tests/` → 仓库根）：
 # 只数一级算出来的是 `.../meeting/tests`，直跑本文件时 `import tests.v1.fixtures_loops`
 # 会因为仓库根不在 `sys.path` 上而报 `ModuleNotFoundError: No module named 'tests'`。
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -18,8 +18,6 @@ from meeting.asr.guards import (  # noqa: E402
     _loop_coverage, _strip_repeat_loops, _LoopGuard,
 )
 
-
-# ── 长周期循环样本必须被拦下 ────────────────────────────────────
 
 def test_period7_loop_line_is_stripped():
     """周期 7 的循环 ×399 —— 旧实现漏掉的正是这种长周期循环。
@@ -41,7 +39,6 @@ def test_period5_loop_line_is_stripped():
     assert len(out) < 60, f"应把循环垃圾砍到 <60 字符，实际 {len(out)}"
     unit, count, cov = _loop_coverage(LOOP_LINE_283)
     assert out.count(unit) == 1, "只应保留一组"
-    # 循环之前的前导正文应当保留
     assert out.startswith("这是一段测试开头，")
 
 
@@ -55,8 +52,6 @@ def test_old_filter_would_have_missed_these():
         # 周期 5/7 的循环在 max_unit=4 的搜索空间里不可能被识别为高覆盖
         assert cov < 0.5, f"max_unit=4 竟然覆盖了 {cov:.2f}，用例前提已变"
 
-
-# ── 正常文本绝不能误杀 ─────────────────────────────────────────
 
 def test_normal_lines_untouched():
     """正常语句样本必须原样返回（含「啊哈」、口头语、英文词重复）。"""
@@ -89,8 +84,6 @@ def test_coverage_metric_sane():
     assert cov > 0.9
 
 
-# ── token 级循环检测（生成过程中掐死循环） ──────────────────────
-
 def test_loop_guard_detects_repetition():
     """尾部窗口里某个短单位反复出现 → 立即判环。"""
     guard = _LoopGuard(eos_token_id=1)
@@ -108,7 +101,6 @@ def test_loop_guard_leaves_normal_stream_alone():
     """正常 token 流（无短周期重复）绝不触发——避免误杀正常转写。"""
     guard = _LoopGuard(eos_token_id=1)
     ids = [0]
-    # 用递增序列模拟正常文本流，无短周期重复
     for i in range(200):
         ids = ids + [1000 + i]
         guard(ids, None)

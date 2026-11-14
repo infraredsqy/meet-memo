@@ -1,6 +1,6 @@
-"""`EventHub` 与 SSE 推送（设计口径）。
+"""`EventHub` 与 SSE 推送。
 
-定死的做法（逐条照设计口径）：
+定死的做法：
 
   - **连接即快照**：建立连接后第一帧必须是 `snapshot`（完整状态），新开的页面上来就落在
     当前状态、**不经过 `idle`**；
@@ -118,8 +118,6 @@ class EventHub:
             return {"revision": 0}
         return self._snapshot_provider()
 
-    # 订阅管理
-
     @property
     def subscriber_count(self) -> int:
         return len(self._subscribers)
@@ -137,8 +135,6 @@ class EventHub:
         if subscriber in self._subscribers:
             self._subscribers.remove(subscriber)
         _log.debug("SSE 订阅者断开（当前 %s 个）", len(self._subscribers))
-
-    # 广播入口（四个名字，同步、不阻塞）
 
     def broadcast_state(self, snapshot_json: dict[str, Any]) -> None:
         """状态变更：发一份**全量**快照，带 `id: <revision>`。"""
@@ -195,8 +191,6 @@ class EventHub:
                 subscriber.queue.get_nowait()
             except queue.Empty:
                 break
-
-    # SSE 流
 
     async def stream(
         self,

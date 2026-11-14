@@ -1,33 +1,8 @@
 """`meeting post` 真入口与「跑会后一套」那段编排（设计）。
 
-要盯住的五条（对应设计口径「验证口径」那一节）：
-
-  1. **参数面**：不给位置参数 → 用法说明 + `EXIT_REJECTED`；指到不存在的目录 →
-     原因里带上那条路径 + `EXIT_REJECTED`；`--force` 被认下（不报用法错误）；
-  2. **编排面**：注入假引擎 + 假启动器之后，摘要里场次目录、每层结论、逐条产物的
-     **绝对路径**齐；终端输出里同时看得到「选了哪一场」与产物的绝对路径；
-  3. **音频归档补齐**：非空 PCM + MP3 缺席 → 产出 `.mp3`（调用的就是
-     `meeting.capture.archive.convert_to_mp3` 这一个函数，一次）；空 PCM → 既不产 MP3
-     也不调转码；MP3 已比 PCM 新 → 不调转码、MP3 字节不变；假转码抛错 → 该路记 `failed`、
-     这一趟 `EXIT_FAILURE`、**PCM 的 sha256 与转换前逐字节相同**；
-  4. **编排只走一条路**：`run_post` 里的 `run_session` 是经 `runner.run_session` 这个
-     模块属性取的（用例换掉它之后，替身真的被调到）；
-  5. **纪要闸**：终态 `done` + `meeting_final.md` 过得了现成四条判据时**不调启动器**、
-     返回 `announced is False`；把那份纪要删掉之后再调，启动器**又被调一次**。
 
 **一条真子进程都不起**：参数面走进程内 `pytest.raises(SystemExit)`，编排面一律注入假件
 （假引擎 / 假启动器 / 假转码）。本机 PATH 上真的有 `dsh`，`tests/conftest.py` 的
-`MEETING_MINUTES_CHILD=1` 兜底是第一层网，这里另外把 `resolve_minutes_hook` 换成只登记的
-假件；**注入假启动器不再需要摘掉那个兜底标记** —— 假启动器经
-`run_post(..., minutes_launcher=…)` → `run_session(..., minutes_launcher=…)` →
-`_announce_minutes(..., launcher=…)` **一路向下传**（本文件没有一处替换模块全局属性），
-而那道标记是产品路径自己的再入闸、与注入的假件无关。
-
-**注入的假启动器按真启动器的时序登记**：`launch()` 返回即算启动成功，终态由它背后那条链
-写进 `meeting_minutes_status.json`，因此 `hook == "launched"` 那一档**一律等这一趟新落的
-终态**（等待语义不按「谁拉起的」分叉）。需要「这一趟真的落定」的用例用 `SettlingLauncher`
-（登记 + 照真子会话的收工样子落终态）；本文件的上界夹具 `a_short_minutes_bound` 把
-`minutes.timeout_seconds` 的读数压到 0.4 秒，任何一档都不会把用例吊在四小时上。
 """
 
 from __future__ import annotations
@@ -68,11 +43,7 @@ from meeting.post_run import (
     sync_archive,
 )
 
-#: 慢档标记（收尾轮）：`meeting post` 是收尾功能，整文件归收尾验收。
 pytestmark = pytest.mark.slow
-
-#: 假启动器那一档的秒数（假的纪要钩子不起任何东西）
-FAKE_SECONDS = 0.01
 
 #: 离线那一层的状态文件名（按产物契约取，不重写一遍字面量）
 OFFLINE_STATUS_NAME = offline_artifacts.STATUS_NAME
@@ -80,11 +51,6 @@ OFFLINE_STATUS_NAME = offline_artifacts.STATUS_NAME
 #: 纪要那一层的两个产物名
 MINUTES_STATUS_NAME = minutes_tail.MINUTES_STATUS_NAME
 MINUTES_FINAL_NAME = minutes_tail.MINUTES_FINAL_NAME
-
-
-# ---------------------------------------------------------------------------
-# 假件
-# ---------------------------------------------------------------------------
 
 
 class SettlingLauncher(RecordingLauncher):
@@ -181,11 +147,6 @@ def a_short_minutes_bound(monkeypatch: pytest.MonkeyPatch) -> float:
     return 0.4
 
 
-# ---------------------------------------------------------------------------
-# 小工具
-# ---------------------------------------------------------------------------
-
-
 def digest(path: Path) -> str:
     """一份文件的 sha256（转码失败前后逐字节比对的判据）。"""
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -207,11 +168,6 @@ def write_minutes_status(session: Path, *, state: str = "done") -> Path:
 def fake_config(**values: Any) -> FakeConfig:
     """最小配置：本文件跑离线那一趟时用它（`minutes.hook = null` 那一档是兜底）。"""
     return FakeConfig(**values)
-
-
-# ---------------------------------------------------------------------------
-# 一、参数面
-# ---------------------------------------------------------------------------
 
 
 def test_post_without_a_positional_argument_prints_usage_and_rejects(
@@ -443,11 +399,6 @@ def test_the_force_switch_reaches_the_orchestration(
     assert seen == [True]
 
 
-# ---------------------------------------------------------------------------
-# 二、音频归档补齐（PCM -> MP3）
-# ---------------------------------------------------------------------------
-
-
 def test_a_nonempty_pcm_without_an_mp3_is_converted_once(tmp_path: Path) -> None:
     """非空 PCM + MP3 缺席 → 转一次，且调的就是那一份现成实现。"""
     session = synth_session(tmp_path / "250919", sources=("mic",))
@@ -634,11 +585,6 @@ def test_a_failed_archive_takes_the_whole_run_to_failure(tmp_path: Path) -> None
     assert fake_engine.calls, "归档转不动不该挡住离线那一趟"
 
 
-# ---------------------------------------------------------------------------
-# 三、编排面：一条链跑完、摘要与终端都说得出
-# ---------------------------------------------------------------------------
-
-
 def test_run_post_reports_every_layer_with_absolute_paths(tmp_path: Path) -> None:
     """注入假引擎 + 假启动器跑一遍：摘要里每层结论与逐条产物**绝对路径**齐。
 
@@ -815,12 +761,6 @@ def test_the_callers_ledger_keeps_the_reason_the_runner_wrote_down(
 ) -> None:
     """调用方改写记录之后，顶层 `error` 里那个更准的原因**还读得出来**。
 
-    这一条盯的是本节点 m2 那一档：`run_session` 逃出去之前，离线段自己**已经现场写下**
-    一版（`runner._write_failed_status()`），随后 `run_post` 接住异常、调
-    `_mark_offline_failed()` 把同一份文件重写一遍。从前那一版被一句通用串
-    （`RuntimeError: 离线段炸了`）整句替换掉，于是「是加载失败还是跑失败」在顶层这一格上
-    就没了 —— 而那句话一秒前才写好。现在改写前先读回盘上那一版，它已经是终态就沿用它的
-    `error`。
 
     `run_session` 换成一条替身（真离线段那两条用例在 `tests/test_offline_runner.py`），
     它做的正是那一版记录：落 `failed` + runner 那句原话，再把异常抛出去。
@@ -1008,11 +948,6 @@ def test_run_post_takes_an_injected_ledger(tmp_path: Path) -> None:
     assert injected.snapshot()["state"] == "done"
 
 
-# ---------------------------------------------------------------------------
-# 四、编排只走一条路：`run_session` 经模块属性取
-# ---------------------------------------------------------------------------
-
-
 def test_run_post_calls_run_session_through_the_module_attribute(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1067,11 +1002,6 @@ def test_the_engine_is_handed_to_the_offline_layer(tmp_path: Path) -> None:
         "meeting_audio_mic_001.pcm",
         "meeting_audio_loopback_001.pcm",
     ]
-
-
-# ---------------------------------------------------------------------------
-# 五、纪要那一层起跑之前那道闸
-# ---------------------------------------------------------------------------
 
 
 def test_the_gate_keeps_the_launcher_away_when_minutes_are_done(tmp_path: Path) -> None:
@@ -1230,9 +1160,7 @@ def test_the_offline_status_file_is_untouched_by_the_gate(tmp_path: Path) -> Non
     assert after == before
 
 
-# ---------------------------------------------------------------------------
 # 六、等纪要终态：有界、落定就走
-# ---------------------------------------------------------------------------
 
 
 def test_the_wait_returns_as_soon_as_the_terminal_state_lands(tmp_path: Path) -> None:
@@ -1369,9 +1297,7 @@ def test_the_wait_upper_bound_comes_from_the_minutes_wall_clock_key(
     assert post_run_module._minutes_timeout_seconds() == 60.0
 
 
-# ---------------------------------------------------------------------------
 # 七、退出码只走现成那五档
-# ---------------------------------------------------------------------------
 
 
 def test_every_exit_the_post_entry_uses_is_a_frozen_constant() -> None:

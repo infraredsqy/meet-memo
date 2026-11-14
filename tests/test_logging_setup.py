@@ -1,19 +1,3 @@
-"""`tests/test_logging_setup.py` —— 日志（设计口径第 4 / 5 / 9 条 / §4.1 文件清单第 15 行）。
-
-覆盖：
-  - 服务级 log 路径（家目录重定向到临时目录）与格式串；
-  - bootstrap 日志先落默认目录、读配置后按生效 `log.dir` 重建；
-  - **轮转按 `log.max_bytes` / `log.backup_count` 配置值生效**（改这两个键造出轮转：
-    备份份数、保留整份旧文件、最早那几行落在 `.2`、`.3` 不出现，**不改固定常量**）；
-  - logger `meeting` + `propagate=False`；幂等（重复调用不重复加 handler）；
-  - `detach_session_log()` 写失败**抛 `OSError`**；
-  - **`EXIT_STARTUP_UNMET` 这一档的唯一断言处**：主 log 不可写（`log.dir = <普通文件>/sub/`）
-    与 `config.json` 损坏（非法 JSON / 同名目录）各自的真子进程退出码断言；
-  - **启动不再扫别的场次目录**：盘上放着未收尾的 `session.json`（甚至多场），
-    服务照常起、一行「启动扫描」WARNING 都不落、那份记录**逐字节原地不动**，
-    其余文件也不被碰 —— 「看住未收尾场次」归下一节点的注册表收编。
-"""
-
 from __future__ import annotations
 
 import json
@@ -31,11 +15,6 @@ from meeting import logging_setup
 from meeting.cli import EXIT_OK, EXIT_STARTUP_UNMET
 
 EXPECTED_FORMAT = "%(asctime)s %(levelname)-7s [%(threadName)s] session=%(session)s %(name)s: %(message)s"
-
-
-# ---------------------------------------------------------------------------
-# 进程内：logger 名、propagate、格式串、幂等
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture()
@@ -136,7 +115,7 @@ def test_rebuild_replaces_handler_and_notes_bootstrap_path(tmp_path, monkeypatch
         logging_setup.setup_service_logging(
             effective_dir, level="INFO", max_bytes=4096, backup_count=2
         )
-        assert len(logger.handlers) == handlers_before  # 旧的摘掉了，没有叠加
+        assert len(logger.handlers) == handlers_before
         effective_path = logging_setup.service_log_path()
         assert effective_path == str(Path(effective_dir) / "meeting.log")
 
@@ -190,7 +169,7 @@ def test_rotation_uses_config_values(temp_logging):
         name for name in os.listdir(log_dir) if name.startswith(log_path.name + ".")
     )
     assert backups == [log_path.name + ".1", log_path.name + ".2"]
-    assert len(backups) == 2  # 备份文件数等于 log.backup_count
+    assert len(backups) == 2
 
     # 旧内容**整份保留**：最后那一份备份装的是轮转出去的最早内容
     oldest_text = helpers.read_text(oldest_backup)
@@ -214,7 +193,6 @@ def test_attach_and_detach_session_log(temp_logging):
     text = helpers.read_text(session_dir / "meeting.log")
     assert "场次级这一行" in text
     assert "session=250906" in text
-    # 摘掉之后不再写场次 log
     logging.getLogger("meeting.session").info("摘掉之后的这一行")
     assert "摘掉之后的这一行" not in helpers.read_text(session_dir / "meeting.log")
 
@@ -259,11 +237,6 @@ def test_build_rotating_handler_uses_given_parameters(temp_logging):
         assert handler.baseFilename.endswith("custom.log")
     finally:
         handler.close()
-
-
-# ---------------------------------------------------------------------------
-# 启动前奏的 log 落点：「配置来源」行与重建失败分支（三入口各按旧本逐字还原）
-# ---------------------------------------------------------------------------
 
 
 class _RecordSink(logging.Handler):
@@ -400,11 +373,6 @@ def test_web_entry_asks_for_the_after_rebuild_log_shape(monkeypatch):
     assert seen == {"config_source_after_rebuild": True}
 
 
-# ---------------------------------------------------------------------------
-# 子进程：EXIT_STARTUP_UNMET 这一档的唯一落点
-# ---------------------------------------------------------------------------
-
-
 def test_main_log_unwritable_exits_startup_unmet(tmp_path):
     """主 log 不可写（`log.dir = <普通文件>/sub/`）→ 子进程退出码 `EXIT_STARTUP_UNMET`。"""
     home = tmp_path / "home"
@@ -414,7 +382,6 @@ def test_main_log_unwritable_exits_startup_unmet(tmp_path):
     bad_log_dir = blocker / "sub" / "logs"
     helpers.write_config_json(home, {"web.port": 0, "log.dir": str(bad_log_dir)})
 
-    # ① 初始化本身抛错
     old_home, old_profile = os.environ.get("HOME"), os.environ.get("USERPROFILE")
     os.environ["HOME"] = str(home)
     os.environ["USERPROFILE"] = str(home)
@@ -429,7 +396,6 @@ def test_main_log_unwritable_exits_startup_unmet(tmp_path):
         if old_profile is not None:
             os.environ["USERPROFILE"] = old_profile
 
-    # ② 真子进程退出码
     result = helpers.run_web_expecting_failure(home)
     assert result.returncode == EXIT_STARTUP_UNMET
     combined = result.stdout + result.stderr
@@ -462,11 +428,6 @@ def test_config_json_is_a_directory_exits_startup_unmet(tmp_path):
     assert str(path) in (result.stdout + result.stderr)
 
 
-# ---------------------------------------------------------------------------
-# 子进程：启动**不再**读 / 改写别的场次目录（上一节点的「启动扫描未收尾」已随默认输出根退场）
-# ---------------------------------------------------------------------------
-
-
 def _session_record(state: str, *, interrupted: bool = False) -> str:
     return json.dumps(
         {
@@ -490,9 +451,8 @@ def _session_record(state: str, *, interrupted: bool = False) -> str:
 def test_startup_leaves_an_unfinished_session_alone(tmp_path):
     """盘上放一场未收尾（`recording`）→ 服务照常起，**不读、不改写、不碰**那一目录。
 
-    原「启动扫描：发现未收尾 → 改写成 draining + interrupted」这一整条已退场
-    （`docs/design-intent.md` 第 4 条：没有默认落点，启动不为找最近一场读任何别的目录）；
-    本用例把「退场」钉住：没有扫描 WARNING、`session.json` 逐字节未动、不出现场次开始行。
+    没有默认落点，启动不为找最近一场读任何别的目录：没有扫描 WARNING、`session.json`
+    逐字节未动、不出现场次开始行。
     """
     home = tmp_path / "home"
     home.mkdir()
@@ -518,11 +478,9 @@ def test_startup_leaves_an_unfinished_session_alone(tmp_path):
     warning_lines = helpers.lines_with(log_text, "WARNING")
     assert not [line for line in warning_lines if "启动扫描" in line], warning_lines
     assert not [line for line in warning_lines if "未收尾" in line], warning_lines
-    # 盘上那一版一个字节都不动：既不改写成 draining、也不写 interrupted
     assert record_path.read_text(encoding="utf-8") == original
     assert audio_path.read_bytes() == b"\x00" * 32
     assert sorted(item.name for item in out_root.iterdir()) == before_children
-    # 不自动开始录音：没有场次开始行
     assert not helpers.lines_with(log_text, "场次开始")
 
 
@@ -552,7 +510,7 @@ def test_startup_reads_none_of_two_older_sessions(tmp_path):
     assert not [line for line in warnings if "启动扫描" in line], warnings
     for path, blob in blobs.items():
         assert path.read_bytes() == blob, f"{path} 被启动读出来了"
-    # 更早那一场与新一场都未收尾，但服务都不认领（收编归注册表节点）
+    # 更早那一场与新一场都未收尾，但服务都不认领
     proc2 = helpers.spawn_service(home)
     try:
         proc2.wait_ready()
@@ -563,9 +521,6 @@ def test_startup_reads_none_of_two_older_sessions(tmp_path):
 
 def test_startup_is_unbothered_by_an_unreadable_session_json(tmp_path):
     """某一场的 `session.json` 是非 UTF-8 字节 → 启动照常起，**一行关于它的警告都不落**。
-
-    原行为「文件存在却读不出来 → 恰落一行『读不出来…按未命中处理』的 WARNING」也是
-    扫描链路上的，随整条退场：启动根本不去读那些目录。
     """
     home = tmp_path / "home"
     home.mkdir()
@@ -589,8 +544,4 @@ def test_startup_is_unbothered_by_an_unreadable_session_json(tmp_path):
     warnings = helpers.lines_with(log_text, "WARNING")
     assert not [line for line in warnings if "启动扫描" in line], warnings
     assert not [line for line in warnings if "读不出来" in line], warnings
-    # 那份文件原样不动
     assert record_path.read_bytes() == blob
-
-
-

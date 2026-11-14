@@ -1,21 +1,14 @@
-"""`ServiceRuntime`——唯一状态权威（设计口径；从 `app.py` 整体搬来）。
+"""`ServiceRuntime`——唯一状态权威。
 
-搬迁边界（设计口径）：本模块承载 `ServiceRuntime`（类名、构造语义、方法名与语义
-一字不改）；工厂入口 `build_runtime()` 仍在 `app.py`；信号处理那四样常驻 `app.py`，
-本模块不复制；写进 `_shutdown_target` 的对象仍由 `startup()` 在这一侧写入。
-
-并发模型（设计口径）：全部状态收在本对象一处、只在 asyncio 事件循环里改、不加锁；
+并发模型：全部状态收在本对象一处、只在 asyncio 事件循环里改、不加锁；
 后端把事实送进来的唯一入口是 `loop.call_soon_threadsafe(...)`；`to_dict()` 与 `commit()`
 配合：状态变更后经 `commit()` 一次完成「`revision +1` + 广播一次全量 `state`」，别处一律
 不自己改 `revision`、不自己发 `state`。唯一例外是「等待一条同步调用」：收尾三步与会中
 总结的模型调用都提交到各自的 daemon 工作线程，事件循环只等结果，HTTP 面照旧转；上限
 分别是 `compute_drain_budget()` 与 `summary.deadline_seconds`。
 
-拆分说明：方法体按职责拆进本目录的 mixin 模块（`runtime_shared` / `runtime_backends` /
-`runtime_facts` / `runtime_sessions` / `runtime_catalog` / `runtime_post` /
-`runtime_summary` / `runtime_materials` / `runtime_drain`）；本文件只保留构造、状态权威
-核心与 re-export，`__all__` 冻结名字的对外 import 路径不变；测试要 patch 的模块级名字
-一律打在读它的那个模块上。
+方法体按职责拆进本目录的 mixin 模块；本文件只保留构造、状态权威核心与 re-export；
+测试要 patch 的模块级名字一律打在读它的那个模块上。
 """
 
 from __future__ import annotations
@@ -26,7 +19,7 @@ import time
 from typing import Any
 
 from meeting import __version__, logging_setup  # logging_setup：本模块不再直调，但它是
-# tests 以 `runtime_module.logging_setup` 为 patch 路径的那一格（5 处），名字留在这里。
+# tests 以 `runtime_module.logging_setup` 为 patch 路径，名字留在这里。
 from meeting.alerts import AlertJudge, AlertThresholds
 from meeting.backends.registry import BackendResolution
 from meeting.config import ConfigValueError
@@ -117,7 +110,6 @@ class ServiceRuntime(
         # 唯一一份状态
         self.snapshot: Snapshot = new_snapshot(settings=self._settings_view())
 
-        # 后端与判定
         self.capture_resolution: BackendResolution | None = None
         self.transcriber_resolution: BackendResolution | None = None
         self.post_resolution: BackendResolution | None = None
@@ -157,11 +149,11 @@ class ServiceRuntime(
         #: 它是「提示级的键集合有没有变」的判据：只有键集合真的动了才让调用点走一次
         #: `commit()`，`duration_seconds` 的刷新因此不给 `revision` 投票（转写通道不参与
         #: 状态迁移，0.5 秒的节拍不许把它抖起来）。清提示级时与判定器那份登记一起清
-        #: （唯一入口 `_clear_hints()`，复审 m3）。
+#: （唯一入口 `_clear_hints()`）。
         self._hint_keys: tuple[tuple[str, str, str], ...] = ()
 
         #: 本场开场读到的旧场次记录（`None` = 新场；有值 = 续接）：旧段的段记录、各路旧段
-        #: 文件名表与场次身份三格从它合并（第 9 条）。
+#: 文件名表与场次身份三格从它合并。
         self._resumed_record: dict[str, Any] | None = None
 
         # 收尾 task 句柄（属性名冻结；启动时赋值、走完含被取消那趟后置空）
@@ -179,7 +171,6 @@ class ServiceRuntime(
         #: 本次关停是不是强制打断那一档（`trigger_shutdown()` 写、`cli.py` 读来挑退出码）
         self._shutdown_interrupted = False
 
-        # SSE
         from meeting.service.hub import EventHub
 
         self.hub = EventHub(snapshot_provider=self._snapshot_json)
@@ -191,8 +182,8 @@ class ServiceRuntime(
         #: 转写健康度节拍（低频、只写快照；见 `_transcriber_health_loop()`）
         self._transcriber_ticker: asyncio.Task | None = None
 
-        # -- 会中总结（设计口径）：两样都是内存里的、会话级的、不落文件
-        # （设计章 2.3 / 5.1：会中总结做完就该消失）。
+        # -- 会中总结：两样都是内存里的、会话级的、不落文件
+        # （会中总结做完就该消失）。
         # `summary_buffer`：内存里那条追加中的实时转写——盘上的会中临时稿只有分钟级
         # `[HH:MM]`（秒被丢掉、同一分钟撞成一个戳），切不了窗口；这份带完整墙钟浮点 `ts`
         # 与入队序，喂它的入口只有 `bind_transcriber()` 包出来的那个 sink。
@@ -221,16 +212,14 @@ class ServiceRuntime(
         # （读盘），与本字段无关。
         self.post_jobs: dict[tuple[str, str], PostJob] = {}
 
-    # 状态 JSON 产出（唯一产出者）
-
     def _session_elapsed_seconds(
         self, session: SessionInfo, *, moment: float | None = None
     ) -> float:
-        """这一场**录到的**秒数：墙钟跨度扣掉暂停的那几段（`docs/design-intent.md` 第 7 条）。
+        """这一场**录到的**秒数：墙钟跨度扣掉暂停的那几段。
 
         权威长度是实际录到的音频时长（写侧的内容字节计数，落 `session.json`）；快照这一格是
         它在界面上的读数，暂停期间因此不往前走 —— 否则「已录 12:30」会把休息的十分钟也算进
-        这一场，按第 7 条那是附注、按第 8 条那段时间根本没录。
+        这一场——暂停期间归档写静音，那段时间根本没录进内容。
         """
         now = time.monotonic() if moment is None else float(moment)
         paused = float(session.paused_seconds)
@@ -270,8 +259,6 @@ class ServiceRuntime(
             log_path=self.log_path,
         )
 
-    # 每一路健康迁移的日志事件（契约点名的必落 log 事件）
-
     def _log_health_migrations(
         self,
         *,
@@ -281,19 +268,18 @@ class ServiceRuntime(
     ) -> None:
         """把这一刻与上一次落过 log 的那一版之间的每一路 `health` 变化落成一条 log。
 
-        契约把「每一路健康迁移（含原因与阈值）」列为必须落 log 的事件（设计口径、
-        `index.md` §7 的 G6 要求场次 log 结束标记之前逐类可查）。本方法只加日志、不改任何
-        状态语义：`health` 的值仍由 `meeting/state.py` 的迁移函数写。
+        契约把「每一路健康迁移（含原因与阈值）」列为必须落 log 的事件。本方法只加日志、
+        不改任何状态语义：`health` 的值仍由 `meeting/state.py` 的迁移函数写。
 
         行内容按契约四项写：哪一路、从什么值到什么值、原因、阈值。「阈值：」有三种形态，
-        读 log 的人按三档认（审查观察项 M4 点名的误读点）：
+        读 log 的人按三档认（容易误读的地方）：
 
           1. 实测阈值（`alert.*` 判定真用到阈值的两条迁移）：从 `self.judge.thresholds`
-             现读（不是配置默认值、不是字面量）；
+              现读（取生效值）；
           2. 无阈值：判据里本来就没有阈值数，`threshold` 显式传说明或传空补「无阈值」——
-             这档冒号后面没有可取的数，按 `<键>=<数>` 解析会落空；
+              这档冒号后面没有可取的数，按 `<键>=<数>` 解析会落空；
           3. 不看阈值（收尾相关三处）：迁移由收尾流程驱动，阈值判定没参与——
-             与第 2 档长相接近，差别是原因。
+              与第 2 档长相接近，差别是原因。
 
         无论哪一档都不编造一个数。`source` 给定时只比那一对；幂等（基线刷成当下值）。
         """

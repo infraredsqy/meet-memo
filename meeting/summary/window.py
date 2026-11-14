@@ -1,14 +1,11 @@
 """会中总结的窗口切片：内存里的追加缓冲 + 按时间戳取连续尾部。
 
-两条冻结裁定：窗口从服务侧内存的追加缓冲读（盘上两份稿只供人看——只有分钟级 `[HH:MM]`、
+窗口从服务侧内存的追加缓冲读（盘上两份稿只供人看——只有分钟级 `[HH:MM]`、
 同一分钟撞成一个戳、没有单调序号；内存这份带完整墙钟 `ts` 与入队序 `seq`）；窗口按
-行首时间戳切——取「末行 `ts` 往前 N 秒」的连续尾部、边界不切进任何一行（事故场的时间戳
-曾被压进一分钟，按行数取会取错内容，spec「坑与注意」第 1 条）。
+行首时间戳切——取「末行 `ts` 往前 N 秒」的连续尾部、边界不切进任何一行
+（时间戳可能被压进同一分钟，按行数取会取错内容）。
 
-三块各管一件事：`BufferedLine` / `TranscriptBuffer` 收（线程安全，`lines()` 交回副本）；
-`select_window()` 切（纯函数）；`render_window()` 装配（逐字保留原句，一行一句）。
-`BufferedLine.ts` 与 `TranscriptLine.ts` 是同一个值（墙钟秒）；`seq` 单调递增、从 0 起。
-没有任何「什么时候触发」的东西——V1 的频率门控明留在 V1，窗口由人按键挑。
+没有任何「什么时候触发」的东西——窗口由人按键挑。
 """
 
 from __future__ import annotations
@@ -20,11 +17,10 @@ from datetime import datetime
 
 from meeting.backends.base import TranscriptLine
 
-#: 缓冲的行数上限：**兜的是内存**，窗口要的是最近那几分钟。一场会一小时约 300–600 行，两万行是几十场的量；
+#: 缓冲的行数上限：**兜的是内存**，窗口要的是最近那几分钟。
 #: 到顶时从头丢最老的那些（`append()` 里的裁剪），时间窗口取的是尾部，丢头不影响它。
 DEFAULT_MAX_LINES = 20000
 
-#: 窗口档位 → 人话标签（设计章 2.3 的四个档位逐字对应）
 WINDOW_LABELS: dict[str, str] = {
     "5m": "5 分钟",
     "15m": "15 分钟",
@@ -32,14 +28,11 @@ WINDOW_LABELS: dict[str, str] = {
     "full": "整场",
 }
 
-#: 两路的人话路径标签（设计章 2.3「行格式：`[HH:MM] 路径标签 · 正文`」，取值 `本地` / `远端`；
-#: 渲染窗口文本时照它，行尾标出来源，读窗口的人一眼看得出这一句是本地还是远端）
 SOURCE_LABELS: dict[str, str] = {
     "mic": "本地",
     "loopback": "远端",
 }
 
-#: 认不出的来源原样标出（不许编一个中文名给它）
 UNKNOWN_SOURCE_LABEL = "未知"
 
 
@@ -47,9 +40,9 @@ UNKNOWN_SOURCE_LABEL = "未知"
 class BufferedLine:
     """缓冲里的一行（**冻结**：切片交出去的是这些行本身，谁都不许就地改）。
 
-    `seq` 是入队序，单调递增、从 0 起；`ts` 是墙钟秒（epoch），与 `TranscriptLine.ts`
-    同一个值；`kind` 在生产路径上恒为 `"line"`（`TranscriptLine.kind` 的取值域是
-    `line` / `gap`，转写流水线出的每一行都是 `line`）。
+    `ts` 是墙钟秒（epoch），与 `TranscriptLine.ts` 同一个值；`kind` 在生产路径上恒为
+    `"line"`（`TranscriptLine.kind` 的取值域是 `line` / `gap`，转写流水线出的每一行都是
+    `line`）。
     """
 
     seq: int
@@ -97,7 +90,6 @@ class TranscriptBuffer:
                 del self._lines[: len(self._lines) - self._max_lines]
 
     def lines(self) -> list[BufferedLine]:
-        """当前全部行的**副本**（按入队序）。"""
         with self._lock:
             return list(self._lines)
 
@@ -113,7 +105,6 @@ class TranscriptBuffer:
 
     @property
     def max_lines(self) -> int:
-        """行数上限（构造时定死）。"""
         return self._max_lines
 
 
@@ -134,14 +125,13 @@ def select_window(
     - 缓冲非空 → **锚点就是末行的 `ts`**（`cutoff = 末行 ts − window_seconds`）：
       转写停转或说话变稀的时候，末行比此刻早多少都不影响窗口取到那几行 ——
       `now_ts` 在这里**不参与**；拿当前墙钟当锚点会让「末行早就过去了」的缓冲切出空窗口，
-      调用方随后交回一个一行都没有的静默成功（spec 冻结的口径见 task.md 的接口契约）；
+      调用方随后交回一个一行都没有的静默成功；
     - 缓冲为空且给了 `now_ts` → 用 `now_ts` 当锚点：刚开会、一行都还没落下来时，
       窗口交回空的一份，这样调用方拿到的是「还没有材料」这件事实本身；
     - 缓冲为空且不给 `now_ts` → 空窗口（没有锚点，也没有行可取）。
 
     **边界不切进任何一行**：从尾部向前收到「`ts < cutoff`」为止。同一个 `ts` 上挤着
-    一批行时按 `seq` 的先后**整批一起收或一起丢**，绝不从中间断开 —— 事故那一场里
-    时间戳被压进同一分钟，按行数取窗口就会把同一分钟的内容切成两半。
+    一批行时按 `seq` 的先后**整批一起收或一起丢**，绝不从中间断开。
 
     传进来的 `lines` 按入队序（`seq` 升序）给；本函数**不排序**、也不改输入，
     交回的是同一批 `BufferedLine` 对象组成的新列表。
@@ -158,8 +148,8 @@ def select_window(
     if not lines:
         return []
 
-    # 锚点：**末行的 ts**（契约口径）。`now_ts` 只服务「缓冲为空」那一格（上面已经返回），
-    # 因此走到这里它**不参与计算** —— 这一格是契约里的参数，留着不改签名。
+    # 锚点：**末行的 ts**。`now_ts` 只服务「缓冲为空」那一格（上面已经返回），
+    # 因此走到这里它**不参与计算**。
     cutoff = float(lines[-1].ts) - span
 
     kept: list[BufferedLine] = []
@@ -182,8 +172,7 @@ def render_window(lines: Sequence[BufferedLine]) -> str:
 
     - 正文**逐字保留**（识别失败的占位符 `[[识别失败: 超时 20s]]` 也原样在里面 ——
       提示词负责把缺口讲清楚，这一层不替它改写、不替它删）；
-    - 时间是那一行的**墙钟时刻**（不是相对秒数）：模型要能说清「讲到哪儿了」；
-    - 来源标在行尾，与设计章 2.3 的 `本地` / `远端` 同一套词。
+    - 时间是那一行的**墙钟时刻**（不是相对秒数）：模型要能说清「讲到哪儿了」。
     """
     rendered: list[str] = []
     for line in lines:

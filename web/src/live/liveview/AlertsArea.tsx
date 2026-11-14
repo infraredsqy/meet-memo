@@ -3,9 +3,8 @@ import type { HeartbeatState } from '../heartbeat';
 import type { LiveView as LiveViewModel } from '../view';
 
 /**
- * 告警区（ui-design 2.5「告警区」一行）：暂停横带、致命横幅、采集已停、提示级行、
- * 「本场曾中断」与心跳迟到的弱提示。失联时调用方把整块收掉（两句话不得同屏）；
- * 「查看日志」的开合状态归调用方 —— 整块收掉再回来时不重置。
+ * 失联时调用方把整块收掉（两句话不得同屏）；「查看日志」的开合状态归调用方 ——
+ * 整块收掉再回来时不重置。
  */
 export function AlertsArea({
   view,
@@ -19,12 +18,9 @@ export function AlertsArea({
   onMute,
 }: {
   view: LiveViewModel;
-  /** 心跳四级（「迟到」那一行读它）。 */
   heartbeat: HeartbeatState;
-  /** 服务日志路径（致命横幅与采集已停里可复制的那行）。 */
   logPath: string | null;
   busy: boolean;
-  /** 致命横幅里「查看日志」那一格开着没有。 */
   logShown: boolean;
   onToggleLog: () => void;
   onResume: () => void;
@@ -35,8 +31,8 @@ export function AlertsArea({
 
   return (
     <section className="band band--alert" aria-label="告警">
-      {/* 「暂停中」与「哪一路死了」同一个级别：整行横带、左沿一道实心条（设计章 7.10
-          的 `alert--paused`）。它排在最前面 —— 这一屏最要紧的一句话就是「现在没在录」 */}
+      {/* 「暂停中」与「哪一路死了」同一个级别：整行横带、左沿一道实心条。它排在最前面 ——
+          这一屏最要紧的一句话就是「现在没在录」 */}
       {view.pause !== null && (
         <div className="alert alert--paused" role="status">
           <div className="alert__head">
@@ -130,7 +126,7 @@ export function AlertsArea({
         </div>
 ))}
 
-      {/* 「本场曾中断」提示行（gil-stall-hole）：帧空洞记录是历史事实（录中冻结解冻后
+      {/* 「本场曾中断」提示行：帧空洞记录是历史事实（录中冻结解冻后
           发帧线程报上来的），提示级 —— 只上一行字，不出声、不弹红横幅、不进两拍计数。
           它与「采集已停」那一条分工：那条答「现在停没停」（恢复即收），
           这条说的是 recording_alive 说不出的那句「那一段内容没记上」 */}

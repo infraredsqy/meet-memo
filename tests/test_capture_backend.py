@@ -1,17 +1,9 @@
-"""`tests/test_capture_backend.py` —— 真采集后端的起停与收尾（`meeting/backends/capture.py`）。
+"""真采集后端的起停与收尾（`meeting/backends/capture.py`）。
 
-**假源注入**（§5 的验收手段）：把 `capture.create_capture_source()` /
+**假源注入**：把 `capture.create_capture_source()` /
 `create_loopback_source()` 换成假源，于是 `CaptureBackend.start()` 这条**生产代码路径**
 被整条走通（挑端点 → 造源 → 起会话引擎 → 两路归档 → 收尾落盘 → 转码），换掉的只有最外面
 那一层声卡库。一条真机调用都没有。
-
-三块：
-
-  1. `start()` 的抛错口径：单路起不来**不抛错**（只给那一路发 `SourceLost`）、本场该采的路
-     全起不来才抛 `CaptureUnavailable`、`mode=mic` 时只有 mic 算数；
-  2. 会话与收尾：归档写进 `session_dir`、`finalize()` 落盘、`transcode()` 出 MP3、`stop()` 幂等；
-  3. 端到端（进程内真 `ServiceRuntime`）：`capture.backend = auto` 开一场 → 停 → 收尾 `flush`
-     记 `done`、flush 落定自动起的转码独立工序转出两个 `.mp3`（状态文件落 `done`）。
 """
 
 from __future__ import annotations
@@ -32,19 +24,17 @@ from tests._app_drivers import live, post, snapshot_of
 from tests._helpers import wait_until
 from tests._capture_fakes import CHUNK_BYTES, FakeCaptureSource
 
-#: 慢档标记（收尾轮）：真流式/真后端的收尾验收，不进每次迭代圈。
 pytestmark = pytest.mark.slow
 
-#: 假端点表（形状照本机实测：同名端点在不同 host API 下并存）
+#: 假端点表
 FAKE_MIC = DeviceEndpoint("假-麦克风 (Focusrite)", "MME", "input", index=1, is_default=True)
 FAKE_RENDER = DeviceEndpoint("假-扬声器 (Focusrite USB Audio)", "", "render", index=0)
 
-#: 进程内用例的轮询超时（收尾三步跑在收尾线程池里）
 BACKEND_POLL_TIMEOUT_SECONDS = 15.0
 
 
 def wave_attempt() -> OpenAttempt:
-    """能打开、也有波形的试开结果（本机实测的 MME 那条）。"""
+    """能打开、也有波形的试开结果。"""
     from meeting.capture.devices import measure_samples
 
     return OpenAttempt(
@@ -96,12 +86,6 @@ class _FailingStart(FakeCaptureSource):
 def install_fake_probe(monkeypatch: pytest.MonkeyPatch, factory: SourceFactory) -> None:
     """把**端点枚举 + 试开 + 造源**三处都换成假件，一个真声卡入口都不碰。
 
-    三处都要换（`docs/v1-lineage.md` 的坑 C9 那一手：**函数内查找**）：
-
-      - `sources.list_input_endpoints` / `list_render_endpoints` → 假端点表；
-      - `sources.test_open_input` / `test_open_loopback` → 能打开、有波形的假结果；
-      - `capture.create_capture_source` / `create_loopback_source` → 本用例的假源工厂。
-
     后端那四个接缝的缺省写法是 `lambda: sources_module.<f>()`（调用那一刻再取），所以
     `monkeypatch.setattr` 打在**模块对象**上照样生效 —— 后端构造函数里一个函数对象都没抓。
     """
@@ -152,11 +136,6 @@ def make_backend(
     )
     backend.bind(lambda fact: None, config=ReadOnlyConfig(values))
     return backend
-
-
-# ---------------------------------------------------------------------------
-# ① 起采集：抛错口径
-# ---------------------------------------------------------------------------
 
 
 def test_start_brings_up_both_routes_and_writes_both_archives(
@@ -236,7 +215,6 @@ def test_start_raises_when_the_device_table_has_nothing(
 
     with pytest.raises(capture_module.CaptureUnavailable) as info:
         backend.start("both", str(session_dir))
-    # 两路各自为什么挑不出端点都写在 `message` 里（mic 是「候选为空」那一档）
     assert "候选为空" in str(info.value)
     assert "一个 render（播放）端点都没有" in str(info.value)
     # 一条源都没有被造出来（连开设备那一步都没走到）
@@ -271,8 +249,7 @@ def test_mic_mode_does_not_read_the_loopback_route(
 ):
     """`mode=mic` 时不读 loopback：那一路的源连造都不造，归档**整段时间写静音**。
 
-    「某一路没开」也是「那一路写静音」（`docs/design-intent.md` 第 9 条）：不再是 0 字节
-    文件——两路时间轴等长，落盘的全是数字零，内容量一格不动。
+    「某一路没开」也是「那一路写静音」：两路时间轴等长，落盘的全是数字零，内容量一格不动。
     """
     factory = SourceFactory(chunks=3)
     backend = make_backend(monkeypatch, factory=factory)
@@ -301,11 +278,6 @@ def test_mic_mode_does_not_read_the_loopback_route(
     assert loop_file.read_bytes() == bytes(loop_file.stat().st_size)  # 逐样本为零
 
 
-# ---------------------------------------------------------------------------
-# ② 会话与收尾
-# ---------------------------------------------------------------------------
-
-
 def test_finalize_flushes_both_archives(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """`finalize()` 把两路归档落盘：之后 `stop()` 不会再多写一个字节。"""
     factory = SourceFactory(chunks=4)
@@ -322,7 +294,7 @@ def test_finalize_flushes_both_archives(tmp_path: Path, monkeypatch: pytest.Monk
     backend.finalize()
     sizes = {source: (session_dir / archive_name(source)).stat().st_size for source in ("mic", "loopback")}
     assert sizes["mic"] > 0
-    backend.finalize()  # 幂等
+    backend.finalize()
     backend.stop()
     assert {
         source: (session_dir / archive_name(source)).stat().st_size for source in ("mic", "loopback")
@@ -378,11 +350,6 @@ def test_the_real_backend_still_has_no_inject_fault(monkeypatch: pytest.MonkeyPa
         "transcode": True,
         "dev_inject": False,
     }
-
-
-# ---------------------------------------------------------------------------
-# ③ 端到端：flush 记 done、转码独立工序转出两份 MP3
-# ---------------------------------------------------------------------------
 
 
 def test_end_to_end_session_drains_with_two_mp3(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -467,7 +434,6 @@ def test_end_to_end_session_drains_with_two_mp3(tmp_path: Path, monkeypatch: pyt
         # 两份 PCM 原样留着（`session.json` 声明的是它们）
         assert (session_dir / archive_name("mic")).exists()
         assert (session_dir / archive_name("loopback")).exists()
-        # 归档落在输出根下（没有落到别处）
         assert str(session_dir).startswith(str(out_root))
 
 
@@ -504,6 +470,5 @@ def test_end_to_end_finalize_step_records_failure_when_a_route_dies(
         )
         steps = {step["id"]: step for step in done["ended"]["steps"]}
         assert steps["flush"]["status"] == "done"
-        # 死掉那一路留下的是它读到的那三块；另一路照常继续、字节数更多
         assert (session_dir / archive_name("loopback")).stat().st_size == 3 * CHUNK_BYTES
         assert (session_dir / archive_name("mic")).stat().st_size > 3 * CHUNK_BYTES

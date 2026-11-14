@@ -1,22 +1,8 @@
-"""`tests/test_port_policy.py` —— 端口策略、命令面与退出码（设计口径第 1 / 2 / 6 / 7 条）。
+"""端口策略、命令面与退出码。
 
-覆盖：
-  - 默认 8765；`web.port` / `MEETING_PORT` 能改；`0` 让系统挑并打印 / 落 log 选中端口；
-  - **只监听 127.0.0.1**（两条独立断言：主 log 绑定行的 `getsockname` host、枚举出的非回环地址被拒）；
-  - 两种占用情形的文案与**退出码 `EXIT_REJECTED`**；探针 **1 秒总超时**（另断一条 ≤ 5 秒墙钟）；
-  - **用法错误 → `EXIT_REJECTED`**（无参数 / 未定义动作词）；
-  - **空闲态 `CTRL_BREAK_EVENT` → `EXIT_OK`** + `收到 SIGBREAK，进入关停` + 信号自检通过两行 log；
-  - `install_shutdown_signal_handlers()` 后 `getsignal(SIGINT) is getsignal(SIGBREAK)`（用后复原）；
-  - **`meeting` 命令面的最小验证**（`[project.scripts]` + 可调用对象 `is` 同一个入口）；
-  - **`post` extra 的依赖声明**（`[project.optional-dependencies].post` 在场且含 `av`，
-    模型依赖不在这里重复列）；
-  - 启动序列第 5 步「打开浏览器」在真子进程里的两种情形（`MEETING_NO_BROWSER=1` 跳过 /
-    打开失败只警告且服务照常起来）。**子进程里一律不许出现真浏览器**：要走到「打开浏览器」
-    这一步的用例（拿掉 `MEETING_NO_BROWSER` 的那一条）经 `fake_browser_module()` 注入一份假的
-    `webbrowser` 模块，`BROWSER=no-such-browser` 那套在 Windows 上会退到宿主默认浏览器，
-    已经废掉（见 `tests/_helpers.py` 的文件头说明）。
-
-`EXIT_STARTUP_UNMET` 这一档在本文件里**不出现**（§4.4 的落点分工）。
+**子进程里一律不许出现真浏览器**：要走到「打开浏览器」这一步的用例（拿掉
+`MEETING_NO_BROWSER` 的那一条）经 `fake_browser_module()` 注入一份假的 `webbrowser`
+模块，`BROWSER=no-such-browser` 那套在 Windows 上会退到宿主默认浏览器，已经废掉。
 """
 
 from __future__ import annotations
@@ -39,18 +25,12 @@ from meeting import cli as cli_module
 from meeting.cli import EXIT_OK, EXIT_REJECTED
 from meeting.service import app as service_app
 
-#: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md`。
 pytestmark = pytest.mark.slow
 
 DEFAULT_PORT = 8765
 SELF_CHECK_LINE = "信号接管自检通过：SIGINT 与 SIGBREAK 指向本服务的处理函数"
 SIGBREAK_LINE = "收到 SIGBREAK，进入关停"
 BIND_PREFIX = "绑定成功："
-
-
-# ---------------------------------------------------------------------------
-# 小工具
-# ---------------------------------------------------------------------------
 
 
 def _wait_heartbeat(port: int, timeout: float = 20.0) -> httpx.Response:
@@ -75,11 +55,6 @@ def _free_ephemeral_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
-
-
-# ---------------------------------------------------------------------------
-# 起得来、选中的端口说得出
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.slow
@@ -181,11 +156,6 @@ def test_port_zero_lets_os_choose_and_prints_it(tmp_path):
         proc.terminate()
 
 
-# ---------------------------------------------------------------------------
-# 只监听 127.0.0.1（两条独立断言）
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.slow
 def test_bind_address_from_log_is_loopback(tmp_path):
     """① 从服务级主 log 的绑定那一行读回真实 host：必须是 `127.0.0.1`。"""
@@ -243,11 +213,6 @@ def test_host_header_is_checked(tmp_path):
         assert response.status_code == 403
     finally:
         proc.terminate()
-
-
-# ---------------------------------------------------------------------------
-# 端口被占的两种情形（都以 EXIT_REJECTED 结束）
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.slow
@@ -317,16 +282,6 @@ def test_probe_total_timeout_is_one_second(tmp_path):
         silent.stop()
 
 
-# ---------------------------------------------------------------------------
-# 启动序列第 5 步「打开浏览器」（真子进程；§1.1 / §3.5 第 5 条）
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# 用法错误 / post 桩
-# ---------------------------------------------------------------------------
-
-
 def test_no_action_word_prints_usage_and_exits_rejected(tmp_path):
     """`meeting` 不带参数 → 用法说明 + `EXIT_REJECTED`。"""
     home = tmp_path / "home"
@@ -363,27 +318,9 @@ def test_exit_code_constants_match_the_frozen_table():
     assert cli_module.EXIT_INTERRUPTED == 130
 
 
-# ---------------------------------------------------------------------------
-# 信号接管
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.slow
 def test_idle_ctrl_break_event_exits_ok(tmp_path):
-    """空闲态发 `CTRL_BREAK_EVENT` → `EXIT_OK` + 两行 log（信号处理函数真的生效的证据）。
-
-    **与设计的信号语义同源**（§4 落点表 `tests/test_port_policy.py` 行点名的同源替换，
-    审查问题 M6）：子进程与信号辅助改用 `tests/_service.py` 的 `ServiceProcess`
-    （`send_interrupt()` 发的同样是 `CTRL_BREAK_EVENT`，退出码走 `wait()` /
-    `poll()`）—— 此前这里走的是 `tests/_helpers.py` 的 `spawn_service()` / `send_break()`，
-    两者机制本来相同，却让「空闲态 `Ctrl+C`」这一档在仓库里有两套写法。**只换辅助来源**：
-    下面的断言与语义一个字没动（同一条退出码常量、同一行 log、同一条「输出根不凭空多目录」
-    的自检）。
-
-    **授权来源（第七轮审查 m4）**：设计口径落点表把这一处动作明写成「同源替换：只同步
-    断言、不改设计的契约取值」；端口策略的两种占用文案、探针 1 秒超时、其余退出码档位
-    取值与 `getsignal(SIGINT) is getsignal(SIGBREAK)` 那一条都不动。
-    """
+    """空闲态发 `CTRL_BREAK_EVENT` → `EXIT_OK` + 两行 log（信号处理函数真的生效的证据）。"""
     home = tmp_path / "home"
     home.mkdir()
     helpers.write_config_json(home, {"web.port": 0})
@@ -422,7 +359,6 @@ def test_console_script_entry_is_callable_and_shared():
     module_name, _, attr = target.partition(":")
     resolved = getattr(importlib.import_module(module_name), attr)
 
-    # `python -m meeting` 也指向同一个入口（解析 `模块:属性` 得到的对象与 `meeting.cli.main` 同一）
     entry_module = importlib.import_module("meeting.__main__")
     assert entry_module.main is cli_module.main
     assert getattr(entry_module, "main") is resolved

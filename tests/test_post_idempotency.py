@@ -64,7 +64,6 @@ from meeting.cli import (
 )
 from meeting.post_run import run_post
 
-#: 慢档标记（收尾轮）：`meeting post` 是收尾功能，整文件归收尾验收。
 pytestmark = pytest.mark.slow
 
 #: 离线那一层的状态文件名（按产物契约取，不重写一遍字面量）
@@ -81,9 +80,7 @@ SOURCES = ("mic", "loopback")
 BG_TIMEOUT_SECONDS = 4.0
 
 
-# ---------------------------------------------------------------------------
 # 假件：两个只登记的替身 + 第二层网
-# ---------------------------------------------------------------------------
 
 
 class FakeMinutesHook:
@@ -154,9 +151,7 @@ def _a_short_minutes_bound(monkeypatch: pytest.MonkeyPatch) -> float:
     return 0.4
 
 
-# ---------------------------------------------------------------------------
 # 小工具
-# ---------------------------------------------------------------------------
 
 
 def digest(path: Path) -> str:
@@ -273,9 +268,7 @@ def a_finished_session(root: Path) -> tuple[Path, FakeEngine, SettlingLauncher]:
     return session, engine, launcher
 
 
-# ---------------------------------------------------------------------------
 # 一、连跑三遍：第二、三遍两条计数都不涨
-# ---------------------------------------------------------------------------
 
 
 def test_the_second_run_calls_neither_the_engine_nor_the_launcher(tmp_path: Path) -> None:
@@ -358,9 +351,7 @@ def test_the_repeat_runs_write_no_offline_product_again(tmp_path: Path) -> None:
     assert digest_set(session, names) == before
 
 
-# ---------------------------------------------------------------------------
 # 二、无待办：两层都到终态时「什么都不跑」
-# ---------------------------------------------------------------------------
 
 
 def test_no_pending_work_prints_one_line_and_calls_nothing(
@@ -434,9 +425,7 @@ def test_minutes_done_without_the_final_artifact_is_not_finished(tmp_path: Path)
     assert (session / MINUTES_FINAL_NAME).is_file()
 
 
-# ---------------------------------------------------------------------------
 # 三、只补缺的那一层（两个方向各一条）
-# ---------------------------------------------------------------------------
 
 
 def test_a_done_offline_layer_is_left_alone_while_minutes_are_added(tmp_path: Path) -> None:
@@ -503,9 +492,7 @@ def test_an_injected_launcher_stands_in_for_the_gate(tmp_path: Path) -> None:
     assert launcher.calls == [str(session)], "已是终态时这一格不该再涨"
 
 
-# ---------------------------------------------------------------------------
 # 四、`running` 那一档：默认拒跑，`--force` 是出路
-# ---------------------------------------------------------------------------
 
 
 def test_a_running_offline_layer_rejects_the_run(
@@ -624,9 +611,7 @@ def test_force_reaches_the_gate_not_only_the_summary(tmp_path: Path) -> None:
     assert forced["force"] is True
 
 
-# ---------------------------------------------------------------------------
 # 四之二、在飞那一段缝：`running` 落在 `launch()` 返回之前，紧接着的第二趟拒跑
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture
@@ -772,9 +757,7 @@ def test_the_minutes_tail_keeps_its_own_announce_function(
     assert before.__qualname__ == "_announce_minutes"
 
 
-# ---------------------------------------------------------------------------
 # 六、**注入路径**上的等待：拉起那一档等的是**本趟新落的终态**
-# ---------------------------------------------------------------------------
 
 
 class ExplodingConverter:
@@ -1023,9 +1006,7 @@ def test_a_failed_archive_keeps_the_no_pending_work_message_away(tmp_path: Path)
     assert "音频已归档" not in str(summary.get("error") or "")
 
 
-# ---------------------------------------------------------------------------
 # 七、闸自己那一层：读方与判据都借现成的
-# ---------------------------------------------------------------------------
 
 
 def test_the_minutes_gate_rejects_a_status_file_without_the_required_fields(

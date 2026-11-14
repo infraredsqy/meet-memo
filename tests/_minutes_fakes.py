@@ -4,9 +4,7 @@
 「一份过得了判据的收尾稿」这份共用样本；`RecordingLauncher` / `FakeHook` / `FakeResolution`
 / `RecordingConverter` 假掉「拉起子会话 / 解析钩子 / 转码」三处接缝；`write_minutes_done()`
 / `write_final()` / `DelayedHookImplementation` 摆出「真 `MinutesHook` 先落 `running`、
-隔一会儿落终态」的那个时序现场。原先分别住在 `test_minutes_launch.py` / `test_cli_post.py`
-/ `test_post_idempotency.py`、被这条链上的用例文件互相 import 的正本搬到这里，用法一律
-`from tests._minutes_fakes import ...`。
+隔一会儿落终态」的那个时序现场。
 """
 
 from __future__ import annotations

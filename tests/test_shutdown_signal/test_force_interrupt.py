@@ -37,12 +37,7 @@ from tests.test_shutdown_signal._common import (
     case_env,
 )
 
-#: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md`。
 pytestmark = pytest.mark.slow
-
-# ---------------------------------------------------------------------------
-# ③ 收尾中途第二次按 → 强制打断档
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.slow
@@ -53,10 +48,10 @@ def test_second_sigbreak_during_drain_exits_130(service_process, case_env):
     `SHUTDOWN_BLOCKING_STEP_SECONDS`，轮询 `/api/state` 一定能在阻塞结束之前查到
     `flush` 那一步 `status == "running"`，那时收尾确实还在跑。
 
-    **「立即中止」的时延**（§3.5 行为表第二行、修审查问题 M5）：第二次按下之后进程必须在
+    **「立即中止」的时延**：第二次按下之后进程必须在
     `INTERRUPT_EXIT_LATENCY_LIMIT_SECONDS` 之内退出，而**在飞的同步步还剩
     `SHUTDOWN_BLOCKING_STEP_SECONDS` 那么久** —— 收尾各步的工作线程是 daemon，所以这段
-    剩余时长不参与进程退出（判据与实测见那个常量的说明）。
+    剩余时长不参与进程退出。
     """
     case_started = time.monotonic()
     plugin = fakes.write_knob_plugin(
@@ -87,9 +82,8 @@ def test_second_sigbreak_during_drain_exits_130(service_process, case_env):
     _assert_interrupted_face(proc)
     log_text = _log_text(proc)
     assert INTERRUPTED_LINE in log_text
-    # **M5 的那一格**：这一档（`stop` 之后收尾中再按）用户只按了**一次**，而冻结常量的文案
-    # 写的是「用户第二次 Ctrl+C」—— 常量逐字冻结不动，同一行里补上真实按下次数，记录因此
-    # 不失真。子进程的计数器从 0 起，这一按就是第 1 次。
+    # 这一档用户只按了**一次**（`stop` 之后收尾中再按）；同一行里补上真实按下次数，
+    # 记录因此不失真。子进程的计数器从 0 起，这一按就是第 1 次。
     assert f"{INTERRUPTED_LINE}（本次是第 1 次按下）" in log_text, (
         f"强制打断那一行该带上真实按下次数：\n{log_text[-1200:]}"
     )
@@ -104,48 +98,22 @@ def test_second_sigbreak_during_drain_exits_130(service_process, case_env):
     _finish_case(case_started, "③ 收尾中途第二次按")
 
 
-# ---------------------------------------------------------------------------
-# ③b 同一个进程**连按两次**：第二次的 `force=True` 那一格（**C1**）
-#
-# 契约 §3.5 的行为表把四类触发点列成四格并要求**逐条落地、不许合并成一条路径**。其中
-# 「第二次按下 / 收尾进行中」这一格的判据落在**处理函数内部数出来的按下次数**上：处理函数
-# 每进来一次就把 `_shutdown_press_count` 加一、算出 `force = 次数 > 1`，随回调一起排进事件
-# 循环；`ServiceRuntime.trigger_shutdown(force=...)` 据此走强制打断那一支。
-#
-# ③（`test_second_sigbreak_during_drain_exits_130`）验的是**另一格**：那一刻 `stop` 已经让
-# 盘上停在 `ended·draining`，用户**只按了一次**，判据落在状态上（`force=False`），落进 log 的
-# 是「本次是第 1 次按下」。**「同一个进程连按两次、第二次带 `force=True`」这一格因此在
-# 修本条之前没有任何进程级用例走到过。** 下面这一条把它走到底：连按两次、断言落进 log 的
-# 是「本次是第 2 次按下」（那行文案里的次数就是 `force` 的实测形式）。
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.slow
 def test_second_press_in_the_same_process_carries_force_true(service_process, case_env):
-    """**同一个进程连按两次** → 第二次按下带 `force=True`，强制打断档收场（C1）。
+    """**同一个进程连按两次** → 第二次按下带 `force=True`，强制打断档收场。
 
     现场（一个子进程、两次 `CTRL_BREAK_EVENT`）：
 
       1. `start` 进 `recording`；
-      2. **第一次按下** —— 这一刻 `top_state == "recording"`，走 §3.5 第一行那条路
-         （`stop_session(reason="ctrl_c")` 起收尾、等它落定）；断言它**确实走的是这一行**
-         （服务级 log 里有「第一次 Ctrl+C：收尾已起」），于是第二次按下的 `force=True`
-         真的来自「同一次进程里的第二次信号」，与状态判据无关；
+      2. **第一次按下** —— 这一刻 `top_state == "recording"`，走 stop_session 那条路；
+         断言它**确实走的是这一行**（服务级 log 里有「第一次 Ctrl+C：收尾已起」），于是
+         第二次按下的 `force=True` 真的来自「同一次进程里的第二次信号」，与状态判据无关；
       3. 收尾**还在跑**（假采集件 `finalize()` 在工作线程里睡
          `SHUTDOWN_BLOCKING_STEP_SECONDS`，轮询到 `flush` 那一步停在 `running`——同步点确定，
          不靠抢时间窗口）；
       4. **第二次按下** —— 这时收尾仍在进行，处理函数内部计数走到 2、`force=True`。
 
-    断言（与 ③ 同一套结果字段，另加 `force` 那一格的可判定形式）：
-
-      - 退出码 `EXIT_INTERRUPTED`（强制打断档）；
-      - 盘上 `state == "draining"`、`interrupted is True`、无 `ended_at`、原 `steps` 保留
-        （`_assert_interrupted_face()` 逐项断言）；
-      - 服务级 log 里有强制打断那行，且**「本次是第 2 次按下」**——这一行里的次数就是
-        `force` 的实测形式（`force = 次数 > 1`）；
-      - 两行「收到 SIGBREAK，进入关停」都在（两个信号真的都送达了同一个处理函数）；
-      - 「立即中止」：退出时延在 `INTERRUPT_EXIT_LATENCY_LIMIT_SECONDS` 之内（在飞那一步
-        还剩 `SHUTDOWN_BLOCKING_STEP_SECONDS`，收尾用的工作线程是 daemon、进程不等它）。
+    「本次是第 2 次按下」这一行里的次数就是 `force` 的实测形式（`force = 次数 > 1`）。
     """
     case_started = time.monotonic()
     plugin = fakes.write_knob_plugin(
@@ -161,7 +129,6 @@ def test_second_press_in_the_same_process_carries_force_true(service_process, ca
     session_dir = _latest_session_dir(proc)
     assert read_session_json(session_dir)["state"] == "recording"
 
-    # **第一次按下**：落在 `recording` 这一格（`force=False`，走 stop_session 那条路）
     first_pressed = time.monotonic()
     proc.send_interrupt()
     _wait_state(
@@ -174,7 +141,7 @@ def test_second_press_in_the_same_process_carries_force_true(service_process, ca
         f"第一次按下该走「录音中按一次」那一条路（日志里没有那句话）：\n{_log_text(proc)[-1500:]}"
     )
 
-    # **确定的同步点**：收尾还在跑（`flush` 那一步停在 `running`），这时才按第二次
+    # **确定的同步点**：这时才按第二次
     during = _wait_state(
         proc,
         lambda snap: _step_statuses(snap).get("flush") == "running",
@@ -190,12 +157,11 @@ def test_second_press_in_the_same_process_carries_force_true(service_process, ca
 
     disk = _assert_interrupted_face(proc)
     log_text = _log_text(proc)
-    # **C1 的那一格**：这一行里的次数就是处理函数内部数出来的 `force`（2 > 1）
+    # 这一行的次数就是处理函数内部数出来的 `force`（2 > 1）
     assert f"{INTERRUPTED_LINE}（本次是第 2 次按下）" in log_text, (
         f"第二次按下该落「本次是第 2 次按下」那一行（`force=True` 的实测形式）：\n"
         f"{log_text[-1500:]}"
     )
-    # 两次按下都真的送到了同一个处理函数
     assert log_text.count(SIGBREAK_LINE) == 2, (
         f"同一个进程里该落下两行「{SIGBREAK_LINE}」：\n{log_text[-1500:]}"
     )
@@ -220,11 +186,6 @@ def test_second_press_in_the_same_process_carries_force_true(service_process, ca
         f"「{SIGBREAK_LINE}」共 {log_text.count(SIGBREAK_LINE)} 行"
     )
     _finish_case(case_started, "③b 同一进程连按两次")
-
-
-# ---------------------------------------------------------------------------
-# ④ 已经停在 `ended·draining` 再按 → 与 ③ 同结果
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.slow

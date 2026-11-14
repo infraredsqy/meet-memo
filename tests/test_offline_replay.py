@@ -1,19 +1,8 @@
-"""`meeting/offline/replay.py` 与 `meeting replay` 入口的契约用例（节点）。
-
-要盯住的几条：
-
-  - **素材只读**：重放跑完，原场次目录逐字节不变（含 `session.json` 与两路音频）；
-  - **上限真的截到了**：`--seconds` / `--chunks` 两种表达都换算成秒并落在拷贝上
-    （拷贝里的段 PCM 就是截断后的长度，盘上现量）；
-  - **`chunk_seconds <= 0` 时按块上限如实拒绝**（备料决策 d1，不硬猜）;
-  - **只跑同一条链、不拉纪要**：产物形状与生产一致、拷贝目录里零纪要文件；
-  - **读数三样**：实时率、每块耗时、失败原因分布都在打印文本里；
-  - **两遍同量级**：同一份素材跑两遍（假引擎），读数结构一致、比值 < 10×（决策 d6）。
+"""`meeting/offline/replay.py` 与 `meeting replay` 入口的契约用例。
 
 全部进程内、全部假件：引擎用本文件的假货（直注入或 `post.engine = module:Class`），
-**真引擎一次都不许被构造**（`no_real_engine_can_ever_be_built`，照
-`tests/test_cli_post_config.py` 抄的红线）。本文件是**快档**：不挂 `slow`，
-单条用例 ≤ 5 秒。
+**真引擎一次都不许被构造**（`no_real_engine_can_ever_be_built`）。本文件是**快档**：
+不挂 `slow`，单条用例 ≤ 5 秒。
 """
 
 from __future__ import annotations
@@ -40,11 +29,6 @@ from meeting.offline.progress import PROGRESS_NAME, CHUNK_STATES
 SAMPLE_RATE = 16000
 
 
-# ---------------------------------------------------------------------------
-# 红线：真引擎一次都不许被构造（照 `tests/test_cli_post_config.py:101-121` 抄）
-# ---------------------------------------------------------------------------
-
-
 @pytest.fixture(autouse=True)
 def no_real_engine_can_ever_be_built(monkeypatch: pytest.MonkeyPatch) -> Any:
     """**本文件的红线**：真离线引擎一次都不许被构造（绝不加载权重、绝不联网）。"""
@@ -56,11 +40,6 @@ def no_real_engine_can_ever_be_built(monkeypatch: pytest.MonkeyPatch) -> Any:
 
     monkeypatch.setattr(engine_module, "MossOfflineEngine", _NeverBuiltEngine)
     return _NeverBuiltEngine
-
-
-# ---------------------------------------------------------------------------
-# 假件
-# ---------------------------------------------------------------------------
 
 
 class FakeReplayEngine:
@@ -169,11 +148,6 @@ def staged_pcm_size(work_dir: Path, source: str) -> int:
     return (work_dir / f"meeting_audio_{source}_001.pcm").stat().st_size
 
 
-# ---------------------------------------------------------------------------
-# 上限换算（决策 d1）
-# ---------------------------------------------------------------------------
-
-
 def test_cap_to_seconds_converts_both_forms() -> None:
     assert replay_module.cap_to_seconds() is None
     assert replay_module.cap_to_seconds(seconds=4.5) == 4.5
@@ -192,15 +166,10 @@ def test_cap_to_seconds_rejects_bad_forms() -> None:
     with pytest.raises(ValueError):
         replay_module.cap_to_seconds(chunks=2.5)  # type: ignore[arg-type]
     with pytest.raises(ValueError):
-        # `chunk_seconds = 0`（不分块）时块语义塌缩：如实拒绝，不硬猜（决策 d1）
+        # `chunk_seconds = 0`（不分块）时块语义塌缩：如实拒绝，不硬猜
         replay_module.cap_to_seconds(chunks=3, chunk_seconds=0)
     with pytest.raises(ValueError):
         replay_module.cap_to_seconds(seconds=1, chunks=1)
-
-
-# ---------------------------------------------------------------------------
-# 重放本体：截断、只读、同一条链
-# ---------------------------------------------------------------------------
 
 
 def test_replay_truncates_by_seconds_and_leaves_source_untouched(tmp_path: Path) -> None:
@@ -215,19 +184,17 @@ def test_replay_truncates_by_seconds_and_leaves_source_untouched(tmp_path: Path)
         config=FakeConfig(),
     )
 
-    # 截断落在了拷贝上：两路各 4.0 秒（64000 样本 × 2 字节），整场 8.0 秒
+    # 截断落在了拷贝上：两路各 4.0 秒，整场 8.0 秒
     assert staged_pcm_size(tmp_path / "work", "mic") == 4.0 * SAMPLE_RATE * 2
     assert staged_pcm_size(tmp_path / "work", "loopback") == 4.0 * SAMPLE_RATE * 2
     assert reading["measured_seconds"] == 8.0
     assert reading["per_source"]["mic"]["seconds"] == 4.0
     assert reading["cap_seconds"] == 4.0
-    # 读数三样都在
     assert reading["rtf"] is not None and reading["rtf"] > 0
     assert reading["counts"]["transcribed"] == 2
     assert reading["summary"]["state"] == "done"
     # 逐块进度记录落在了拷贝目录里（注入的 ledger）
     assert (tmp_path / "work" / PROGRESS_NAME).exists()
-    # 原目录一个字节没动、一个文件没添
     assert digest_tree(source) == before
 
 
@@ -243,7 +210,6 @@ def test_replay_by_chunks_uses_effective_chunk_seconds(tmp_path: Path) -> None:
         config=config,
     )
 
-    # 3 块 × 2.0 s = 每路 6.0 s 截断（整场 12.0 s）；链按 2.0 s 块长把每路切成 3 块
     assert reading["cap_seconds"] == 6.0
     assert reading["measured_seconds"] == 12.0
     assert reading["per_source"]["loopback"]["chunks"] == 3
@@ -275,7 +241,7 @@ def test_replay_rejects_missing_session_dir(tmp_path: Path) -> None:
 
 
 def test_replay_twice_same_material_readings_comparable(tmp_path: Path) -> None:
-    """决策 d6 的判尺在假引擎上先走一遍流程：两遍结构一致、比值 < 10×。"""
+    """判尺在假引擎上先走一遍流程：两遍结构一致、比值 < 10×。"""
     source = synth_session(tmp_path / "250906", seconds=10.0)
     config = FakeConfig()
 
@@ -420,11 +386,6 @@ def test_format_reading_lists_the_three_required_readings(tmp_path: Path) -> Non
     assert str(tmp_path / "work") in text
 
 
-# ---------------------------------------------------------------------------
-# 入口：`meeting replay <场次目录> ...`
-# ---------------------------------------------------------------------------
-
-
 def _run_entry(capsys: pytest.CaptureFixture[str], *argv: str) -> tuple[int, str, str]:
     with pytest.raises(SystemExit) as excinfo:
         replay_entry(list(argv))
@@ -447,7 +408,7 @@ def test_replay_entry_usage_errors(tmp_path: Path, capsys: pytest.CaptureFixture
     code, out, err = _run_entry(capsys, "--bogus", str(tmp_path))
     assert code == EXIT_REJECTED
     assert "用法：meeting replay" in err
-    assert "每路" in err  # --chunks N 按路计：mic、loopback 各领一份 N 块（review-1 m2）
+    assert "每路" in err  # --chunks N 按路计：mic、loopback 各领一份 N 块
 
     code, _out, err = _run_entry(capsys, str(tmp_path), "--seconds")
     assert code == EXIT_REJECTED
@@ -480,9 +441,7 @@ def test_replay_entry_runs_with_config_selected_engine(
     assert code == EXIT_OK
     assert "实时率" in out
     assert "失败原因分布" in out
-    # 引擎是按生效配置的选择器造出来的
     assert ConfigSelectedEngine.constructed
-    # 拷贝与产物都落在 --out 给的目录里
     assert staged_pcm_size(tmp_path / "work", "mic") == 2 * SAMPLE_RATE * 2
     assert (tmp_path / "work" / "meeting_offline_report.md").exists()
 

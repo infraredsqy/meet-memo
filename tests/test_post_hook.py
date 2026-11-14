@@ -1,14 +1,5 @@
 """`meeting/backends/post.py` 的契约用例：解析落点、收尾第 4 步的接线、惰性导入。
 
-三条要盯的：
-
-  1. `resolve_post_hook()` 解析到本实现，`has_implementation is True`，
-     `capabilities_of()` 不把它当替身（本类只是解析落点，不带任何钩子方法）；
-  2. 收尾第 4 步**不拉起任何会后动作**：那一格如实停在 `waiting`（＝等你动手），
-     释放显存照做，事后盘上也不多出一份离线状态文件；
-  3. 惰性导入：全新解释器里 `import meeting.backends.post` 与
-     `import meeting.offline.runner`，`torch` / `transformers` / `av` 都不在 `sys.modules`。
-
 全部用例注入假引擎或假替身，一条都不加载真模型。
 """
 
@@ -29,11 +20,6 @@ from meeting.backends.registry import capabilities_of, resolve_post_hook
 from meeting.offline import artifacts
 
 from tests import _helpers as helpers
-
-
-# ---------------------------------------------------------------------------
-# 一、解析：拿到本实现，不被当成替身
-# ---------------------------------------------------------------------------
 
 
 def test_resolve_post_hook_lands_on_this_implementation() -> None:
@@ -75,17 +61,11 @@ def test_hook_declares_no_capture_capabilities() -> None:
     assert not hasattr(post_module.PostProcessHook, "launch")
 
 
-# ---------------------------------------------------------------------------
-# 二、收尾第 4 步的接线证明
-# ---------------------------------------------------------------------------
-
-
 def test_the_drain_post_step_leaves_the_lane_waiting_for_the_user(
     tmp_path: Path, monkeypatch
 ) -> None:
     """收尾第 4 步**不拉起任何会后动作**，这一格如实停在 `waiting`（＝等你动手）。
 
-    R26 / `docs/design-intent.md` 第 10 条：按「结束录音」之后什么都不发生。
     走的是真路径：开一场（dev 采集替身）→ 真 `_resolve_backends()` 按 `post.hook = auto`
     解析到本实现 → 真正的 `_drain_post()` 跑那一步。判据是「这一格停 `waiting`、
     盘上也不多出一份离线状态文件」（本实现不带任何钩子方法，一个会后动作都起不了）。
@@ -136,7 +116,6 @@ def test_the_drain_post_step_leaves_the_lane_waiting_for_the_user(
 
     step = next(item for item in runtime.snapshot.ended.steps if item.id == "post")
     assert step.status == "waiting", (step.status, step.detail, step.error)
-    # 「什么都不按」是合法的一档（R26），而这一格已经走完了：盘上不会多出一份离线状态文件
     assert not (session_dir / artifacts.STATUS_NAME).exists()
 
 
@@ -182,25 +161,14 @@ def test_the_post_step_stays_waiting_even_without_a_hook(tmp_path: Path, monkeyp
 
     step = next(item for item in runtime.snapshot.ended.steps if item.id == "post")
     assert step.status == "waiting", (step.status, step.detail, step.error)
-    # 缺席那一档的解析结论照旧（本实现到位之后，这一档只在显式取 null 时出现）
     assert runtime.post_resolution.skipped() is True
     assert runtime.post_resolution.target is None
 
 
-# ---------------------------------------------------------------------------
-# 三、收尾第 4 步**只做一件事**：让会中模型退出显存
-#
-# 为什么这一步还要跑：会中那个模型用完了就该当场退出显卡（`docs/design-intent.md` 第 21 条），
-# 这件事与「要不要跑会后」无关。会后那两趟活各有各的按钮，这一条线一次都不碰它们。
-#
-# 判据取**事件列表**：替身后端的 `release_gpu()` 往列表里记一笔 —— 列表里只有
-# `release` 这一项。不用固定 `sleep` 赌时序（项目纪律），也不读源码行号。
-# ---------------------------------------------------------------------------
-
 #: 释放抛异常时写进 log 的那一段（用例按它核实「如实登记、不静默」）
 RELEASE_FAILURE_NOTE = "会中模型退出显存失败"
 
-#: 收尾那几步的 logger（record 直接挂在这一层上；见 `recording_log` 的说明）
+#: 收尾那几步的 logger（record 直接挂在这一层上）
 RUNTIME_LOGGER_NAME = "meeting.service.runtime"
 
 
@@ -208,7 +176,7 @@ class CapturedLog(logging.Handler):
     """直接挂在被测 logger 上的记录器。
 
     为什么不走 pytest 的 `caplog`：项目 `meeting` 那一层 logger 是 `propagate = False`
-    （`meeting/logging_setup.py` 第 58 行，为的是不污染 torch / transformers 的日志），
+    （为的是不污染 torch / transformers 的日志），
     记录冒不到根上，`caplog` 一条都收不到。这里自己挂 handler，判据读实测文本。
     """
 
@@ -243,7 +211,7 @@ def _post_wiring(tmp_path: Path, monkeypatch, *, events: list[str], transcriber_
     """把运行时推到「第 4 步待跑」那一档：dev 采集替身 + 解析到位的会后钩子落点。
 
     `events` 由调用方给（替身后端的 `release_gpu()` 往这一份里记一笔 —— 事件列表里
-    排出的先后，就是这一步的顺序证据）。返回 `(runtime, previous)`。
+    排出的先后，就是这一步的顺序证据）。
     """
     from meeting.service.app import build_runtime
     from meeting.state import begin_drain
@@ -284,8 +252,8 @@ def _post_wiring(tmp_path: Path, monkeypatch, *, events: list[str], transcriber_
 def test_the_backend_release_still_runs_on_the_drain_post_step(tmp_path, monkeypatch) -> None:
     """**释放照做、会后不碰**：`release_gpu()` 被喊到一次，会后一个动作都不起。
 
-    事件列表里只有 `release` 这一项 —— 会中模型当场退出显存（`docs/design-intent.md`
-    第 21 条），会后那两趟活留给用户手上的两个按钮。
+    事件列表里只有 `release` 这一项 —— 会中模型当场退出显存，
+    会后那两趟活留给用户手上的两个按钮。
     """
     import asyncio
 

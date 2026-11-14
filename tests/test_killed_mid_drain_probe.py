@@ -1,24 +1,8 @@
-"""造场探针（spec  完成判定第一条）：被强杀在收尾半路的场次能收口。
+"""造场探针：被强杀在收尾半路的场次能收口。
 
-**造场**（盘上那份 `session.json` 就是「强杀留下的现场」本身，人一个字节不手改产品产物）：
+**造场**：盘上那份 `session.json` 就是「强杀留下的现场」本身，人一个字节不手改产品产物。
 
-  1. 工作区里躺着一场会，盘上停在收尾半路：`state="draining"` + `interrupted: true`、
-     **`ended_at` 缺失**（结束标记没写成）、`drain.steps` 里 `flush` 停在 `running`、
-     其余 `waiting` —— 正是「收尾期间按第二次 Ctrl+C 落盘之后进程被杀」的现场
-     （`docs/state.md`那一段）；
-  2. 经 `workspace_open` 登记进工作台（登记不改写任何盘上文件）；
-  3. 起真服务子进程（`MEETING_NO_BROWSER=1`，窗口纪律由测试层兜底）。
-
-**断言**：
-
-  - `GET /api/sessions` 里这一场是 `ended`（三档口径：录音已发生过）；
-  - 「生成会后精细稿」（`post_offline`）用假件引擎拿到 200 受理，应答形状是真实的那一副
-    （`{ok, revision, post: {kind, dir}}`）；
-  - 「生成纪要」（`post_minutes`）同样 200 受理；
-  - minutes 还在飞时第二发并发被「已经有一趟在飞」的闸拒（409 `draining`，`detail` 落在
-    `{kind, dir, started_at}`）—— 拒的理由落在闸上，不再提「落盘没落定」。
-
-**硬约束（全局指令）**：autopilot 节点绝不许把纪要交付给 DSH 或真实跑会后链 —— 两个后端
+**硬约束**：autopilot 节点绝不许把纪要交付给 DSH 或真实跑会后链 —— 两个后端
 全是本用例自带的假件：`post.engine` / `minutes.hook` 都指 `module:Class` 假实现（临时目录
 经 `PYTHONPATH` 注入子进程），假 minutes 只往**临时工作区**写一个标记文件，不探任何
 `minutes.dsh_url`、不发任何网络请求。
@@ -39,14 +23,12 @@ from tests import _helpers as helpers
 from tests._helpers import wait_until
 from tests._service import post_action
 
-#: 慢档标记：真服务子进程，不进每次迭代圈（全量档归收尾）。
 pytestmark = pytest.mark.slow
 
 #: 假 minutes 钩子拿「在飞」撑多久（秒）：第二发并发要撞上「有一趟在飞」的闸，
 #: 第一趟的线程得还活着。取值收在红线内：够两发 HTTP 一前一后即可。
 MINUTES_IN_FLIGHT_SECONDS = 1.0
 
-#: 等假 minutes 的标记文件落地的上限（秒）。
 MINUTES_MARKER_TIMEOUT_SECONDS = 3.0
 
 #: 假 minutes 落下的标记文件名（写进**临时工作区**，不碰任何真实路径）。
@@ -139,7 +121,6 @@ def test_a_session_killed_mid_drain_reads_ended_and_post_actions_are_acceptable(
     )
     pythonpath = os.pathsep.join([str(helpers.REPO_ROOT), str(fake_dir)])
 
-    # 造场 + 配置（两个会后后端全指假件；采集替身；离线引擎假件）
     workspace = _craft_killed_mid_drain_session(env.out_root)
     env.write_config(
         {
@@ -163,7 +144,6 @@ def test_a_session_killed_mid_drain_reads_ended_and_post_actions_are_acceptable(
     assert opened.status_code == 200, opened.text
     assert opened.json()["workspace"]["kind"] == "meeting"
 
-    # ② 工作区清单：这一场是「录音结束」（ended），不是 recording、不是 draining
     listing = _get(base_url, "/api/sessions")
     assert listing.status_code == 200, listing.text
     rows = {row["dir"]: row for row in listing.json()["sessions"]}
@@ -171,12 +151,10 @@ def test_a_session_killed_mid_drain_reads_ended_and_post_actions_are_acceptable(
     assert row["state"] == "ended", row
     assert row["dir_exists"] is True and row["kind"] == "meeting"
 
-    # ③ 单场读数同一套口径
     single = _get(base_url, f"/api/sessions/{quote(str(workspace))}")
     assert single.status_code == 200, single.text
     assert single.json()["state"] == "ended"
 
-    # ④「生成会后精细稿」：假件引擎在场 → 200 受理，应答是真实形状
     offline_receipt = post_action(base_url, "post_offline", {"dir": str(workspace)})
     assert offline_receipt.status_code == 200, offline_receipt.text
     body = offline_receipt.json()
@@ -202,7 +180,6 @@ def test_a_session_killed_mid_drain_reads_ended_and_post_actions_are_acceptable(
         "inputs": "none",  # 现场没有稿子：回执如实说破输入档位（纪要免闸的读数）
     }, minutes_body
 
-    # ⑥ 第二发并发：撞上「已经有一趟在飞」的闸（409 draining，理由落在闸上）
     second = post_action(base_url, "post_minutes", {"dir": str(workspace)})
     assert second.status_code == 409, second.text
     refusal = second.json()

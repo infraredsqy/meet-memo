@@ -10,14 +10,7 @@ import type { EventsSource } from './events-source';
  *
  * 判据全部来自服务推的快照（SSE **那条唯一连接**在 `App.tsx` 顶层 —— 全页恰一个
  * `EventSource`，本组件不再自持连接），具体条件在 `home/gate.ts`
- * （`showsWorkspaceHome()`）里逐条写着，本组件只照它选一屏：
- *
- * - 回工作台：`idle` 且没有场次；以及 `ended`——**任意相都回**（：停止录音
- *   那一刻就能回工作台，哪怕落盘还在跑）。按「结束录音」之后会后一个动作都不自动跑，
- *   工作区回到「当前没有进行中的会议」——「我这些会」那一行还在，右边是这一场的详情，
- *   会后那两个按钮住在那里；收尾只剩详情里那一小块落盘进度（ui-design 4.2 二），
- *   它的读数（快照 `ended`）从这里转手进去。
- * - 留在会中那一屏：`recording` / `alert`。
+ * （`showsWorkspaceHome()`）里逐条写着，本组件只照它选一屏。
  *
  * 首份快照没到之前一帧都不画（给一行占位，见下）。
  *
@@ -37,10 +30,6 @@ export function HomeGate({
     return <p className="hint">正在接服务…</p>;
   }
   if (showsWorkspaceHome(snapshot)) {
-    // 心跳周期顺手交给工作台：会后进度区的轮询跟着同一个可配节奏走（节点）。
-    // 唯一的 SSE 连接经 `events` 转手给会中那一屏；工作台不开 SSE（R27）。
-    // 落盘那一小块的读数是快照 `ended` 的原文（快照一路在推，那一小块跟着翻面），
-    // 它只对快照里那一场（`session.dir`）说话，详情里只在选中它时显示。
     return (
       <WorkspaceHome
         heartbeatSeconds={snapshot.settings.heartbeat_interval_seconds}

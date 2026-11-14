@@ -1,8 +1,4 @@
-"""ServiceRuntime 的「后端接线与探测」mixin：绑定 / 解析 / 探测 / 起停。
-
-方法与方法间注释均自 meeting/service/runtime.py 第 644-1167 行一字不改复制；
-本文件自写内容只有模块 docstring、import 与 _log 一行、类声明行。
-"""
+"""ServiceRuntime 的「后端接线与探测」mixin：绑定 / 解析 / 探测 / 起停。"""
 from __future__ import annotations
 
 import asyncio
@@ -32,8 +28,6 @@ _log = logging.getLogger("meeting.service.runtime")
 
 class RuntimeBackendsMixin:
     """「后端接线与探测」：revision 等只读小接口、绑定地址、startup/shutdown、后端解析与设备探测。"""
-
-    # 只读小接口
 
     @property
     def revision(self) -> int:
@@ -68,11 +62,11 @@ class RuntimeBackendsMixin:
     def _settings_view(self) -> SettingsView:
         """快照 `settings` 的生效值视图。
 
-        口径（§3.5.5 + §7.1 高危点 7）：这里读的是运行期生效值。归 `pending_restart` 的键
+        口径：这里读的是运行期生效值。归 `pending_restart` 的键
         在 `settings_update` 写盘成功后快照不会立刻反映，要重启才可见；热读键写盘后立刻换新值
         （`settings_update()` 按 `applied` 重取一次本函数）——`alarm.sound`、设置抽屉四项、
         会中切模型两键都走这一条（设备改完紧接着的 `reprobe` 按新值挑；会中仍不换设备，
-        `docs/contract.md` 第 7 章）。`settings.devices` 两子键取设备键位生效值（没配即
+        （设备改完紧接着的 `reprobe` 按新值挑；会中仍不换设备）。`settings.devices` 两子键取设备键位生效值（没配即
         `null`）；`summary_preset_names` 只给名字（预设内容与密钥不进快照），
         `summary_active_preset` 指针不在清单里时实际生效的是平铺档，照实报空串。
         """
@@ -86,7 +80,7 @@ class RuntimeBackendsMixin:
         return SettingsView(
             alarm_sound=bool(self._value("alarm.sound")),
             heartbeat_interval_seconds=int(self._value("heartbeat.interval_seconds")),
-            # 快速总结的缺省档：四档取值（装载与写前校验都只放四档，这里原样带出）
+            # 快速总结的缺省档：装载与写前校验都只放已知档位，这里原样带出
             summary_default_window=str(self._value("summary.default_window")),
             summary_preset_names=preset_names,
             summary_active_preset=active_preset,
@@ -157,7 +151,7 @@ class RuntimeBackendsMixin:
         # ④ 解析三个后端（唯一入口是 registry；失败回退替身 + warning）
         self._resolve_backends()
 
-        # ④b 会后在飞记录的核对（的 d5）：上一趟会后被进程死掉截断时，盘上停着
+        # ④b 会后在飞记录的核对：上一趟会后被进程死掉截断时，盘上停着
         # running、记录还写着 —— 这里把它补成 `interrupted`（治「杀了进程就永远停在在跑」
         # 那条病）。这是「启动序列不读场次目录」那条口径的**定向例外**：只读记录里点名的
         # 那一场，不扫任何目录；核对的任何意外只警告，不阻塞启动。
@@ -166,13 +160,13 @@ class RuntimeBackendsMixin:
         # ⑤ 组装初始快照（`top_state: idle`、`session: null`、`sources` 取 probe() 的三态）
         self._probe_devices()
 
-        # ⑤b `transcript` 三格的初值取自后端，不留给 dataclass 默认值（复审 m3）：
+        # ⑤b `transcript` 三格的初值取自后端，不留给 dataclass 默认值：
         # 默认 `health = "normal"` 要等健康度节拍第一拍（0.5 秒后）才被刷成真实现空闲态的
         # `stopped`——idle 契约样本只描述前半秒、空闲用例被迫抢拍，一条纯粹的时序依赖。
         # 就地取一次之后 `revision` 停在 `REVISION_START`（`startup()` 不做提交，返回值有意
         # 丢掉）。位置必须在 ⑤ 之后：`_probe_devices()` 才把转写后端 `bind()` 上。
         self._refresh_transcript_snapshot()
-        # 空闲态不发提示级（`docs/ui-design.md` 章 2.5）：显式清一次，让「快照 = 登记」
+        # 空闲态不发提示级：显式清一次，让「快照 = 登记」
         # 这条不变量从第一帧就成立。
         self._clear_hints()
 
@@ -180,7 +174,7 @@ class RuntimeBackendsMixin:
         self._open_browser()
 
     def _reconcile_interrupted_post_jobs(self) -> None:
-        """启动时对一遍「在飞」记录（的 d5；记录按 `(种类, 场次)` 一格一条，
+        """启动时对一遍「在飞」记录（记录按 `(种类, 场次)` 一格一条，
         这里逐条走）：记录里点名的、盘上仍 `running` 的那一场 offline 会后，补成
         `interrupted`，然后清记录。
 
@@ -250,9 +244,8 @@ class RuntimeBackendsMixin:
     async def shutdown(self) -> None:
         """关停动作：停 ticker、停采集、**停转写**、清关停目标（本项目不做收尾，收尾归设计）。
 
-        `transcriber_backend.stop()` 在关停路径上一直缺一个调用点：协议里这个方法从设计
-        就冻结着，而在此之前没有任何一处调它 —— 于是转写的读线程与 worker 会一直挂到进程退出
-        （设计口径的那条接线）。它与采集一样**失败只登记、不抛**：关停路径上
+        关停路径上要调 `transcriber_backend.stop()`：少了这个调用，转写的读线程与
+        worker 会一直挂到进程退出。它与采集一样**失败只登记、不抛**：关停路径上
         任何一步出事都不许把进程卡住。
         """
         if self._ticker is not None:
@@ -459,10 +452,10 @@ class RuntimeBackendsMixin:
         )
 
     def reprobe(self) -> None:
-        """`reprobe`：重新枚举并试开设备，更新快照两路（设计口径）。
+        """`reprobe`：重新枚举并试开设备，更新快照两路。
 
         **只在没有场次在跑的时候可用**：`recording` / `alert` 态下这两路设备是开场前定下来的，
-        会中换设备属于明文不做的那一档（`docs/contract.md` 第 7 章），因此这两态一律拒绝，
+        会中换设备属于明文不做的那一档，因此这两态一律拒绝，
         `code` 取既有的 `already_recording`（取值域冻结在 `ACTION_CODES` 里，不自造新码）。
         `ended`（含收尾停留档）态下采集已经停了，重新探测不干扰任何在飞的东西。
         """
@@ -485,7 +478,7 @@ class RuntimeBackendsMixin:
         return self.probes
 
     def _apply_probe_results(self, *, reason: str, threshold: str) -> None:
-        """把 `self.probes` 按 `source` 落进快照两路（设计口径的落点）。
+        """把 `self.probes` 按 `source` 落进快照两路。
 
         越界取值（后端返回第四个探针状态这类）记 warning 并把该路落 `probe_failed`：
         服务照常起、`top_state` 不动。

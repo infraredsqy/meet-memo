@@ -1,10 +1,7 @@
 """`meeting post` 的会后编排：`run_post()` 与它的辅助函数族。
 
-`meeting/cli.py` 只留参数面、入口路由与 web 启动；会后编排整族住在本模块——
-音频归档补齐（`sync_archive()`）、幂等闸、离线与纪要两层的结论与等待、摘要汇总
-（`_summarize_run()`）。编排只有 `run_post()` 这一条入口：`meeting/cli.py` 的
-`post()` 与收尾第 4 步共用；收尾第 4 步不拉起任何会后动作，「生成会后精细稿」按钮
-走 `run_session` 直路。
+编排只有 `run_post()` 这一条入口：`meeting/cli.py` 的 `post()` 与收尾第 4 步共用；
+收尾第 4 步不拉起任何会后动作，「生成会后精细稿」按钮走 `run_session` 直路。
 """
 
 from __future__ import annotations
@@ -31,23 +28,19 @@ from meeting.session import (
     segment_archive_paths,
 )
 
-# 会后编排（`meeting post` 这条入口的 run_post()；收尾不自动跑、按钮走 run_session 直路）
 
-#: 归档那一层的三种结论文档名
 ARCHIVE_DONE = "done"
 ARCHIVE_SKIPPED = "skipped"
 ARCHIVE_FAILED = "failed"
 
-#: 归档那一层每个源的三档结论文档名（「转出了」/「没什么要转的」/「转砸了」）
+#: 归档那一层每个源的三档结论（「转出了」/「没什么要转的」/「转砸了」）
 OUTCOME_CONVERTED = "converted"
 OUTCOME_NO_WORK = "no_work"
 OUTCOME_FAILED = "failed"
 
-#: 离线那一层的结论词（按层的终态分档）
 LAYER_DONE = "done"
 LAYER_ABSENT = "absent"
 LAYER_FAILED = "failed"
-LAYER_UNKNOWN = "unknown"
 
 #: 离线那一层**一路整条没交回、另一路跑成**那一档的结论词：它是这一层的终态（产物可用），
 #: 与 `done` 分开写，好让读方在一格上就看出「有一路整条没有」（`artifacts.STATES` 同值）。
@@ -62,27 +55,20 @@ LAYER_INTERRUPTED = "interrupted"
 #: 两层共用的「上一趟还在跑 / 崩在半路」那一档（`meeting post` 默认拒跑的那一档）
 LAYER_RUNNING = "running"
 
-#: 纪要那一层独有的**第四档**：已交付 DSH web 服务端生成、产物还没落。
-#:
-#: 它既不是 `running`（本进程没有线程在跑）也不是 `done`（产物还没经四条判据），因此
-#: 单独给一个词：读方按它判「这一场已经交付过、别再拉起第二个会话」，按产物判「完成没有」。
+#: 纪要那一层独有的**第四档**：已交付 DSH web 服务端生成、产物还没落。读方按它判
+#: 「这一场已经交付过、别再拉起第二个会话」，按产物判「完成没有」。
 LAYER_DELIVERED = "delivered"
 
-#: 纪要那一层的产物名（场次目录根）：终态状态文件与纪要本体
 MINUTES_FINAL_NAME = "meeting_final.md"
 
 #: 等纪要那一层终态的上界（秒）的兜底档：**只在连配置表都读不到时**用它，
 #: 正常路径读的是现成的纪要墙钟键 `minutes.timeout_seconds`。
 MINUTES_TIMEOUT_FALLBACK_SECONDS = 14400.0
 
-#: 等纪要时每一次读盘之间那一小会儿。
-#:
-#: 这里只能读盘、没有可挂的事件：纪要那一层由启动器起一条 daemon 线程，终态由那条线程
-#: 或 headless 子进程写进 `meeting_minutes_status.json`——编排函数手里没有可 join 的句柄，
-#: 盘上那份状态文件就是唯一的完成通知。等待因此有界：上界取 `minutes.timeout_seconds`。
+#: 等纪要时每一次读盘之间那一小会儿：编排函数手里没有可 join 的句柄（终态由后台线程或
+#: headless 子进程写进状态文件），盘上那份状态文件就是唯一的完成通知。
 MINUTES_POLL_SECONDS = 0.05
 
-#: 编排函数在摘要里报的三步（终端按这个顺序打「每步做了什么」）
 POST_STEPS: tuple[tuple[str, str], ...] = (
     ("archive", "音频归档补齐（PCM -> MP3）"),
     ("offline", "会后离线（离线转写与说话人聚类）"),
@@ -92,11 +78,6 @@ POST_STEPS: tuple[tuple[str, str], ...] = (
 
 def _log() -> logging.Logger:
     return logging_setup.get_logger("cli")
-
-
-# ---------------------------------------------------------------------------
-# 会后编排（两条入口共用这一段）
-# ---------------------------------------------------------------------------
 
 
 def run_post(
@@ -110,25 +91,6 @@ def run_post(
     progress: offline_progress.OfflineProgressLedger | None = None,
 ) -> dict[str, Any]:
     """把「跑会后一套」跑一遍，交回一份可读摘要（`post()` 与收尾第 4 步共用）。
-
-    四件事，按顺序：
-
-      1. 音频归档补齐（`sync_archive()`）：两路各自独立判、独立转。判据是转码独立工序那一份
-         （`meeting/capture/transcode.py` 的凭据核对）：凭据认账不重转、空段不产 MP3、
-         没凭据 / 不认账的重转一次；转码失败如实记 `failed`、PCM 一个字节都不动。
-         转码实现只有一份（`capture.archive` 的 `convert_to_mp3` + `mp3_path_for`）。
-      2. 跑离线那一趟：`offline_runner.run_session(...)` 走模块属性调用，好让用例整个换掉；
-         注入参数一路向下传，不落在模块全局上。`announce_minutes=True` 是人工放行那一格
-         （隔离闸）：离线链拉起纪要的开关缺省假，只有 `meeting post` 这条人工入口显式传真。
-         逐块进度记录在这一条入口上也立起来（`progress` 缺省时按 `runtime._run_post_offline()`
-         同一副样子立一份），页面读会后进度不因「这一趟是命令行拉起的」而空着
-         （`docs/design-intent.md` 第 12 条：落盘跟着链走，不挑入口）。
-      3. 等纪要那一层的终态：纪要挂在离线链尾巴上（`_announce_minutes()`），要等它落定才报
-         结论。三条拉起路径共用同一处等待（`_wait_for_settled_minutes()`）：判据是盘上那份
-         状态与拉起之前的基线（`_minutes_baseline()`）不同、且已落终态，于是上一趟留在盘上的
-         终态不会被当成这一趟的结果。结论如实三分：新终态 `done` 且产物过判据 → 成功档；
-         `failed` / 产物过不了判据 / 读不动 → 如实失败；到上界仍未落定 → `timeout` 那一档。
-      4. 汇总：每层结论 + 逐条产物绝对路径 + 退出码，都在返回的摘要里。
 
     幂等闸判定一律落在花钱之前（`sync_archive()` 之后、`run_session()` 之前）。
     「已完成」判据两层各一份：离线段 = 状态文件 `done` 且三份产物齐；纪要段 = 状态文件
@@ -181,7 +143,6 @@ def run_post(
         except Exception:  # pragma: no cover - 日志尚未初始化时只走终端
             pass
 
-    # ---- 幂等闸：两层各自的现状，判定落在花钱之前 ----
     offline_status = _offline_status(directory)
     minutes_status = _minutes_status(directory)
     # 拉起之前那一份基线快照：拉起之后要等的「新终态」就是与它不同的那一份。
@@ -214,10 +175,9 @@ def run_post(
     minutes_complete = _minutes_layer_done(directory, minutes_status)
     offline_done = bool(offline_complete and not force)
     minutes_done = bool(minutes_complete and not force)
-    # 「这一趟没有待办」的前置是「音频已归档」（设计口径「关键决定 4」）：归档有一路转不动
+    # 「这一趟没有待办」的前置是「音频已归档」：归档有一路转不动
     # 时不许走这一档——既不能报 `EXIT_OK`，也不能打一句「音频已归档」。
     if offline_done and minutes_done and result["archive"]["state"] != ARCHIVE_FAILED:
-        # 两层都到终态、产物齐、音频已归档：一个引擎调用、一个子进程都不产生。
         result["offline"] = _finished_offline_outcome(directory, offline_status)
         result["minutes"] = _finished_minutes_outcome(directory, minutes_status)
         result["artifacts"] = _artifact_paths(directory)
@@ -240,8 +200,8 @@ def run_post(
             if minutes_launcher is not None
             else None
         )
-        # 逐块进度记录在这一条入口上也落（`docs/design-intent.md` 第 12 条：
-        # 落盘跟着链走、不挑是哪个按钮拉起的）；调用方注入的那一份优先。
+        # 逐块进度记录在这一条入口上也落（落盘跟着链走、不挑是哪个按钮拉起的）；
+        # 调用方注入的那一份优先。
         if progress is None:
             # 场次元信息（编号与路清单）从它的家现取（`runner/session_info.py`），
             # 逐块进度记录自己不再反向问编排器。
@@ -266,7 +226,6 @@ def run_post(
                 _log().exception("会后离线那一趟抛出来了：%s", directory)
             except Exception:  # pragma: no cover - 同上
                 pass
-            # 上抛之前把状态文件补一版 `failed`，好让直接调 `run_post()` 的读者也有记录可查。
             _mark_offline_failed(directory, offline_error)
             raise
 
@@ -505,9 +464,6 @@ def _settled_minutes_outcome(
     return row
 
 
-# 幂等闸：两层各自的「已完成」判据与那三种「不必跑」的结论
-
-
 def _capturing_launcher(
     launcher: Any, announced: list[dict[str, Any]]
 ) -> Callable[[str], Any]:
@@ -628,12 +584,6 @@ def _layer_is_running(status: dict[str, Any], keys: tuple[str, ...]) -> bool:
 
 
 def _minutes_is_delivered(status: dict[str, Any]) -> bool:
-    """纪要这一层是不是已经交付给 DSH web 服务端（终态 `delivered`）。
-
-    web 分支的语义是「投递 accepted 即算交付完成」：这一档既不算「正在跑」（本进程没有
-    线程在跑）也不算「已完成」（产物还没过四条判据）——它是第三种「不必再拉起」的情形：
-    已经交付过，重复拉起只会让同一场生成两遍（`--force` 是重新交付的出路）。
-    """
     return str(status.get("state") or "") == LAYER_DELIVERED
 
 
@@ -643,7 +593,6 @@ def _missing_names(directory: Path, names: Iterable[str]) -> list[str]:
 
 
 def _offline_artifacts_complete(directory: Path, status: dict[str, Any]) -> bool:
-    """离线段的三份产物是不是都在：逐路的两份按本场声明的每一路各算一份，外加一份报告。"""
     names = [REPORT_NAME]
     for source in offline_runner.declared_sources(directory):
         names.append(TRANSCRIPT_NAME_TEMPLATE.format(source=source))
@@ -737,9 +686,6 @@ def _failure_summary(
     )
 
 
-# 音频归档补齐（PCM → MP3）
-
-
 def sync_archive(
     session_dir: Path | str,
     *,
@@ -825,9 +771,6 @@ def sync_archive(
     elif all(row["outcome"] == OUTCOME_NO_WORK for row in rows):
         state = ARCHIVE_SKIPPED
     return {"state": state, "sources": rows}
-
-
-# 每层的结论与产物
 
 
 def _minutes_timeout_seconds() -> float:
@@ -981,8 +924,6 @@ def _minutes_from_launcher(
     returned = outcome.get("returned")
     state = outcome.get("state")
     if hook == "launched":
-        # 拉起不等于落定，与「谁拉起的」无关：两者的终态都只由盘上那份状态文件回答。
-        # 一律等这一趟新落的终态（判据落在 `baseline` 上）；交回值里的 `state` 不当结论。
         waited = _wait_for_settled_minutes(
             directory, baseline=baseline, deadline=deadline
         )
@@ -1055,7 +996,6 @@ def _remaining_seconds(begun: float, budget: float, deadline: float | None) -> f
     return remaining
 
 
-
 def _read_minutes_state(status_path: Path) -> str | None:
     """纪要状态文件里的 `state`；文件不在 / JSON 坏 / 缺字段一律交回「读不动」。"""
     import json
@@ -1103,8 +1043,8 @@ def _minutes_settled(
 
     新落的：这一版的标记与基线那一版不同。终态：`state` 落在 `running` 之外、且这一版
     读得出内容——标记变了而状态读不出（空文件 / 坏 JSON）按「还在写」接着等：写方是
-    原子替换，读方偶尔撞上换文件那一瞬间（本机实测到过：刚换上去的那一版被读成空）；
-    真是残文件时到上界如实报 `timeout`。上一趟留在盘上的终态标记与基线相同，不算落定。
+    原子替换，读方偶尔撞上换文件那一瞬间；真是残文件时到上界如实报 `timeout`。
+    上一趟留在盘上的终态标记与基线相同，不算落定。
     """
     if mark == baseline.get("mark"):
         return False
@@ -1226,7 +1166,7 @@ def _summarize_run(result: dict[str, Any], *, error: str | None = None) -> dict[
     `EXIT_OK` 的前置是「这一趟要做的都做成了」。纪要层到上界还没落定如实写 `timeout`，
     不写成 `failed`——它还在跑，说成失败与说成成功一样是谎报（退出码照样不是成功档）。
     """
-    # 退出码五档与翻名表冻结在 `meeting/cli.py`（§3.4）：函数体内 import——cli 的模块级
+    # 退出码五档与翻名表冻结在 `meeting/cli.py`：函数体内 import——cli 的模块级
     # import 指到本模块，两边在 import 期互相等会转圈。
     from meeting.cli import EXIT_FAILURE, EXIT_OK, EXIT_REJECTED, _exit_name
 
@@ -1282,7 +1222,6 @@ def _summarize_run(result: dict[str, Any], *, error: str | None = None) -> dict[
         artifacts=result.get("artifacts") or _artifact_paths(directory),
     )
     return result
-
 
 
 __all__ = [

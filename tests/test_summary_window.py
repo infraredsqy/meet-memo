@@ -1,15 +1,5 @@
 """`meeting/summary/window.py` 的契约用例：缓冲、按时间戳切窗口、装配成文本。
 
-盯的是四件事（对应设计口径的完成判定与给复审的自检项）：
-
-  - **窗口按时间戳切**：`5m` 取的是「末行 `ts` 往前 300 秒」那一段连续尾部，
-    同一个 `ts` 上挤着的一批行**整批同进同出**（事故那一场里时间戳被压进同一分钟，
-    按行数切就会切错内容）；
-  - **缓冲的行为**：`seq` 从 0 起单调递增、`lines()` 交回的是副本（改不动缓冲）、
-    到顶从头丢最老的、`clear()` 之后从零开始；
-  - **线程安全**：多个线程同时 `append()`，一条都不丢、`seq` 不重号；
-  - **装配**：`render_window()` 把窗口变成一行一句的文本，原句逐字保留、行尾标来源。
-
 全部用例都不碰网络、不写盘，单条压在看门线以内。
 """
 
@@ -37,7 +27,6 @@ CASE_WALL_CLOCK_LIMIT_SECONDS = 5.0
 #: 读起来就是「最近几分钟」那一份真实形状。
 ANCHOR_TS = time.time()
 
-#: 秒数 → 一行（造样本时用）
 MINUTE = 60.0
 
 
@@ -255,7 +244,7 @@ def test_render_window_on_an_empty_window_is_an_empty_string() -> None:
 
 
 def test_source_labels_cover_the_two_paths_and_the_unknown_one() -> None:
-    """两路的人话标签逐字对齐设计章 2.3；认不出的来源报 `未知`，不编一个中文名给它。"""
+    """两路的人话标签；认不出的来源报 `未知`，不编一个中文名给它。"""
     assert source_label("mic") == "本地"
     assert source_label("loopback") == "远端"
     assert source_label("something-else") == "未知"

@@ -1,21 +1,4 @@
-"""`tests/test_sse.py` —— `GET /api/events` 与三通道（设计口径第七行；§3.8）。
-
-覆盖（逐条对 §5.1 的 ①–⑥）：
-
-  ① **首帧是 `snapshot`**：连上后第一个 `event:` 名必须是 `snapshot`、`data` 带完整状态字段；
-     录音中建连时首帧 `top_state == "recording"`（**不经过 `idle`**）；同一时刻
-     `GET /api/state` 的关键字段与首帧一致（`test_api_state_matches_first_frame`，
-     函数名与契约逐字一致）。
-     首帧时序的另一半（取快照与注册订阅之间没有 `await`）按源码文本自查（辅助证据）。
-  ② `state` 是**全量**快照、`id:` == `data.revision`。
-  ③ `levels` 4Hz 量级且**不占 revision**，`data` 形状 `{revision, frames: {mic, loopback}}`，
-     每个 source 带 `ts` / `dbfs` / `peak` / `bar` / `envelope`。
-  ④ `transcript` 形状 `{revision, line: {...}}`（骨架阶段恒 0 行；无转写后端时不报错、不断流）。
-  ⑤ 开头出现 `retry: 2000`；保活帧是仅一行注释 `: ping`（不伪造 `event` / `data`）。
-  ⑥ **慢消费者重同步**：一个只连不读的订阅者把队列灌到 512，再触发若干次状态变更 →
-     它最终收到一份带 `resync: true` 与 `dropped: N ≥ 1` 的 `snapshot`；
-     **另一个正常订阅者不受影响**、继续依次收到每次 `state`、revision **无跳号**。
-"""
+"""`GET /api/events` 与三通道。"""
 
 from __future__ import annotations
 
@@ -35,19 +18,11 @@ from meeting.service.hub import (
 )
 from tests._service import SseClient, parse_sse_frame
 
-#: 慢档标记（收尾轮）：真流式/真后端的收尾验收，不进每次迭代圈。
 pytestmark = pytest.mark.slow
 
-#: 用例的显式等待与读帧上限（秒）
 SSE_TIMEOUT_SECONDS = 15.0
-#: 4Hz 抽帧的观测窗口与期望帧数
 LEVELS_OBSERVE_SECONDS = 1.0
 LEVELS_MIN_FRAMES = 2
-
-
-# ---------------------------------------------------------------------------
-# 真服务：SSE 的基本行为
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture()
@@ -87,7 +62,6 @@ def test_first_frame_is_snapshot(dev_service):
     assert first["event"] == "snapshot", f"第一条事件帧必须是 snapshot：{first['raw']!r}"
     assert first["parsed"] is True
     assert first["data"]["revision"] >= before["revision"]
-    # 录音中建连：首帧就是真实态，**不经过 idle**
     assert first["data"]["top_state"] == "recording"
     assert set(first["data"]) == {
         "revision", "service", "top_state", "session", "sources",
@@ -125,7 +99,7 @@ def _dedent(source: str) -> str:
 
 
 def test_api_state_matches_first_frame(dev_service):
-    """① 同一时刻 `GET /api/state` 的关键字段与 SSE 首帧一致（§9-3，方案行 373）。"""
+    """同一时刻 `GET /api/state` 的关键字段与 SSE 首帧一致。"""
     proc = dev_service
     assert post(proc, "start").status_code == 200
 
@@ -154,7 +128,7 @@ def test_state_events_are_full_snapshots_with_matching_ids(dev_service):
     """② `state` 是全量快照，且帧级 `id:` == `data.revision`。"""
     proc = dev_service
     with SseClient(proc.base_url) as client:
-        client.read_frame(timeout=SSE_TIMEOUT_SECONDS)  # snapshot
+        client.read_frame(timeout=SSE_TIMEOUT_SECONDS)
         assert post(proc, "start").status_code == 200
         frame = client.read_until("state", timeout=SSE_TIMEOUT_SECONDS)
 
@@ -193,7 +167,6 @@ def test_levels_channel_shape_and_rate(dev_service):
     # 不占 revision：录音期间 revision 只在状态变更时涨（levels 一条都不涨它）
     state = helpers.local_get(f"{proc.base_url}/api/state", timeout=5.0).json()
     assert payload["revision"] <= state["revision"]
-    # 一帧 levels 不改变任何状态（顶态、场次都照旧）
     assert state["top_state"] == "recording"
 
 
@@ -220,7 +193,6 @@ def test_transcript_channel_shape_without_a_transcriber(dev_service):
         assert first["data"]["transcript"] == {
             "health": "normal", "last_line_at": None, "buffered_lines": 0, "failed_segments": 0,
         }
-        # 没有转写后端也不断流：还读得到 levels
         assert client.read_until("levels", timeout=SSE_TIMEOUT_SECONDS)["parsed"] is True
 
 
@@ -273,7 +245,6 @@ def test_hub_resyncs_the_slow_subscriber_and_leaves_the_fast_one_alone():
     assert slow_frame["data"]["resync"] is True
     assert slow_frame["data"]["dropped"] >= 1
 
-    # 正常订阅者不受影响：继续依次收到每次 state，revision 逐次 +1（无跳号）
     seen = []
     for step in range(5):
         revisions["value"] += 1
@@ -314,8 +285,7 @@ def test_event_names_are_the_frozen_four():
 def test_unknown_event_paths_are_not_invented(dev_service):
     """`/api/events` 的应答头是 SSE 类型（不是 HTML、不是 JSON）。"""
     proc = dev_service
-    # 复用探针的 client（本机新建一个 `httpx.Client` 要 0.83 秒，见 `helpers.local_get()`）；
-    # 不设 client 级超时，这一次流式读只受下面 `get()` 自带的超时约束
+    # 复用探针的 client；不设 client 级超时，这一次流式读只受下面 `get()` 自带的超时约束
     with helpers.local_client_for(f"{proc.base_url}/api/events").stream(
         "GET",
         f"{proc.base_url}/api/events",

@@ -1,9 +1,9 @@
-"""跨文件共用的假件与工厂辅助（设计口径；**`pytest` 不收集本文件**）。
+"""跨文件共用的假件与工厂辅助（**`pytest` 不收集本文件**）。
 
 定位与分工（写死，不留自由发挥的口子）：
 
-  - 本模块是 `tests/` 下**跨测试文件共用的假件与工厂辅助的唯一落点**，命名与设计的
-    `tests/_service.py` 同形；`tests/test_drain.py` 与 `tests/test_shutdown_signal.py` 都从这里
+  - 本模块是 `tests/` 下**跨测试文件共用的假件与工厂辅助的唯一落点**；`tests/test_drain.py`
+    与 `tests/test_shutdown_signal.py` 都从这里
     取假件，**只 import、不各自定义、不各写一份**，也不把假件塞进 `tests/conftest.py`
     （`conftest.py` 只放 fixture）。
   - **五个假件**（类名与使用者一一对应）：`FakeCaptureBackend`（可控拖长、会抛错的
@@ -16,10 +16,8 @@
     `BLOCK_SECONDS_ENV` 之外还有六个：`FINALIZE_DELAY_SECONDS_ENV` / `FINALIZE_ERROR_ENV` /
     `BACKLOG_DEPTH_ENV` /
     `SEGMENT_TIMEOUT_SECONDS_ENV` / `LAUNCH_DELAY_SECONDS_ENV` / `LAUNCH_THREAD_SECONDS_ENV`。
-    **有了这几个旋钮，用例侧不再需要「构造参数固定」的本地假件子类**：`tests/test_drain.py`
-    的 ③（有实现却抛错）/ ⑤（可控拖长）/ ⑤b2（大积压量）/ ⑥（启动即完成）/ ⑩（钉在 `running`）
-    各档全部由本文件的这五个共享假件配出来，那个文件**只 import、不自行定义**（§3.8 的口径）。
-    `tests/test_drain.py` 与 `tests/test_shutdown_signal.py` 因此都不再各自养一份假件源码。
+    **有了这几个旋钮，用例侧不再需要「构造参数固定」的本地假件子类**：各档全部由
+    本文件的这五个共享假件配出来，用例文件**只 import、不自行定义**。
   - **注入通道（唯一一种）**：假件写进临时目录、经 `PYTHONPATH`（= 仓库根 + 该临时目录）
     加既有配置键 `capture.backend` / `post.hook` / `transcriber.backend` 配进**真服务子进程**；
     子进程按 `module:Class` 解析。临时目录里那份模块**由本文件里的同一批类体生成**
@@ -64,19 +62,16 @@ LOAD_MARKER = "fake-modules-loaded"
 ANNOTATION_ENV = "MEETING_TEST_DRAIN_FAKES_ANNOTATION"
 
 #: **旋钮常量与缺省值定义在下面 `_CLASS_SOURCE_BEGIN` 之后的区段里**（不在这一层）。
-#:
 #: 那一段源码同时被**写出去**给子进程用（`_class_source()` 切片 + `_FAKE_MODULE_HEADER`），
 #: 于是「常量名 / 取值 / 读值助手 / 五个假件」**只有一份维护点**：本进程里 `from tests._drain_fakes
 #: import FakeCaptureBackend` 拿到的那一份，与子进程里 `registry` 解析出来的那一份，逐字同源。
 #: 旋钮清单与它们的用处见下面那一段的注释（`BLOCK_SECONDS_ENV` / `FINALIZE_*` /
 #: `BACKLOG_DEPTH_ENV` / `SEGMENT_TIMEOUT_SECONDS_ENV` / `LAUNCH_*` 共七个）。
-#:
 #: 三个配置键（既有的键，本项目不新增配置键）
 CONFIG_KEY_CAPTURE = "capture.backend"
 CONFIG_KEY_TRANSCRIBER = "transcriber.backend"
 CONFIG_KEY_POST = "post.hook"
 
-#: 五个假件的类名（与 `设计.md` §3.8 的清单逐字一致）
 FAKE_CLASS_NAMES: tuple[str, ...] = (
     "FakeCaptureBackend",
     "FakeTranscriberBackend",
@@ -188,29 +183,21 @@ _FAKE_MODULE_SOURCE = _FAKE_MODULE_HEADER + _class_source() + _FAKE_MODULE_FOOTE
 
 
 # ==== FAKE CLASS BODIES BEGIN ====
-# ---------------------------------------------------------------------------
 # 旋钮常量、缺省值与读值助手（**本区段整体写给子进程那一份模块**，一处维护、两处使用）
 #
-# 为什么旋钮走环境变量而不是构造参数：`registry` 对后端**无参实例化**（`cls()`，设计
-# 冻结的口径），假件的构造参数因此没法由配置键传进去。把「那一步睡多久 / 抛不抛错 / 报多大
-# 积压」经环境变量交给子进程里那份假件，于是用例侧那句话与实测一致。
+# 为什么旋钮走环境变量而不是构造参数：`registry` 对后端**无参实例化**（`cls()`），
+# 假件的构造参数因此没法由配置键传进去。
 #
 # **读值一律发生在调用时**（不在 import 期固化一个死值）：值是「这一次调用听谁的」那一件事实。
 # 本区段被 `_class_source()` 切出去时，`_FAKE_MODULE_HEADER` 里已经 import 了 `os` / `time` /
 # `threading` 三个标准库模块，因此这七个常量与三个助手在子进程那份模块里同样可用。
-# ---------------------------------------------------------------------------
 
-#: 承载「`BlockingThreadPostHook` 阻塞多少秒」的环境变量（**不是本服务的环境变量**）。
-#:
-#: 这一项让用例能把**契约里的那个常量**（`SHUTDOWN_BLOCKING_HOOK_SECONDS` /
-#: `DRAIN_BLOCKING_STEP_SECONDS`）真的交给子进程里的假件，于是「阻塞 N 秒」与实测一致 ——
-#: 用例侧不再有一个「只写在注释里」的死常量。
+#: 承载「`BlockingThreadPostHook` 阻塞多少秒」的环境变量（**不是本服务的环境变量**）：
+#: 用例侧的阻塞秒数经它真的交给子进程里的假件。
 BLOCK_SECONDS_ENV = "MEETING_TEST_DRAIN_BLOCK_SECONDS"
 
-#: **其余旋钮同走环境变量**（与 `BLOCK_SECONDS_ENV` 同一手法、同一理由）。有了它们，
-#: `tests/test_drain.py` 不再自建「构造参数固定」的本地假件类，③ / ⑤ / ⑤b2 / ⑥ / ⑩ 各档
-#: 一律用下面这五个共享假件经环境变量配出来：
-#:
+#: **其余旋钮同走环境变量**（与 `BLOCK_SECONDS_ENV` 同一手法、同一理由），各档一律用
+#: 下面这五个共享假件经环境变量配出来：
 #:   - `FINALIZE_DELAY_SECONDS_ENV`：`FakeCaptureBackend.finalize()` 睡多久（可控拖长）；
 #:   - `FINALIZE_ERROR_ENV`：非空即让 `finalize()` 抛 `OSError`（造「有实现却抛错」）；
 #:   - `BACKLOG_DEPTH_ENV` / `SEGMENT_TIMEOUT_SECONDS_ENV`：`FakeTranscriberBackend` 报的
@@ -219,7 +206,7 @@ BLOCK_SECONDS_ENV = "MEETING_TEST_DRAIN_BLOCK_SECONDS"
 #:   - `LAUNCH_THREAD_SECONDS_ENV`：`FakePostHook` 把这个秒数丢进工作线程（`0` = 那条线程
 #:     永不返回，即「启动即算完成、不等它跑完」那一档）；
 #:   - `CLOCK_OFFSET_SECONDS_ENV`：配合 `FINALIZE_MARKER_ENV`，把这只时钟往前拨多少秒
-#:     （「越过预算 → 该步 `failed`」那一档用，说明见 `FINALIZE_MARKER_ENV`）。
+#:     （「越过预算 → 该步 `failed`」那一档用）。
 CLOCK_OFFSET_SECONDS_ENV = "MEETING_TEST_DRAIN_CLOCK_OFFSET_SECONDS"
 FINALIZE_DELAY_SECONDS_ENV = "MEETING_TEST_DRAIN_FINALIZE_DELAY_SECONDS"
 FINALIZE_ERROR_ENV = "MEETING_TEST_DRAIN_FINALIZE_ERROR"
@@ -228,19 +215,17 @@ SEGMENT_TIMEOUT_SECONDS_ENV = "MEETING_TEST_DRAIN_SEGMENT_TIMEOUT_SECONDS"
 LAUNCH_DELAY_SECONDS_ENV = "MEETING_TEST_DRAIN_LAUNCH_DELAY_SECONDS"
 LAUNCH_THREAD_SECONDS_ENV = "MEETING_TEST_DRAIN_LAUNCH_THREAD_SECONDS"
 
-#: **让某一步真的越过这一趟收尾预算**的旋钮（写它的那一步见下）：给一个文件路径时，
+#: **让某一步真的越过这一趟收尾预算**的旋钮：给一个文件路径时，
 #: 那一步把**时钟偏移秒数**写进那个文件。
-#:
-#: 为什么需要它（写清、别读成「绕过断言」）：这一趟收尾的总上限写死是
+#: 为什么需要它：这一趟收尾的总上限写死是
 #: `budget = 30 + backlog × (segment_timeout + 5)`，**下限 30 秒且不开配置键** —— 「某一步
 #: 越过预算 → 该步 `failed`」这条行为在真服务里不睡满 30 秒就造不出来，而用例的红线是 ≤ 5 秒。
-#: 这个旋钮不碰收尾编排、也不改预算：它只把**进程自己读的那只单调钟**往前拨（拨法见
-#: `tests/_drain_fakes.py` 的 `write_clock_offset_shim()`），于是 deadline 真的过期、越界真的由
+#: 这个旋钮不碰收尾编排、也不改预算：它只把**进程自己读的那只单调钟**往前拨，
+#: 于是 deadline 真的过期、越界真的由
 #: `_drain_wait()` 与事件循环的计时判出来（那一步 `error` 里的两个数仍由被测代码给出）。
-#:
-#: **它由哪一步写**：第 1 步 `flush`（`FakeCaptureBackend.finalize()` 返回前）。
-#: 原先写在 `post` 那一步的会后钩子上，而按「结束录音」之后会后一个动作都不自动跑（R26），
-#: 那一步已经不再被调用 —— 标记因此改由收尾里**第一个真实调用**写下，排在它后面的
+#: **它由哪一步写**：第 1 步 `flush`（`FakeCaptureBackend.finalize()` 返回前）——
+#: 会后钩子那一步已不再被调用（「结束录音」之后会后一个动作都不自动跑），标记改由
+#: 收尾里**第一个真实调用**写下，排在它后面的
 #: `transcode` / `log` / `post` 三格面对的剩余预算随即过期，越界照样落在真实的调用上。
 FINALIZE_MARKER_ENV = "MEETING_TEST_DRAIN_FINALIZE_MARKER"
 
@@ -429,7 +414,7 @@ class FakeTranscriberBackend:
         return _seconds_from_env(SEGMENT_TIMEOUT_SECONDS_ENV, self._segment_timeout)
 
     def release_gpu(self) -> bool:
-        """收尾的 `post` 那一步现在只做这件事（R26：会后归用户手上那两个按钮）。
+        """收尾的 `post` 那一步现在只做这件事（会后归用户手上那两个按钮）。
 
         它照真后端那条防御式取法被用到（`getattr(self.transcriber_backend, "release_gpu", None)`
         + 经 `_drain_wait()` 提交到工作线程），收尾编排里该跑的四步因此一步不少。
@@ -447,8 +432,7 @@ class FakePostHook:
 
     **两个旋钮都可以由环境变量顶掉**（构造参数进不了子进程）：
     `LAUNCH_DELAY_SECONDS_ENV`（拖长多少秒）与 `LAUNCH_THREAD_SECONDS_ENV`（把多少秒丢进
-    工作线程；`0` = 那条线程永不返回）。两个值都**在 `launch()` 里现读**。`tests/test_drain.py`
-    的 ⑤ 与 ⑥ 就是经这两个旋钮配出来的。
+    工作线程；`0` = 那条线程永不返回）。两个值都**在 `launch()` 里现读**。
 
     `launch()` 里的 `time.sleep` 由运行时的**收尾专用 daemon 执行器**推进工作线程，
     因此这里同步睡多久都不会把事件循环钉住。
@@ -515,10 +499,8 @@ class BlockingThreadPostHook:
     应答，「轮询到某步处于运行中」这个同步点因此一定等得到（同步阻塞若真的落在事件循环上，
     那个窗口根本不会出现）。
 
-    **阻塞秒数从 `BLOCK_SECONDS_ENV` 读**（构造参数由 `registry` 的无参实例化挡住，见那个
-    环境变量的说明）：用例把契约里的 `SHUTDOWN_BLOCKING_HOOK_SECONDS` 经它交给子进程，
-    于是「阻塞多少秒」与实测一致。没给该变量时取 3.0。`tests/test_drain.py` 的 ⑩ 与
-    `tests/test_shutdown_signal.py` 的 ② / ③ 都经这个假件造同步点。
+    **阻塞秒数从 `BLOCK_SECONDS_ENV` 读**（构造参数由 `registry` 的无参实例化挡住）：
+    用例把阻塞秒数经它交给子进程，没给该变量时取 3.0。
     """
 
     def __init__(self, *, block_seconds: float | None = None) -> None:
@@ -604,9 +586,7 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-# ---------------------------------------------------------------------------
 # 工厂：把假件写进临时目录、拼出 PYTHONPATH 与配置键
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -628,7 +608,7 @@ class FakePlugin:
         return f"{FAKE_MODULE_NAME}:{class_name}"
 
     def pythonpath(self, repo_root: str | Path) -> str:
-        """子进程的 `PYTHONPATH`：**仓库根 + 临时假件目录**（两个条目，口径见 §3.8）。
+        """子进程的 `PYTHONPATH`：**仓库根 + 临时假件目录**（两个条目）。
 
         现场带了时钟替身目录时（`clock_dir` 非空）再追加第三个条目 —— 它只出现在
         「某一步越过预算」那一档的现场里，常规现场仍是两个条目。
@@ -663,10 +643,8 @@ def write_fake_module(
       直接 import 使用（真服务子进程那一支一律用默认的完整源码）；
     - `note`：给这个现场留一行说明，落在同目录的 `README.txt` 里。
 
-    **没有「追加自定义类」这一项**（审查问题 M1 收掉的那一条）：`tests/test_drain.py` 曾经
-    经一个 `extra_classes=` 参数把六个「构造参数固定」的本地假件类追加进来。那些旋钮现在都
-    在上面那几个环境变量上，用例只 import 这五个共享假件即可 —— 追加口子一并去掉，
-    免得下一位再从这条路上养出第二份假件源码。
+    **没有「追加自定义类」这一项**：旋钮都在上面那几个环境变量上，用例只 import
+    这五个共享假件即可 —— 免得再从这条路上养出第二份假件源码。
     """
     home = Path(home)
     directory = home / "drain-fakes"
@@ -781,7 +759,7 @@ def fake_transcriber_plugin(
 
 
 def write_failing_post_hook(home: Path | str, *, capture: str = "dev") -> FakePlugin:
-    """挂「`launch()` 抛错」的假会后钩子（§4 点名的辅助；`test_shutdown_signal.py` ④ / ⑤ 用它）。
+    """挂「`launch()` 抛错」的假会后钩子。
 
     采集侧由 `capture` 决定（缺省 `dev` 采集替身）：`POST start` 要能真开起来，
     收尾才能走到 `post` 那一步去撞那个抛错的钩子。`capture=""` 表示这一项不写进配置。
@@ -865,7 +843,7 @@ def write_slow_drain_plugin(
     """挂「`flush` 与 `post` 两步可控拖长」的假件现场（`tests/test_drain.py` ⑤ / ⑤b2）。
 
     拖长落在**采集后端的 `finalize()`** 与**会后钩子的 `launch()`** 上（四步里没有一步是转写
-    后端的调用，§3.3 的判据这么要求）；积压量与段长仍由转写假件报（`backlog_depth` /
+    后端的调用）；积压量与段长仍由转写假件报（`backlog_depth` /
     `segment_timeout` 非空时经环境变量交给 `FakeTranscriberBackend`）。
     """
     return write_knob_plugin(
@@ -898,7 +876,7 @@ def write_immediately_returning_post_plugin(home: Path | str, *, capture: str = 
 def write_blocking_post_hook(
     home: Path | str, *, capture: str = "dev", block_seconds: float | None = None
 ) -> FakePlugin:
-    """挂「把阻塞放进工作线程」的假会后钩子（`test_shutdown_signal.py` ③ 用它钉同步点）。
+    """挂「把阻塞放进工作线程」的假会后钩子。
 
     `block_seconds` 给定时，经 `BLOCK_SECONDS_ENV` 交给子进程里的假件（**这就是契约里那个
     `SHUTDOWN_BLOCKING_HOOK_SECONDS` 真正生效的地方**）；不给时假件取它自己的缺省 3.0。
@@ -956,9 +934,7 @@ def write_clock_offset_plugin(
     return plugin
 
 
-# ---------------------------------------------------------------------------
 # 环境变量与配置文件的装配（与 `tests/_helpers.py` 同一套隔离手法）
-# ---------------------------------------------------------------------------
 
 
 def service_env_overrides(
@@ -985,7 +961,7 @@ def service_env_overrides(
 def write_plugin_config(home: Path | str, plugin: FakePlugin) -> Path:
     """把假件的配置键写进 `<家目录>/.config/meeting/config.json`（**点号扁平键**）。
 
-    键名与形状照设计冻结的口径：只有一层点号扁平键名，**嵌套形状不合法**。
+    只有一层点号扁平键名，**嵌套形状不合法**。
     """
     from tests import _helpers as helpers
 
@@ -1000,16 +976,15 @@ def json_dump(path: Path | str, data: dict[str, Any]) -> Path:
     return path
 
 
-# ---------------------------------------------------------------------------
 # 「某一步越过预算」那一档的控速件：把子进程读的那只单调钟按标记前移
 #
-# 为什么需要它（写清，别读成绕过断言）：收尾预算的下限是 `DRAIN_BUDGET_MIN_SECONDS` = 30 秒、
-# 封顶 300 秒，公式与三个数都**硬编码、不开配置键**（设计口径）。于是「某一步越过预算 →
+# 为什么需要它：收尾预算的下限是 `DRAIN_BUDGET_MIN_SECONDS` = 30 秒、
+# 封顶 300 秒，公式与三个数都**硬编码、不开配置键**。于是「某一步越过预算 →
 # 该步 `failed`」这条行为在真服务里不睡满 30 秒就造不出来，而用例的红线是「单条 ≤ 5 秒」。
 # 本文件因此给一条**只在用例显式开了旋钮时才生效**的控速件：
 #
 #   `FakeCaptureBackend.finalize()` 跑完之后（`FINALIZE_MARKER_ENV` 给了路径时）把偏移秒数
-# 写进那个文件 → 子进程里被注入的 `clockoffset` 模块（见 `write_clock_offset_shim()`）
+# 写进那个文件 → 子进程里被注入的 `clockoffset` 模块
 # 把 `meeting.service.runtime` 与拆分进各 mixin 模块（`runtime_facts` / `runtime_sessions` /
 #   `runtime_summary` / `runtime_drain`）的那几处 `time` 名字换成自己的替身 → 此后工作线程里的
 #   `_remaining_budget()` 读到的单调钟整体前移 → 那一条 deadline 真的过期。
@@ -1018,7 +993,6 @@ def json_dump(path: Path | str, data: dict[str, Any]) -> Path:
 # `asyncio.wait_for` + 它自己的秒表判出来，`error` 里的「budget=Ns，实测耗时 Ms」仍是真实读数；
 # `asyncio` 内部的时间源（`loop.time()`）与 `time.sleep()` 都不受影响（它们不查 `time.monotonic`
 # 这个属性）。没开旋钮时这一路完全不参与（`finalize()` 里那个分支直接返回）。
-# ---------------------------------------------------------------------------
 
 #: 时钟替身模块名（经 `PYTHONPATH` 注入子进程时 `import` 的就是它）
 CLOCK_SHIM_MODULE_NAME = "clockoffset"

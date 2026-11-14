@@ -1,6 +1,6 @@
-"""`tests/test_api_actions.py` —— `POST /api/actions` 的信封、动作与 `code` 表（设计口径第四行）。
+"""`tests/test_api_actions.py` —— `POST /api/actions` 的信封、动作与 `code` 表。
 
-覆盖（逐条对 §5.1 与 §3.6.2 的可用性表）：
+覆盖：
 
   - `start` 成功（建目录 + 写 `session.json` + 进 `recording`）；
     `mode` 缺省 `both`、三个合法取值都能进 `recording`、第四个取值 `invalid_setting`(400)
@@ -39,7 +39,6 @@ from meeting import config as config_module
 from meeting.service import runtime as runtime_module
 from meeting.service.runtime import ACTION_CODES, ACTION_NAMES
 
-#: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md`。
 pytestmark = pytest.mark.slow
 
 #: 三分表：可热读的十二键（`asr.*` 五个 + `alarm.sound` + 设置抽屉那四项 + 会中切模型两键）
@@ -73,9 +72,7 @@ PENDING_KEYS = {
 }
 
 
-# ---------------------------------------------------------------------------
 # 信封与 `code` 表
-# ---------------------------------------------------------------------------
 
 
 def test_action_names_and_codes_are_the_frozen_ones():
@@ -170,9 +167,7 @@ def test_middleware_still_forbids_bare_action_requests(tmp_path):
         assert client.get("/api/heartbeat").headers["cache-control"] == "no-store"
 
 
-# ---------------------------------------------------------------------------
 # start
-# ---------------------------------------------------------------------------
 
 
 def test_start_creates_the_session_and_enters_recording(tmp_path):
@@ -219,7 +214,7 @@ def test_start_rejects_an_illegal_mode_before_creating_anything(tmp_path):
 
 
 def test_start_returns_already_recording_with_the_three_fields(tmp_path):
-    """录音中再 `start` → `already_recording`(409)，`detail` 带三个字段（§9-8 / R17）。"""
+    """录音中再 `start` → `already_recording`(409)，`detail` 带三个字段。"""
     with live(tmp_path) as (client, runtime, _home, _out):
         assert post(client, "start").status_code == 200
         time.sleep(0.3)
@@ -288,9 +283,7 @@ def test_start_is_rejected_while_draining(tmp_path, monkeypatch):
         assert record["state"] == "failed"
 
 
-# ---------------------------------------------------------------------------
 # stop / mute_session
-# ---------------------------------------------------------------------------
 
 
 def test_stop_and_mute_are_not_recording_outside_a_session(tmp_path):
@@ -424,9 +417,7 @@ def test_session_mute_recalculates_instead_of_stamping_true(tmp_path):
         assert snapshot_of(client)["alerts"]["critical"]["muted"] is False
 
 
-# ---------------------------------------------------------------------------
 # settings_update
-# ---------------------------------------------------------------------------
 
 
 def test_settings_update_splits_applied_and_pending_restart(tmp_path):
@@ -748,9 +739,7 @@ def test_settings_update_swaps_the_summary_preset_at_once(tmp_path):
         assert snapshot_of(client)["settings"]["summary_active_preset"] == ""
 
 
-# ---------------------------------------------------------------------------
 # dev_inject
-# ---------------------------------------------------------------------------
 
 
 def test_dev_inject_requires_an_active_session(tmp_path, monkeypatch):

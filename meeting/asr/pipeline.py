@@ -1,23 +1,20 @@
 """实时转写流水线 —— 游标尾读归档 PCM → VAD 切段 → 入队盖章 → 独立 worker → 落盘 + 行出口。
 
-**音频从哪来**（R2 / R3）：采集只管往 `session_dir/meeting_audio_<source>_<段号>.pcm` 写
+**音频从哪来**：采集只管往 `session_dir/meeting_audio_<source>_<段号>.pcm` 写
 （`buffering=0`，写盘立刻可见；段拼起来 = 连续时间轴，暂停区间是数字零）；转写侧每路一条
 读线程按游标**逐段**读新字节，不碰采集层任何对象；**时间戳取「读到这一块那一刻」的墙钟**
-并随段入队（「入队即盖章」，V1 `_TaggedSink` 语义）——处理慢不会把后面段的时间戳挤到一起
-（V1 的事故根因正是「等 ASR 返回后再取时间戳」）。
+并随段入队——处理慢不会把后面段的时间戳挤到一起。
 
-**VAD 切段**照 V1 `vad.py:12-77`：帧长 30ms、`webrtcvad.Vad(1)`、静默 2.0 秒出段、单段硬
-上限按配置 `asr.max_segment_seconds`（默认 10 秒，超了立即出段再续不丢段），每 0.5 秒热读
-一次上限。**队列无界**（禁止 busy-drop，V1 `docs/specs.md:157` 列为反模式）；**一个** worker
-顺序消费两路（显存只有一份）。**落盘**：每路 `meeting_transcript_<source>.md`，追加模式、
-逐行 flush，行格式 `[HH:MM] 文本` / `[[识别失败: 超时 20s]]`（B12 / B13）。
+**VAD 切段**：帧长 30ms、静默 2.0 秒出段、单段硬上限按配置 `asr.max_segment_seconds`
+（默认 10 秒，超了立即出段再续不丢段），每 0.5 秒热读一次上限。**队列无界**（禁止
+busy-drop）；**一个** worker 顺序消费两路（显存只有一份）。**落盘**：每路
+`meeting_transcript_<source>.md`，追加模式、逐行 flush，行格式 `[HH:MM] 文本`。
 
-**续接**（design-intent 第 9 条）：临时稿已在场时开场各路追加一条 `<!-- … -->` 记号行、
-各推一条 `kind="gap"` 行；读头从盘上最大段号接起，旧段一个字节不重读。
+**续接**：临时稿已在场时开场各路追加一条 `<!-- … -->` 记号行、各推一条 `kind="gap"` 行；
+读头从盘上最大段号接起，旧段一个字节不重读。
 
 本模块顶层只有标准库与包内 import（`numpy` / `webrtcvad` 惰性 import），没装模型依赖的
-机器上 `meeting.backends.transcribe` 仍能 import 成功。搬移出处照 `docs/v1-lineage.md`
-留注释（VAD 判据 `vad.py:12-77`、盖章语义 `pipeline.py:47-62`、日志字段 `docs/specs.md:143-149`）。
+机器上 `meeting.backends.transcribe` 仍能 import 成功。
 """
 
 from __future__ import annotations
@@ -33,91 +30,67 @@ from typing import Any, Callable, Protocol, runtime_checkable
 from meeting import config as config_module
 from meeting.asr import glm as glm_module
 from meeting.backends.base import SOURCE_IDS, TranscriptLine
-# 归档 PCM 的形状只认**一个口径来源**：`meeting/capture/archive.py`（同款先例见
-# `capture/engine.py` 顶部）——这里不再抄第二份，防两处各自漂移。
+# 归档 PCM 的形状只认**一个口径来源**：`meeting/capture/archive.py`——这里不再抄第二份，
+# 防两处各自漂移。
 from meeting.capture.archive import CHANNELS, SAMPLE_RATE, SAMPLE_WIDTH
 from meeting.session import archive_name, next_segment_number
 
 _log = logging.getLogger("meeting.asr.pipeline")
 
-#: 一帧多少毫秒（`webrtcvad` 只认 10 / 20 / 30）
+#: `webrtcvad` 只认 10 / 20 / 30
 FRAME_MILLISECONDS = 30
 
-#: 一帧多少字节（`16000 × 30 / 1000 × 2` = 960 字节 = 480 个 int16 样本）
 FRAME_BYTES = SAMPLE_RATE * FRAME_MILLISECONDS // 1000 * SAMPLE_WIDTH
 
-#: 静默多久算一段说完（秒）——照 V1 `vad.py:26` 的 `SILENCE_TIMEOUT`
 SILENCE_TIMEOUT_SECONDS = 2.0
 
-#: 段长上限的重读间隔（秒）——照 V1 `vad.py:21` 的 `_TUNABLE_TTL`：
-#: `asr.max_segment_seconds` 是热读键，改配置无需重建 VAD 实例
+#: 段长上限的重读间隔（秒）：`asr.max_segment_seconds` 是热读键，改配置无需重建 VAD 实例
 VAD_TUNABLE_TTL_SECONDS = 0.5
 
-#: 读线程一次读多少字节（0.5 秒的音频；够大到读得动，够小到时间戳盖得准）
 DEFAULT_READ_CHUNK_BYTES = SAMPLE_RATE * SAMPLE_WIDTH // 2
 
-#: 归档还没出现时的轮询间隔（秒）：采集侧先开文件、转写随后起步，有几十毫秒的空档
 DEFAULT_ARCHIVE_POLL_SECONDS = 0.05
 
-#: 读线程从归档尾读时的轮询间隔（秒）：一次没读到新字节就按这个节奏再来
 DEFAULT_TAIL_IDLE_SECONDS = 0.02
 
-#: worker 取段的等待上限（秒）——照 V1 `pipeline.py:113` 的 `get(timeout=0.1)`
 WORKER_IDLE_SECONDS = 0.1
 
-#: `stop()` 里 worker 线程 join 的收尾余量（秒）：预算耗完也最多再等这一下
 DRAIN_JOIN_SLACK_SECONDS = 1.0
 
 #: 收尾时**每一路读线程** join 的上界（秒）：`_join_readers()` 逐路等这么久，超时就落一条
 #: warning 并往下走（daemon 线程，不阻塞进程退出）。必须是**有名字的常量**：外层
 #: `meeting/backends/transcribe.py` 的 `stop()` 要同步等这条收尾线程，上界得把这一项
-#: 按路数算进去（复审 m5：外层余量曾比内层最坏档小一截，最坏档会打出假的「收尾线程没跑完」）。
+#: 按路数算进去。
 READER_JOIN_TIMEOUT_SECONDS = 2.0
 
-#: 每路的产物文件名（`source ∈ mic / loopback`）
 TRANSCRIPT_FILE_TEMPLATE = "meeting_transcript_{source}.md"
 
-#: 续接开场那条断口的话（`.md` 记号行与界面 gap 行共用这一句）。措辞直说「续接」「没录」，
-#: 绕着说的词一概不用。
 RESUME_GAP_TEXT = "续接：上面是上一段的稿子，两段之间有一段没录"
 
-#: 转写健康度 `behind` 的**积压门槛**（段）。取值依据：V1 `docs/specs.md:147` 的 TUI 计数器
-#: 「待转写 ≥20 段转红」——按默认段长 10 秒算是 200 秒语音还没落文字，人眼已经觉得字幕
-#: 追不上说话；低于它只是正常滞后，报 `behind` 会天天亮灯。
+#: 转写健康度 `behind` 的**积压门槛**（段）：低于它只是正常滞后，报 `behind` 会天天亮灯。
 BACKLOG_BEHIND_THRESHOLD = 20
 
-#: worker 的收队哨兵（**不入队**，拿它当「不再有段了」）
 _CLOSE_SENTINEL = object()
 
-# 收尾预算：`budget = 30 + 积压段数 × (单段超时 + 5)`，下限 30、封顶 300。
 # **公式住在这里**（转写是积压量的来源），`meeting/service/runtime.py` 的
 # `compute_drain_budget()` 直接转交——两处各写一份就成了两条会漂移的口径。
-# 三个数硬编码、不开配置键。
 
-#: 预算下限（秒）
 DRAIN_BUDGET_MIN_SECONDS = 30
 
-#: 预算封顶（秒）
 DRAIN_BUDGET_MAX_SECONDS = 300
 
-#: 公式里每段那笔额外开销（秒）：`积压段数 × (单段超时 + 5)`
 DRAIN_BUDGET_SEGMENT_OVERHEAD_SECONDS = 5
 
 
 def compute_drain_budget(backlog: int, segment_timeout: float) -> float:
-    """收尾预算：`30 + backlog × (segment_timeout + 5)`（下限 30、封顶 300）。"""
     budget = DRAIN_BUDGET_MIN_SECONDS + int(backlog) * (
         float(segment_timeout) + float(DRAIN_BUDGET_SEGMENT_OVERHEAD_SECONDS)
     )
     return float(min(DRAIN_BUDGET_MAX_SECONDS, max(DRAIN_BUDGET_MIN_SECONDS, budget)))
 
-#: 一段音频至少要有半秒才值得识别。判据出处 V1 `pipeline.py:127` 的表达式有**量纲笔误**：
-#: `seg_bytes` 是字节数，`SAMPLE_RATE * 0.5 = 8000` 比的是字节，实际只等于 0.25 秒。
-#: V2 不跟着笔误走：按 `int(SAMPLE_RATE * 0.5) * SAMPLE_WIDTH` 比字节，0.5 秒就是真半秒
-#: （VAD 已丢不足 500ms 的段，这里兜的是「硬上限切出的尾段只有一两帧」那一档）。
+#: VAD 已丢不足半秒的段，这里兜的是「硬上限切出的尾段只有一两帧」那一档
 MIN_SEGMENT_SECONDS = 0.5
 
-#: 失败占位符的标签（`[[识别失败: 超时 20s]]` 这一形状；**绝不含 `**`**）
 FAILURE_LABELS: dict[str, str] = {
     "timeout": "识别失败: 超时",
     "loop": "识别失败: 重复循环",
@@ -125,7 +98,6 @@ FAILURE_LABELS: dict[str, str] = {
     "error": "识别失败: 错误",
 }
 
-#: 认不出的失败原因落这一档（形状仍是双层方括号 + 裸文本）
 DEFAULT_FAILURE_LABEL = "识别失败"
 
 
@@ -133,9 +105,7 @@ DEFAULT_FAILURE_LABEL = "识别失败"
 #: 快照 `transcript.health` 只落这三档）
 TRANSCRIPT_HEALTH: tuple[str, ...] = ("normal", "behind", "stopped")
 
-#: 转写健康度的兜底档（后端报了取值域之外的东西时落它：`behind` 会说成「落后」，
-#: `stopped` 会说成「没在跑」，两档都比事实更具体，只有 `stopped` ——
-#: 「这一档现在不产出」—— 在「后端行为不可信」时说的是实话）
+#: 转写健康度的兜底档：`stopped` 在「后端行为不可信」时说的是实话（`behind` 会说成「落后」）
 TRANSCRIPT_HEALTH_FALLBACK = "stopped"
 
 
@@ -143,8 +113,7 @@ def validate_transcript_health(value: Any) -> str:
     """把后端报上来的健康度收进**转写域**的三取值；越界落 `TRANSCRIPT_HEALTH_FALLBACK`。
 
     **必须与采集域的 `meeting.state.validate_health()` 分开**（那是七取值的探针域，越界落
-    `probe_failed`）。共用校验器的后果是实测过的：`normal` 走采集域校验器，快照的
-    `transcript.health` 会出成 `"probe_failed"`——转写域里不存在、前端 schema 也不认的值。
+    `probe_failed`）。
     """
     text = str(value)
     return text if text in TRANSCRIPT_HEALTH else TRANSCRIPT_HEALTH_FALLBACK
@@ -152,18 +121,17 @@ def validate_transcript_health(value: Any) -> str:
 
 @runtime_checkable
 class SegmentTranscriber(Protocol):
-    """worker 认的转写接口（**唯一**一个方法）。
-
-    生产实现是设计的 `meeting.asr.glm.GlmAsrTranscriber`（`transcribe_segment(int16 数组)
-    -> TranscribeResult`）；测试注入自己的替身（假模型），**任何用例都不许加载真模型**。
+    """worker 认的转写接口：生产实现是 `meeting.asr.glm.GlmAsrTranscriber`
+    （`transcribe_segment(int16 数组) -> TranscribeResult`）；测试注入自己的替身（假模型），
+    **任何用例都不许加载真模型**。
     """
 
     def transcribe_segment(self, audio_int16: Any) -> Any: ...
 
 
 def _format_failure(reason: str, duration: float = 0.0, timed_out: bool = False) -> str:
-    """把一条失败结果格式化成落盘占位符（照 V1 `pipeline.py:39-44`）：
-    双层方括号、裸文本、**绝不含 `**`**（否则下游把 `**X**:` 当成说话人标签，B12 / E12）。
+    """把一条失败结果格式化成落盘占位符：双层方括号、裸文本、**绝不含 `**`**
+    （否则下游把 `**X**:` 当成说话人标签）。
     """
     label = FAILURE_LABELS.get(reason, DEFAULT_FAILURE_LABEL)
     if timed_out and duration:
@@ -173,11 +141,6 @@ def _format_failure(reason: str, duration: float = 0.0, timed_out: bool = False)
 
 class VoiceActivitySegmenter:
     """一路的 VAD 切段器：吃字节、吐完整段（`feed()` 的 `emit` 出口每次给一段）。
-
-    判据逐条照 V1 `mnotes_core/vad.py:12-77`：帧长 30ms、`webrtcvad.Vad(1)`、
-    静默 2.0 秒出段、单段硬上限按配置 `asr.max_segment_seconds`（默认 10 秒，超了立即出段
-    再续，一段都不丢）；段长上限**每 0.5 秒重读一次配置**（V1 的 `_TUNABLE_TTL`），
-    因此改 `asr.max_segment_seconds` 不需要重建实例。
 
     **VAD 后端是构造参数**（缺省 `webrtcvad.Vad(1)`，库在函数体内惰性 import）：
     测试注入一个确定性的替身，用例因此不依赖 `webrtcvad` 的判定细节、也不跑真模型。
@@ -197,8 +160,6 @@ class VoiceActivitySegmenter:
         self._segment_buffer = bytearray()
         self._buffer = bytearray()
         self._last_speech = 0.0
-        #: 段长上限**显式给定时以它为准**（`max_segment_seconds=...` 是调用方的决定，
-        #: 热读只负责「没显式给」的那一档：配置改了就换、不改就沿用配置值）
         self._pinned_cap = max_segment_seconds is not None
         self._cap_seconds = (
             float(max_segment_seconds)
@@ -207,15 +168,11 @@ class VoiceActivitySegmenter:
         )
         self._cap_checked = 0.0
 
-    # -- 段长上限（热读） --------------------------------------------------
-
     @property
     def cap_bytes(self) -> int:
-        """当前生效的单段硬上限（字节）：`秒数 × 采样率 × 2`。"""
         return max(1, int(self._cap_seconds)) * SAMPLE_RATE * SAMPLE_WIDTH
 
     def _refresh_cap(self, now: float) -> None:
-        """偶尔重读一次 `asr.max_segment_seconds`（照 V1 `vad.py:36-43`）。"""
         if self._pinned_cap or now - self._cap_checked <= self._ttl:
             return
         self._cap_checked = now
@@ -224,10 +181,7 @@ class VoiceActivitySegmenter:
         except Exception:  # noqa: BLE001 - 配置读不出来就沿用上一次的取值，不打断切段
             _log.warning("读 asr.max_segment_seconds 失败，沿用上一次的段长上限", exc_info=True)
 
-    # -- 主路径 ------------------------------------------------------------
-
     def feed(self, data: bytes, emit: Callable[[bytes], None], now: float) -> None:
-        """喂一块字节；每切出一段就调一次 `emit(pcm_bytes)`（可能一次切出多段）。"""
         if not data:
             return
         self._buffer.extend(data)
@@ -244,17 +198,14 @@ class VoiceActivitySegmenter:
                 self._segment_buffer.extend(frame)
                 if now - self._last_speech > self.silence_timeout:
                     self._emit(emit)
-            # 硬上限：单段超过上限秒数强制切分（不丢，续录新段）
             if len(self._segment_buffer) >= self.cap_bytes:
                 self._emit(emit)
 
     def flush(self, emit: Callable[[bytes], None]) -> None:
-        """把手上这一段剩下的音频强行送出（收队时用，**不丢尾巴**）。"""
         self._emit(emit)
 
     @property
     def has_pending(self) -> bool:
-        """手上还压着一段没送出的音频吗。"""
         return bool(self._segment_buffer)
 
     def _emit(self, emit: Callable[[bytes], None]) -> None:
@@ -267,7 +218,6 @@ class VoiceActivitySegmenter:
 
 
 def _default_vad() -> Any:
-    """缺省的 VAD 后端：`webrtcvad.Vad(1)`（库在函数体内惰性 import）。"""
     import webrtcvad
 
     return webrtcvad.Vad(1)
@@ -288,14 +238,10 @@ def tail_archive_segments(
 
     - `start_index` 是读头的**起步段号**（缺省 1）：续接（同一工作区再录一段）的
       一场从这里直接接到**本段**——旧段的字节一个都不重读，临时稿里旧正文不会被
-      抄第二遍；单文件场景与新场照旧从 1 起步；
-    - `segment_path(index)` 交回第 `index` 段的路径；交回 `None` 表示**不会再有下一段**
-      （单文件场景借此保持读到 EOF 就守着这**一个文件**的老行为）；
-    - 当前段还没出现时按 `archive_poll_seconds` 等它；读到 EOF 后，**下一序号的段文件
-      已经出现**就接过去，否则守着当前段继续等新字节；
+      抄第二遍；
+    - `segment_path(index)` 交回第 `index` 段的路径；交回 `None` 表示**不会再有下一段**；
     - 每一块的盖章口径在 `_tail_one_segment()`：`on_chunk(data, time.time())`，读到那一刻
-      的墙钟。跨段不换章：续接留下的时间洞在这里只是「EOF 等了很久」，
-      断口语义归开场那条记号行（`start()` 里的续接两件事），本层不另外表达；
+      的墙钟。跨段不换章：续接留下的时间洞在这里只是「EOF 等了很久」；
     - 其余口径（`"r+b"` 不隐式建文件、文件被删原样上抛、`first_seen` 每段一次）与
       生产读路径一致。
     """
@@ -333,11 +279,6 @@ def _tail_one_segment(
     first_seen: Callable[[str, int], None] | None,
     next_path: Callable[[], str | None],
 ) -> bool:
-    """尾读**一个**段文件直到收到停机信号；交回是否要把读头移到下一段。
-
-    「移到下一段」的判据：读到了 EOF，而且下一序号的段文件已经在盘上。EOF 而下一段
-    还没出现（本段还在被写、或后面没有更多段）就守着本段继续等。
-    """
     handle = open(path, "r+b")
     try:
         if first_seen is not None:
@@ -345,10 +286,8 @@ def _tail_one_segment(
         while not stop.is_set():
             data = handle.read(chunk_bytes)
             if data:
-                # **盖章点**：这一刻的墙钟随这一块里切出来的段一起入队
                 on_chunk(data, time.time())
                 continue
-            # EOF：下一段已经在盘上就接过去；否则按 idle 节奏守着本段等新字节
             following = next_path()
             if following is not None and os.path.exists(following):
                 return True
@@ -365,17 +304,8 @@ def _tail_one_segment(
 class TranscriptionPipeline:
     """一条会中一直在跑的实时转写：两路读线程 + 一个段队列 + 一个 worker + 每路一个产物。
 
-    起停：
-
-      - `start(mode, session_dir)`：按 `mode` 决定读哪几路（`meeting.capture.engine` 的同一套
-        取值域：`both` / `mic` / `loopback`），起读线程与 worker；
-      - `stop()`：关读线程 → flush VAD 的尾段 → **在收尾预算内**把队列里剩下的段尽量做完
-        （预算 = `compute_drain_budget(backlog, segment_timeout)`，即
-        `30 + 积压段数 × (单段超时 + 5)`，下限 30、封顶 300）；预算耗完还有剩段就
-        **如实登记**（几条没做完、音频归档完整、临时稿缺的是尾巴），不许静默丢。
-
-    出口：每成一行调一次 `line_sink(TranscriptLine(...))`（由 `TranscriberBackend` 交给
-    runtime 包好的线程安全出口）。
+    `stop()` 在收尾预算内把队列里剩下的段尽量做完；预算耗完还有剩段就**如实登记**
+    （几条没做完、音频归档完整、临时稿缺的是尾巴），不许静默丢。
     """
 
     def __init__(
@@ -402,19 +332,15 @@ class TranscriptionPipeline:
         self._read_chunk_bytes = int(read_chunk_bytes)
         self._idle_seconds = float(idle_seconds)
         self._archive_poll_seconds = float(archive_poll_seconds)
-        #: 收尾预算的算法**照 `compute_drain_budget` 的形状**（同一个函数、同一条公式），
-        #: 这里让它可以被注入：用例要验「预算耗完还有剩段就如实登记」时不必真等 30 秒
         self._budget_fn = budget_fn or compute_drain_budget
         self.behind_threshold = int(behind_threshold)
 
         #: 段队列：**无界**（`maxsize=0`）。禁止 `put_nowait` / `if full: continue` 这类
-        #: busy-drop 路径（V1 `docs/specs.md:157` 把它明确列为反模式）
+        #: busy-drop 路径
         self.segments: queue.Queue[Any] = queue.Queue()
         self.session_dir: str | None = None
         self.mode: str | None = None
         self.sources: tuple[str, ...] = ()
-        #: 读头的**起步段号**（`start()` 里定）：开场 1；续接接到本段（盘上最大段号），
-        #: 旧段的字节一个都不重读
         self._start_segment: int = 1
 
         self._stop = threading.Event()
@@ -422,18 +348,15 @@ class TranscriptionPipeline:
         self._lock = threading.RLock()
         self._worker: threading.Thread | None = None
         #: worker **线程对象本身**（`stop()` 收队时会把 `_worker` 置空，而那一刻线程可能还在
-        #: 写最后一行；`writer_finished()` 问的是「线程真的退出了没有」，只有这个引用答得了）
+        #: 写最后一行；`writer_finished()` 只有这个引用答得了）
         self._worker_thread: threading.Thread | None = None
         self._reader_threads: dict[str, threading.Thread] = {}
         self._vads: dict[str, VoiceActivitySegmenter] = {}
         self._handles: dict[str, Any] = {}
         self._sealed = False
-        # 第一趟 `stop()` 算好的登记（幂等档原样交回它，不再重算、不覆写 note）
         self._last_drain: dict[str, Any] | None = None
         self._started = False
-        #: 收队 deadline（`stop()` 里设；`worker_alive()` 用它判「还在收尾预算内」）
         self._drain_deadline: float | None = None
-        #: 登记（给 `meeting/backends/transcribe.py` 的 `health()` 与 log 用）
         self.worker_started = False
         self.reader_errors: dict[str, str] = {}
         self.segments_seen = 0
@@ -441,31 +364,18 @@ class TranscriptionPipeline:
         self.failures: dict[str, int] = {}
         self.last_unfinished_note: str = ""
 
-    # -- 起 ---------------------------------------------------------------
-
     def start(self, mode: str, session_dir: str) -> None:
-        """起两路读线程与 worker（**幂等**：重复调用什么都不做）。
-
-        目录里已有本场的临时稿（`.md` 在场）时这一场是**续接**：开场做两件事——
-        各路临时稿追加一条记号行（`<!-- … -->` 形，读侧跳过）、各推一条
-        `kind="gap"` 的行；读头从**盘上实有的最大段号**接起（采集侧开场已开出本段的
-        新段文件），旧段的字节一个都不重读、旧正文不会被抄第二遍。
-        两件事都在读线程与 worker 起来之前做完，记号行因此排在所有新行之前。
-        """
+        """起两路读线程与 worker（**幂等**：重复调用什么都不做）。"""
         with self._lock:
             if self._started:
                 return
             self._started = True
-            # 上一场可能还留着读线程（换场时 `start()` 会被再调一次）：先收干净再起新的
             self._join_readers(reason="换一场之前")
             self._stop.clear()
             self.mode = str(mode)
             self.session_dir = str(session_dir)
             self.sources = tuple(_sources_for_mode(mode))
             os.makedirs(self.session_dir, exist_ok=True)
-            # 读头从盘上实有的最大段号接起（`next_segment_number() - 1` = 最大段号，
-            # 没有段时为 0 → 落回 1）：采集侧先开本段的新段文件，转写随后起步，
-            # 所以这一号在盘上已经在场；开场（空目录）它就是 1。
             self._start_segment = max(1, next_segment_number(session_dir, SOURCE_IDS) - 1)
             resumed = any(
                 os.path.exists(self._transcript_path(source))
@@ -499,10 +409,7 @@ class TranscriptionPipeline:
                 "；续接开场，旧段不重读" if resumed else "",
             )
 
-    # -- 出口 -------------------------------------------------------------
-
     def set_line_sink(self, line_sink: Callable[[Any], None]) -> None:
-        """换一份行出口（`bind()` 可能比 `start()` 先来；这是线程安全的一次赋值）。"""
         with self._lock:
             self._sink = line_sink
 
@@ -514,23 +421,18 @@ class TranscriptionPipeline:
             return
         sink(line)
 
-    # -- 读线程 -----------------------------------------------------------
-
     def _segment_path(self, source: str, index: int) -> str:
-        """这一路第 `index` 段的归档路径（命名规则由 `meeting/session.py` 一处定死）。"""
         return os.path.join(str(self.session_dir), archive_name(source, index))
 
     def _reader_loop(self, source: str) -> None:
         """一路读线程：按段序号游标尾读归档，把新字节喂给这一路的 VAD。
 
         段列表不问 `session.json`（开场第一版还没有段记录，而且元信息不当判据）：按确定的
-        命名规则逐序号找盘上的段文件，序号升序接续 = 连续时间轴。起步段号在 `start()`
-        里定（开场 1；续接接到本段，旧段一个字节都不重读）。
+        命名规则逐序号找盘上的段文件，序号升序接续 = 连续时间轴。
         """
 
         def on_chunk(data: bytes, captured_at: float) -> None:
-            # **盖章点就是这里**：captured_at 是「读到这一块那一刻」的墙钟，
-            # 它随这一块里切出来的段一起入队（处理慢不会把后面段的时间戳挤到一起）。
+            # **盖章点就是这里**：captured_at 是「读到这一块那一刻」的墙钟。
             self._vads[source].feed(data, lambda pcm: self._enqueue(source, captured_at, pcm),
                                     captured_at)
 
@@ -558,26 +460,19 @@ class TranscriptionPipeline:
             _log.warning("尾读 %s 这一路归档失败：%s: %s", source, type(exc).__name__, exc)
 
     def _enqueue(self, source: str, captured_at: float, pcm: bytes) -> None:
-        """**入队即盖章**：三元组 `(source, capture_ts, pcm_bytes)` 进无界队列。"""
         if not pcm:
             return
         if len(pcm) < int(SAMPLE_RATE * MIN_SEGMENT_SECONDS) * SAMPLE_WIDTH:
-            # 不足半秒（V1 `pipeline.py:127` 那行注释的意思；那个表达式本身有量纲笔误，
-            # 见 `MIN_SEGMENT_SECONDS` 上的说明）：不识别，也不写行
             return
         with self._lock:
             self.segments_seen += 1
         self.segments.put((source, float(captured_at), bytes(pcm)))
 
-    # -- worker -----------------------------------------------------------
-
     def _worker_loop(self) -> None:
         """**唯一**的消费线程：顺序消费两路的段（显存只有一份）。
 
-        **队列空的那一小会也要继续等**：段是按「2 秒静默出段」的节奏来的，中间必然有空档；
-        队列一空就退出等于把 worker 提前收摊（后面来的段全成了孤儿）。收队的条件因此是
-        「收队信号已下 **且** 队列真的空了」—— 只有 `stop()` 会下那个信号，而它在设完信号
-        之后还会再等一小会，队列里剩下的段因此不会被空档抢跑丢掉。
+        队列一空就退出等于把 worker 提前收摊（后面来的段全成了孤儿）；收队的条件因此是
+        「收队信号已下 **且** 队列真的空了」——只有 `stop()` 会下那个信号。
         """
         while True:
             try:
@@ -599,19 +494,18 @@ class TranscriptionPipeline:
                     self.segments_done += 1
 
     def _handle_segment(self, source: str, captured_at: float, pcm: bytes) -> None:
-        """一段的完整处理：噪声预筛 → 识别 → 文本级兜底 → 一行 / 一个占位符 + 一条日志。"""
         import numpy as np
 
         audio = np.frombuffer(pcm, dtype=np.int16)
         audio_seconds = len(audio) / SAMPLE_RATE
         # **同一支钟**：captured_at 是墙钟，这里取 queued_at 也必须用墙钟——混进
         # monotonic（与本机墙钟差十几亿秒）的话 max(0.0,…) 会恒夹成 0.0，而 wait= 正是
-        # 本单元唯一一条「流水线落后」的可观测前兆（V1 `pipeline.py:140` 同此）。
+        # 本单元唯一一条「流水线落后」的可观测前兆。
         queued_at = time.time()
         waited = max(0.0, queued_at - captured_at)
 
         # 噪声预筛命中 → **静音，不写行**（连占位符也不写）：语义是「这一段落是静音」，
-        # 按一次成功的「什么都没识别出来」登记，不进失败计数、不落占位符。
+        # 按一次成功的「什么都没识别出来」登记，不进失败计数。
         if glm_module._is_noise_segment(audio):
             _log.info(
                 "seg %s audio=%.1fs asr=0.0s wait=%.1fs tokens=0 reason=noise（静音，不写行）",
@@ -701,7 +595,7 @@ class TranscriptionPipeline:
         tokens: int,
         reason: str,
     ) -> None:
-        """每段一条日志（字段照 V1 `docs/specs.md:143-149`）。
+        """每段一条日志。
 
         行里的 `source=` 是本单元加的一列：两路共用一个 worker，出了事要能看出是哪一路。
         **`wait` 持续增长就是流水线落后的前兆**：它是「这一段在队列里等了多久」，
@@ -712,10 +606,7 @@ class TranscriptionPipeline:
             _stamp(captured_at), audio_seconds, duration, waited, tokens, reason, source,
         )
 
-    # -- 落盘 -------------------------------------------------------------
-
     def _transcript_path(self, source: str) -> str:
-        """这一路临时稿的路径（`meeting_transcript_<source>.md`，名出一处）。"""
         return os.path.join(str(self.session_dir), TRANSCRIPT_FILE_TEMPLATE.format(source=source))
 
     def _open_resume_gap(self) -> None:
@@ -723,7 +614,6 @@ class TranscriptionPipeline:
 
         记号行取 `<!-- … -->` 注释形：`LINE_RE` 认不出它，读侧（纪要切块、行数统计）
         跳过它、不把它当发言；它照旧计入 splitlines 的行数分母（现行口径，不开口子）。
-        gap 行走既有行出口推给界面。锁外调用（`start()` 在锁释放之后调它）。
         """
         at = time.time()
         for source in self.sources:
@@ -739,8 +629,7 @@ class TranscriptionPipeline:
     def _append_marker(self, source: str, at: float, text: str) -> None:
         """往这一路的临时稿追加一条注释形记号行（**独立小开的句柄**，写完即关）。
 
-        只在 `start()` 里、读线程与 worker 都还没起来时调用——此刻没有别人在写这一路，
-        一支临时的追加句柄就够了，与 `_write_line()` 的常驻句柄互不打扰。
+        只在 `start()` 里、读线程与 worker 都还没起来时调用——此刻没有别人在写这一路。
         """
         path = self._transcript_path(source)
         line = f"<!-- [{_stamp(at)}] {text} -->\n"
@@ -750,13 +639,10 @@ class TranscriptionPipeline:
             handle.flush()
 
     def _write_line(self, source: str, captured_at: float, text: str) -> None:
-        """追加一行到这一路的产物（**追加模式、逐行 flush**；行形状 `[HH:MM] 文本`，
-        时间戳取采集时刻）。
+        """追加一行到这一路的产物。
 
-        「写一行」与「收队关句柄」共用同一把锁：`stop()` 在 worker join **之后**才
-        `_close_handles()`，正常路径不撞；但 join 有上界（预算耗完 worker 可能还在写），
-        写在锁外会撞上「句柄已关 / 已置空」的竞态。写在锁里：写完了才关，或发现句柄已空、
-        重开一个继续写。
+        「写一行」与「收队关句柄」共用同一把锁：join 有上界（预算耗完 worker 可能还在写），
+        写在锁外会撞上「句柄已关 / 已置空」的竞态。
         """
         path = self._transcript_path(source)
         line = f"[{_stamp(captured_at)}] {text}\n"
@@ -780,20 +666,12 @@ class TranscriptionPipeline:
             except OSError:  # pragma: no cover - 关不掉不影响收尾结论
                 _log.warning("关转写产物失败（如实登记，不静默）", exc_info=True)
 
-    # -- 停 ---------------------------------------------------------------
-
     def stop(self) -> dict[str, Any]:
         """关读线程 → flush 尾段 → **在收尾预算内**把队列里剩下的段尽量做完。
 
         返回登记字典（`budget` / `unfinished` / `note` / `segments_seen` / `segments_done`），
-        供 `meeting/backends/transcribe.py` 复述进 log。
-
-        **`unfinished` 算的是「还没做完」而不是「队列里还剩几段」**：worker 是「先 `get()`
-        再处理」，预算耗完那一刻它手上那一段已经不在队列里了 —— 漏掉它就等于
-        「在飞的那一段被静默丢掉」，而那正是 spec 不许的那件事。
-
-        **返回即收队完成**：读线程与 worker 都 join 过了（join 的上界 = 收尾预算 + 余量），
-        因此调用方不需要再猜「线程收干净了没有」。
+        供 `meeting/backends/transcribe.py` 复述进 log。返回即收队完成：读线程与 worker
+        都 join 过了。
         """
         with self._lock:
             if self._sealed:
@@ -807,7 +685,6 @@ class TranscriptionPipeline:
         self._stop.set()
         self._join_readers(reason="收尾")
 
-        # 读线程已经停了，手上还压着的尾巴在这里送出（不丢半段）
         for source in self.sources:
             vad = self._vads.get(source)
             if vad is None or not vad.has_pending:
@@ -818,22 +695,18 @@ class TranscriptionPipeline:
         self._draining.set()
         backlog = self.segments.qsize()
         budget = float(self._budget_fn(backlog, self._segment_timeout))
-        # 收队 deadline：「在预算内尽量做完」这段窗口的右端（`worker_alive()` 读它）
         self._drain_deadline = time.monotonic() + budget
         worker = self._worker
         if worker is not None and worker.is_alive() and worker is not threading.current_thread():
             worker.join(timeout=budget + DRAIN_JOIN_SLACK_SECONDS)
         # 收队走完就把句柄放开：`worker_alive()` 因此不再靠「还在收尾预算里」那一档兜着
-        # （那一档只描述 join 还没结束的窗口，`stop()` 返回之后它就不该再算「活着」）
         self._worker = None
         # **「没做完」= 队列里剩下的 + 已被 worker 取走、还在处理的那一段**：
-        # worker 是「先 get() 再处理」，只看 qsize() 的话 `unfinished` 在生产路径上恒为 0
-        # （空头支票）。`segments_seen - segments_done` 正好是这两部分的和。
+        # 只看 qsize() 的话 `unfinished` 在生产路径上恒为 0（空头支票）。
         with self._lock:
             outstanding = int(self.segments_seen) - int(self.segments_done)
         unfinished = max(self.segments.qsize(), outstanding)
         note = self._drain_note(budget=budget, unfinished=unfinished)
-        # 第一趟的登记存档：之后每一次 `stop()`（幂等档）都原样交回它
         self._last_drain = note
         if unfinished:
             _log.warning(
@@ -845,14 +718,7 @@ class TranscriptionPipeline:
         return note
 
     def _join_readers(self, *, reason: str) -> None:
-        """把读线程 join 干净（**幂等**，可重复调）。
-
-        收尾与「换一场」都会走它：写线程/读线程是 daemon，不 join 的话它们会跨着用例继续
-        轮询别人留下的文件句柄（同一进程里连跑多场时，那是实打实的资源泄漏）。
-
-        每一路等的上界是 `READER_JOIN_TIMEOUT_SECONDS`（**逐路**各算一次），
-        于是「`stop()` 从进来到 worker join 开始」这一段的最坏耗时 = 该上界 × 路数。
-        """
+        """把读线程 join 干净（**幂等**，可重复调；收尾与「换一场」都会走它）。"""
         self._stop.set()
         for thread in list(self._reader_threads.values()):
             if thread.is_alive() and thread is not threading.current_thread():
@@ -881,18 +747,10 @@ class TranscriptionPipeline:
             "reader_errors": dict(self.reader_errors),
         }
 
-    # -- 读数（`TranscriberBackend` 的三态与两个计数） ----------------------
-
     def backlog_depth(self) -> int:
-        """队列里还没处理的段数（**无界队列的 `qsize()`**，不额外登记、不偷偷丢弃）。"""
         return int(self.segments.qsize())
 
     def worker_alive(self) -> bool:
-        """worker 还活着吗。
-
-        「还活着」包含两档：正常消费中（线程活着），以及**收队中但还没过 deadline**
-        （`_draining` 已设、收尾预算还没耗完 —— 这一档正是「在预算内尽量做完」的那段窗口）。
-        """
         worker = self._worker
         if worker is None:
             return False
@@ -902,13 +760,12 @@ class TranscriptionPipeline:
         return self._draining.is_set() and deadline is not None and time.monotonic() <= deadline
 
     def readers_alive(self) -> bool:
-        """两路读线程都还活着吗（一路读崩了就是 `False`，健康度如实降档）。"""
         if not self._reader_threads:
             return False
         return all(thread.is_alive() for thread in self._reader_threads.values())
 
     def writer_finished(self) -> bool:
-        """**写行的那个线程真的退出了吗**（复审 m4 的判据）。
+        """**写行的那个线程真的退出了吗**。
 
         与 `worker_alive()` 的差别：`stop()` 收队时把 `_worker` 置空（`worker_alive()` 当场
         变 False，而线程可能还在 `_write_line()` 里），且「还在收尾预算内」那一档在这里不算
@@ -918,7 +775,7 @@ class TranscriptionPipeline:
         return thread is None or not thread.is_alive()
 
     def close_transcripts_when_drained(self, *, timeout: float | None = None) -> bool:
-        """等 worker 把手上那一段写完，再把产物句柄收干净（复审 m4）。
+        """等 worker 把手上那一段写完，再把产物句柄收干净。
 
         **为什么要再关一次**：`stop()` 末尾那次 `_close_handles()` 关不掉**之后**才写的行——
         worker 预算耗完那一刻手上还扣着一段时，`stop()` 返回后它把那一行写出，
@@ -953,8 +810,8 @@ def _sources_for_mode(mode: str) -> tuple[str, ...]:
     """本场读哪几路归档：与采集侧同一套取值域（`meeting.capture.engine`）。
 
     采集侧的 `sources_for_mode()` 是唯一口径来源，这里 import 它（不抄一份取值域），
-    未知 mode 也由它当场抛 `ValueError`（与采集侧同一条消息、同一个 fail-fast 口径）——
-    同一个冻结取值域不允许采集侧 fail-fast、转写侧静默回退成两路全读。
+    未知 mode 也由它当场抛 `ValueError`——同一个冻结取值域不允许采集侧 fail-fast、
+    转写侧静默回退成两路全读。
     """
     from meeting.capture.engine import sources_for_mode
 

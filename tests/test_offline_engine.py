@@ -3,16 +3,6 @@
 **一条都不加载真模型**（`tests/conftest.py` 的 5 秒看门狗 + 真模型加载远超它）：
 引擎那一段用假 processor / 假模型打在 `_load_models` 这个接缝上，音频解码也换成
 返回固定波形的假件。真引擎只走一条一次性 MOSSTD 冒烟脚本，跑完即弃。
-
-三块要盯的：
-
-  - `parse_transcript` 吃 `[start][Sxx]text[end]`（多段、带空格的正文、标签切换、
-    缺结束标签、坏时间戳、正文里的方括号），**自己实现**，不依赖第三方包；
-  - 引擎把**波形 ndarray** 送进 processor（不是路径），并且 `generate` 收到的是
-    `input_ids` / `attention_mask` / `input_features` / `audio_feature_lengths` /
-    `audio_chunk_mapping` 五个键，取输出时按 `attention_mask` 的和切掉提示词；
-  - `import meeting.offline.engine` 在**全新解释器**里不拉 `torch` / `transformers` /
-    `av` / `webrtcvad`（照 `tests/test_asr_glm.py` 的既有做法）。
 """
 
 from __future__ import annotations
@@ -38,11 +28,6 @@ from tests import _helpers as helpers
 PROMPT_TOKENS = 7
 #: 假模型生成的 token id（解码由假 tokenizer 按记录下的长度交回正文）
 GENERATED_TOKENS = 12
-
-
-# ---------------------------------------------------------------------------
-# 一、`parse_transcript`：官方紧凑格式
-# ---------------------------------------------------------------------------
 
 
 def test_parse_transcript_reads_one_segment() -> None:
@@ -111,10 +96,7 @@ def test_parse_transcript_accepts_multi_line_output() -> None:
 def test_parse_transcript_drops_malformed_input(raw: str) -> None:
     """坏输入一律丢掉：起止倒挂、标签不合法、正文为空。
 
-    ⚠ 另外两档**不在**这一档（正文要留下）：见
-    `test_parse_transcript_keeps_a_final_segment_missing_its_end_tag`、
-    `test_parse_transcript_ignores_free_text_before_a_segment` 与
-    `test_parse_transcript_keeps_the_body_when_trailing_noise_follows`。
+    另外两档**不在**这一档（正文要留下）。
     """
     assert parse_transcript(raw) == []
 
@@ -160,11 +142,6 @@ def test_parse_transcript_keeps_a_lone_final_segment_without_end_tag() -> None:
 
     assert [(s.start, s.end, s.speaker) for s in segments] == [(12.5, 12.5, "S03")]
     assert segments[0].text == "只有这一段，没有结束标签"
-
-
-# ---------------------------------------------------------------------------
-# 二、引擎：假 processor + 假模型（不加载真模型）
-# ---------------------------------------------------------------------------
 
 
 class _FakeTensor:
@@ -427,7 +404,6 @@ def test_engine_load_failure_is_kept_and_not_retried(monkeypatch: pytest.MonkeyP
         engine.transcribe("a.wav")
 
     assert engine.load_error == "OSError: 第一次读不动模型快照"
-    # 第二次调用：当场拒（原话照旧），加载接缝一次都不再进
     with pytest.raises(RuntimeError, match="第一次读不动模型快照"):
         engine.transcribe("b.wav")
     assert len(attempts) == 1
@@ -452,11 +428,6 @@ def test_engine_passes_model_dtype_and_device_to_the_loader(monkeypatch: pytest.
 
     assert captured == [(snapshot, "bfloat16", "cpu")]
     assert engine.max_new_tokens == 8192
-
-
-# ---------------------------------------------------------------------------
-# 三、精度档位与设备解析（照官方 helper 的形态）
-# ---------------------------------------------------------------------------
 
 
 def test_torch_dtype_names_cover_the_four_supported_levels() -> None:
@@ -497,10 +468,6 @@ def test_default_engine_construction_touches_no_heavy_model() -> None:
     assert callable(engine.transcribe)
     assert hasattr(engine_module.OfflineEngine, "transcribe")
 
-
-# ---------------------------------------------------------------------------
-# 四、全新解释器里的 import 链：重依赖一个都不许被拉进来
-# ---------------------------------------------------------------------------
 
 #: 在子进程里跑的一行：只 import 被测模块，再报出**重依赖**。
 _IMPORT_CHAIN_CODE = (
@@ -564,11 +531,6 @@ def test_package_import_pulls_no_heavy_dependency() -> None:
     assert (result.stdout or "").strip() == "heavy=", output
 
 
-# ---------------------------------------------------------------------------
-# 退出守卫：进程正在退出时不发起任何 import（260928-2 那场 (b) 机制的守门用例）
-# ---------------------------------------------------------------------------
-
-
 def test_load_models_refuses_to_import_while_interpreter_is_finalizing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -586,18 +548,12 @@ def test_load_models_refuses_to_import_while_interpreter_is_finalizing(
         engine_module._load_models("whatever", dtype="bfloat16", device="cpu")
 
 
-# ---------------------------------------------------------------------------
-# release_engine（的 d6）：丢引用 + 请 torch 把缓存还给系统
-# ---------------------------------------------------------------------------
-
-
 def test_release_engine_drops_model_references_and_reports_the_drop() -> None:
     """带着权重的那一格：processor / transcriber 两格引用丢掉，交回 True。"""
     engine = SimpleNamespace(processor=object(), transcriber=object())
     assert engine_module.release_engine(engine) is True
     assert engine.processor is None
     assert engine.transcriber is None
-    # 幂等：第二次起没有可丢的（False），再来一遍也不抛
     assert engine_module.release_engine(engine) is False
 
 

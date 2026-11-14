@@ -47,22 +47,15 @@ from tests.test_drain._common import (
     _warm_up_client,
 )
 
-#: 慢档标记：`pytest.mark.slow` 的归位判据见 `docs/service.md`。
 pytestmark = pytest.mark.slow
-
-# ---------------------------------------------------------------------------
-# ⑥ `post` 启动即完成
-# ---------------------------------------------------------------------------
 
 
 def test_post_step_completes_on_launch_return(service_process, meeting_env):
-    """第 4 步 `post` 做完它该做的就落定，收尾不等任何会后链（R26）。
+    """第 4 步 `post` 做完它该做的就落定，收尾不等任何会后链。
 
-    按「结束录音」之后会后一个动作都不自动跑（R26）：那一步只剩「让会中模型退出显存」
+    按「结束录音」之后会后一个动作都不自动跑：那一步只剩「让会中模型退出显存」
     这一件事，做完就停在 `waiting`（＝等你动手），收尾仍在预算内正常落 `done`，
-    盘上 `state == "done"`。原先这一条量的是「启动即算完成、不等它跑完」那条契约，
-    那条契约现在落在用户按下的两个按钮上（`POST /api/actions` 的 `post_offline` /
-    `post_minutes` 起线程即算启动成功，见 `tests/test_post_actions.py`）。
+    盘上 `state == "done"`。
     """
     plugin = fakes.write_immediately_returning_post_plugin(meeting_env.home)
     fakes.write_plugin_config(meeting_env.home, plugin)
@@ -79,11 +72,6 @@ def test_post_step_completes_on_launch_return(service_process, meeting_env):
 
     record = read_session_json(snapshot["session"]["dir"])
     assert record is not None and record["state"] == "done"
-
-
-# ---------------------------------------------------------------------------
-# ⑦ `budget` 与耗时进 log（契约 §3.8 点名的那个函数名，独立成条）
-# ---------------------------------------------------------------------------
 
 
 def test_drain_logs_budget_and_elapsed(service_process, meeting_env):
@@ -108,8 +96,6 @@ def test_drain_logs_budget_and_elapsed(service_process, meeting_env):
     session_dir = Path(snapshot["session"]["dir"])
 
     # 场次 log：收尾起点、预算的输入与结果，加上摘掉之前那几步的记录
-    # （`log` 步落定那一刻场次 handler 就被摘掉 —— 它自己的「结束 / 耗时」与 `post`
-    # 步的开始都只进得了服务级 log）
     session_log = wait_until(
         lambda: _log_with_all(
             session_dir / "meeting.log",
@@ -123,7 +109,6 @@ def test_drain_logs_budget_and_elapsed(service_process, meeting_env):
     assert session_log, "场次 log 里该有收尾开始与摘掉之前那几步的记录"
     assert "segment_timeout=" in session_log, "预算的另一个输入也该落在本场那一份里"
 
-    # 服务级 log：四步齐备的一份 —— 每步都有开始、结束与耗时，预算的输入与结果也在这
     service_log_path = meeting_env.log_dir / "meeting.log"
     service_log = wait_until(
         lambda: _log_with_all(
@@ -146,7 +131,6 @@ def test_drain_logs_budget_and_elapsed(service_process, meeting_env):
     )
     assert service_log, "服务级 log 里该有各步齐备的记录"
 
-    # 逐步点名：各步的「开始 / 结束 / 耗时」三样在服务级 log 里逐条查得到（缺哪一步就报哪一步）
     for step_id in DRAIN_STEP_IDS:
         for needle, label in (
             (f"收尾步骤开始：{step_id}", "开始"),
@@ -157,15 +141,10 @@ def test_drain_logs_budget_and_elapsed(service_process, meeting_env):
                 f"服务级 log 里查不到 {step_id} 那一步的{label}（{needle}）：\n"
                 f"{service_log[-1500:]}"
             )
-    # 预算的输入与结果：积压量、段长与算出来的那条上限都写着（`budget` 的取值域由 ⑤ 与 ⑤b2 核）
+    # 预算的输入与结果：积压量、段长与算出来的那条上限都写着
     assert "budget=" in service_log
     assert "backlog=" in service_log
     assert "segment_timeout=" in service_log
-
-
-# ---------------------------------------------------------------------------
-# ⑧ 失败后不自杀
-# ---------------------------------------------------------------------------
 
 
 def test_failed_step_keeps_service_alive_and_start_conflicts(service_process, meeting_env):
@@ -210,13 +189,8 @@ def test_failed_step_keeps_service_alive_and_start_conflicts(service_process, me
     assert detail["log_path"], f"拒绝路径要带上 log 路径：{detail}"
 
 
-# ---------------------------------------------------------------------------
-# ⑨ 两条出路进状态与 log
-# ---------------------------------------------------------------------------
-
-
 def test_failed_step_records_both_ways_out(service_process, meeting_env):
-    """收尾失败时，log 里能找到 `meeting post` 与「重启」两条出路（§5.3 行 249）。"""
+    """收尾失败时，log 里能找到 `meeting post` 与「重启」两条出路。"""
     plugin = fakes.write_failing_capture_plugin(meeting_env.home)
     fakes.write_plugin_config(meeting_env.home, plugin)
 
@@ -234,11 +208,6 @@ def test_failed_step_records_both_ways_out(service_process, meeting_env):
     service_log = _service_log_text(meeting_env)
     assert "meeting post" in service_log
     assert "重启" in service_log
-
-
-# ---------------------------------------------------------------------------
-# ⑩ 收尾期间可观测
-# ---------------------------------------------------------------------------
 
 
 def test_state_stays_readable_while_draining(service_process, meeting_env):
@@ -260,7 +229,7 @@ def test_state_stays_readable_while_draining(service_process, meeting_env):
     _start(proc)
 
     assert post_action(proc.base_url, "stop").status_code == 200
-    # 先把观察点挪进窗口（见 `DRAIN_WINDOW_ENTRY_DELAY_SECONDS` 的说明），再轮询
+    # 先把观察点挪进窗口，再轮询
     time.sleep(DRAIN_WINDOW_ENTRY_DELAY_SECONDS)
     during = _wait_state(
         proc,

@@ -5,10 +5,9 @@ import { chunkRowLabel, phaseMark } from '../progress';
 import type { PostStopView } from '../post';
 
 /**
- * 会后进度区（R27，节点）：可展开收缩；展开是逐块行往下刷 + 每路一条的进度条。
+ * 会后进度区：可展开收缩；展开是逐块行往下刷 + 每路一条的进度条。
  * 读数是 `GET /api/sessions/{id}` 那只纯读端点的原文，轮询只在有活动时开（轮询与取数
  * 归主组件）；「停着一版 running」按 `in_process` 分层如实画，不替盘上的话下结论。
- * 展开与收起是纯界面偏好，状态住在这里（不落本地存储）。
  */
 export function ProgressArea({
   prog,
@@ -18,20 +17,14 @@ export function ProgressArea({
   chunkRows,
   onStop,
 }: {
-  /** 进度区的读数（有读数才算；读不出来就画失败那一行，`statusError`）。 */
   prog: ProgressView | null;
-  /** 轮询/取数失败那一行（如实画在进度区里，不顶掉首页的失败块）。 */
   statusError: string | null;
-  /** 停止入口（R28 /）：这一场的 offline 在飞时出现在进度区头行。 */
   stop: PostStopView;
   busy: boolean;
-  /** 逐块行（每跑完一块落一行；第一次读到时把已跑过的补成 `observed` 行）。 */
   chunkRows: ChunkRow[];
   onStop: () => void;
 }): ReactNode {
-  /** 进度区展开没有（纯界面偏好，只活在这一页的内存里，不落本地存储）。 */
   const [progOpen, setProgOpen] = useState(true);
-  /** 阶段行的图形标记（`phaseMark()` 照 phase 给；没有标记就摆 spinner）。 */
   const progMark = prog === null ? null : phaseMark(prog.phase);
 
   return (
@@ -48,8 +41,7 @@ export function ProgressArea({
             {prog.phaseLabel}
           </span>
 )}
-        {/* 停止入口（R28 /）：只在这一场的 offline 在飞时出现。
-            受理即回——当前块收尾之后停，盘上状态记为「已中断」。 */}
+        {/* 受理即回——当前块收尾之后停，盘上状态记为「已中断」。 */}
         {stop.visible && (
           <button
             className="btn btn--small btn--ghost wsprog__stop"
@@ -70,7 +62,7 @@ export function ProgressArea({
           {progOpen ? '收起' : '展开'}
         </button>
       </div>
-      {/* 错误行不进收起的那一半：收起态也要看得见「读数出事了」（review-1 m1 顺带） */}
+      {/* 错误行不进收起的那一半：收起态也要看得见「读数出事了」 */}
       {statusError !== null && <p className="wsprog__row wsprog__row--bad">{statusError}</p>}
       {progOpen && (
         <div className="wsprog__body">
@@ -112,8 +104,6 @@ export function ProgressArea({
                   </p>
 ))}
               </div>
-              {/* 四档合计与已运行秒数：给人看的读数（设计意图第 6、7 条那句话
-                  是给维护者的口径，不摆到界面上） */}
               <p className="hint">
                 {prog.elapsedSeconds === null
                   ? ''

@@ -1,24 +1,15 @@
 /**
- * 发声：致命级首发在音箱里响一声。
+ * 发声：致命级首发在音箱里响一声 —— 单次短促一声，非连续、非循环。用 WebAudio 就地合成，
+ * 不引任何音频文件。
  *
- * **形态**：单次短促一声，非连续、非循环（设计章 4.4）。用 WebAudio 就地合成，
- * 不引任何音频文件（门槛 7：零外链、断网可用）。
+ * **谁决定响不响**：`decideAlarmSound()` —— 判据全在服务推来的 `settings.alarm_sound` 与那一条
+ * 告警的 `muted` 上。这一层只管「把这一声放出来」。
  *
- * **谁决定响不响**：`decideAlarmSound()` —— 判据全在服务推来的 `settings.alarm_sound`
- * 与那一条告警的 `muted` 上（见 `alarm.ts`）。这一层只管「把这一声放出来」。
- *
- * **关掉声音这件事有两条路**：持久化开关（`alarm.sound`）与会话级静音，两条都由服务
- * 体现在 `muted` 里，界面不再自己判一次（交付要求第 5 条末句）。
- *
- * **自动播放策略**：页面还没被用户碰过时，浏览器会把 `AudioContext` 按在 `suspended`
- * 上，第一声会放不出来。这里把那次失败**吞掉**，并记下「需要一次用户交互」；
- * `App` 在任意一次点击之后补一次授权（`resume()` + 空跑一个振荡器把链路点着），
- * 之后的声音照放。
+ * **自动播放策略**：页面还没被用户碰过时，浏览器会把 `AudioContext` 按在 `suspended` 上。这里把
+ * 那次失败**吞掉**并记下「需要一次用户交互」；`App` 在任意一次点击之后补一次授权。
  */
 
-/** 只取用到的那几样，测试注入一个假的实现即可（不必是本机的 `AudioContext`）。
- *  `destination` 与 `connect()` 的连线端刻意用 `unknown`：这一层不碰音频图的结构，
- *  只把节点连起来，因此不必依赖 DOM 那套类型。 */
+/** 只取用到的那几样，测试注入一个假的实现即可。`destination` 与 `connect()` 的连线端刻意用 `unknown`：这一层不碰音频图的结构。 */
 export interface AudioContextLike {
   state: string;
   currentTime: number;
@@ -45,7 +36,7 @@ export interface GainLike {
   connect(target: unknown): unknown;
 }
 
-/** 一声的长短与音高：短促、偏低的「嗒」，与告警的语气相称（不是铃声）。 */
+/** 一声的长短与音高：短促、偏低的「嗒」，与告警的语气相称。 */
 export const BEEP_SECONDS = 0.18;
 export const BEEP_FREQUENCY_HZ = 880;
 export const BEEP_PEAK_GAIN = 0.25;
@@ -65,22 +56,18 @@ export function browserAudioContextFactory(): AudioContextFactory | null {
 }
 
 export interface AlarmSoundHandle {
-  /**
-   * 响一声。返回这一声有没有真的放出来：
-   * `false` 表示被自动播放策略按住了（那时调用方记下「要一次用户交互」）。
-   */
+  /** 响一声。返回这一声有没有真的放出来：`false` 表示被自动播放策略按住了。 */
   play(): boolean;
   /** 用户的第一次交互之后调用：补一次授权，让之后的声音放得出来。 */
   unlock(): void;
-  /** 现在解没解锁。 */
   unlocked(): boolean;
 }
 
 /**
  * 造一个发声器。
  *
- * `context` 懒建：页面加载时不许先造一个 `AudioContext` 出来（某些浏览器会因此
- * 在控制台记一条警告），第一声要响的时候才建。
+ * `context` 懒建：页面加载时不许先造一个 `AudioContext` 出来（某些浏览器会因此在控制台记一条
+ * 警告），第一声要响的时候才建。
  */
 export function createAlarmSound(
   createContext: AudioContextFactory | null,

@@ -1,4 +1,4 @@
-"""`tests/test_dev_level_sequence.py` —— dev 替身合成电平的增量缓存（复审 #3）。
+"""`tests/test_dev_level_sequence.py` —— dev 替身合成电平的增量缓存。
 
 `DevCaptureBackend._run()` 每拍调 `level_sequence(source, tick + 1)` 取末位；过去每次
 都从种子重建整条序列（单帧 O(tick)、整场累计 O(tick²)）。现在 `level_sequence()` 走

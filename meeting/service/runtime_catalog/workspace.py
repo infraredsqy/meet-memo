@@ -1,8 +1,4 @@
-"""RuntimeCatalogMixin 的「工作区注册表」域分片：登记 / 移除 / 清单读数与三档状态口径。
-
-方法与方法间注释均自拆分前的 runtime_catalog.py 单文件 mixin 一字不改复制；
-本文件自写内容只有模块 docstring、import、_log 一行与类声明行。
-"""
+"""RuntimeCatalogMixin 的「工作区注册表」域分片：登记 / 移除 / 清单读数与三档状态口径。"""
 from __future__ import annotations
 
 import logging
@@ -18,10 +14,6 @@ _log = logging.getLogger("meeting.service.runtime")
 
 
 class RuntimeCatalogWorkspaceMixin:
-    """「工作区注册表」：开 / 移 / 清单读数，三档 state 口径的唯一住家。"""
-
-    # 工作区注册表（工作台收编节点）
-
     def _is_actively_recording(self, path: str | Path) -> bool:
         """`path` 这一场是不是**本进程此刻在录**的那一场（三档口径里 `recording` 的判据）。
 
@@ -43,8 +35,8 @@ class RuntimeCatalogWorkspaceMixin:
     ) -> tuple[str | None, str | None, str | None]:
         """工作区清单那三格的读数：`(state, date, mode)`。
 
-        **`GET /api/sessions` 与 `GET /api/sessions/{id}` 前七格共用这一处**（契约 4.9
-        写着前七格与 4.8 同一行同源、逐格语义见 4.8）：同一个事实在两处必须给同一个值。
+        **`GET /api/sessions` 与 `GET /api/sessions/{id}` 前七格共用这一处**：
+        同一个事实在两处必须给同一个值。
 
         `state` 是**三档口径**（只表达「这场录音走到哪了」，落盘 / 转码 / 会后那几步
         不进这个口径）：
@@ -68,7 +60,7 @@ class RuntimeCatalogWorkspaceMixin:
 
         每段四格：`index` / `started_at` / `ended_at` / `duration_seconds`——
         段记录里给人看的就这四样（`pauses` / `sources` 是核对用的格子，不进界面）。
-        盘上形状不对的那一条如实跳过；这一格只是把盘上的读数端出来给人看（第 6 条）。
+        盘上形状不对的那一条如实跳过；这一格只是把盘上的读数端出来给人看。
         状态文件不在场时交回空表。
         """
         if not isinstance(record, dict):
@@ -148,7 +140,7 @@ class RuntimeCatalogWorkspaceMixin:
         }
 
     def workspace_remove(self, dir: Any) -> dict[str, Any]:
-        """`workspace_remove`：**只把这一条从注册表移走**；文件一个字节不动（第 5 条）。
+        """`workspace_remove`：**只把这一条从注册表移走**；文件一个字节不动。
 
         目录被事先移走/删掉的那一条也照样移（`removed: False` 只是"名单里本来没有"），
         重复删除安全。
@@ -165,12 +157,12 @@ class RuntimeCatalogWorkspaceMixin:
         一律 `"ended"`；没有则 `null` —— 见 `_disk_record_cells()`），
         `date` / `mode` 只在盘上读得出来时带值。
         `recent` 是最近一次被打开/切换的那一条的目录（**只从注册表读**，不扫任何场次
-        目录 —— 启动序列对它的口径见 `docs/state.md`「重启自洽」）。
+        目录）。
         清单本身也按「最近在用」倒序给出（`registry.ordered()`）：最近一次被打开/切换
         的那一场排最前，判据与 `recent` 同一条链——界面照应答次序渲染、
-        自己不重排，次序的口径正本在 `docs/contract.md` 4.8。
+        自己不重排。
 
-        `has_offline` 是「这一场有没有会后精细稿」那一格（R29）：判据是场次目录里在不在
+        `has_offline` 是「这一场有没有会后精细稿」那一格：判据是场次目录里在不在
         `meeting_offline_transcript_<source>.md`（`workspace.has_offline_transcript()`，
         只看名目、不读内容）。「出纪要」那个按钮按它渲染 —— 界面因此一眼看得出 AI 手上
         有没有那份更细的稿。**这一格走本端点，不塞进快照**（推送出去的东西只认那九个顶层键，
@@ -180,8 +172,8 @@ class RuntimeCatalogWorkspaceMixin:
         —— 此刻服务进程里在飞的那一趟会后（`{kind, dir, started_at}`）或 `null`。它是
         界面那格全局「显卡忙不忙」的会后一半读数（另一半「本机正在录」从快照状态读，
         不走这里）；**每行十二键**，这一格在应答体顶层、不进任何一行，快照九键
-        一个字不动。行里的 `segments` 是这场会**各段的时长与时间**（续接节点加上去的
-        读数，盘上段记录原文四格，两段的会看得出接过）。
+        一个字不动。行里的 `segments` 是这场会**各段的时长与时间**
+        （盘上段记录原文四格，两段的会看得出接过）。
         """
         rows: list[dict[str, Any]] = []
         for entry in self.registry.ordered():
@@ -212,8 +204,6 @@ class RuntimeCatalogWorkspaceMixin:
             "recent": None if recent is None else str(recent["dir"]),
             "post_jobs": self.post_jobs_state(),
         }
-
-    # 会后的多趟活与转码工序（闸与登记的读法归 runtime_post / runtime_transcode）
 
     def _registry_entry_for(self, target: str) -> dict[str, Any] | None:
         """`target` 在注册表里那一条（判据与 `GET /api/sessions` **同一套**：`normcase` 后的

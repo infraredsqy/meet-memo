@@ -3,10 +3,9 @@
 这一层只做「一条音频路径进去，一串带 `Sxx` 标签的分段出来」：模型加载、消息构造、
 处理器调用、生成、解码、解析。**不做说话人编号规范化**（那是 `meeting/offline/speakers.py`
 的事），也不写任何场次产物。引擎的**解析与构造**（按 `post.engine` 找类、按
-`post.model` / `post.dtype` 造，`resolve_engine()` / `build_engine()` 一族）也住这里
-（自 `meeting/offline/runner` 编排主模块迁入）。
+  `post.model` / `post.dtype` 造，`resolve_engine()` / `build_engine()` 一族）也住这里。
 
-两条来自实测的硬约束写在这里，改之前先读完：
+两条硬约束写在这里，改之前先读完：
 
   1. **波形以 ndarray 传进 processor，绝不传文件路径。** `transformers.audio_utils.load_audio`
      对 ndarray 直接返回、不要求任何解码后端；而字符串路径（mp3 与 wav 都一样）会落到
@@ -19,8 +18,7 @@
 （`meeting/asr/glm.py` 的既有纪律）；`torch` / `transformers` 的首次 import 包在
 `meeting/importlock.py` 的进程级锁里（与会中 ASR 的首导互斥，理由见 `_load_models()`；
 `transcribe()` 前置与 `_resolve_device()` 的 `import torch` 是同一把锁）。
-`dtype` 的合法取值与 `_resolve_device` 的形态照抄
-官方 helper（`moss_transcribe_diarize/inference_utils.py:50-71`），那是本项目实测跑通的那一份。
+`dtype` 的合法取值与 `_resolve_device` 的形态照抄官方 helper 那一份实现。
 """
 
 from __future__ import annotations
@@ -45,17 +43,17 @@ class EngineShutdownInterrupted(RuntimeError):
     退出期继续首导会被拦腰打断成不知所云的 `ImportError`，如实抛本异常、状态文件落 failed。
     """
 
-#: 官方 helper 的提示词（`inference_utils.py:13-17` 的 `DEFAULT_PROMPT`，逐字）
+#: 官方 helper 的提示词（逐字）
 DEFAULT_PROMPT = (
     "请将音频转写为文本，每一段需以起始时间戳和说话人编号"
     "（[S01]、[S02]、[S03]…）开头，正文为对应的语音内容，"
     "并在段末标注结束时间戳，以清晰标明该段语音范围。"
 )
 
-#: 处理器一次能吃下的最大 token 数（照官方 helper 的 `prepare_inputs` 缺省）
+#: 处理器一次能吃下的最大 token 数
 MAX_LENGTH = 131072
 
-#: 精度档位名 → `torch.dtype` 属性名（照官方 helper 的 `dtype_from_name`，只留本机实测的两档）
+#: 精度档位名 → `torch.dtype` 属性名（只留本机在用的两档）
 DTYPE_NAMES: dict[str, str] = {
     "bf16": "bfloat16",
     "bfloat16": "bfloat16",
@@ -89,8 +87,7 @@ class OfflineSegment:
 class OfflineEngine(Protocol):
     """离线引擎的协议：换引擎时上层（钩子、产物落盘）不动。
 
-    实现要给出的**真实依赖面**（offline-engine-protocol-undeclared-surface；上层
-    `meeting/offline/runner` 编排主模块鸭子类型读的就是这些，缺了只会静默降级）：
+    实现要给出的**真实依赖面**（上层 `meeting/offline/runner` 编排主模块鸭子类型读的就是这些，缺了只会静默降级）：
 
     - `transcribe(audio_path)`：吃音频文件路径，交回带 `Sxx` 原始标签的分段列表；
     - `load_error` / `_load()`：加载探测（`_ensure_engine_loaded()`；实现可缺——
@@ -375,8 +372,7 @@ def _load_models(model: str, *, dtype: str, device: str):
 
     重依赖全在函数体内惰性 import，且整段 import 包进 `heavy_imports()`（进程级锁）：
     会中 ASR 与本模块在各自后台线程首次 import transformers，两线程同时首导同一模块时
-    其一可能见到半初始化的模块对象（260928-2 实测 `ImportError: cannot import name
-    AutoModelForCausalLM`）。import 前后各一条带线程名的 debug 日志，下次偶现好定案。
+    其一可能见到半初始化的模块对象（实测见过 `ImportError: cannot import name AutoModelForCausalLM`）。
     进程退出期当场抛 `EngineShutdownInterrupted`，不触任何 import。
     用例的接缝：`monkeypatch.setattr(meeting.offline.engine, "_load_models", fake)`
     打在同一份模块对象上。
@@ -408,7 +404,7 @@ def _load_models(model: str, *, dtype: str, device: str):
 
 
 def release_engine(engine: object) -> bool:
-    """**让出离线引擎占的显存**（会中 release_gpu() 的对应物，design-intent 第 21 条）：
+    """**让出离线引擎占的显存**（会中 release_gpu() 的对应物）：
     丢掉模型引用再 `torch.cuda.empty_cache()`。引用计数之外还要这一步，是因为 PyTorch
     缓存分配器不会自动把预留显存还给驱动，服务进程常驻就会一直白占。没加载过是 no-op、
     幂等；torch 惰性 import，缺依赖只算「没能清缓存」。返回是否真的丢了引用。

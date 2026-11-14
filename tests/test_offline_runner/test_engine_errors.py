@@ -44,12 +44,7 @@ from tests.test_offline_runner._common import (
     verdict_of,
 )
 
-#: 慢档标记（收尾轮）：会后离线链的契约验收，归收尾跑。
 pytestmark = pytest.mark.slow
-
-# ---------------------------------------------------------------------------
-# 四、引擎抛错：异常不许逃出 `run_session`
-# ---------------------------------------------------------------------------
 
 
 def test_engine_error_lands_in_the_status_file_without_escaping(tmp_path) -> None:
@@ -78,12 +73,11 @@ def test_engine_error_lands_in_the_status_file_without_escaping(tmp_path) -> Non
 def test_engine_load_failure_lands_as_its_own_reason(tmp_path, monkeypatch) -> None:
     """真引擎那台机器上**第一次加载就失败**：这一趟如实落成失败、写明是加载失败。
 
-    这是本节点第一条 bug 的判据：惰性加载失手时从前会被逐块那个 `except` 折成笼统的
-    `engine_error`（「模型压根没起来」与「某一块没跑成」长得一样）。现在按
-    `engine_load_error` 登记，而且**只加载一次、不重试**（第二路不再敲一遍模型）。
+    惰性加载失手按 `engine_load_error` 登记，与「某一块没跑成」的 `engine_error` 在原因词上
+    分得开；而且**只加载一次、不重试**（第二路不再敲一遍模型）。
 
-    注入接缝用的是 `meeting.offline.engine._load_models`（`engine.py` 自述的那一个，
-    全链路只有它一处是模型入口）——真模型一个字节都不加载。
+    注入接缝用的是 `meeting.offline.engine._load_models`
+    （全链路只有它一处是模型入口）——真模型一个字节都不加载。
     """
     from meeting.offline import engine as engine_module
 
@@ -120,12 +114,8 @@ def test_engine_load_failure_lands_as_its_own_reason(tmp_path, monkeypatch) -> N
 def test_a_whole_recording_of_silence_never_even_loads_the_model(tmp_path, monkeypatch) -> None:
     """整路全静音：模型**一次都不加载**，终态照旧 `done` + `silent: true`。
 
-    加载那一档的探针从前无条件跑在逐块循环之前，于是这一场会把模型真的拉起来（真引擎
-    那一下就是几 GB 权重），而且这次加载一旦失手，这一场就从 `done` + `silent: true` 翻成
-    `failed` —— 可静音本身什么都没出错、这一档原来既不进引擎也不加载模型
-    （`docs/design-intent.md` 第 21 条：不必用就不许把模型拉起来占显存；
-    `docs/state.md` 那一句「跳过的那几段…没花那一次引擎调用」）。
-    这一条钉住的是：一块都不必送引擎的那一趟，连加载那一下都不发生。
+    不必用就不许把模型拉起来占显存。这一条钉住的是：一块都不必送引擎的那一趟，
+    连加载那一下都不发生。
     """
     from meeting.offline import engine as engine_module
 
@@ -193,9 +183,7 @@ def test_an_exception_escaping_run_session_still_leaves_a_failed_status(
 ) -> None:
     """从 `run_session` 逃出去的异常：状态文件落 `failed`、写明原因，异常照旧上抛。
 
-    这一档从前是**没有记录**的：状态文件停在第 1279 行那版 `running`（更早抛出时压根没有
-    状态文件），读方看到的是「还在跑」。服务按钮那条 daemon 线程只落一条 log、
-    命令行的 `meeting post` 才补记录 —— 现在这一层自己兜住，谁拉起这一趟都一样。
+    这一层自己兜住，谁拉起这一趟都一样。
 
     **两路都没轮到时逐路那一格的词档是 `not_run`**：现开的那一格 `reasons` 空、`error`
     是 `null`（引擎一次都没被喊过），兜成 `engine_error` 会把「压根没跑」说成「引擎跑这一块
@@ -239,8 +227,6 @@ def test_the_state_cell_alone_separates_one_dead_source_from_two_healthy_ones(
     """**只看 `state` 那一档**就能分开「两路都成」与「一路整条失败」，并看出缺的是哪一路。
 
     `verdict_of()` 是读方那一条判据的落点（只读 `state` 与 `artifacts.<source>.state`）。
-    这一条正是本节点第二条 bug 的验收线：从前两种情形在读方眼里长得一模一样
-    （整场都是 `state == "done"`，而坏的那一路连 `artifacts` 的键都没有）。
     """
     healthy = synth_session(tmp_path / "healthy")
     run_session(healthy, engine=FakeEngine(), config=FakeConfig())
@@ -284,11 +270,8 @@ def test_the_state_cell_alone_separates_one_dead_source_from_two_healthy_ones(
 def test_one_broken_source_does_not_take_the_other_down(tmp_path) -> None:
     """一路引擎抛错、另一路正常 → **读方只看 `state` 那一档就分得开，缺的是哪一路也看得出来**。
 
-    判据在这一节点上被改过一次（原来是「整场 `done`、且 `mic` 连键都没有」）：
-    「一路整条失败」从前在状态文件里只剩顶层 `error` 那句拼接串，读方若只看 `state`
-    会以为这一层没问题。现在两路在 `artifacts` 里各有一格、各带 `state` / `reason` /
-    `error`，整场 `state` 也为此多立了一档 —— 这一路整条没交回就是 `partial`，
-    与「两路都成」那一档（`done`）分得开。
+    两路在 `artifacts` 里各有一格、各带 `state` / `reason` / `error`；这一路整条没交回
+    就是 `partial`，与「两路都成」那一档（`done`）分得开。
     """
     session = synth_session(tmp_path / "250919")
 
@@ -309,7 +292,6 @@ def test_one_broken_source_does_not_take_the_other_down(tmp_path) -> None:
     assert status["state"] == "partial"
     assert "mic" in (status["error"] or "")
     assert REASON_ENGINE_ERROR in (status["error"] or "")
-    # **只看 `state` 那一档**：这一档与「两路都成」分得开，而且看得出缺的是 mic
     assert verdict_of(status) == ("partial", ["mic"])
     # 「缺的是哪一路」只看 `artifacts.<source>.state` 就读得出来，不必解析 `error` 那句话
     per_source = {source: row["state"] for source, row in status["artifacts"].items()}

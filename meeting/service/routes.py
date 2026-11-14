@@ -6,17 +6,15 @@
 - `POST /api/actions`（信封 + 十九个动作名 + `code` 表，分发走 `_ACTION_HANDLERS`，导入时
   与 runtime 的 `ACTION_NAMES` 核对，对不上服务起不来）；
 - `GET /api/summaries`（本场成功的会中总结，读内存不落文件）；
-- `GET /api/sessions`（工作区注册表）、`GET /api/sessions/{id}`（单场状态，
-  形状见 `docs/contract.md` 4.9）、`GET /api/sessions/{id}/transcripts`（稿子正文）；
-- 会议资料四条（资料节点，语义见 `docs/contract.md` 4.12）：清单 / 上传 /
-  取原文件 / 删除——上传是唯一不走 `/api/actions` 的写端点（二进制正文装不进 JSON 信封），
-  头哨由中间件按端点扩过去；
+- `GET /api/sessions`（工作区注册表）、`GET /api/sessions/{id}`（单场状态）、
+  `GET /api/sessions/{id}/transcripts`（稿子正文）；
+- 会议资料四条：清单 / 上传 / 取原文件 / 删除——上传是唯一不走 `/api/actions` 的写端点
+  （二进制正文装不进 JSON 信封），头哨由中间件按端点扩过去；
 - `GET /api/dirs` / `POST /api/dirs`（目录选择器：现场判读 + 新建目录，REST 写入口）、
   `GET /api/devices`（设备清单，只枚举不开设备）、`GET /debug`（骨架自检页）。
 
 资料四条与稿子正文注册在单场状态那条**之前**：`{dir:path}` 收得下斜杠，注册在后会抢走
-那几条。装配模块与 `static.py` 里的旧注册已摘除——同一路径重复注册不报错，留着旧注册
-会让完整版永远不生效。新路由全部落在三道本地防线中间件的覆盖范围内。
+那几条。新路由全部落在三道本地防线中间件的覆盖范围内。
 """
 
 from __future__ import annotations
@@ -140,9 +138,6 @@ def _action_error(code: str, message: str, *, status: int = 400,
     return ActionError(code, message, status=status, detail=detail)
 
 
-# GET /api/state · GET /api/heartbeat
-
-
 @_needs_runtime
 async def _api_state(request: Request) -> Response:
     runtime = _runtime_of(request)
@@ -156,22 +151,16 @@ async def _api_heartbeat(request: Request) -> Response:
     return JSONResponse(runtime.heartbeat_dict())
 
 
-# GET /api/summaries（设计：本场按过的那些次会中总结）
-
-
 @_needs_runtime
 async def _api_summaries(request: Request) -> Response:
     """本场总结记录：`{session_id, entries}`（**200**，任何状态下都给）。
 
-    记录活在运行时的内存里、**不落文件**（设计章 2.3 / 5.1）；只记**成功产出**的那几次，
+    记录活在运行时的内存里、**不落文件**；只记**成功产出**的那几次，
     按时间先后排。没有场次或一次都没按过时 `session_id` 为 `null`、`entries` 是空数组。
     读它是**纯读**：不提交、不涨 `revision`、不广播。
     """
     runtime = _runtime_of(request)
     return JSONResponse(runtime.summaries_dict())
-
-
-# GET /api/events（SSE）
 
 
 @_needs_runtime
@@ -188,9 +177,6 @@ async def _api_events(request: Request) -> Response:
     )
 
 
-# GET /api/sessions · GET /api/dirs（工作台收编节点：两只读端点）
-
-
 # 这几个处理器是同步 def（不走协程）：它们只是调 runtime 的纯读读取器（盘上 stat 与
 # 读 session.json，都不是异步的）；写成 async 会让盘上读数在事件循环线程上跑。
 # Starlette 对同步处理器自动丢线程池执行。
@@ -200,7 +186,7 @@ def _api_sessions(request: Request) -> Response:
 
     与 `GET /api/summaries` 同一档纯读：不提交、不涨 `revision`、不广播；
     "最近一场"只从注册表读（启动与请求侧都**不扫任何场次目录**，
-    `docs/design-intent.md` 第 4 条）。
+    "最近一场"只从注册表读（启动与请求侧都**不扫任何场次目录**）。
     """
     runtime = _runtime_of(request)
     return JSONResponse(runtime.sessions_dict())
@@ -211,10 +197,10 @@ def _api_session_status(request: Request) -> Response:
     """单场状态：`GET /api/sessions/{id}`，`{id}` 是**这一场的目录路径**（URL 编码的绝对路径）。
 
     会后视图那一片进度区就读它：这一场此刻跑到哪一档、会后离线跑过几块、共几块、
-    正在跑哪一路、已经跑了多久（应答体逐格见 `docs/contract.md` 第 4.9 节）。
+    正在跑哪一路、已经跑了多久。
 
     与 `GET /api/sessions` / `GET /api/summaries` 同一档**纯读**：不提交、不涨 `revision`、
-    不广播。路径打不到已登记的工作区时按第 4.9 节的失败口径回 404（回的是通用失败信封：
+    不广播。路径打不到已登记的工作区时按契约的失败口径回 404（回的是通用失败信封：
     `{ok, code, message, detail}`）。
     """
     runtime = _runtime_of(request)
@@ -228,7 +214,7 @@ def _api_session_status(request: Request) -> Response:
 def _api_session_transcripts(request: Request) -> Response:
     """这一场的稿子正文：`GET /api/sessions/{id}/transcripts`（会后区的两份稿）。
 
-    两份稿（会中稿 / 会后稿，`docs/design-intent.md` 第 11 条：平级）× 本地 / 远端
+    两份稿（会中稿 / 会后稿，平级）× 本地 / 远端
     两路各一份；文件在的那一路给 `text`（正文原样），不在的那一路给 `reason`
     （缺稿的那一档，缺稿话归界面翻）。`{id}` 与失败口径跟单场状态那一只同一套
     （404 两档）。与 `GET /api/sessions` 同一档**纯读**：不提交、不涨 `revision`、
@@ -267,15 +253,14 @@ def _api_dirs(request: Request) -> Response:
 def _api_dirs_create(request: Request) -> Response:
     """新建目录：`POST /api/dirs?dir=<父层>&name=<名字>`（写端点，头哨在中间件）。
 
-    与 `GET /api/dirs` 同族的一只 REST 写入口（先例是资料上传那条不走动作信封的
-    `POST …/materials`）：落点是正在浏览的这一层（`dir` 省略时主目录，与 GET 同一
-    起点），名字必给、必须用户亲手起——软件不自动命名、不自动挑落点（设计意图
-    第 3、4 条的新口径），只建一层、不做删除、不做改名。
+    与 `GET /api/dirs` 同族的一只 REST 写入口：落点是正在浏览的这一层（`dir` 省略时
+    主目录，与 GET 同一起点），名字必给、必须用户亲手起——软件不自动命名、不自动挑
+    落点，只建一层、不做删除、不做改名。
 
     成功体 = 通用信封 + `directory` 键：新建那一行的名目判读（刚建出来是 `empty`），
     界面拿它把新行插进清单并直接置为选定。拒绝档三条（一层不存在 / 名字非法 /
     同名已存在）与盘上出岔档由 `runtime.dirs_create()` 按契约给；**不涨 `revision`、
-    不广播**（选择器的现场独立于四态快照，先例同上）。
+    不广播**（选择器的现场独立于四态快照）。
     """
     runtime = _runtime_of(request)
     try:
@@ -302,9 +287,6 @@ async def _api_devices(request: Request) -> Response:
         return _error_response(exc)
 
 
-# 会议资料四条（资料节点）：清单 / 上传 / 取原文件 / 删除
-
-
 def _materials_missing_error(name: str) -> ActionError:
     """资料里没有这一份的失败体（`material_missing`，404；取原文件与删除共用）。"""
     return ActionError(
@@ -322,7 +304,7 @@ def _api_materials_listing(request: Request) -> Response:
     **目录就是清单**（没有 JSON 记录）：只读 `meeting_materials/` 的名目，目录还不在
     （一场还没传过资料）时 `items` 是空数组、目录也不建——「首次上传时由服务创建」
     是上传那一侧的事。与 `GET /api/sessions` 同一档纯读：不提交、不涨 `revision`、
-    不广播。寻址失败（目录不在原地 / 两样都不是）按 4.12 的失败口径回 404。
+    不广播。寻址失败（目录不在原地 / 两样都不是）按契约的失败口径回 404。
     """
     runtime = _runtime_of(request)
     try:
@@ -350,7 +332,7 @@ async def _api_materials_upload(request: Request) -> Response:
     - 中途失败（盘上出岔 / 客户端断开）把**半截文件收走**，不留残骸；
     - 成功体 = 通用信封 + `material: {name, size_bytes, added_at}`（贴上时刻 = 落盘
       那一刻的文件修改时间，不保留原文件的时间戳）。**不涨 `revision`**——资料层
-      独立于四态快照，信封里的 `revision` 只是当前版本号（先例是 `summarize`）。
+      独立于四态快照，信封里的 `revision` 只是当前版本号。
 
     域编排（`from` 档源校验、占名、流式写盘、半截清理）收在
     `runtime_materials.RuntimeMaterialsMixin.materials_receive()` 一处；路由层只留
@@ -422,8 +404,6 @@ async def _api_materials_delete(request: Request) -> Response:
     except ActionError as exc:
         return _error_response(exc)
 
-
-# POST /api/actions —— 动作登记表（分发只认这张表，函数末尾没有第三条出路）
 
 #: 动作处理器：`(runtime, args) → 额外成功键`（async；`None` = 通用信封
 #: `{"ok": true, "revision": N}` 就够）。每个动作成功体的形状只写在这一处。
@@ -516,12 +496,12 @@ async def _act_set_source(runtime: ServiceRuntime, args: dict[str, Any]) -> None
 
 
 async def _act_speaker_rename(runtime: ServiceRuntime, args: dict[str, Any]) -> dict[str, Any]:
-    # 说话人改名（R10 第四条 / R30）：只写这一场的人名表（不拉离线/纪要、不动快照），
+    # 说话人改名：只写这一场的人名表（不拉离线/纪要、不动快照），
     # 成功体多一个 `speaker` 键；界面改完当场生效走的是重问单场状态那一跳。
     return {"speaker": runtime.speaker_rename(args)}
 
 
-#: 会后的两个按钮（R26）与 `post_stop`（R28）共用同一条成功体规矩：
+#: 会后的两个按钮与 `post_stop` 共用同一条成功体规矩：
 #: 起一条后台线程即算启动成功 / 立起取消旗标即算受理成功，成功体多一个 `post` 键，
 #: 停没停成由盘上的状态文件回答（`post_stop` 的回执多一格 `stopping: true`）。
 _ACTION_HANDLERS: dict[str, _ActionHandler] = {
@@ -550,11 +530,9 @@ _ACTION_HANDLERS: dict[str, _ActionHandler] = {
 def _reconcile_action_registry() -> None:
     """启动期核对：登记表与 `ACTION_NAMES` 两份名单必须恰好对上，对不上当场炸。
 
-    `ACTION_NAMES`（runtime 冻结的那一份，`detail.known` 与契约按它答）与分发表的
-    名单从前靠纪律同步：给 `ACTION_NAMES` 加名漏加分支时，请求穿过分发链落到函数末尾、
-    什么都不做却回 `ok: true`。现在登记表是分发的唯一依据，本模块被导入（＝应用装配、
-    服务起跑之前）时把两边数一遍：任何一边多一个名、少一个名，启动就此失败 ——
-    漂移活不过启动。
+    `ACTION_NAMES`（runtime 冻结的那一份，`detail.known` 与契约按它答）是名单的正本；
+    登记表是分发的唯一依据。本模块被导入（＝应用装配、服务起跑之前）时把两边数一遍：
+    任何一边多一个名、少一个名，启动就此失败 —— 漂移活不过启动。
     """
     registered = set(_ACTION_HANDLERS)
     frozen = set(ACTION_NAMES)
@@ -578,8 +556,7 @@ async def _api_actions(request: Request) -> Response:
 
     分发走模块顶那张「动作名 → 处理器」登记表（`_ACTION_HANDLERS`）：表是分发的唯一
     依据，并在本模块导入时与 `ACTION_NAMES` 核对过（`_reconcile_action_registry()`）。
-    查表查不到的名字在这里**显式失败** —— 从前那条「穿过分发链落到函数末尾、
-    什么都不做却回 `ok: true`」的假成功通道，在结构上不存在了。
+    查表查不到的名字在这里**显式失败**。
     """
     runtime = _runtime_of(request)
 
@@ -642,9 +619,6 @@ async def _api_actions(request: Request) -> Response:
     return JSONResponse(body)
 
 
-# GET /debug
-
-
 async def _debug_page(request: Request) -> Response:
     """骨架自检页：从**包内**读取（`package-data` 覆盖 `meeting/service/*.html`）。"""
     from starlette.responses import HTMLResponse
@@ -652,9 +626,6 @@ async def _debug_page(request: Request) -> Response:
     from meeting.service import static as static_module
 
     return HTMLResponse(static_module.read_debug_page())
-
-
-# 注册
 
 
 def api_routes() -> list[Route]:
@@ -697,7 +668,7 @@ def api_routes() -> list[Route]:
 
 
 def debug_routes() -> list[Route]:
-    """`GET /debug` 的唯一注册点（**从 `meeting/service/static.py` 摘除了旧注册**）。"""
+    """`GET /debug` 的唯一注册点。"""
     return [Route("/debug", _debug_page, methods=["GET"])]
 
 

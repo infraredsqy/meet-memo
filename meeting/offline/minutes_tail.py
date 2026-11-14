@@ -1,4 +1,4 @@
-"""离线链尾巴上「怎么拉起纪要」的编排（自 `meeting/offline/runner` 拆出）。
+"""离线链尾巴上「怎么拉起纪要」的编排。
 
 `run_session()` 的三份产物与状态文件都落定之后，还要按 `minutes.hook` 把会后纪要
 那一层拉起来 —— 这一段（通知、隔离闸、终态闸、实现拉起）与离线转写主链
@@ -58,8 +58,8 @@ def _announce_minutes(
       （但调用方显式递了 `launcher` 的替身档照常调到，用例靠它的登记核有没有再花钱）；
     - 这一层炸了**不许影响离线三份产物**、也不许改 `meeting_offline_status.json`
       （`try/except BaseException` 兜住只记 log）；
-    - 拉起之前还有 `_minutes_gate()`：已 `done` 且产物过判据时不再拉起（R8 的
-      「反复重跑不重复拉子会话」在自动入口上的落点）；`force = True` 跳过那道闸。
+    - 拉起之前还有 `_minutes_gate()`：已 `done` 且产物过判据时不再拉起；
+      `force = True` 跳过那道闸。
 
     `launcher` / `force` / `deadline` / `status_reader` / `artifact_checker` / `captured`
     均为注入点与透传格（缺省走产品路径）。返回值只进 `run_session()` 摘要、**不写进任何

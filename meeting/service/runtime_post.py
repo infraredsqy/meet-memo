@@ -1,6 +1,6 @@
 """会后作业 mixin：精细稿 / 纪要 / 停止 / 分钟层认领。
 
-**闸按（种类, 场次）重排**（转码搬出收尾节点）：进程级一刀切（「任何一趟会后在飞，
+**闸按（种类, 场次）重排**：进程级一刀切已废——每一种活按 `(kind, dir)` 一趟一格，同一种重活在同一场上
 别的按钮一律拒」）已废 —— 每一种活按 `(kind, dir)` 一趟一格，同一种重活在同一场上
 只能有一趟、第二趟如实拒；**纪要免闸**（与转码、与其它场次、与别的会后动作都并行）；
 唯一硬闸 = 本地大模型互斥（录音中拒「生成会后精细稿」，反向由 `start` 那一侧拒）。
@@ -118,7 +118,7 @@ class RuntimePostMixin:
         （`meeting_offline_status.json` / `meeting_minutes_status.json` /
         `meeting_transcode_status.json`），与既有钩子那几条契约同一姿态。
 
-        `claimed_minutes=True` 表示纪要那一层的 claim 已经在动作本体里同步认过（m2），
+        `claimed_minutes=True` 表示纪要那一层的 claim 已经在动作本体里同步认过，
         线程体那一趟因此直接起线程、不再认第二次。
 
         **`cancel` 是打断那一趟的接缝**：offline 档起一条 `threading.Event`
@@ -204,7 +204,7 @@ class RuntimePostMixin:
             _log.info("会后的活儿（%s）收工：%s", kind, target)
 
     def _run_post_offline(self, target: str, cancel: threading.Event | None = None) -> None:
-        """「生成会后精细稿」那一趟：**只跑离线那一条链，纪要一动不动**（R26）。
+        """「生成会后精细稿」那一趟：**只跑离线那一条链，纪要一动不动**。
 
         跑的是与 `meeting post` 同一段实现（`offline.runner.run_session()`），但
         `minutes=False`：这一趟**不通知纪要那一层**（尾巴上那道
@@ -242,7 +242,7 @@ class RuntimePostMixin:
         )
 
     def _run_post_minutes(self, target: str, *, claimed: bool = False) -> None:
-        """「直接出纪要」那一趟：把**手上有的稿子**交给 DSH（R9：缺会后稿就按现有档位降级）。
+        """「直接出纪要」那一趟：把**手上有的稿子**交给 DSH（缺会后稿就按现有档位降级）。
 
         拉起点按 `minutes.hook` 解析（与收尾第 4 步原来那一处同源）；解析不出实现时
         没东西可拉，如实抛出去、由线程体记一条 log —— 动作本身在起线程之前就已经
@@ -253,7 +253,7 @@ class RuntimePostMixin:
         `run_session(announce_minutes=True)` 里给真）。其余一切调用缺省假，纪要那一层
         不会自己跑起来。
 
-        `claimed=True`：那一版 claim 已经由 `post_minutes()` 同步认过（m2），这里不再
+        `claimed=True`：那一版 claim 已经由 `post_minutes()` 同步认过，这里不再
         重复认一次 —— 否则会读到自己刚落下的 `running`、把这一趟自己拒掉。
         """
         from meeting.backends.registry import resolve_minutes_hook
@@ -272,7 +272,7 @@ class RuntimePostMixin:
     def _reject_start_on_offline_post(self) -> None:
         """唯一硬闸的**另一侧**：会后精细稿在飞时，「开始录音」如实拒。
 
-        本地大模型互斥（`docs/design-intent.md` 第 21 条）：会后精细稿那条链跑在本地
+        本地大模型互斥：会后精细稿那条链跑在本地
         离线模型上，会中录音要拉起会中模型 —— 两份不并排。界面上按「开始录音」先弹
         「启动新会议会打断会后总结，是否继续」，确认才打断（`post_stop` 受理即回、
         当前块收尾后停、状态 `interrupted`）再起录 —— 服务侧这一道 409 拦的是没走
@@ -355,7 +355,7 @@ class RuntimePostMixin:
         """`post_offline` 动作：「生成会后精细稿（走离线模型）」。
 
         跑的是会后**离线**那一条链（慢、占显卡、出带说话人编号的那一份稿）；这一趟
-        **不碰纪要**（R26 的两个独立按钮）。起一条 daemon 线程即算启动成功，
+        **不碰纪要**（两个独立按钮）。起一条 daemon 线程即算启动成功，
         这一趟跑多久由盘上的离线状态文件回答。
 
         拒绝顺序固定：① 录音中（唯一硬闸的这一侧，409）→ ② 这台机器没接这一层
@@ -380,8 +380,8 @@ class RuntimePostMixin:
     def post_minutes(self, args: dict[str, Any] | None = None) -> dict[str, Any]:
         """`post_minutes` 动作：「直接出纪要（拿手上有的稿子交给 DSH）」。
 
-        **不补跑离线那一层**（R9 的「这一条是可选的」）：手上有会中稿就拿它出纪要，
-        会后稿在的话两份一起给（R11 的两份对拍）；两份都没有时由纪要那一层按现成档位
+        **不补跑离线那一层**：手上有会中稿就拿它出纪要，
+        会后稿在的话两份一起给；两份都没有时由纪要那一层按现成档位
         记 `failed` + 原因，不静默出一份空纪要。起一条 daemon 线程即算启动成功。
 
         **纪要免闸**：与转码、与其它场次、与别的会后动作都并行 —— 同一场上会后精细稿
@@ -393,7 +393,7 @@ class RuntimePostMixin:
 
         `args["dir"]` 给定时跑它指定的那一场（校验见 `_session_dir_for_post()`）。
 
-        **在飞判据是同步的**（m2）：起线程之前先按 `minutes` 那一层**盘上的 claim 闸**
+        **在飞判据是同步的**：起线程之前先按 `minutes` 那一层**盘上的 claim 闸**
         （`MinutesHook.claim()` → `meeting/minutes/claim.py::mark_running()`，既有那一把锁，
         不另发明一套）同步认领一次 —— 上一趟还在飞时当场按 409 `draining`
         如实回一句「已经在飞」，而不是回 `{kind: 'minutes'}` 那个假成功（线程体里那条
@@ -420,7 +420,7 @@ class RuntimePostMixin:
         except BaseException as exc:
             # 线没起来（`threading.Thread(...)` / `thread.start()` 这一类）：刚认下的那一版
             # claim 不能留在盘上 —— 留着就是一条永远在飞的记录，之后每一次按「直接出纪要」都被
-            # claim 闸按 409 拒，界面上没有出路（m4）。退回它、再把异常原样上抛。
+            # claim 不能留在盘上 —— 留着就是一条永远在飞的记录，之后每一次按「直接出纪要」都被
             if claimed:
                 self._release_minutes_claim(resolution, target, exc)
             raise
@@ -459,7 +459,7 @@ class RuntimePostMixin:
         return receipt
 
     def post_stop(self, args: dict[str, Any] | None = None) -> dict[str, Any]:
-        """`post_stop` 动作：停掉正在跑的「生成会后精细稿」那一趟（R28）。
+        """`post_stop` 动作：停掉正在跑的「生成会后精细稿」那一趟。
 
         **受理即回，不等块边界**：立起取消旗标就交回执 —— 线程在
         下一块开跑前收场（正在跑的那一块不掐：引擎是同步推理），盘上状态由
@@ -551,7 +551,7 @@ class RuntimePostMixin:
         return {"kind": kind, "dir": target, "stopping": True}
 
     def _claim_minutes_layer(self, resolution: Any, target: str) -> bool:
-        """起线程之前**同步**登记一次「纪要这一层在飞」（m2），**返回认没认成**。
+        """起线程之前**同步**登记一次「纪要这一层在飞」，**返回认没认成**。
 
         判据复用 `meeting/minutes/claim.py` 那把 claim 闸（实现经 `claim()` 暴露它，
         没有 `claim()` 的实现照旧走线程体那条路，返回值是 `False`）：盘上停着一版 `running`
@@ -582,7 +582,7 @@ class RuntimePostMixin:
     def _release_minutes_claim(
         self, resolution: Any, target: str, exc: BaseException
     ) -> None:
-        """起线程那一步抛出来时，把刚认下的那一版 claim **如实退回**（m4）。
+        """起线程那一步抛出来时，把刚认下的那一版 claim **如实退回**。
 
         这一版是 `claim()` 同步落下的（`meeting/minutes/claim.py` 那把既有 claim 锁）；线没起来
         的话就没有人来收它，盘上会永远停在 `running`，之后每一趟都被 claim 闸按 409 拒

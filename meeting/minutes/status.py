@@ -1,4 +1,4 @@
-"""纪要生成的状态文件（spec「交付物形状」里的 `meeting_minutes_status.json`）。
+"""纪要生成的状态文件（`meeting_minutes_status.json`）。
 
 **它与 `meeting_offline_status.json` 是两份**，各说各的一层：那一份说「会后离线转写跑成什么样」，
 这一份说「会后纪要生成跑成什么样」。两者互不覆盖（`offline` 的产物由它自己的写入方负责），
@@ -46,7 +46,6 @@ KNOWN_SCHEMA_MAJOR = 1
 STATUS_NAME = "meeting_minutes_status.json"
 
 #: 拉起之前那一版 `running` 里 `mode` 的取值（输入档位此刻还不知道，用现成的 `none` 档）。
-#:
 #: 状态文件里 `mode` 那一格由 `build_status()` 收下（`runner` 随后那一版会按真实输入覆盖它），
 #: 读方（`parse_status_document()`）判的是四格必填与四档取值，因此这一版照样读得回来。
 MODE_UNKNOWN = MODE_NONE
@@ -56,7 +55,6 @@ STATE_RUNNING = "running"
 STATE_DONE = "done"
 STATE_FAILED = "failed"
 #: 第四档：**已交付 DSH web 服务端生成**（web 分支的终态）。
-#:
 #: 「投递 accepted 即算交付完成」是这一档的语义：这一层不等 DSH 那边把纪要写完，
 #: 因此**产物校验不在这条路上**。读方按产物判「要不要补跑」，按这一档判「已经交付过、
 #: 别再拉起第二个会话」（`meeting post` 的重复拉起闸）。
@@ -65,7 +63,6 @@ STATES: tuple[str, ...] = (STATE_RUNNING, STATE_DONE, STATE_FAILED, STATE_DELIVE
 
 #: 再入闸那一档：子会话（`MEETING_MINUTES_CHILD=1`）里不再拉起 DSH，这一趟记 `skipped`
 #: （**不在四档里**：它既没有跑起来，也不算失败）。
-#:
 #: 这一档**只出现在返回值里**：子会话不去覆盖父进程那一趟的状态文件，因此
 #: `write_status()` / `read_status()` 仍然只认上面那四档。
 STATE_SKIPPED = "skipped"
@@ -75,7 +72,7 @@ STATE_SKIPPED = "skipped"
 #: （`meeting post` 与工作台「直接出纪要」按钮）显式放行，其余调用一律跳过。
 ISOLATION_MESSAGE = "纪要层隔离：本次非人工发起，跳过"
 
-#: 放行参数的下传说明（`DeliveryForbidden` 拒绝话术的括号补语，**一处定稿**）：
+#: 放行参数的下传说明（`DeliveryForbidden` 拒绝话术的括号补语）：
 #: 放行参数叫 `allow_dsh=True`、由两条人工入口经 `MinutesHook.launch(deliver=True)` 下传。
 #: headless 启动器、web 交付与编排层三处拒绝话术都接这一份，措辞不再各漂各的。
 ISOLATION_GRANT = (
@@ -100,7 +97,7 @@ RUN_PROMPT_NAME = "run_prompt.md"
 MINUTES_RUN_LOG_NAME = "minutes-run.log"
 
 #: 状态文件里 `artifacts` 的三格（相对场次目录的路径）——从上面的裸名派生，
-#: 取值与从前逐字节相同（`ARTIFACT_FINAL` 在场次目录根，不带前缀）
+#: `ARTIFACT_FINAL` 在场次目录根，不带前缀。
 ARTIFACT_FINAL = "meeting_final.md"
 ARTIFACT_INPUTS = f"{WORKING_DIR}/inputs.json"
 ARTIFACT_LOG = f"{WORKING_DIR}/{MINUTES_RUN_LOG_NAME}"
@@ -287,8 +284,7 @@ def mark_failed(session_dir: str | Path, error: str) -> dict[str, Any]:
 
     「读回盘上那一版 → 沿用 `mode` / `branch` / `started_at` / `artifacts` / `dsh` 五格
     （缺格按缺省补：`none` / `headless` / 现在 / 空 / 空）→ 覆盖 `state = "failed"` 与
-    `error`」这段写法，从前在两个调用点逐字各抄一份（`meeting/backends/minutes.py` 的
-    线程体兜底、`meeting/service/runtime.py` 的 claim 退回兜底支），现在只有这一份 ——
+    `error`」这段写法只此一份 ——
     claim 闸与启动核对读的都是这份文件，补记录口径因此只能有一处。
 
     读不动盘上那一版（文件不在场、不合契约）时按空记录补。这一层没有 offline 那份

@@ -1,8 +1,4 @@
-"""ServiceRuntime 的事实摄取 mixin：心跳 / 电平 / 转写 / 告警 / 捕获缺口。
-
-模块级两个节拍常量与第 1298-1829 行的方法体自 meeting/service/runtime.py 一字不改复制；
-本文件自写内容只有模块 docstring、import 与 _log 一行、类声明行。
-"""
+"""ServiceRuntime 的事实摄取 mixin：心跳 / 电平 / 转写 / 告警 / 捕获缺口。"""
 from __future__ import annotations
 
 import asyncio
@@ -49,11 +45,11 @@ class RuntimeFactsMixin:
     def recording_alive(self) -> bool | None:
         """`recording_alive`：`recording` / `alert` 态按帧时钟算；其余态为 `null`。
 
-        「还没有第一帧」单独一档（开场误报的修法）：首帧比 `start` 晚约 0.5s 才来，
-        旧口径把这段算成 `False`，10s 心跳落进竞态窗口就误弹「采集已停止」（约 1/6）。现在
-        自本场 start 起算同一只帧时钟窗口（`max(2.0s, 3 × frame_interval)`）：窗口内没首帧
+        「还没有第一帧」单独一档：首帧比 `start` 晚约 0.5s 才来，
+        把这段直接算成 `False` 会在心跳的竞态窗口里误弹「采集已停止」。自本场 start 起算
+        同一只帧时钟窗口（`max(2.0s, 3 × frame_interval)`）：窗口内没首帧
         → `None`（未知）；超窗仍无首帧 → `False`——「别把未知做成永不报」。`session_start_mono`
-        缺席时如实报 `False`：让「采不到」不可能被忽略（design-intent 第 1 条）。
+        缺席时如实报 `False`：让「采不到」不可能被忽略。
         """
         if self.snapshot.top_state not in ("recording", "alert"):
             return None
@@ -204,7 +200,8 @@ class RuntimeFactsMixin:
         只有一件事 —— worker 停摆之后不再有行到来、快照得有人刷 —— 而那件事只在场次起来之后
         才谈得上。反向摆（`startup()` 里就起）会多出一条时序依赖：它的**第一拍**落在什么时刻
         取决于「用户多快按下开始」，空闲档 `stopped -> normal` 那一次迁移因此会落在这一场第一个
-        提交的前后两种位置，`revision` 跟着差 1（复审 m3 的修法上曾实测到这一点）。
+        取决于「用户多快按下开始」，空闲档 `stopped -> normal` 那一次迁移因此会落在这一场第一个
+        提交的前后两种位置，`revision` 跟着差 1。
         场次起来之后这一跳已经由 `start_session()` 自己带走（那一刷就在 `commit()` 前面），
         节拍随后只管「期间有没有迁移」。
         """
@@ -215,13 +212,13 @@ class RuntimeFactsMixin:
     async def _transcriber_health_loop(self) -> None:
         """转写健康度节拍：每 0.5 秒把 `transcript` 三格刷一遍，健康度迁移就 `commit()`。
 
-        为什么要有这一条（设计口径 §7「一行到来时与 worker 停摆时」）：刷新原先只挂
+        为什么要有这一条：刷新原先只挂
         「一行到来」，而 worker 停摆恰恰不再有行到来——真「转写挂了」时快照会一直停在
         `normal`（`buffered_lines` 同理，停摆时积压只增不减）。起拍由 `start_session()` 起
         （空闲档初值与 `stopped -> normal` 那一跳由 `startup()` 的 ⑤b 与 `start_session()`
-        自己带走，复审 m3）。与水位节拍分开：那一条只在录音态跑，转写在不在与状态无关。
+        自己带走）。与水位节拍分开：那一条只在录音态跑，转写在不在与状态无关。
         拍子的副作用只有快照：`commit()` 只发生在 `health` 真迁移或提示级键集合变化那一刻
-        （契约第 3.3 节），三条用例钉住（读快照纯读 / 停摆刷上快照 / 积压量不投票）。
+        拍子的副作用只有快照：`commit()` 只发生在 `health` 真迁移或提示级键集合变化那一刻。
         """
         try:
             while True:
@@ -260,7 +257,7 @@ class RuntimeFactsMixin:
         self.last_fact_at = self.last_frame_ts
 
         # 用户主动关掉的那一路（`health = stopped`）：静音电平帧不进静默判定——关掉是
-        # 机主的主动选择，不是「这一路采不到」（设计意图第 17、9 条）。切断必须在帧进
+        # 机主的主动选择，与「这一路采不到」分开对待。切断必须在帧进
         # 判定器之前完成；包络与瞬时读数照旧更新，帧时钟照旧刷新（写静音的管线活着）。
         if item.health == "stopped":
             return
@@ -351,10 +348,10 @@ class RuntimeFactsMixin:
     def _apply_transcript_line(self, line: Any) -> None:
         """一行转写：进 `transcript` 字段并推 `transcript` 通道（不参与状态迁移）。
 
-        三格（设计口径）在一行到来时就地刷新（判定权收在
+        三格在一行到来时就地刷新（判定权收在
         `_refresh_transcript_snapshot()` 一处）；worker 停摆没有行可等，另有健康度节拍
         与 `startup()` ⑤b 两条不依赖行的刷新路径。读路径不刷（纯读）。提交资格只有
-        `health` 一格（契约第 3.3 节：`transcript` 通道不参与状态迁移）——一行到来、
+        `health` 一格（`transcript` 通道不参与状态迁移）——一行到来、
         积压量变、失败计数加一都不给 `revision` 添抖动；顺风路径上每行只广播
         `transcript` 通道，积压量与失败计数照旧写进快照。
         """
@@ -362,7 +359,7 @@ class RuntimeFactsMixin:
             text = getattr(line, "text", "")
             self.snapshot.transcript.last_line_at = now_iso()
             if str(text).startswith("[[识别失败"):
-                # 占位符是失败档的唯一形状（`docs/v1-lineage.md` 的 B12）：
+                # 占位符是失败档的唯一形状：
                 # 计数只在这里 +1，与后端报的失败原因同源（同一份文本）
                 self.snapshot.transcript.failed_segments += 1
             changed = self._refresh_transcript_snapshot()
@@ -390,8 +387,8 @@ class RuntimeFactsMixin:
         `buffered_lines` 与 `failed_segments` 照样写进快照但不投票——「积压 5 段变 4 段」
         不是状态迁移；`duration_seconds` 的刷新同理（0.5 秒节拍每拍都发生）。
 
-        四个调用点（设计口径 §7「一行到来时与 worker 停摆时」）：`startup()` ⑤b
-        取初值（否则空闲态要等节拍第一拍才翻成 `stopped`，带时序依赖，复审 m3）；
+        四个调用点：`startup()` ⑤b
+        取初值（否则空闲态要等节拍第一拍才翻成 `stopped`，带时序依赖）；
         `start_session()`（`stopped -> normal` 那一跳跟着本场自己的提交走）；
         `_apply_transcript_line()`（顺风路径的迁移不等下一拍）；`_transcriber_health_loop()`
         （worker 停摆之后没有行到来）。不挂读路径：刷新会经 `commit()` 提交，让 `GET
@@ -431,7 +428,7 @@ class RuntimeFactsMixin:
             )
             transcript.health = health
             changed = True
-        # 积压量只写进快照，不参与状态迁移、不涨 `revision`（契约第 3.3 节）：
+        # 积压量只写进快照，不参与状态迁移、不涨 `revision`：
         # 它几乎每行都在变，让它触发 commit 等于给 state 通道加高频抖动。
         if transcript.buffered_lines != backlog:
             transcript.buffered_lines = backlog
@@ -443,7 +440,7 @@ class RuntimeFactsMixin:
         """把提示级清成空——快照那一格与判定器那份登记一起清（唯一入口）。
 
         三样同进同退（判定器条目与记时表、快照 `alerts.hints`、键集合登记 `_hint_keys`）：
-        只清一两样会让「快照与登记是同一份真相」有一刻不成立，旧登记还会让下一场误判（复审 m3）。
+        只清一两样会让「快照与登记是同一份真相」有一刻不成立，旧登记还会让下一场误判。
         不改致命级与两条电平计数。
         """
         self.judge.clear_hints()
@@ -455,12 +452,11 @@ class RuntimeFactsMixin:
 
         返回「提示级的键集合有没有变」，调用方据此决定要不要 `commit()`；同一键集合里
         `duration_seconds` 的刷新不算变化。离开 `recording` / `alert` 之后提示级恒为空
-        （`docs/ui-design.md` 章 2.5：空闲态与结束档的告警区不出现）——空闲态那个
+        （空闲态与结束档的告警区不出现）——空闲态那个
         `health == "stopped"` 报的是「真转写后端还没起过场次」，与录音中「转写停了」是两种
         情形，无条件交给判定器等于把它升成一条用户可见的告警条。每次都调判定器不挑时机：
         提示条要在窗口内一直刷新 `duration_seconds`（判定器的 `_merge_hint()` 本就幂等）。
         `health` / `backlog` 用调用方刚读过的同一份读数，不在这里再问一次后端。
-        提示级来源与阈值见判定器（`docs/state.md` 第 6 章）。
         """
         if self.snapshot.top_state not in ("recording", "alert"):
             if not self.snapshot.alerts.hints and not self._hint_keys:

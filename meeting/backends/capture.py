@@ -11,14 +11,14 @@
   - 用户在录音前改了配置打 `reprobe`，runtime 再调一次 `probe()` 就重新探测（`probe()` 幂等）；
   - `start()` 起**两路各自独立**的采集（读侧在 `sources.py`、写侧与电平刻度在
     `meeting/capture/engine.py`），归档写进 `start()` 收到的 `session_dir`；
-  - `finalize()` 停流 + join + 关文件 + `fsync`（收尾第 1 步），`stop()` 幂等收场
+  - `finalize()` 停流 + join + 关文件 + `fsync`，`stop()` 幂等收场
     （进程关停时调）；各段 PCM → MP3 的转码归 `meeting/capture/transcode.py` 的独立
     工序（flush 落定自动起，判据是 `capabilities_of()` 的 `transcode` 能力位）；
   - `pause()` / `resume()` / `deactivate_source()` / `activate_source()` 是暂停与
     「用户关一路 / 重新打开一路」的服务层出口（写静音、不录内容；告警语义不动），
     动作面入口是 `pause` / `resume` / `set_source` 三个动作（`meeting/service/routes.py`）。
 
-**`start()` 的抛错口径**（§5 的裁定）：单路起不来**不抛错** —— 只给那一路发一条
+**`start()` 的抛错口径**：单路起不来**不抛错** —— 只给那一路发一条
 `SourceLost`（`reason` 写人话），另一路照跑；**本场该采的路全部起不来**才抛
 `CaptureUnavailable`。`mode=mic` 时只有 mic 起不来才算全败。`start()` 抛错之前自己拉起来的
 线程要自己收干净（runtime 的 `_abort_session()` 那条路**不调** `stop()`）。
@@ -85,7 +85,7 @@ class CaptureBackend:
         缺省写法用 lambda 把查找推到调用那一刻（构造时不抓函数对象）：测试里
         `monkeypatch.setattr(capture_module, "create_capture_source", fake)` 与
         `monkeypatch.setattr(sources_module, "list_input_endpoints", fake)` 因此照样生效
-        （`docs/v1-lineage.md` 的坑 C9：`from ... import f` 绑的是函数对象，改不动）。
+        （`from ... import f` 绑的是函数对象，改不动）。
 
         后两个接缝是采集引擎的注入点：`source_factory(source, endpoint)` 造一路采集源
         （缺省走本模块的 `create_capture_source()` / `create_loopback_source()`），
@@ -109,8 +109,6 @@ class CaptureBackend:
         self.last_probes: list[SourceProbe] = []
         #: 正在跑的这一场（没有会话时为 `None`）
         self.session: Any = None
-
-    # -- 协议 -------------------------------------------------------------
 
     def bind(self, emit: Callable[[Any], None], *, config: Any = None) -> None:
         """记下事实出口与只读配置视图（runtime 在 `probe()` 之前调一次）。"""
@@ -166,7 +164,7 @@ class CaptureBackend:
     def start(self, mode: str, session_dir: str) -> None:
         """起采集：按 `mode` 起该采的路，归档写进 `session_dir`。
 
-        抛错口径（§5 的裁定）：**单路起不来不抛错**，只给那一路发一条 `SourceLost`
+        抛错口径：**单路起不来不抛错**，只给那一路发一条 `SourceLost`
         （`reason` 写人话），另一路照跑；本场该采的路**全部**起不来才抛 `CaptureUnavailable`。
         `mode=mic` 时只有 mic 起不来才算全败。
         """
@@ -247,10 +245,8 @@ class CaptureBackend:
         """停采集（**幂等**）：没落过盘就先 `finalize()`，再清掉这一场。"""
         self._stop_session()
 
-    # -- 暂停 / 关一路（引擎能力的服务层出口；动作面入口归暂停/切源节点） -------
-
     def pause(self) -> None:
-        """暂停本场采集：所有路写数字静音、不录内容（`docs/design-intent.md` 第 8 条）。
+        """暂停本场采集：所有路写数字静音、不录内容。
 
         没有在录的会话时什么都不做（幂等；动作面怎么暴露这个能力是下游节点的事，
         `ACTION_NAMES` 与顶层四态本节点都不动）。
@@ -278,8 +274,8 @@ class CaptureBackend:
         """用户重新打开某一路：重新挑设备、重开流，交回引擎的读线程。
 
         **失败原样上抛**（调用方转成 `capture_unavailable`）：设备又被别的程序占着这一档
-        必须让按按钮的人看得见 —— 悄悄不打开等于「看起来在录、其实没录」
-        （`docs/design-intent.md` 第 1 条）。上抛之前把刚造出来的那一份源收干净；
+        必须让按按钮的人看得见 —— 悄悄不打开等于「看起来在录、其实没录」。
+        上抛之前把刚造出来的那一份源收干净；
         引擎那一侧此刻还没清「用户已关」的标志，那一路照旧如实停在写静音。
         """
         session = self.session
@@ -294,8 +290,6 @@ class CaptureBackend:
             raise
         session.activate_source(source, candidate)
         _log.info("用户重新打开 %s 这一路：设备 %s", source, endpoint.label())
-
-    # -- 内部 -------------------------------------------------------------
 
     def _stop_session(self) -> None:
         session, self.session = self.session, None
@@ -403,7 +397,7 @@ def _default_source_factory(source: str, endpoint: devices_module.DeviceEndpoint
 
 
 def create_capture_source(source: str, endpoint: devices_module.DeviceEndpoint) -> Any:
-    """造一路采集源（照 V1 的两条路：mic 走 `sounddevice`、loopback 走 `soundcard`）。
+    """造一路采集源（mic 走 `sounddevice`、loopback 走 `soundcard`）。
 
     这一层是**测试注入假源的接缝**：`meeting/capture/devices.py` 挑出端点之后，真实开设备
     的那一步就落在它身上。测试把那两个函数换成假件即可（服务启动那一次 `probe()` 用同一套

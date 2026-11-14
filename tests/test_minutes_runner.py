@@ -1,18 +1,5 @@
 """`meeting/minutes/runner.py` / `inputs.py` / `status.py` 与两个钩子的契约用例。
 
-要盯的八条（对应设计口径2 的完成判定与给复审的自检项）：
-
-  1. **一次成功的运行**：找输入 → `working/inputs.json` → 切块 → 渲染 → 拉起 → 校验 → 落状态；
-  2. **一条转写都没有**：不启动 DSH、状态记 `failed` + 原因（不许静默出空纪要）；
-  3. **三档失败里的两档**（假启动器那一档在 `test_minutes_launch.py` 里）：切块/渲染抛错、
-     启动器报失败，都记 `failed`；
-  4. **再入闸**：环境里有 `MEETING_MINUTES_CHILD=1` 时**没拉起 DSH**（假启动器记「被调用过」）；
-  5. **状态文件与离线那一份是两份**：跑一次纪要生成不改动离线那三份产物（拿哈希比）；
-  6. **`minutes.hook = null`**：离线跑完不产生纪要状态文件；离线尾钩被解析成缺席档；
-  7. **配置键**：四个键的默认值、取值域、三分表登记；临时 `config.json` 里
-     `minutes.chunk_lines = 40` 被认、`= 5` 被拒（越界）；
-  8. **惰性**：全新解释器里 `import meeting.minutes.launch` 等三个新模块不拉重依赖。
-
 全部用例都用**假启动器**或**假可执行文件**，一条都不调用系统上的 `dsh`，也不加载真模型。
 """
 
@@ -58,7 +45,6 @@ from tests._minutes_fakes import GOOD_FINAL
 
 #: 后台线程收敛的轮询上限（事件驱动地等，等到了就立刻回）
 CONVERGE_TIMEOUT_SECONDS = 10.0
-
 #: 离线那三份产物（跑一次纪要生成之后逐字节比对的就是这三份 + 状态文件）
 OFFLINE_ARTIFACTS = (
     "meeting_offline_transcript_mic.md",
@@ -166,11 +152,6 @@ def _no_test_process_reentry_flag(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MEETING_MINUTES_CHILD", raising=False)
 
 
-# ---------------------------------------------------------------------------
-# 一、一次成功的运行
-# ---------------------------------------------------------------------------
-
-
 def test_a_successful_run_writes_the_inputs_the_chunks_and_the_status(tmp_path: Path) -> None:
     """一次成功的运行：`working/inputs.json` + 分块 + 提示词 + 状态文件四样齐。"""
     session = _session(tmp_path)
@@ -196,7 +177,6 @@ def test_a_successful_run_writes_the_inputs_the_chunks_and_the_status(tmp_path: 
     assert document["chunks"]["loopback"]["live"]["chunk_count"] == 1
     assert "offline" not in document["chunks"]["loopback"], "这一路没有会后稿：不伪造一份"
     assert launcher.calls and launcher.calls[0]["session_dir"] == session
-    # 盘上的四样（两份稿的块各占一个目录）
     assert (session / "working" / "inputs.json").is_file()
     assert (session / "working" / "mic" / "live" / "00_index.md").is_file()
     assert (session / "working" / "mic" / "offline" / "00_index.md").is_file()
@@ -263,11 +243,6 @@ def test_the_status_file_round_trips_and_rejects_a_foreign_version(tmp_path: Pat
         status_module.read_status(path)
 
 
-# ---------------------------------------------------------------------------
-# 二、一条转写都没有 / 切块渲染失败 / 启动器报失败
-# ---------------------------------------------------------------------------
-
-
 def test_a_session_without_inputs_never_starts_dsh(tmp_path: Path) -> None:
     """一条转写都没有 → **不启动 DSH**，状态记 `failed` + 原因，清单照落。"""
     session = tmp_path / "250919"
@@ -325,11 +300,6 @@ def test_a_template_error_lands_in_the_status(tmp_path: Path, monkeypatch) -> No
     assert not (session / FINAL_NAME).exists()
 
 
-# ---------------------------------------------------------------------------
-# 三、再入闸
-# ---------------------------------------------------------------------------
-
-
 def test_the_reentry_gate_stops_before_the_launcher(tmp_path: Path) -> None:
     """`MEETING_MINUTES_CHILD=1` → **没拉起 DSH**，返回 `skipped`，盘上不写状态文件。"""
     session = _session(tmp_path)
@@ -368,7 +338,7 @@ def test_the_launcher_is_handed_the_rendered_prompt(tmp_path: Path) -> None:
     text = launcher.calls[0]["prompt_text"]
     assert "{{" not in text
     assert "## 说话人附录" in text
-    # **M4**：交出去的这份提示词里，给模型看的路径一律相对场次目录；
+    # 交出去的这份提示词里，给模型看的路径一律相对场次目录；
     # 提示词里唯一那段绝对路径在清单那段 JSON 的 `session_dir` 一格（给程序读的字段）
     absolute = str(session).replace("\\", "/")
     assert absolute in text and absolute not in text.split("```json")[0]
@@ -377,12 +347,7 @@ def test_the_launcher_is_handed_the_rendered_prompt(tmp_path: Path) -> None:
     assert written["session_id"] == session.name
     assert launcher.calls[0]["timeout"] == float(
         config_module.DEFAULT_VALUES["minutes.timeout_seconds"]
-)
-
-
-# ---------------------------------------------------------------------------
-# 四、配置键
-# ---------------------------------------------------------------------------
+    )
 
 
 def test_a_temp_config_file_lets_chunk_lines_through_and_rejects_an_out_of_range_one(
@@ -612,11 +577,6 @@ def test_the_absent_hook_never_writes_anything(tmp_path: Path) -> None:
     assert list(tmp_path.iterdir()) == []
 
 
-# ---------------------------------------------------------------------------
-# 五、与离线那一层的关系
-# ---------------------------------------------------------------------------
-
-
 def test_a_minutes_run_leaves_the_offline_artifacts_untouched(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -733,10 +693,6 @@ def _config_getter(values: dict):
     return getter
 
 
-# ---------------------------------------------------------------------------
-# 六、惰性：全新解释器里的 import 链
-# ---------------------------------------------------------------------------
-
 #: 在子进程里跑的一段：import 三个新模块 + 钩子，报出重依赖与解析结论
 _IMPORT_CHAIN_CODE = (
     "import sys; "
@@ -789,13 +745,8 @@ def test_the_final_artifact_check_is_the_same_one_the_launcher_uses(tmp_path: Pa
     assert check_final_artifact(session) != ()
 
 
-# ---------------------------------------------------------------------------
-# 七、running 那一份（拉起 DSH 之前落的）
-# ---------------------------------------------------------------------------
-
-
 def test_the_running_state_is_on_disk_before_the_launcher_is_called(tmp_path: Path) -> None:
-    """**m1**：拉起 DSH **之前**盘上已经有一份 `running`（读方据此分得出「正在跑」）。
+    """拉起 DSH **之前**盘上已经有一份 `running`（读方据此分得出「正在跑」）。
 
     假启动器在被调用的那一刻读盘：那正是「子进程刚被拉起、纪要还没写出来」的现场。
     """
@@ -836,7 +787,7 @@ def test_the_running_state_is_on_disk_before_the_launcher_is_called(tmp_path: Pa
 
 
 def test_a_failed_run_still_overwrites_the_running_state(tmp_path: Path) -> None:
-    """**m1**：失败路径上终态照样覆盖掉那一份 `running`（不会永远停在 running）。"""
+    """失败路径上终态照样覆盖掉那一份 `running`（不会永远停在 running）。"""
     session = _session(tmp_path)
     launcher = RecordingLauncher(write_final=False, fail="artifact_missing")
 
@@ -864,7 +815,7 @@ def test_a_session_without_inputs_leaves_a_failed_state_not_a_running_one(tmp_pa
 
 
 def test_the_reentry_gate_writes_no_status_at_all(tmp_path: Path) -> None:
-    """**m1 的边界**：再入闸那一档盘上**一份状态文件都没有**（`running` 也不落）。"""
+    """再入闸那一档盘上**一份状态文件都没有**（`running` 也不落）。"""
     session = _session(tmp_path)
 
     document = runner_module.run(

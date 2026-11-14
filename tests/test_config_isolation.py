@@ -1,41 +1,8 @@
-"""配置隔离的回归用例（设计 **critical-2** 的钉子）。
+"""配置隔离的回归用例。
 
-## 要钉住的现象（本轮复审复算出来的现场）
-
- 设计给 `meeting post` 的入口加了一步配置前奏：
-`meeting/cli.py::post()` → `_load_config_or_exit()`（`config.load()` + 值级校验）→
-`cli.py:250 config_module.set_current(loaded)`。这条前奏本身是本单元要的东西，副作用是
-**在进程内走真入口的用例会去读 `~/.config/meeting/config.json`**：
-
-  - 没做家目录隔离的用例读的是**机主真实那一份**（本机当时是
-    `{"post.engine": "auto", "minutes.hook": "null"}`）；
-  - `set_current()` 设的是**进程级全局**，用例收场不还 —— `minutes.hook = "null"`
-    于是跟着后面每一条用例走；
-  - 产品路径上 `meeting/backends/minutes.py::_mark_running()` 读的是
-    `minutes_hook_selector()`（`config.get("minutes.hook")`，**无视用例对
-    `registry.resolve_minutes_hook` 的打桩**），于是 `launch_module.configured_branch("null")`
-    当场抛 `LaunchError`：24 条用例（`test_minutes_runner.py` 18、
-    `test_post_idempotency.py` 4、`test_summary_action.py` 2）被串档打红。
-
-## 本文件钉的四件事
-
-  1. 走真入口的那一步读到的生效配置**落在本用例的临时家目录**，不是机主那一份
-     （`test_the_real_entry_reads_the_isolated_home_not_the_host_one`）；
-  2. 走真入口的用例确实把生效配置设上了（否则第 1 条与第 3 条都钉不住），而**下一条用例
-     开工时它是干净的** —— 这两条按定义顺序成对（`_..._leaks...` 在前、
-     `test_the_next_case_starts_from_no_effective_config` 紧跟着它）；
-  3. 端到端复现：把 `HOME` / `USERPROFILE` 指向一份含 `minutes.hook = "null"` 的
-     `config.json`（模拟「机主真实配置里有非默认值」），**泄露源头那条用例 + 被串档打红的
-     那一条**一起在真子进程里跑仍然是全绿；
-  4. 第六道守卫（`tests/conftest.py` 的 `_no_writes_to_the_real_home`）不是恒真断言：
-     对一个临时目录造出「被创建 / 被改动」两种现场，它当场读得出来。
-
-第 3 条为什么用**真子进程**：夹具一定先于用例把 `HOME` 指到临时家目录，因此「外部环境里
-那份配置」在进程内是造不出来的 —— 只有从外面把 `HOME` 传进来才复现得了复审那一幕。
-子进程**不弹窗**（`_hidden_startupinfo()`：`STARTF_USESHOWWINDOW` + `SW_HIDE`，与宿主
-`-WindowStyle Hidden` 同一件事；本机的 `AGENTS.md` 明令不用 `CREATE_NO_WINDOW`，而
-`windowsHide` 是 Node 那一侧的选项名、Python 的 `Popen` 不收它），只跑两条用例（实测
-0.4 秒级），不真起服务、不碰模型。
+端到端复现那一条用**真子进程**：夹具一定先于用例把 `HOME` 指到临时家目录，因此「外部环境里
+那份配置」在进程内是造不出来的 —— 只有从外面把 `HOME` 传进来才复现得了。
+子进程**不弹窗**、只跑两条用例，不真起服务、不碰模型。
 """
 
 from __future__ import annotations
@@ -54,19 +21,19 @@ from meeting.cli import EXIT_OK, post
 
 from tests import _helpers as helpers
 
-#: **泄露源头**（复审现场里第一条把机主那份配置设上且不还的用例）：走真入口 `post()`
-#: 而自己不做家目录隔离。它现在读的是本用例的临时家目录（`tests/conftest.py::_isolated_home`）。
+#: **泄露源头**：走真入口 `post()` 而自己不做家目录隔离的那一条；
+#: 它现在读的是本用例的临时家目录（`tests/conftest.py::_isolated_home`）。
 LEAK_SOURCE_CASE = (
     "tests/test_cli_post.py::test_post_prints_the_selected_session_and_the_artifact_paths"
 )
 
-#: **被串档打红的那一条**（24 条之一）：它走真实现 `MinutesHook`，`_mark_running()` 会读
+#: **被串档打红的那一条**：它走真实现 `MinutesHook`，`_mark_running()` 会读
 #: 生效的 `minutes.hook` —— 泄露在场时读到 `"null"` 就抛 `LaunchError`。
 VICTIM_CASE = (
     "tests/test_minutes_runner.py::test_the_hook_claims_the_run_in_flight_before_it_returns"
 )
 
-#: 模拟「机主真实配置里有非默认值」的那一份（逐字取复审现场里机主那份的内容）
+#: 模拟「机主真实配置里有非默认值」的那一份
 HOST_CONFIG_VALUES: dict[str, Any] = {"post.engine": "auto", "minutes.hook": "null"}
 
 
@@ -99,11 +66,6 @@ def _ok_summary(session_dir: Any) -> dict[str, Any]:
         "minutes": {"hook": "finished", "state": "done"},
         "artifacts": {},
     }
-
-
-# ---------------------------------------------------------------------------
-# ① 生效配置的落点是本用例的临时家目录（不是机主那一份）
-# ---------------------------------------------------------------------------
 
 
 def test_the_real_entry_reads_the_isolated_home_not_the_host_one(
@@ -152,17 +114,12 @@ def test_the_next_case_starts_from_no_effective_config() -> None:
     这条按定义顺序紧跟着 `test_the_real_entry_reads_the_isolated_home_not_the_host_one`：
     `tests/conftest.py::_restore_effective_config` 在每条用例收场时把
     `config_module.set_current()` 的取值原样放回。少了那道夹具，这里读到的就是上一条
-    留下的那份配置（复审现场里它一路渗到 24 条用例被判红）。
+    留下的那份配置。
     """
     assert config_module.current() is None, (
         "上一条用例留下的模块级生效配置没有被放回："
         f"{config_module.current()!r}（`_restore_effective_config` 该在收场时还原）"
     )
-
-
-# ---------------------------------------------------------------------------
-# ③ 端到端：外部那份含 `minutes.hook = "null"` 的家目录配置进不了测试进程的用例
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.slow
@@ -171,7 +128,7 @@ def test_the_affected_cases_stay_green_under_a_host_config_with_a_null_hook(
 ) -> None:
     """泄露源头 + 被串档打红的那一条，在真子进程里一起跑 → 全绿。
 
-    子进程的环境就是复审现场那一刻的外部环境：`HOME` / `USERPROFILE` 指向一份含
+    子进程的环境就是外部环境：`HOME` / `USERPROFILE` 指向一份含
     `minutes.hook = "null"` 的 `config.json`（本用例的临时目录，**不动机主真实那一份**）。
     本仓的用例一律靠本用例的临时家目录读配置，因此那份外部配置连读都读不到。
     """
@@ -208,11 +165,6 @@ def test_the_affected_cases_stay_green_under_a_host_config_with_a_null_hook(
     output = f"{proc.stdout}\n{proc.stderr}"
     assert proc.returncode == 0, output
     assert "2 passed" in proc.stdout, output
-
-
-# ---------------------------------------------------------------------------
-# ④ 第六道守卫有牙：被创建 / 被改动都读得出来
-# ---------------------------------------------------------------------------
 
 
 def test_the_real_home_guard_notices_a_created_and_a_changed_file(tmp_path: Path) -> None:
@@ -253,8 +205,8 @@ def test_the_session_finish_check_reds_the_session_and_prints_the_diff(
     """会话**收场**那一半：改动落在最后一条用例收场之后也跑不掉。
 
     这一步直调 `pytest_sessionfinish()`（**不碰机主那一份**：读数造在临时目录里，只把守卫
-    内存里的开工快照换成「那时什么都没有」），断言它把整场会话判红，并打印出被创建的路径与
-    前后读数 —— 复审要的正是这两样。
+    内存里的开工快照换成「那时什么都没有」），断言它把整场会话判红，并打印出被创建的路径
+    与前后读数。
     """
     from tests import conftest as guard_module
 

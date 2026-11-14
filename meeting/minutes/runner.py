@@ -1,4 +1,4 @@
-"""会后纪要生成的一次运行（spec「自动跑挂在哪一步」那一层的编排）。
+"""会后纪要生成的一次运行。
 
 一次 `run(session_dir)` 走完这些事：
 
@@ -23,17 +23,17 @@
 
 ## 先落 `running` 再拉起 DSH
 
-一次生成最长 14400 秒（`minutes.timeout_seconds` 的上界是 86400）。早先状态文件是**跑完才第一次
-落盘**，这期间读方（`meeting post`、界面）看到的是一份不存在的文件，「这一场还没跑」与
-「这一场正在跑」分不出来。因此拉起之前先写一份 `running`（带 `started_at` / `mode` / `branch`
-与空的 `dsh` 那一格），终局那一趟再覆盖它 —— `meeting/backends/minutes.py` 那句
-「不会永远停在 `running`」于是有了对象：进程被杀时，`_mark_failed()` 就是把这一份改成 `failed`。
+一次生成最长 14400 秒（`minutes.timeout_seconds` 的上界是 86400）。拉起之前先写一份
+`running`（带 `started_at` / `mode` / `branch` 与空的 `dsh` 那一格），读方（`meeting post`、
+界面）在这期间分得出「没跑」与「正在跑」；终局那一趟再覆盖它 ——
+`meeting/backends/minutes.py` 那句「不会永远停在 `running`」于是有了对象：
+进程被杀时，`_mark_failed()` 就是把这一份改成 `failed`。
 
 再入闸那一档（`MEETING_MINUTES_CHILD=1`）**不写状态文件**，那条口径一个字没动。
 
 ## 顺序不能反
 
-离线那条转写**就是这一层的输入**（spec：「先出纪要就会永远只有降级档」）。调用方
+离线那条转写**就是这一层的输入**。调用方
 （`meeting/offline/minutes_tail.py` 的尾巴、`meeting post`）必须在三份离线产物落完之后调它，
 本模块不自己去等、也不去探测离线链的状态。
 
@@ -262,7 +262,7 @@ def run(
     mode = document["mode"]
     write_inputs(inputs_path(directory), document)
     if mode == MODE_NONE:
-        # 一条转写都没有：**不启动 DSH**（spec：这一档记 failed + 原因，不许静默出空纪要）
+        # 一条转写都没有：**不启动 DSH**（这一档记 failed + 原因，不许静默出空纪要）
         message = (
             f"这一场的输入一条都没有（找的是 meeting_transcript_<source>.md 与 "
             f"meeting_offline_transcript_<source>.md），不启动 DSH、不出纪要：{directory}"
@@ -366,7 +366,7 @@ def _chunk_summary(chunks: Mapping[str, Any]) -> dict[str, Any]:
     """分块那一趟的结果（每一路每一份稿的行数与块数），进状态文件之外的返回值。
 
     形状与 `chunk_session()` 的返回值同构（`{source: {kind: {…}}}`）：两份稿都在时两份各答一格
-    （R11 的两份稿对拍靠的就是这一层）。状态文件的形状是冻结的，因此这一格只出现在返回值里：
+    形状与 `chunk_session()` 的返回值同构（`{source: {kind: {…}}}`）：两份稿都在时两份各答一格。
     `meeting post` 与用例用它核「切了几块」。
     """
     return {

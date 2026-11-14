@@ -1,16 +1,15 @@
-"""配置层（设计口径，B11 的正确边界）。
+"""配置层。
 
-`~/.config/meeting/config.json`：点号扁平键名的单层映射（嵌套形状不合法），
-不迁移 V1 的 `~/.config/meeting_notes/`。配置目录整组可被 `MEETING_CONFIG_DIR`
-指到别处（`config_dir()` 一处生效：注册表、配置文件、会后任务记录与日志默认
-落点跟着搬；空串按没设）。优先级：环境变量 > `config.json` > 代码默认值（B11）。
-热读键见 `HOT_KEYS`（写盘即生效），其余键启动时读一次；环境变量一律在 import / 启动时求值
-（B11 的坑）。`alert.*` 是判定阈值，`alarm.*` 只管出声；`heartbeat.interval_seconds` 是界面
-心跳（管失联横幅），与服务侧采集帧心跳（`max(2.0s, 3 × frame_interval)`，管 `recording_alive`）
-不许串线。文件不存在 → 用默认值照常起；读不出来 / 不是 JSON → `ConfigCorruptError`
-（`cli.main()` 映射 `EXIT_STARTUP_UNMET`）；键值非法 → `ConfigValueError`（`EXIT_REJECTED`，
-在写生效值清单之前拦下）——都不许拿默认值糊过去。`web.host` 这类键永远不合法：
-只监听 `127.0.0.1` 是安全边界，不能被配置改掉。
+`~/.config/meeting/config.json`：点号扁平键名的单层映射（嵌套形状不合法）。
+配置目录整组可被 `MEETING_CONFIG_DIR` 指到别处（`config_dir()` 一处生效：注册表、配置
+文件、会后任务记录与日志默认落点跟着搬；空串按没设）。优先级：环境变量 > `config.json` >
+代码默认值。热读键见 `HOT_KEYS`（写盘即生效），其余键启动时读一次；环境变量一律在
+import / 启动时求值。`alert.*` 是判定阈值，`alarm.*` 只管出声；`heartbeat.interval_seconds`
+是界面心跳（管失联横幅），与服务侧采集帧心跳（`max(2.0s, 3 × frame_interval)`，管
+`recording_alive`）不许串线。文件不存在 → 用默认值照常起；读不出来 / 不是 JSON →
+`ConfigCorruptError`（`cli.main()` 映射 `EXIT_STARTUP_UNMET`）；键值非法 →
+`ConfigValueError`（`EXIT_REJECTED`，在写生效值清单之前拦下）——都不许拿默认值糊过去。
+`web.host` 这类键永远不合法：只监听 `127.0.0.1` 是安全边界，不能被配置改掉。
 """
 
 from __future__ import annotations
@@ -23,15 +22,13 @@ from typing import Any
 
 from meeting.atomicio import write_text_atomic
 
-# 异常（退出码常量由 cli.main() 映射成 §3.4 的常量后 sys.exit，本模块不定义）
-
 
 class ConfigError(Exception):
     """配置层错误基类。"""
 
 
 class ConfigCorruptError(ConfigError):
-    """`config.json` 读不出来或不是合法 JSON（文件级损坏），对应 `EXIT_STARTUP_UNMET`。"""
+    """`config.json` 读不出来或不是合法 JSON（文件级损坏）。"""
 
     def __init__(self, path: str, detail: str) -> None:
         self.path = path
@@ -40,10 +37,6 @@ class ConfigCorruptError(ConfigError):
 
 
 class ConfigValueError(ConfigError):
-    """某个键的值非法（类型 / 范围 / 键间规则），对应 `EXIT_REJECTED`。
-
-    `key` / `value` / `legal` 供终端与 bootstrap 日志写清键名、收到的值、合法范围。
-    """
 
     def __init__(self, key: str, value: Any, legal: str, detail: str | None = None) -> None:
         self.key = key
@@ -56,14 +49,12 @@ class ConfigValueError(ConfigError):
         super().__init__(message)
 
 
-# 默认值表（§3.11，键名与默认值都是跨层冻结项）
+# 默认值表：键名与默认值都是跨层冻结项
 
 CONFIG_DIR_NAME = (".config", "meeting")
 CONFIG_FILE_NAME = "config.json"
 SERVICE_LOG_FILE_NAME = "meeting.log"
 
-#: 热读键：写盘那一刻就生效。`alarm.sound` 排在 `asr.*` 前面，因为 `ASR_SETTING_KEYS`
-#: 是按 `asr.` 前缀从这张表筛出来的，排在前面不参与快照 `settings.asr` 的子键次序。
 HOT_KEYS: tuple[str, ...] = (
     "alarm.sound",
     "asr.max_segment_seconds",
@@ -79,7 +70,7 @@ HOT_KEYS: tuple[str, ...] = (
     "summary.active_preset",
 )
 
-#: `asr.*` 五个默认值沿用 `docs/v1-lineage.md` 的 B1（V1 实测值），复核只许改值不许改口径。
+#: asr.* 的默认值只许改值，不许改口径。
 DEFAULT_VALUES: dict[str, Any] = {
     "web.port": 8765,
     "web.dist_dir": "web/dist",
@@ -96,17 +87,11 @@ DEFAULT_VALUES: dict[str, Any] = {
     "capture.backend": "auto",
     "transcriber.backend": "auto",
     "post.hook": "auto",
-    # 会后离线转写（定名，与 `capture.backend` 同形：接口在这里，值归选型节点）。
-    # 模型默认 MOSSTD 的 HF 仓库 id（本机已有本地快照），档位取本机实测跑通的 bf16。
     "post.engine": "auto",
     "post.model": "OpenMOSS-Team/MOSS-Transcribe-Diarize",
     "post.dtype": "bfloat16",
-    # 每块音频长度上限（秒），`0` = 显式关掉分块。默认 450 是对 spec「默认关闭」的有意偏离：
-    # 本机实测 600 s → 11.6 GiB 峰值、900 s → 22.9 GiB（越界换页，墙钟劣化 5–12 倍）、
-    # 1500 s → OOM（16 GB 卡，设计报告 10.1），而验收素材 5943 s 整段必死；450 s 实测
-    # 峰值 7.5 GiB 是安全档。块数为 1 时不切块（短于 450 s 仍整段跑）。
+    # 每块音频长度上限（秒），`0` = 显式关掉分块。默认 450 是显存安全档（更大的块会 OOM）。
     "post.chunk_seconds": 450,
-    # 两路各自用哪个设备（定名）：`None` = 按默认策略挑（见 capture/devices.py）
     "devices.mic": None,
     "devices.loopback": None,
     "asr.max_segment_seconds": 10,
@@ -114,34 +99,28 @@ DEFAULT_VALUES: dict[str, Any] = {
     "asr.max_new_tokens": 400,
     "asr.repeat_max_unit": 40,
     "asr.repeat_min_coverage": 0.5,
-    # 会后纪要生成（设计定名，与 `post.*` 同形）：
+    # 会后纪要生成：
     #   - `minutes.hook`：`auto` = 跟离线链尾巴自动跑；JSON `null` = 不自动跑。
-    #   - `minutes.chunk_lines`：每块行数，与 V1 切块口径一致（取值域同 chunk.MIN/MAX）。
-    #   - `minutes.max_segments`：每条 source 的分段上限（取值域同 contract.DEFAULT_MAX_SEGMENTS）。
-    #   - `minutes.timeout_seconds`：一次纪要生成的墙钟上限（R8：会后换质量，但要有上限）。
-    #   - `minutes.dsh_url`：DSH web 服务端地址（不是 `dsh` 可执行文件）。在跑时经 `/api`
-    # 在场次工作区建会话交付（终态 `delivered`），没在跑才落回本进程 headless 子进程。
+    #   - `minutes.timeout_seconds`：一次纪要生成的墙钟上限。
+    #   - `minutes.dsh_url`：DSH web 服务端地址（不是 `dsh` 可执行文件）。
     "minutes.hook": "auto",
     "minutes.chunk_lines": 100,
     "minutes.max_segments": 8,
     "minutes.timeout_seconds": 14400,
     "minutes.dsh_url": "http://127.0.0.1:3080",
-    # 会中总结（设计定名，与 `post.*` / `minutes.*` 同形）：
-    #   - `base_url` / `model`：OpenAI 兼容协议，默认本机实测跑通的 DeepSeek 端点，换厂商改这两个键。
+    # 会中总结：
+    #   - `base_url` / `model`：OpenAI 兼容协议，换厂商改这两个键。
     #   - `api_key`：可空键，密钥不进仓库——写配置文件或用 `MEETING_SUMMARY_API_KEY` 压住。
-    #   - `extra_body_json`：厂商特有字段以一个 JSON 字符串键承载（配置层拒收 dict 值，
-    # 为这一个键放开硬约束不值得），空串 = 不并。
-    #   - `deadline_seconds`：墙钟 deadline，换掉 V1「3 × 60 秒硬编码超时」最坏 180 秒的算法。
-    #   - `max_attempts`：尝试次数上限，真正的刹车是 deadline。
-    #   - `default_window`：`args.window` 省略时的缺省档（四档取值）。
+    #   - `extra_body_json`：厂商特有字段以一个 JSON 字符串键承载，空串 = 不并。
+    #   - `max_attempts`：尝试次数上限，真正的刹车是 `deadline_seconds`。
     "summary.base_url": "https://api.deepseek.com/v1",
     "summary.api_key": None,
     "summary.model": "deepseek-chat",
     "summary.extra_body_json": "",
-    # 会中切模型两键（与四件套同组）：`presets_json` 全部预设装在一个 JSON 字符串键里
-    # （同 `extra_body_json` 的先例），空串 = 没配（回落平铺四键），非空必须是 JSON 数组文本：
-    # 每套 `name` 必填（非空白、不重名，指针按它挑），其余四格可省。**预设里的密钥不进快照、
-    # 不在界面回显**。`active_preset` 当前用哪套；名字不在清单里时读的一侧回落平铺键。
+    # `summary.presets_json`：全部预设装在一个 JSON 字符串键里，空串 = 没配（回落平铺四键），
+    # 非空必须是 JSON 数组文本：每套 `name` 必填（非空白、不重名），其余四格可省。
+    # **预设里的密钥不进快照、不在界面回显**。`active_preset` 当前用哪套；名字不在清单里时
+    # 读的一侧回落平铺键。
     "summary.presets_json": "",
     "summary.active_preset": "",
     "summary.deadline_seconds": 25.0,
@@ -149,11 +128,10 @@ DEFAULT_VALUES: dict[str, Any] = {
     "summary.default_window": "15m",
 }
 
-#: 后端选取键的取值口径（§3.11 / 冻结项 6）
 BACKEND_SELECTORS = ("auto", "null", "dev")
 
-#: `web.port` 下界 `0` 是契约特例（§3.6）：让系统挑空闲端口（测试 / 无头场景），
-#: 默认值仍是 8765，且端口被占照旧拒绝启动——`0` 不是「允许随机跳端口」。
+#: `web.port` 下界 `0` 是契约特例：让系统挑空闲端口，端口被占照旧拒绝启动——
+#: `0` 不是「允许随机跳端口」。
 INT_LIMITS: dict[str, tuple[int, int]] = {
     "web.port": (0, 65535),
     "log.max_bytes": (1, 2**53),
@@ -166,7 +144,6 @@ INT_LIMITS: dict[str, tuple[int, int]] = {
     "asr.timeout_seconds": (1, 86400),
     "asr.max_new_tokens": (1, 2**31),
     "asr.repeat_max_unit": (1, 2**31),
-    # `0` = 关掉分块（与 `web.port = 0` 的「特殊取值合法、默认值另算」同形）；上界一天。
     "post.chunk_seconds": (0, 86400),
     # 取值域与 `meeting/minutes/` 里的常量逐字相同
     "minutes.chunk_lines": (10, 1000),
@@ -176,11 +153,10 @@ INT_LIMITS: dict[str, tuple[int, int]] = {
     "summary.max_attempts": (1, 10),
 }
 
-#: 浮点范围
 FLOAT_LIMITS: dict[str, tuple[float, float]] = {
     "alert.silence_dbfs": (-200.0, 100.0),
     "asr.repeat_min_coverage": (0.0, 1.0),
-    # 一次总结的墙钟 deadline（秒）：下界 1 秒（更短拿不到任何应答），上界一小时。
+    # 下界 1 秒：更短拿不到任何应答。
     "summary.deadline_seconds": (1.0, 3600.0),
 }
 
@@ -204,7 +180,6 @@ STRING_LIMITS: dict[str, tuple[str, ...] | None] = {
     "devices.loopback": None,
     "summary.base_url": None,
     "summary.model": None,
-    # 四档取值（设计章 2.3 的四个按钮），取值不在档内的装载时拦下
     "summary.default_window": ("5m", "15m", "30m", "full"),
 }
 
@@ -217,12 +192,9 @@ NULLABLE_KEYS: tuple[str, ...] = ("devices.mic", "devices.loopback", "summary.ap
 #: 会后纪要，归一成空串或默认值都会把「关掉」吃掉。
 NULL_SENTINEL_KEYS: tuple[str, ...] = ("minutes.hook",)
 
-#: 全部可写 `null` 的键
-ALL_NULLABLE_KEYS: tuple[str, ...] = (*NULLABLE_KEYS, *NULL_SENTINEL_KEYS)
-
-#: 契约 §3.11 冻结的映射。`MEETING_SUMMARY_API_KEY` 走同一条通路：装载时求值、
-#: 优先级最高；是密钥，唯一用法就是环境变量（不写盘、不打印、不进证据）。
-#: `tests/_helpers.py` 的 `SERVICE_ENV_NAMES` 由本表派生，机主环境变量不会漏进子进程用例。
+#: 冻结的映射。`MEETING_SUMMARY_API_KEY` 走同一条通路：装载时求值、优先级最高；是密钥，
+#: 唯一用法就是环境变量（不写盘、不打印、不进证据）。`tests/_helpers.py` 的
+#: `SERVICE_ENV_NAMES` 由本表派生，机主环境变量不会漏进子进程用例。
 ENV_KEYS: dict[str, str] = {
     "MEETING_PORT": "web.port",
     "MEETING_LOG_DIR": "log.dir",
@@ -230,32 +202,24 @@ ENV_KEYS: dict[str, str] = {
     "MEETING_SUMMARY_API_KEY": "summary.api_key",
 }
 
-#: 会中总结密钥的环境变量名（供探针与文档引用）
 ENV_SUMMARY_API_KEY = "MEETING_SUMMARY_API_KEY"
 
-#: 值为 `1` 时关掉浏览器打开（测试与无头场景）
 ENV_NO_BROWSER = "MEETING_NO_BROWSER"
 
-#: 配置目录整组重定向（探针与手工跑的隔离入口，pytest 之外也要能一行隔离）：
-#: 设了它，`config_dir()` 整组跟着走——`config.json`、`workspaces.json`、会后任务
-#: 记录与日志默认落点全从那一个函数推出，一处设、整组搬。**不指向任何配置键**
-#: （与 `ENV_NO_BROWSER` 同档，不进 `ENV_KEYS` 冻结表），空串按没设；显式
-#: `log.dir`（config.json 或 `MEETING_LOG_DIR`）仍以显式值为准。
+#: 配置目录整组重定向：`config_dir()` 一处生效——注册表、`config.json`、会后任务
+#: 记录与日志默认落点全从那一个函数推出。**不指向任何配置键**（不进 `ENV_KEYS` 冻结表），
+#: 空串按没设；显式 `log.dir`（config.json 或 `MEETING_LOG_DIR`）仍以显式值为准。
 ENV_CONFIG_DIR = "MEETING_CONFIG_DIR"
 
-# `settings_update` 的键态三分表（设计口径）：只有逐条列出的字面键名合法，
-# 不按前缀归组、没有前缀白名单，表外一律 `invalid_setting`(400)。设备键位是点号
-# 字面键名，快照里才收成子键；嵌套形状不合法。
+# `settings_update` 的键态三分表：只有逐条列出的字面键名合法，不按前缀归组、没有
+# 前缀白名单，表外一律 `invalid_setting`(400)。
 
-#: 可热读的键 → 落 `applied`
 APPLIED_SETTING_KEYS: tuple[str, ...] = tuple(HOT_KEYS)
 
-#: 其余键（写盘成功但要重启才生效）→ 落 `pending_restart`
 PENDING_RESTART_SETTING_KEYS: tuple[str, ...] = tuple(
     key for key in DEFAULT_VALUES if key not in HOT_KEYS
 )
 
-#: 三分表本体：点号字面键名 → 归类（`applied` / `pending_restart`）
 SETTING_KEY_GROUPS: dict[str, str] = {
     **{key: "applied" for key in APPLIED_SETTING_KEYS},
     **{key: "pending_restart" for key in PENDING_RESTART_SETTING_KEYS},
@@ -268,8 +232,7 @@ def setting_group(key: str) -> str | None:
 
 
 #: 快照 `settings.asr` 的子键 ↔ 配置键（逐字同名，去掉 `asr.` 前缀）。嵌套写法只出现在
-#: 状态 JSON 里，不进请求体、应答体、`config.json`。按 `asr.` 前缀从 `HOT_KEYS` 筛
-#: （热读档后来收了 `alarm.sound`，直接对整张表去前缀会长出 `settings.asr.sound`）。
+#: 状态 JSON 里，不进请求体、应答体、`config.json`。
 ASR_SETTING_KEYS: tuple[str, ...] = tuple(
     key.split(".", 1)[1] for key in HOT_KEYS if key.startswith("asr.")
 )
@@ -425,11 +388,7 @@ def write_config_values(
     return target
 
 
-# 家目录解析（测试的配置隔离靠重定向 HOME / USERPROFILE）
-
-
 def home_dir() -> str:
-    """当前用户主目录：先看 `HOME`，再看 `USERPROFILE`。"""
     home = os.environ.get("HOME")
     if home:
         return home
@@ -440,11 +399,8 @@ def home_dir() -> str:
 
 
 def config_dir() -> str:
-    """配置与日志的根目录：`MEETING_CONFIG_DIR` 设了用它（空串按没设），没设 `~/.config/meeting`。
-
-    重定向是给 pytest 之外的探针与手工跑的隔离入口；取值口径与字符串配置键同档
-    （strip 后为空按没设，非空原样用、不归一）。注册表、`config.json`、会后任务
-    记录与 `default_log_dir()` 全部从本函数推出——一处设、整组搬。
+    """配置与日志的根目录：`MEETING_CONFIG_DIR` 设了用它（空串按没设），
+    没设 `~/.config/meeting`。
     """
     raw = os.environ.get(ENV_CONFIG_DIR, "")
     if raw.strip():
@@ -453,12 +409,10 @@ def config_dir() -> str:
 
 
 def config_path() -> str:
-    """配置文件路径：`~/.config/meeting/config.json`（由家目录推出）。"""
     return os.path.join(config_dir(), CONFIG_FILE_NAME)
 
 
 def default_log_dir() -> str:
-    """`log.dir` 的默认值：`~/.config/meeting/logs`。"""
     return os.path.join(config_dir(), "logs")
 
 
@@ -467,9 +421,6 @@ def default_for(key: str) -> Any:
     if key == "log.dir":
         return default_log_dir()
     return DEFAULT_VALUES[key]
-
-
-# 校验
 
 
 def _legal_text(key: str) -> str:
@@ -519,8 +470,8 @@ def validate_value(key: str, value: Any) -> Any:
         return value
 
     if key == "summary.presets_json":
-        # 非空必须是 JSON 数组文本，每套 name 必填且不重名。写错的预设当场拦下——
-        # 让一套读不出来的预设走到总结层，等于把一次总结交给一段语法错误的文本。
+        # 写错的预设当场拦下——让一套读不出来的预设走到总结层，
+        # 等于把一次总结交给一段语法错误的文本。
         if not isinstance(value, str):
             raise ConfigValueError(key, value, _legal_text(key), "收到的不是字符串")
         if not value.strip():
@@ -589,13 +540,12 @@ def validate_value(key: str, value: Any) -> Any:
 
     if key == "summary.active_preset":
         # 空串 = 不选预设（平铺四键，存量配置零迁移）；「名字在不在清单里」归
-        # validate_setting_changes（见那里的注释）。
+        # `validate_setting_changes`。
         if not isinstance(value, str):
             raise ConfigValueError(key, value, _legal_text(key), "收到的不是字符串")
         return value.strip()
 
     if key == "summary.extra_body_json":
-        # 空串 = 不并；能解析但不是对象的（数组 / 数字 / "abc"）与解析不了的都在装载时拦下。
         if not isinstance(value, str):
             raise ConfigValueError(key, value, _legal_text(key), "收到的不是字符串")
         if not value.strip():
@@ -702,9 +652,6 @@ def _flatten_message(key: str, value: Any) -> str:
     return f"{key} = {value!r}"
 
 
-# 生效配置对象
-
-
 @dataclass(frozen=True)
 class Config:
     """一次 `load()` 的产物：生效值 + 来源信息。"""
@@ -714,7 +661,6 @@ class Config:
     path: str
 
     def get(self, key: str, default: Any = None) -> Any:
-        """点号路径取值。"""
         if key in self.applied:
             return self.applied[key]
         if default is not None:
@@ -722,26 +668,20 @@ class Config:
         return default_for(key)
 
     def as_dict(self) -> dict[str, Any]:
-        """生效值（供 log 与 `/debug`）。"""
         return dict(self.applied)
 
     def hot_keys(self) -> list[str]:
-        """热读键清单（就是 `HOT_KEYS`）。"""
         return list(HOT_KEYS)
 
     def config_path(self) -> str:
-        """本次读取用的配置文件路径。"""
         return self.path
 
     def source_of(self, key: str) -> str:
         return self.sources.get(key, "默认")
 
     def no_browser(self) -> bool:
-        """`MEETING_NO_BROWSER=1` 关掉浏览器打开（测试与无头场景）。"""
         return os.environ.get(ENV_NO_BROWSER, "").strip() == "1"
 
-
-# 读取入口
 
 #: 已退场键的字面键名：存量 config.json 里读到即忽略（见 `load()`）；
 #: 除此之外的未知键仍然严格拒绝。
@@ -753,16 +693,12 @@ def load(
     environ: dict[str, str] | None = None,
     path: str | None = None,
 ) -> Config:
-    """启动时读一次配置：环境变量 > `config.json` > 默认值。
-
-    `environ` / `path` 只服务测试注入。
-    """
+    """启动时读一次配置。`environ` / `path` 只服务测试注入。"""
     env = os.environ if environ is None else environ
     config_file = config_path() if path is None else path
 
     file_values = _read_config_file(config_file)
 
-    # 退场键读到即忽略 + 落一条 log，不抛 ConfigValueError；拼错键名的严格拒绝保留。
     for retired in _RETIRED_KEYS:
         if retired in file_values:
             logging.getLogger("meeting.config").warning(
@@ -797,7 +733,6 @@ def load(
 
         applied[key] = value
 
-    # 环境变量层（一律启动时求值，改了不会热生效）
     for env_name, key in ENV_KEYS.items():
         if env_name not in env:
             continue
@@ -823,20 +758,16 @@ def load(
 
 
 def format_applied(config: Config) -> str:
-    """把生效值清单写成一行行 `key = value`（供 log 的「配置来源与生效值」）。"""
     lines = []
     for key in DEFAULT_VALUES:
         lines.append(f"  {_flatten_message(key, config.applied[key])}  [{config.source_of(key)}]")
     return "\n".join(lines)
 
 
-# 模块级状态（`get()` 的便捷入口）
-
 _LOADED: Config | None = None
 
 
 def get(key: str, default: Any = None) -> Any:
-    """点号路径取值（未 `load()` 过时退回默认值表）。"""
     if _LOADED is None:
         return default_for(key) if default is None else default
     return _LOADED.get(key, default)
@@ -847,20 +778,17 @@ def current() -> Config | None:
 
 
 def set_current(config: Config | None) -> None:
-    """测试与 `cli.py` 的注入点。"""
     global _LOADED
     _LOADED = config
 
 
 def as_dict() -> dict[str, Any]:
-    """生效值（供 log 与 `/debug`）。"""
     if _LOADED is None:
         return {key: default_for(key) for key in DEFAULT_VALUES}
     return _LOADED.as_dict()
 
 
 def hot_keys() -> list[str]:
-    """热读键清单（就是 `HOT_KEYS`）。"""
     return list(HOT_KEYS)
 
 

@@ -1,61 +1,8 @@
-"""`meeting post` 这条入口把**配置层**读进来并生效（设计的补齐）。
-
-要盯住的那一件事：`meeting post <场次目录>` 走的是**产品入口**，因此这一趟里每一个取值都
-必须来自「用户写的那份 `config.json`」，而不是 `meeting/config.py` 的默认值表。
-`web()` 一直在启动序列的第 ② 步读它（`config_module.load()` + 值级校验 +
-`config_module.set_current()`），`post()` 此前整条路都没读 —— 于是
-`post.engine` / `post.model` / `post.dtype` / `post.chunk_seconds` 与
-`minutes.*`（含 `minutes.hook` / `minutes.timeout_seconds`）**一律退回默认值**：
-
-  - 用户在 `config.json` 里写 `minutes.hook = null`（明确不要会后纪要）时，`meeting post`
-    照旧按默认的 `auto` 解析并**拉起 headless DSH 子会话** —— 那是真花钱的一步，
-    而且违背用户显式配置；
-  - 用户写 `post.engine = <替身>` 想便宜地跑一遍时，`meeting post` 会造出**真**离线引擎。
+"""`meeting post` 这条入口把**配置层**读进来并生效。
 
 **每条用例都走真入口 `post()`**（`_parse_post_args()` → `_load_config_or_exit()` →
 `run_post()`）：配置层就位这一步是这条入口自己的事，绕过它去直调 `run_post()` 的用例证明
 不了这条入口的配置层已经接上。
-
-本文件把这条入口的配置层逐格钉住，五档各一组：
-
-  1. `post.engine` 写成替身时，**真按它取引擎**（断言落在「替身被构造出来、真被调用来
-     转写」上，而不是落在「默认值是什么」上）；
-  2. `minutes.hook = null` 时，**拉起那一本记录为 0**（真拉起点
-     `meeting.offline.runner._launch_minutes_implementation` 一次都没被走到），
-     `minutes.hook = auto` 时同一本记录里**恰好 1 笔**（正控与负控一起读，这本记录才证明得了
-     「配置真的关掉了这一层」），解析那一格如实落在**缺席档**（`selector == "null"`、
-     `has_implementation is False`），这一趟落安静跳过那一档；
-  3. `minutes.timeout_seconds` 调小时，`meeting post` **等纪要的上界真的跟着变**：等待层
-     实际拿到的上界等于配置里那个值，且**等待真的按它收场**（等待层被换成按上界真睡
-     一小会儿的替身：上界是配置里那个秒级值时它按那个值收场，是 60 / 14400 时当场判红）；
-  4. 配置损坏 / 取值非法两档的**退出码与终端说法与 `web()` 同源**
-     （`EXIT_STARTUP_UNMET` / `EXIT_REJECTED`，两处逐字同句），且都**不进花钱那一段**
-     （`run_post()` 一次都没被调到）；
-  5. 家目录下**没有 `config.json`** 时行为与改动前一致（生效值逐键是默认表那一份，
-     `minutes.timeout_seconds` 仍是 14400）。
-
-**全部进程内、全部注入假件**：一条真子进程都不起，一次模型端点都不碰，一份离线权重都不
-加载。四处假件分别是：
-
-  - **真引擎的替身**（`no_real_engine_can_ever_be_built`）：`meeting.offline.engine` 里那个
-    `MossOfflineEngine` 被换成一碰就炸的类 —— 任何落到 `auto` 那一档的路径都在构造现场
-    当场炸掉，**一毫秒都不花、一个字节都不下载**（本节点此前真拉过一次 HF 权重，属事故）；
-  - **假引擎**：`post.engine` 指向本模块的 `RecordingOfflineEngine`（`module:Class` 形状，
-    配置层放行）—— 构造与 `transcribe()` 只登记，交回两段合成结果；
-  - **假转码**：把 `meeting.capture.archive.convert_to_mp3` 换成一个只写几个字节的替身
-    （真 ffmpeg / 真 pydub 在不在场与本文件的结论无关）；
-  - **假纪要拉起**：`tests/conftest.py` 的 `MEETING_MINUTES_CHILD=1` 兜底是第一层网，
-    本文件另加两处登记：`registry.resolve_minutes_hook` 的**包装间谍**（真解析照旧走，
-    只多记一笔）与**真拉起点** `meeting.offline.runner._launch_minutes_implementation`
-    （`runner.py:1408` 定义、`:1371` 调）的登记替身。后者把真拉起点整个换掉，并按真启动器
-    时序交终态（先 `running`、迟一小会儿落 `done` + 合规的 `meeting_final.md`），于是
-    **真子会话一次都起不来**：`minutes.hook = auto` 那一趟解析出来的真实现
-    （`meeting.backends.minutes.MinutesHook`）永远不会被调到。**解析次数与拉起次数是两个
-    独立的读数**：第 2 档要的是「解析 1 次、拉起 0 笔」，`auto` 那一档要「解析 1 次、
-    拉起恰好 1 笔」。
-
-本文件是**快档**：不做真子进程、不做真墙钟等待（等纪要那一档的等待层被换成按上界真睡
-一小会儿的替身，上界是秒级）。
 """
 
 from __future__ import annotations
@@ -83,8 +30,6 @@ from meeting.offline import engine as offline_engine
 from meeting.offline import runner as offline_runner
 from meeting.offline.engine import OfflineSegment
 
-#: 落终态的现成替身（本仓既有那一族：`SettlingLauncher` / `DelayedHookImplementation`）
-#: ——本文件不新造一套，拉起那一处的登记替身交给它收工。
 from tests._minutes_fakes import DelayedHookImplementation
 
 #: 假引擎在配置里的取值（`module:Class` 形状：配置层的 `BACKEND_SELECTORS` 对这一档放行）
@@ -96,20 +41,14 @@ SAMPLE_SECONDS = 3.0
 SAMPLE_RATE = 16000
 
 
-# ---------------------------------------------------------------------------
-# 假件零：真引擎的替身（本文件的红线）
-# ---------------------------------------------------------------------------
-
-
 @pytest.fixture(autouse=True)
 def no_real_engine_can_ever_be_built(monkeypatch: pytest.MonkeyPatch) -> Any:
     """**本文件的红线**：真离线引擎一次都不许被构造（绝不加载权重、绝不联网）。
 
     真引擎（`meeting.offline.engine:MossOfflineEngine`）的构造函数会去 HF 快照里加载权重，
-    本机缺快照时还会**回退联网下载** —— 一条用例只要漏挡一处，就会真拉一次权重（本节点
-    此前发生过一次，属事故）。因此这里把那个类本身换成「一碰就炸」的替身：
-    `resolve_engine("auto")` 是**调用时**才 `importlib` 取那个属性的，于是任何落到 `auto`
-    那一档的路径都在构造现场当场炸掉。
+    本机缺快照时还会**回退联网下载** —— 一条用例只要漏挡一处，就会真拉一次权重。因此这里把
+    那个类本身换成「一碰就炸」的替身：`resolve_engine("auto")` 是**调用时**才 `importlib` 取
+    那个属性的，于是任何落到 `auto` 那一档的路径都在构造现场当场炸掉。
 
     这一层网同时是一条看门断言：配置层若没被读进来，`post.engine` 就是 `auto`，用例会以
     `AssertionError("真引擎不许被构造")` 收场，而不是悄悄跑一趟真模型。
@@ -124,23 +63,8 @@ def no_real_engine_can_ever_be_built(monkeypatch: pytest.MonkeyPatch) -> Any:
     return _NeverBuiltEngine
 
 
-# ---------------------------------------------------------------------------
-# 假件一：假离线引擎（`post.engine` 指向它；构造与调用都只登记）
-# ---------------------------------------------------------------------------
-
-
 class RecordingOfflineEngine:
-    """假离线引擎：**一个权重都不加载**，只记「被构造过」与「被调用过」。
-
-    `build_engine()` 按 `post.engine` 解析到它之后，用
-    `cls(model=<post.model>, dtype=<post.dtype>)` 构造它 —— 这两个值同样来自配置层，
-    因此这里逐次记下，用例据此证明「取引擎这一步真的按生效配置走」。
-
-    `transcribe()` 照 `meeting/offline/engine.py::OfflineSegment` 的形状交回两段合成结果：
-    够 `run_session()` 落三份产物，且**一次真推理都没发生**。
-
-    类级登记（`constructor_args` / `calls`）让用例不必持有实例就能读到记录。
-    """
+    """假离线引擎：**一个权重都不加载**，只记「被构造过」与「被调用过」。"""
 
     constructor_args: list[dict[str, Any]] = []
     calls: list[str] = []
@@ -173,11 +97,6 @@ def a_clean_engine_ledger() -> Any:
     RecordingOfflineEngine.calls = []
 
 
-# ---------------------------------------------------------------------------
-# 假件二：假转码（真 ffmpeg / 真 pydub 在不在场与本文件无关）
-# ---------------------------------------------------------------------------
-
-
 class RecordingConverter:
     """假转码器：把那份 MP3 写出来，**不碰真 ffmpeg**。"""
 
@@ -200,9 +119,7 @@ def a_fake_converter(monkeypatch: pytest.MonkeyPatch) -> RecordingConverter:
     return converter
 
 
-# ---------------------------------------------------------------------------
 # 假件三：纪要层的两本记录（解析次数 / 拉起次数）——拉起那一本挂在**真名字**上
-# ---------------------------------------------------------------------------
 
 
 class MinutesLedger:
@@ -211,25 +128,13 @@ class MinutesLedger:
     `resolutions` 记 `registry.resolve_minutes_hook()` 每一次的交回值
     （`selector` / `has_implementation` / 那一刻生效配置的路径）；`launch_calls` 记真的走到
     「起子会话」那一步的每一笔 —— 挂点是**真名字**
-    `meeting.offline.runner._launch_minutes_implementation`（`runner.py:1408` 定义、`:1371` 调）。
-
-    此前这一本记录挂在 `meeting.backends.minutes._launch_minutes_implementation` 上，而**那个
-    名字在 `meeting.backends.minutes` 里不存在**（那个 `raising=False` 的 `setattr` 只是现场
-    造了一个死属性）：`launch_calls` 恒为 0，于是「`minutes.hook = null` 时一次都不拉起」
-    这条**关于花钱的**断言什么都没证明，「被走到就当场抛」那层网也一次都没被走到。挂在真名字
-    上之后这本记录才看得见拉起 —— 判据是 `auto` 那一档上**恰好 1 笔**（正控）。
-
-    `launch()` 就是那个登记替身：被调用时记一笔，再交给**现成的落终态替身**
-    （`tests/test_post_idempotency.py` 的 `DelayedHookImplementation`，照真启动器时序：先落
-    `running`、迟一小会儿落 `done` + 合规的 `meeting_final.md`），`meeting post` 那段
-    「等这一趟新落的终态」因此正常收场。**真子会话一次都起不来**：真拉起点整个被换掉了。
+    `meeting.offline.runner._launch_minutes_implementation`。
     """
 
     def __init__(self, settle: Any) -> None:
         self.resolutions: list[dict[str, Any]] = []
         self.launch_calls: list[dict[str, Any]] = []
         self._settle = settle
-        #: 挂在真拉起点那个名字上的替身本身（接线自检读它）
         self.launch_point: Any = None
 
     def resolution_count(self) -> int:
@@ -246,7 +151,6 @@ class MinutesLedger:
         force: bool = False,
         deliver: bool = False,
     ) -> None:
-        """真拉起点（`runner._launch_minutes_implementation`）的替身：登记 + 交终态。"""
         self.launch_calls.append(
             {
                 "session_dir": str(session_dir),
@@ -274,8 +178,7 @@ def a_minutes_ledger(monkeypatch: pytest.MonkeyPatch) -> MinutesLedger:
     退回 `auto`），这一档也只是让记录里多一笔、用例当场红在「这一档不该拉起」这句上，真会话与
     真模型仍然起不来。
 
-    打桩点用真名字（`monkeypatch.setattr` 不带 `raising=False`）：名字若被改名，这里当场红，
-    不会像此前那样现造一个死属性、让记录默默恒为 0。
+    打桩点用真名字（`monkeypatch.setattr` 不带 `raising=False`）：名字若被改名，这里当场红。
     """
     ledger = MinutesLedger(DelayedHookImplementation())
     real_resolve = registry_module.resolve_minutes_hook
@@ -314,19 +217,6 @@ def test_the_safety_nets_this_file_relies_on_are_really_wired(
     """本文件的四层网**此刻真的在岗**（改名 / 打桩落空 → 当场红）。
 
     这一条是本文件的**接线自检**，它不当任何一档的行为证据（那五档各有自己的用例）。
-    逐层**真调一次、看记录动不动**：
-
-      - **真引擎替身**：`meeting.offline.engine` 上那个 `MossOfflineEngine` 此刻不是真类
-        （真类的构造会去 HF 快照加载权重、缺快照时回退联网下载）；
-      - **解析那一处**：`registry.resolve_minutes_hook` 此刻是本文件夹具的登记替身 ——
-        真调一次，`a_minutes_ledger.resolutions` 上必须多出一行；
-      - **拉起那一处**：**真拉起点** `meeting.offline.runner._launch_minutes_implementation`
-        （`runner.py:1408` 定义、`:1371` 调）此刻是本文件夹具的登记替身 —— 真调一次，
-        `a_minutes_ledger.launch_calls` 上必须多出一行。此前这里只断一个 `callable(...)`，
-        而名字挂在 `meeting.backends.minutes` 上一个**不存在**的属性上（`raising=False`
-        现造的死属性）：那一问恒真，也完全看不见真拉起点；
-      - **转码那一处**：`meeting.capture.archive.convert_to_mp3` 此刻是本文件夹具的登记
-        替身 —— 真调一次，替身的 `calls` 上必须多出一行（不会去碰真 ffmpeg）。
     """
     from meeting.capture import archive as archive_module
     from meeting.offline import engine as engine_module
@@ -367,9 +257,7 @@ def test_the_safety_nets_this_file_relies_on_are_really_wired(
     )
 
 
-# ---------------------------------------------------------------------------
 # 等待层的登记替身（记下上界，并按上界真睡一小会儿）
-# ---------------------------------------------------------------------------
 
 
 class WaitReceipt:
@@ -437,9 +325,7 @@ def restore_the_current_config() -> Any:
     config_module.set_current(previous)
 
 
-# ---------------------------------------------------------------------------
 # 小工具
-# ---------------------------------------------------------------------------
 
 
 def write_config(home: Path, values: dict[str, Any]) -> Path:
@@ -548,9 +434,7 @@ def write_offline_done(session: Path, *, sources: tuple[str, ...] = ("mic",)) ->
     )
 
 
-# ---------------------------------------------------------------------------
 # 一、`post.engine` 写成替身：这条路上真按它取引擎
-# ---------------------------------------------------------------------------
 
 
 def test_the_post_engine_selector_comes_from_config_json(
@@ -635,9 +519,7 @@ def test_the_engine_selector_reaches_the_offline_layer_as_a_config_read(
     )
 
 
-# ---------------------------------------------------------------------------
 # 二、`minutes.hook = null`：不拉起纪要层，落安静的缺席档
-# ---------------------------------------------------------------------------
 
 
 def test_a_null_minutes_hook_is_never_launched_and_lands_on_the_absent_tier(
@@ -802,9 +684,7 @@ def test_the_null_hook_stays_absent_on_the_second_pass_too(
     assert not (session / minutes_tail_module.MINUTES_STATUS_NAME).exists()
 
 
-# ---------------------------------------------------------------------------
 # 三、`minutes.timeout_seconds` 调小：等纪要的上界真的跟着变
-# ---------------------------------------------------------------------------
 
 
 def test_the_minutes_wait_upper_bound_follows_the_config_key(
@@ -879,7 +759,6 @@ def test_the_wait_upper_bound_really_bounds_the_wait(
 
     这一格直接调那一处等待（`cli._wait_for_settled_minutes`）本身，把两份预算摆在一起看：
     显式传秒级的 `timeout` 时它按秒级停；不给那一格时它现读配置层那一格（本用例里是 60）。
-    两处读数都落在同一个「到上界还没落定」的档上，说明「上界跟着配置走」这条有实测撑腰。
 
     **盘上先放一版停在 `running` 的状态**：不会有终态来，于是这一处等待走的是「到上界还没
     落定 → 如实报 `timeout`」那一档，等的是时间本身（秒级那一趟因此零点几秒就收场）。
@@ -910,9 +789,7 @@ def test_the_wait_upper_bound_really_bounds_the_wait(
     assert (session / minutes_tail_module.MINUTES_STATUS_NAME).is_file()
 
 
-# ---------------------------------------------------------------------------
 # 四、配置损坏 / 取值非法两档：退出码与终端说法与 `web()` 同源
-# ---------------------------------------------------------------------------
 
 
 def test_a_corrupt_config_takes_the_post_entry_to_the_startup_unmet_exit(
@@ -1029,9 +906,7 @@ def test_a_usage_error_still_wins_over_the_config_load(
     assert "启动前提不成立" not in captured.err
 
 
-# ---------------------------------------------------------------------------
-# 五、家目录下没有 `config.json`：行为与改动前一致（默认值）
-# ---------------------------------------------------------------------------
+# 五、家目录下没有 `config.json`：走默认值
 
 
 def test_a_missing_config_file_keeps_the_entry_on_the_frozen_defaults(
@@ -1039,13 +914,9 @@ def test_a_missing_config_file_keeps_the_entry_on_the_frozen_defaults(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """家目录下没有 `config.json` → 生效值逐键就是默认值表那一份（改动前同形）。
+    """家目录下没有 `config.json` → 生效值逐键就是默认值表那一份。
 
-    证据两条：① `config_module.load()` 交回的生效值**逐键等于**
-    `{key: default_for(key)}`（`log.dir` 这一格由 `default_for()` 按家目录解析，
-    因此比的是解析后的值；「输出根」那一格已随默认落点退场）；② 这一趟照旧按默认的 `post.engine = auto` 取引擎 ——
-    本文件的假引擎**一次都没被构造**（`auto` 不会落到它身上），于是「没配置 = 走默认那一档」
-    这条既有行为在补齐配置层之后一个字没变。`minutes.timeout_seconds` 也仍是默认那一档。
+    `log.dir` 这一格由 `default_for()` 按家目录解析，因此比的是解析后的值。
     """
     monkeypatch.delenv("MEETING_MINUTES_CHILD", raising=False)
     assert not (isolated_config_dir / "config.json").exists()
@@ -1067,8 +938,7 @@ def test_a_missing_config_file_keeps_the_entry_on_the_frozen_defaults(
     )
     assert config_module.get("minutes.hook") == "auto"
     # 默认 `auto` 那一档落到的是真引擎（本文件那条红线替身让它当场炸）：离线那一层如实
-    # 落 failed，这一趟因此**如实按失败档收场**（不是成功档、也不是别的码 —— 这一格与
-    # 改动前同形，实测的终端尾行是「结论：failed，退出码 EXIT_FAILURE」）
+    # 落 failed，这一趟因此**如实按失败档收场**（不是成功档、也不是别的码）
     assert info.value.code == EXIT_FAILURE, info.value.code
 
 
@@ -1105,9 +975,7 @@ def test_the_entry_reads_the_config_before_the_idempotency_gate(
     assert seen == [str(config_path)], seen
 
 
-# ---------------------------------------------------------------------------
 # 六、`log.dir` / `log.level` 这几个键真的被用上（`web()` 第 ③ 步那一格）
-# ---------------------------------------------------------------------------
 
 
 def test_the_post_entry_rebuilds_the_service_log_in_the_configured_dir(
@@ -1117,17 +985,11 @@ def test_the_post_entry_rebuilds_the_service_log_in_the_configured_dir(
 ) -> None:
     """`log.dir` 指到自有目录 → `meeting post` 的服务日志真的落在那里。
 
-    这一格补的是「被读进来却一次都没被用」的那一类：配置层补齐之后 `log.dir` / `log.level`
-    进了生效清单，但 `post()` 只在 bootstrap 那一步按**默认**日志目录建过一次，配的落点
-    一个字不生效（`web()` 有第 ③ 步「按生效配置重建」，`post()` 此前没有）。现在两个入口
-    同源：**post 之后的服务级 log 就在生效 `log.dir` 下**。
-
     判据两条都要能分辨现场，读的是那几行文字本身（光看文件在不在分辨不出来）：
 
       - 生效那一份（`logging_setup.service_log_path()`）落在用户配的目录里，且里面有
-        `会后流程开始` 那一行（它是第 ③ 步**之后**才写的）；
-      - 默认目录那一份里**没有**那一行（bootstrap 那一份到此为止）—— 没有第 ③ 步时，
-        正是反过来：默认目录里有、配的目录里空着。
+        `会后流程开始` 那一行；
+      - 默认目录那一份里**没有**那一行。
 
     `MEETING_LOG_DIR` 先摘掉：环境变量优先于 `config.json`，不摘的话这一格量的是环境变量。
     """

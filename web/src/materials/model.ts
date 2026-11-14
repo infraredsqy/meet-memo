@@ -4,16 +4,12 @@ import {
   MaterialsUnavailableError,
 } from '../api/materials';
 
-/**
- * 会议资料区那份纯逻辑（节点）：类型判读、大小口径、提交文字的落盘名、
- * 粘贴与拖拽那两把筛子、逐文件失败的那几句人话。组件里不夹这些判断 —— 手法照
- * `live/alarm.ts` 与 `home/names.ts` 的先例：纯函数、逐档可验。
- */
+/** 会议资料区那份纯逻辑：类型判读、大小口径、提交文字的落盘名、粘贴与拖拽那两把筛子、逐文件失败的那几句人话。 */
 
-/** 单文件的大小口径：超过它要弹一句「确认要放进资料吗」，确认后照传（spec 的 100M）。 */
+/** 单文件的大小口径：超过它要弹一句「确认要放进资料吗」，确认后照传。 */
 export const MATERIALS_MAX_BYTES = 100 * 1024 * 1024;
 
-/** 资料的类型档（按扩展名判；图片走缩略图，其余走类型标签）。 */
+/** 资料的类型档（按扩展名判）。 */
 export type MaterialKind = 'image' | 'audio' | 'video' | 'text' | 'other';
 
 const KIND_BY_EXT: Readonly<Record<string, MaterialKind>> = {
@@ -82,7 +78,7 @@ export function formatBytes(bytes: number): string {
   return `${value >= 100 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
 }
 
-/** 单份是否超过大小口径（选择器文件模式手上是字节数，不拿 `File`）。 */
+/** 单份是否超过大小口径（选择器文件模式手上是字节数）。 */
 export function sizeOverLimit(sizeBytes: number): boolean {
   return sizeBytes > MATERIALS_MAX_BYTES;
 }
@@ -94,10 +90,7 @@ export function filesOverLimit(
   return files.filter((file) => sizeOverLimit(file.size));
 }
 
-/**
- * 提交文字的落盘名：标题填了就用它（交原始名，清洗归服务），没填用本地时间戳
- * `YYYYMMDD-HHMMSS.md`。扩展名固定 `.md`。
- */
+/** 提交文字的落盘名：标题填了就用它（清洗归服务），没填用本地时间戳 —— 扩展名固定 `.md`。 */
 export function textMaterialName(title: string, at: Date): string {
   const trimmed = title.trim();
   if (trimmed !== '') return `${trimmed}.md`;
@@ -115,10 +108,7 @@ export interface ClipboardFileItem {
   getAsFile(): File | null;
 }
 
-/**
- * 剪贴板里能收的图片文件：**只有图片项才收**，纯文本不收（spec 口径）。
- * 顺序保持剪贴板给的次序；取不出 `File` 的项（Rare，但可能）跳过。
- */
+/** 剪贴板里能收的图片文件：**只有图片项才收**，纯文本不收。顺序保持剪贴板给的次序。 */
 export function pasteImageFiles(
   items: readonly ClipboardFileItem[] | null | undefined,
 ): File[] {
@@ -144,10 +134,7 @@ export function dragFiles(
 export const EDITABLE_SELECTOR =
   'input, textarea, select, [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"]';
 
-/**
- * 事件目标是否落在可编辑元素里（`closest` 沿祖先找，覆盖「contenteditable 容器里的
- * 光标」那一档）。鸭子读法：node 挂载用例没有 DOM，假目标给不出 `closest` 就算不可编辑。
- */
+/** 事件目标是否落在可编辑元素里（`closest` 沿祖先找）。鸭子读法：node 挂载用例没有 DOM，假目标给不出 `closest` 就算不可编辑。 */
 export function eventTargetInEditable(target: unknown): boolean {
   if (target === null || typeof target !== 'object') return false;
   const closest = (target as { closest?: unknown }).closest;
@@ -156,7 +143,7 @@ export function eventTargetInEditable(target: unknown): boolean {
   return hit !== null && hit !== undefined;
 }
 
-/** 一条上传任务的读数（进行中 / 完成 / 失败三档；失败写明原因）。 */
+/** 一条上传任务的读数。 */
 export interface UploadTask {
   key: string;
   name: string;
@@ -167,12 +154,9 @@ export interface UploadTask {
 }
 
 /**
- * 一次资料失败的读法：按错误类分档，不按 `message` 做字符串匹配（契约 6.7 的同一姿态）。
+ * 一次资料失败的读法：按错误类分档，**不按 `message` 做字符串匹配**。
  *
- * - 网络层（服务没应答）→ 点明「没传上去」；
- * - 403（头哨被拦）→ 点明「被拦下 + 没有落盘」——这一档没有失败信封；
- * - HTTP 失败信封 → HTTP 状态 + `code` + 服务回的那句原话；
- * - 其余 → 原话如实（不编码）。
+ * 403（头哨被拦）那一档没有失败信封；其余各档把服务回的那句原话端出来。
  */
 export function materialsFailureText(error: unknown): string {
   if (error instanceof MaterialsUnavailableError) {

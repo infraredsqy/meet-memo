@@ -1,20 +1,4 @@
-"""`tests/test_workspace_registry.py` —— 工作区注册表与两只动作/两只读端点
-（工作台收编节点：spec 的完成判定逐条落在这里）。
-
-覆盖：
-
-  - 判别三档：空目录 / 有 `session.json` 的会议目录 / 有音频归档名却没有
-    `session.json` 的**疑似会议目录**（兜底，不当杂物）/ 塞了杂物但没有会议材料的
-    （unknown，要确认）/ 不存在的目录（missing）；
-  - 注册表白纸：按路径去重（同一目录选两次只占一行）、`last_opened_at` 只更新
-    `added_at`、`remove` 只摘名单**文件一个字节不动**；
-  - 注册表文件住在配置目录（`workspaces.json` 与 `config.json` 两个文件）、原子写
-    不留 tmp 副本、坏文件按空表起不往上冒；
-  - API：`GET /api/sessions`（`recent` = 最近一次被打开/切换那一条）、
-    `GET /api/dirs`（起点主目录的一层）、`workspace_open` 的三档 +
-    `confirm` 后门、`workspace_remove` 的幂等；
-  - 录过的 `start` 在注册表上记一笔 `last_opened_at`（最近一场随开场走）。
-"""
+"""工作区注册表与两只动作/两只读端点。"""
 
 from __future__ import annotations
 
@@ -27,17 +11,9 @@ import pytest
 from meeting.workspace import REGISTRY_FILE_NAME, WorkspaceRegistry, classify_workspace_dir
 from meeting.session import SESSION_FILE_NAME, archive_name
 
-#: 用例的显式等待（本文件没有要等的后台进程，留名备用）
-OPEN_TIMEOUT_SECONDS = 5.0
-
 pytest_snapshot_regen_hint = (
     "workspaces.json 的写盘形状不参与 contract fixtures；这里只验注册表与应用行为。"
 )
-
-
-# ---------------------------------------------------------------------------
-# 注册表本体（单元档：不碰 HTTP）
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture()
@@ -71,7 +47,7 @@ def test_open_dedup_and_timestamps(registry: WorkspaceRegistry, tmp_path: Path):
     os.path.normcase("A") == "A", reason="文件系统分大小写（POSIX）时不适用"
 )
 def test_open_case_insensitive_dedup(registry: WorkspaceRegistry, tmp_path: Path):
-    """Windows 大小写口子（review-1 m1）：同一目录两个大小写写法只记一行。
+    """Windows 大小写口子：同一目录两个大小写写法只记一行。
 
     登记的键保留第一次落笔的原文（展示路径不折成小写）；读写两侧（open / remove）
     都按 normcase 查重。
@@ -92,7 +68,7 @@ def test_open_case_insensitive_dedup(registry: WorkspaceRegistry, tmp_path: Path
 
 
 def test_recent_reads_only_from_registry(registry: WorkspaceRegistry, tmp_path: Path):
-    """「最近一场」只从注册表读：不给目录、也不扫任何场次目录（spec 第 9 条）。"""
+    """「最近一场」只从注册表读：不给目录、也不扫任何场次目录。"""
     a, b = tmp_path / "a", tmp_path / "b"
     a.mkdir()
     b.mkdir()
@@ -118,9 +94,7 @@ def test_ordered_most_recent_first(registry: WorkspaceRegistry, tmp_path: Path):
     registry.open(jia, now="2026-09-21T21:00:01+08:00")
     registry.open(yi, now="2026-09-21T21:00:02+08:00")
     registry.open(bing, now="2026-09-21T21:00:03+08:00")
-    # 不是登记先后（甲乙丙）：最近在用倒序是丙、乙、甲
     assert [e["dir"] for e in registry.ordered()] == [str(bing), str(yi), str(jia)]
-    # 切回甲：甲翻到最前，丙其次、乙最后
     registry.open(jia, now="2026-09-21T21:00:04+08:00")
     assert [e["dir"] for e in registry.ordered()] == [str(jia), str(bing), str(yi)]
     assert registry.recent()["dir"] == str(jia)
@@ -157,9 +131,7 @@ def test_remove_takes_no_bytes(registry: WorkspaceRegistry, tmp_path: Path):
     assert registry.entries() == []
     assert payload.read_text(encoding="utf-8") == "{}"
     assert audio.read_bytes() == b"\x00\x01"
-    # 重复删除安全（幂等，`removed: False`）
     assert registry.remove(ws)["removed"] is False
-    # 收回来：再 open 一次就回去
     back = registry.open(ws, now="2026-09-21T22:00:00+08:00")
     assert back["first_time"] is True
     assert len(registry.entries()) == 1
@@ -188,11 +160,6 @@ def test_corrupt_registry_starts_empty(registry: WorkspaceRegistry, tmp_path: Pa
     assert registry.recent() is None
     registry.open(ws)  # 不抛
     assert [entry["dir"] for entry in registry.entries()] == [str(ws)]
-
-
-# ---------------------------------------------------------------------------
-# 目录判别（spec 的三档 + 兜底段）
-# ---------------------------------------------------------------------------
 
 
 def test_classify_three_kinds_and_suspected(tmp_path: Path):
@@ -225,11 +192,6 @@ def test_classify_three_kinds_and_suspected(tmp_path: Path):
     assert classify_workspace_dir(tmp_path / "nope")["kind"] == "missing"
 
 
-# ---------------------------------------------------------------------------
-# API 档
-# ---------------------------------------------------------------------------
-
-
 def post(client, action: str, args: dict | None = None):
     body: dict = {"action": action}
     if args is not None:
@@ -260,7 +222,7 @@ def api(tmp_path: Path):
 
 
 def test_api_sessions_empty_and_open_paths(api, tmp_path: Path):
-    """spec 完成判定第 1–2 条：三档目录逐个走「新会议」；同一目录两次只占一行。"""
+    """三档目录逐个走「新会议」；同一目录两次只占一行。"""
     client, _home, _out_root = api
 
     # 还没开过：两只读端点的空档（顶层第三格 `post_jobs`：此刻没有会后的活儿在飞）
@@ -282,20 +244,17 @@ def test_api_sessions_empty_and_open_paths(api, tmp_path: Path):
     junk_dir.mkdir()
     (junk_dir / "wj.pdf").write_bytes(b"%PDF-not-really")
 
-    # ① 空目录 → 当一场新会，登记成功
     opened_empty = post(client, "workspace_open", {"dir": str(empty_dir)})
     assert opened_empty.status_code == 200, opened_empty.text
     assert opened_empty.json()["workspace"] == {
         "dir": str(empty_dir), "kind": "empty", "suspected": False, "first_time": True,
     }
 
-    # ② 有会议材料的 → 收编
     opened_meeting = post(client, "workspace_open", {"dir": str(meeting_dir)})
     assert opened_meeting.status_code == 200, opened_meeting.text
     body = opened_meeting.json()["workspace"]
     assert body["kind"] == "meeting" and body["first_time"] is True
 
-    # ③ 杂物目录 → 先拒（400，目录没登记；盘上没多一个字节）、确认后才登记
     refused = post(client, "workspace_open", {"dir": str(junk_dir)})
     assert refused.status_code == 400
     assert refused.json()["code"] == "invalid_setting"
@@ -311,7 +270,6 @@ def test_api_sessions_empty_and_open_paths(api, tmp_path: Path):
     assert opened_suspected.status_code == 200, opened_suspected.text
     assert opened_suspected.json()["workspace"]["suspected"] is True
 
-    # 同一目录选两次只占一行；列表与 recent
     again = post(client, "workspace_open", {"dir": str(empty_dir)})
     assert again.status_code == 200
     rows = client.get("/api/sessions").json()
@@ -325,7 +283,6 @@ def test_api_sessions_empty_and_open_paths(api, tmp_path: Path):
     assert meeting_row["mode"] == "both"
     empty_row = next(row for row in rows["sessions"] if row["dir"] == str(empty_dir))
     assert empty_row["state"] is None and empty_row["kind"] == "empty"
-    # recent = 最近一次被打开/切换的那一场；同秒并列时按注册表的并列判据算唯一答案
     expected_recent = max(
         rows["sessions"],
         key=lambda r: (r["last_opened_at"], r["added_at"], r["dir"]),
@@ -345,7 +302,7 @@ def test_api_dirs_browses_from_home(api, tmp_path: Path):
     home_norm = os.path.normcase(str(home_path))
     assert os.path.normcase(body["cwd"]) == home_norm
     assert body["home"] == body["cwd"]
-    # 用户主目录不再是天花板：从 home 还能向上（up 是 home 的上一层，目录选择器节点）
+    # 从 home 还能向上（`up` 是 home 的上一层）
     assert body["up"] == str(home_path.parent)
     # here 是正在浏览这一层自己的名目（与 dirs 每项同一套四格）
     assert set(body["here"]) == {"name", "dir", "kind", "suspected"}
@@ -356,7 +313,6 @@ def test_api_dirs_browses_from_home(api, tmp_path: Path):
     assert at_root.status_code == 200
     assert at_root.json()["up"] is None
 
-    # 放一个空目录和多一个杂物目录进去
     base = tmp_path / "browse-root"
     base.mkdir(exist_ok=True)
     empty_dir = base / "空会"
@@ -369,7 +325,6 @@ def test_api_dirs_browses_from_home(api, tmp_path: Path):
     names = {item["name"]: item for item in shown.json()["dirs"]}
     assert names["空会"]["kind"] == "empty"
     assert names["杂物间"]["kind"] == "unknown"
-    # 不存在的目录如实回 400
     bad = client.get("/api/dirs?dir=" + str(tmp_path / "nope"))
     assert bad.status_code == 400
     assert bad.json()["code"] == "invalid_setting"
@@ -397,15 +352,13 @@ def test_api_dirs_files_param_lists_files_only_when_asked(api, tmp_path: Path):
     assert listed.status_code == 200
     body = listed.json()
     file_rows = body["files"]
-    assert [row["name"] for row in file_rows] == ["notes.md", "报告.pdf"]  # 按名字排序
+    assert [row["name"] for row in file_rows] == ["notes.md", "报告.pdf"]
     for row in file_rows:
         assert set(row) == {"name", "dir", "size_bytes"}
     by_name = {row["name"]: row for row in file_rows}
     assert by_name["报告.pdf"]["size_bytes"] == 10
     assert by_name["报告.pdf"]["dir"] == str(base / "报告.pdf")
-    # 目录照旧只进 dirs，文件不进 dirs
     assert {row["name"] for row in body["dirs"]} == {"一个子目录"}
-    # 目录那几行的形状照旧四格
     for row in body["dirs"]:
         assert set(row) == {"name", "dir", "kind", "suspected"}
 
@@ -419,7 +372,7 @@ def test_api_dirs_files_param_unreadable_dir_still_400(api, tmp_path: Path):
 
 
 def test_api_remove_and_reclaim(api, tmp_path: Path):
-    """spec 完成判定第 3 条：删除之后文件仍在盘上，且「打开目录」能把它收回列表。"""
+    """删除之后文件仍在盘上，且「打开目录」能把它收回列表。"""
     client, _home, _out_root = api
     ws = tmp_path / "收回来的那一场"
     ws.mkdir()
@@ -432,18 +385,16 @@ def test_api_remove_and_reclaim(api, tmp_path: Path):
     assert removed.status_code == 200, removed.text
     assert removed.json()["workspace"] == {"dir": str(ws), "removed": True}
     assert client.get("/api/sessions").json()["sessions"] == []
-    assert audio.read_bytes() == b"\x00\x02"  # 一个字节没动
-    assert ws.is_dir()  # 目录本身还在
+    assert audio.read_bytes() == b"\x00\x02"
+    assert ws.is_dir()
 
-    # 打开目录（= 再一次 workspace_open）把它收回来
-    # 以及到场里确认收回来的一行如实显示"路径已不在" —— 改名/移走的分支在下面那条
     assert post(client, "workspace_open", {"dir": str(ws)}).status_code == 200
     rows = client.get("/api/sessions").json()
     assert [row["dir"] for row in rows["sessions"]] == [str(ws)]
 
 
 def test_api_missing_row_shows_detached(api, tmp_path: Path):
-    """spec 完成判定第 4 条：把某一行的目录改名/移走，那一行显示「路径已不在」。"""
+    """把某一行的目录改名/移走，那一行显示「路径已不在」。"""
     client, _home, _out_root = api
     import shutil
 
@@ -456,8 +407,7 @@ def test_api_missing_row_shows_detached(api, tmp_path: Path):
     shutil.move(str(ws), str(tmp_path / "被搬走之后"))
     row = client.get("/api/sessions").json()["sessions"][0]
     assert row["dir_exists"] is False
-    assert row["dir"] == str(ws)  # 行有它原本记录的路径
-    # 删掉之后（idempotent），再 remove 一次照样 200
+    assert row["dir"] == str(ws)
     assert post(client, "workspace_remove", {"dir": str(ws)}).json()["workspace"] == {
         "dir": str(ws), "removed": True,
     }
@@ -469,7 +419,6 @@ def test_api_unregistered_dir_and_missing(api, tmp_path: Path):
     none = post(client, "workspace_open", {"dir": str(tmp_path / "不在")})
     assert none.status_code == 400
     assert client.get("/api/sessions").json()["sessions"] == []
-    # 缺 dir 也是 400（同一个 code，message 不同）
     dry = post(client, "workspace_open", {})
     assert dry.status_code == 400
 
@@ -488,8 +437,8 @@ def test_start_notes_registry(api, tmp_path: Path):
 
 
 def test_api_sessions_list_most_recent_first(api, tmp_path, monkeypatch):
-    """spec 完成判定：连登记三场（甲、乙、丙），再把选区切回甲一次；
-    清单应答里甲在最前、丙其次、乙最后——连读两次，次序一致。
+    """连登记三场（甲、乙、丙），再把选区切回甲一次；清单应答里甲在最前、丙其次、乙
+    最后——连读两次，次序一致。
 
     时钟钉住（秒精度下连着几次登记可能落进同一秒，并列会掉目录字典序兜底），
     「甲因最近被切换而排最前」这件事才测得稳——这里测的是「最近在用」本身。
@@ -517,11 +466,9 @@ def test_api_sessions_list_most_recent_first(api, tmp_path, monkeypatch):
 
     order1 = [row["dir"] for row in client.get("/api/sessions").json()["sessions"]]
     order2 = [row["dir"] for row in client.get("/api/sessions").json()["sessions"]]
-    # 甲在最前、丙其次、乙最后；连读两次，次序一致
     assert order1 == order2 == [str(jia), str(bing), str(yi)]
     listed = client.get("/api/sessions").json()
     assert listed["recent"] == str(jia)
-    # 清单内容只换次序：还是那三行，一个不多一个不少
     assert set(order1) == {str(jia), str(yi), str(bing)}
 
 
@@ -544,7 +491,6 @@ def test_api_sessions_same_second_reads_stable_order(api, tmp_path, monkeypatch)
     order1 = [row["dir"] for row in client.get("/api/sessions").json()["sessions"]]
     order2 = [row["dir"] for row in client.get("/api/sessions").json()["sessions"]]
     assert order1 == order2
-    # 两个时刻并列到底：倒序取大，目录字典序收尾（甲 > 乙），答案唯一
     assert order1 == [str(jia), str(yi)]
     assert client.get("/api/sessions").json()["recent"] == str(jia)
 

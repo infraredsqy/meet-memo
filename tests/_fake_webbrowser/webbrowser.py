@@ -1,4 +1,4 @@
-"""**假 `webbrowser` 模块 —— 测试专用**（设计口径第 5 条 / §5 第 1 条的测试隔离设施）。
+"""**假 `webbrowser` 模块 —— 测试专用**。
 
 它的角色是**测试隔离设施**：被测的是 `meeting` 包，这里提供的是子进程里顶替标准库的那一份
 同名声明的替身。它由 `tests/_helpers.py` 的 `fake_browser_module()` 通过 `PYTHONPATH`
@@ -9,9 +9,7 @@
   这在 Windows 上**不成立**：标准库 `webbrowser.register_standard_browsers()` 先在
   `sys.platform[:3] == "win"` 分支里 `register("windows-default", WindowsDefault)`
   （Python 3.13 的 `Lib/webbrowser.py`），再处理 `BROWSER`；`BROWSER` 指向的浏览器
-  `shutil.which()` 找不到时那一项落空，`open()` 于是继续往下走，**用用户默认浏览器真开了窗**
-  （本机实测：`webbrowser._tryorder` 头部是
-  `['no-such-browser-for-meeting-tests', 'windows-default', ...]`）。
+  `shutil.which()` 找不到时那一项落空，`open()` 于是继续往下走，**用用户默认浏览器真开了窗**。
   本模块把这条路彻底切断：它的任何函数都**只会记录、只按测试要求返回**，
   不碰注册表、不拉子进程、不开窗。
 

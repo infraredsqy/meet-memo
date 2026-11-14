@@ -1,25 +1,16 @@
 """会后离线转写主链的**编排**：一次 `run_session(session_dir)` 走完读场次元信息 → 逐路取音频
 → 逐块调引擎 → 逐路编号 → 落三份产物 → 状态文件从 `running` 落成终态。
 
-本模块是 `meeting.offline.runner` 包的主模块：编排（`run_session` 一族）住这里，
-对外的公共面也由本模块聚合；杂活各归其家——
-
-- PCM 字节读取/换算与数字静音门：包内 `runner/pcm.py`；
-- 场次元信息读取（`session_id_of` / `declared_sources`）：包内 `runner/session_info.py`；
-- 引擎解析构造（`resolve_engine` / `build_engine`）：`meeting/offline/engine.py`；
-- 状态文件行形状与逐块结论词表：`meeting/offline/artifacts.py`；
-- 尾巴上怎么拉起纪要：`meeting/offline/minutes_tail.py`（本模块只留一处调用点）。
-
 关键口径（改之前先读完）：
 
-- **两路绝不先混音再跑**（R10）：块内标签带 `cNN:` 命名空间，块间不做映射、不比相似度、
+- **两路绝不先混音再跑**：块内标签带 `cNN:` 命名空间，块间不做映射、不比相似度、
   不合并——合并错是把两个人并成一个编号（不可接受的错），不合并只是把一个人算成两个。
 - **块失败必须露出来**：缺的块进 `partial` / `missing_spans` / 转写首行注释，
-  静默 `done` 加一段悄悄消失的音频是禁止的（design-intent 第 11 条）。
+  静默 `done` 加一段悄悄消失的音频是禁止的。
 - **数字静音门**的判据与满量程换算住 `runner/pcm.py`：峰值低于半格（`SILENT_PEAK_FLOOR`）
-  且长度够 `MIN_GATE_SAMPLES` 的块不送引擎——引擎在样本全零的块上会编出整段假正文
-  （`250906` 实测 69% 假字）；判不了（解不开、读不全）照常送引擎并记 `gate = "unjudged"`。
-- 惰性：`torch` / `transformers` / `av` 不在顶层 import（`tests/test_post_hook.py` 盯着）。
+  且长度够 `MIN_GATE_SAMPLES` 的块不送引擎——引擎在样本全零的块上会编出整段假正文；
+  判不了（解不开、读不全）照常送引擎并记 `gate = "unjudged"`。
+- 惰性：`torch` / `transformers` / `av` 不在顶层 import。
 - 尾巴上的纪要钩子在产物终态**之后**最后通知；`announce_minutes` 缺省假（项目与 DSH 隔离，
   只有 `meeting post` 人工入口传 True），钩子炸了不影响离线产物。
 - 时长口径唯一：PCM = 字节数 / 2 / 16000（16k 单声道 int16），MP3 = 解码后样本数 / 16000。
@@ -93,33 +84,28 @@ from meeting.session import archive_name, segment_archive_paths
 _log = logging.getLogger("meeting.offline.runner")
 
 
-#: 归档 PCM 的形状（16k 采样率 / 样本宽 / 后缀）：唯一出处住 `meeting/offline/audio.py`
-#: （`meeting/capture/archive.py` 的同一档），这里按本模块惯用名接进来。
-# PCM_SAMPLE_RATE / PCM_SAMPLE_WIDTH / PCM_SUFFIX 由上面的 import 提供
+#: 归档 PCM 的形状（16k 采样率 / 样本宽 / 后缀）：唯一出处住 `meeting/offline/audio.py`。
 
 #: 空 PCM 的判据：一个 int16 样本都装不下（与 `capture.archive.EMPTY_PCM_BYTES` 同档）
 EMPTY_PCM_BYTES = PCM_SAMPLE_WIDTH
 
-#: 缺省块长（秒），与 `config.DEFAULT_VALUES` 同值；这里留一份让拿不到配置对象时
-#: （`post.hook` 后台线程会走到）也有实测安全档。取值理由见 `config.py`。
+#: 缺省块长（秒），与 `config.DEFAULT_VALUES` 同值；配置对象拿不到时（`post.hook`
+#: 后台线程会走到）用这一档。
 DEFAULT_CHUNK_SECONDS: float = 450.0
 
-#: `post.chunk_seconds` 显式关掉档：整段一次跑（R9）
+#: `post.chunk_seconds` 显式关掉档：整段一次跑
 CHUNK_SECONDS_OFF: float = 0.0
 
 
-
-#: 块内标签的命名空间模板：第 `NN` 块的 `Sxx` 变成 `cNN:Sxx`
 CHUNK_LABEL_TEMPLATE = "c{index:02d}:{label}"
 
 
-#: 分块时临时 wav 住在场次目录下的这个子目录里，跑完一块不留
 CHUNK_DIR_NAME = "_offline_chunks"
 
 
 def chunk_label(index: int, label: str) -> str:
     """块内命名空间（`S01` → `c01:S01`）：不同块的 `S01` 在 `number_speakers()` 眼里
-    是不同键，块间编号因此绝不合并（R10）。"""
+    是不同键，块间编号因此绝不合并。"""
     return CHUNK_LABEL_TEMPLATE.format(index=int(index), label=str(label))
 
 
@@ -150,15 +136,10 @@ class ChunkRun:
     wall_seconds: float = 0.0
     error: str | None = None
     reason: str = ""
-    #: 这一块是数字静音、跳过了引擎调用
     silent: bool = False
-    #: 门结论：`silent` / `not_silent` / `unjudged`
     gate: str = GATE_NOT_SILENT
-    #: 门凭什么判的（`GATE_METHOD_*`；判不了的那一档为空）
     gate_method: str | None = None
-    #: 门判不了时的一句话（`gate == "unjudged"` 时才有）
     gate_detail: str | None = None
-    #: 交回段里 `end <= start` 的条数（0 = 没有）
     zero_span_segments: int = 0
 
     @property
@@ -243,7 +224,7 @@ def read_chunk_seconds(config: Any = None) -> float:
 def plan_chunks(total_seconds: float, chunk_seconds: float) -> ChunkPlan:
     """把「总时长 + 块长」算成切法：**连续、不重叠、从头开始**。块长 `<= 0` 或总时长
     不超过块长时交回单块——单趟与分块共用同一条主循环，产物只在「标签带不带命名空间」
-    分叉。切点是固定间隔；切点附近找静默中点那条路未实现、未测，不假装做了（设计报告 10.2）。
+    分叉。切点是固定间隔；切点附近找静默中点那条路未实现、未测，不假装做了。
     """
     total = max(0.0, float(total_seconds))
     step_seconds = float(chunk_seconds)
@@ -272,8 +253,6 @@ def plan_chunks(total_seconds: float, chunk_seconds: float) -> ChunkPlan:
     )
 
 
-
-
 def clear_chunk_dir(session_dir: Path | str) -> None:
     """清掉分块用的临时目录（上一次崩在半路留下的块也一并扫掉）。"""
     target = Path(session_dir) / CHUNK_DIR_NAME
@@ -296,17 +275,8 @@ def chunk_file(session_dir: Path | str, index: int) -> Path:
     return Path(session_dir) / CHUNK_DIR_NAME / f"chunk_{int(index):02d}.wav"
 
 
-
-
-
-
-
-
-
-
 def audio_path_for(session_dir: Path | str, source: str) -> Path:
-    """一路**段 1**的音频路径（`meeting/session.py` 的 `archive_name()` 同形）；
-    消费入口是 `resolve_audio()`，这一格给「就要看第一段在哪」的读方与日志。"""
+    """一路**段 1**的音频路径（`meeting/session.py` 的 `archive_name()` 同形）。"""
     return Path(session_dir) / archive_name(source, 1)
 
 
@@ -362,8 +332,6 @@ def _audio_file_label(paths: "Sequence[str]") -> str:
     return f"{names[0]} 等 {len(names)} 个段文件"
 
 
-
-
 def run_session(
     session_dir: str | Path,
     *,
@@ -382,18 +350,18 @@ def run_session(
       `post.model` / `post.dtype` 现造一台、读进程当前生效值。
     - `cancel` 是可注入取消旗标（callable，返回真 = 请求停），在**逐块主循环顶**检查：
       当前块跑完、下一块开跑前收场（正在跑的块不掐），命中后由本函数把状态写成
-      `interrupted`（缺口注记进 `error`，只供人读、不作判据——design-intent 第 6 条），
+      `interrupted`（缺口注记进 `error`，只供人读、不作判据），
       纪要层不通知（半份稿不当完整输入）。
     - `announce_minutes` 缺省 `False`：尾巴上安静跳过（钩子零启动、盘上零纪要状态文件）。
       只有 `meeting post` 人工入口传 `True`，其余调用一律不碰纪要层（与 DSH 隔离）。
       `minutes = False` 是「生成会后精细稿」按钮（`post_offline`）那一档，只出精细稿
-      不通知纪要（R26 / design-intent 第 10 条）；`minutes_launcher` 非空时替掉按
+      不通知纪要；`minutes_launcher` 非空时替掉按
       `minutes.hook` 解析的启动器，`force = True` 跳过「已完成」的闸。
     - **一路的失败不带走整场**：顶层 `state` 三档 `failed`（每路都没交回）/ `partial`
       （至少一路整条没交回）/ `done` 只看这一格就分得开；`artifacts.<source>` 每一路都有
       同形一格（含失败路），没跑成的那一路一份产物文件都不落。被打断是第四档
       `interrupted`。引擎加载失败单独记 `engine_load_error`；整路数字静音时模型一次
-      都不加载（design-intent 第 21 条），照旧落 `done` + `silent: true`。
+      都不加载，照旧落 `done` + `silent: true`。
     - `running` 之后逃出的任何异常（连 `BaseException`）都由 `_write_failed_status()`
       落一版 `failed` 再照旧上抛——状态文件不会永远停在 `running`。
     - 没声跳过不影响终态（`state` 仍 `done`、`partial` 仍 `false`），区间进 `silent` /
@@ -493,7 +461,7 @@ def run_session(
         if progress is not None:
             progress.finish(finished_at=_now_iso())
         # 引擎引用随返回释放，但 PyTorch 缓存分配器不会自动把预留显存还给驱动；服务进程
-        # 常驻，须显式 release（design-intent 第 21 条；会中 release_gpu() 的先例）。
+        # 常驻，须显式 release。
         if engine is not None:
             try:
                 release_engine(engine)
@@ -513,7 +481,7 @@ def run_session(
         state = "done"
     error = None
     if interrupted:
-        # 缺口注记（d7，只供人读）：任何代码都不许拿它当判据。
+        # 缺口注记（只供人读）：任何代码都不许拿它当判据。
         gap_notes = [
             f"{item.source}：{item.error}"
             for item in metrics
@@ -558,7 +526,6 @@ def run_session(
     silent_spans: list[tuple[float, float]] = [
         span for item in metrics for span in item.silent_spans
     ]
-    # 逐路那份进 artifacts.<source>，整场按路聚合进顶层 gate。
     gate = _aggregate_gate(metrics)
     report_name = None if report_path is None else report_path.name
     artifacts_rows = {
@@ -632,8 +599,8 @@ def write_interrupted_status(
     *,
     reason: str,
 ) -> dict[str, Any] | None:
-    """把盘上停在 `running` 的那版离线状态补成 `interrupted`（**服务启动核对**用，
-     的 d5）：从状态文件 + 逐块记录拼出同一形状的终态，缺口注记拼进 `error`。
+    """把盘上停在 `running` 的那版离线状态补成 `interrupted`（**服务启动核对**用）：
+    从状态文件 + 逐块记录拼出同一形状的终态，缺口注记拼进 `error`。
     盘上不是 `running` 时**什么都不写**、交回 `None`——核对不许翻掉已落定的终态。
     """
     directory = Path(session_dir)
@@ -721,7 +688,7 @@ def _run_one_source(
         ] = 1
         _log.warning("会后离线：%s 这一路没有可用音频（%s）", source, note)
     elif engine is None:
-        # 引擎没造出来同样是「加载」档，不是「跑块抛错」。
+        # 引擎没造出来同样归「加载」档，与「跑块抛错」分开记。
         metric.state = "failed"
         metric.error = f"{REASON_ENGINE_LOAD_ERROR}：引擎不可用（{engine_error}）"
         metric.reasons[REASON_ENGINE_LOAD_ERROR] = 1
@@ -811,7 +778,7 @@ def _run_one_source(
                         source, len(runs), metric.error,
                     )
                 # 分块且一块都没跑成时两块产物照落：不留的话盘上同名文件是**上一趟**的旧表，
-                # 读方会当成这一趟的结果（`250906` 两路跑进同一目录撞过）。
+                # 读方会当成这一趟的结果。
                 # 单趟失败不落产物（没有「哪几块没成」可说）；没声那一档照落
                 # （0 段转写 + 注释是正常结果，与「引擎没吐东西」是两件事）。
                 wrote_artifacts = ran or bool(metric.silent_spans) or len(runs) > 1
@@ -900,7 +867,7 @@ def _execute_chunks(
     跑完清临时块目录；产物留的是逐块登记，音频本身可重切。
 
     第三个交回值是引擎加载档：探测**推迟到第一块真要送引擎那一刻**——整路数字静音时
-    探都不探，模型一次都不加载（design-intent 第 21 条）。
+    探都不探，模型一次都不加载。
     """
     audio_paths = _audio_paths(paths)
     steps = plan.chunks
@@ -947,7 +914,7 @@ def _execute_chunks(
                         else _materialize_series(directory, audio_paths, waveform)
                     )
                 )
-                # 单趟与分块走同一个门（C1）
+                # 单趟与分块走同一个门
                 measured = measure_span(
                     audio_paths,
                     offset=step.offset,
@@ -1007,7 +974,7 @@ def _execute_chunks(
                 load_failure = _ensure_engine_loaded(engine)
                 if load_failure is not None:
                     # 在逐块记录上留一行：否则读方分不开「一块没跑」与「没跑成」；
-                    # 记录里的 total 由切块计划定，不因某一块失败而增减（contract 4.9）。
+                    # 记录里的 total 由切块计划定，不因某一块失败而增减。
                     run = ChunkRun(
                         index=step.index,
                         offset=step.offset,
@@ -1135,10 +1102,10 @@ def _materialize_series(directory: Path, audio_paths: "Sequence[Path]", waveform
     """单趟跑且**多于一段**时，把各段按序拼成一份临时 wav（引擎的入参必须是一条轴）。
 
     有已解好的波形就按波形写（与 `_materialize_chunk()` 的波形分支同一条）：MP3 等
-    容器的裸字节不是 int16 PCM，按字节拼会拼出「头说 PCM、数据区是容器字节」的坏容器
+    容器的裸字节自有容器格式，按字节拼会拼出「头说 PCM、数据区是容器字节」的坏容器
     送进引擎。归档 PCM 不解波形，保持流式按字节拼：逐块跨段读、读多少写多少，内存里
     永远只有一个块（两小时的 PCM 也不整段进内存）。非 PCM 又解不出波形时如实抛——
-    调用方按块失败登记，坏容器不出手（offline-mp3-fallback-series-corrupt-input）。
+    坏容器不出手。
     临时文件落在分块目录里，跑完由 `_execute_chunks()` 的收尾一并扫掉。
     """
     target = chunk_file(directory, 1)
@@ -1205,7 +1172,7 @@ def _note_progress(
     spans: Sequence[OfflineSegment],
 ) -> None:
     """把这一块落进进度记录（`progress=None` 什么都不做）：这一块的文字 + 落点。
-    说话人标签是 `cNN:Sxx`，与正式稿的编号（整路内按首次出现）不是同一个东西。
+    说话人标签是 `cNN:Sxx`，正式稿的编号（整路内按首次出现）另有自己的一套。
     落盘失败不带走这一趟（`record_chunk()` 内部兜写盘异常，这里再兜调用方意外）。
     """
     if progress is None:
@@ -1398,12 +1365,10 @@ def _write_failed_status(
         _log.error("会后离线：这一趟抛出来了，状态文件已如实落成 failed（%s）", note)
 
 
-
-
 def _ensure_engine_loaded(engine: Any) -> str | None:
     """探一次引擎加载，交回 `None`（好了）或失败原话：真引擎读 `load_error`，假件探
     `_load()`（两样都没有则当无加载档，交给逐块既有路径）。这一探会把模型真的拉起来，
-    调用点只在第一块真要送引擎时（整路静音一次都不该调，design-intent 第 21 条）。
+    调用点只在第一块真要送引擎时（整路静音一次都不该调）。
     """
     read = getattr(engine, "load_error", None)
     if read is not None:

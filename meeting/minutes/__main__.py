@@ -7,9 +7,8 @@
   - `check <segmentation.json>`：校验一份分段方案（顺带把 `working/inputs.json` 里
     逐 source 的真实行数读进来，走「以输入清单为准」那一路）。
 
-`prompt` 与 `check` 两个子命令是给**手动排查**用的（提示词阶段 2 末尾那条
-`python -m meeting.minutes check working/segmentation.json` 走的就是 `check`）：设计的
-runner 直接调那三个模块的函数，不经过这里。两个入口都不加载 `meeting.config`
+`prompt` 与 `check` 两个子命令是给**手动排查**用的：runner 直接调那三个模块的函数，
+不经过这里。两个入口都不加载 `meeting.config`
 （一个后端子命令不必把家目录、日志那条配置链捆在自己身上）。
 """
 
@@ -76,8 +75,7 @@ def _check_main(argv: Sequence[str] | None = None) -> int:
 
     **顺带把「以输入清单为准」那一路接上**：在方案旁边找到 `inputs.json` 就拿它里面逐 source
     的真实行数当 `expected_lines`（正是 `runner` 平时走的那一路）；找不到就退回方案自己声明的
-    `total_lines`。这一路是本条判据平时真正生效的那条路——此前 `check` 手上没有逐 source 的
-    事实，多 source 场次里 `total_lines` 写整数的那一份会一路错到「静默不核」。
+    `total_lines`。
     """
     parser = argparse.ArgumentParser(
         prog="python -m meeting.minutes check",

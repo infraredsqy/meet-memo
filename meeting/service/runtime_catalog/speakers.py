@@ -1,8 +1,4 @@
-"""RuntimeCatalogMixin 的「说话人改名」域分片：speaker_rename 动作。
-
-方法与方法间注释均自拆分前的 runtime_catalog.py 单文件 mixin 一字不改复制；
-本文件自写内容只有模块 docstring、import、_log 一行与类声明行。
-"""
+"""RuntimeCatalogMixin 的「说话人改名」域分片：speaker_rename 动作。"""
 from __future__ import annotations
 
 import logging
@@ -15,15 +11,13 @@ _log = logging.getLogger("meeting.service.runtime")
 
 
 class RuntimeCatalogSpeakersMixin:
-    """「说话人改名」：把说话人名字写进这一场目录的人名表。"""
-
     def speaker_rename(self, args: dict[str, Any] | None = None) -> dict[str, Any]:
         """`speaker_rename` 动作：把某个说话人编号的名字写进**这一场目录里的人名表**。
 
-        R10 第四条 / R30：名字要能改、并且记住——「记住」落在这场目录根的
+        名字要能改、并且记住——「记住」落在这场目录根的
         `meeting_speaker_names.json`（`meeting.speaker_names` 的字段契约），同一场以后
         再出纪要，`{{SPEAKER_NAMES}}` 把它渲染进提示词。**这只动作只写这一份表**：
-        不拉起离线、不拉起纪要（R26），不改任何已生成的 `meeting_final.md`（R13），
+        不拉起离线、不拉起纪要，不改任何已生成的 `meeting_final.md`，
         也不动快照——不提交、不涨 `revision`、不广播。
 
         校验全在动手之前（`code` 全落在既有那几个上，不加新的）：
@@ -37,7 +31,7 @@ class RuntimeCatalogSpeakersMixin:
             跳过 = 不起名，空名字不落任何状态；
           - 人名表写不进去（盘上出岔）按 `persist_failed`(500) 如实回。
 
-        成功体是通用信封 + 一个 `speaker` 键（先例是 `post` 的回执）：这一格写的是
+        成功体是通用信封 + 一个 `speaker` 键：这一格写的是
         「写了哪一场、哪一个键、现在叫什么」；界面上改完当场生效走的是**重问单场状态**
         那一跳（`speakers` 一格），回执本身不带货。
         """

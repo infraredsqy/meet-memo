@@ -1,13 +1,12 @@
 """会中总结的一次运行：切窗口 → 装配 → 调端点 → 解析 → 归三小段，带一条墙钟 deadline。
 
-预算是一条 deadline（默认 25 秒，`summary.deadline_seconds`），换掉 V1 的「3 次 × 60 秒」
-（最坏 180 秒）；尝试次数上限 3 只是上限——每次请求的超时取剩余预算，预算用尽就停，
-如实报出等了多久、试了几次（成功与失败两条路都填 `elapsed_seconds` / `attempts`）。
-重试只由解析失败触发（照 V1）；端点的四档错误（`timeout` / `bad_status` / `bad_json` /
-`no_content`）当场收工，不再重放同一个错误。
+预算是一条 deadline（默认 25 秒，`summary.deadline_seconds`）；尝试次数上限 3 只是上限
+——每次请求的超时取剩余预算，预算用尽就停，如实报出等了多久、试了几次（成功与失败两条路
+都填 `elapsed_seconds` / `attempts`）。重试只由解析失败触发；端点的四档错误（`timeout` /
+`bad_status` / `bad_json` / `no_content`）当场收工，不再重放同一个错误。
 
 三种收场：成功（`ok=True`，五格都填）；窗口里一行都没有（同样 `ok=True`、三段空、
-一个请求都不发，B15 的「空数组合法」）；失败（`ok=False`，`error` 人话、`detail` 机器可读）。
+一个请求都不发，空数组合法）；失败（`ok=False`，`error` 人话、`detail` 机器可读）。
 `monotonic` / `wall_clock` 都是注入点，用例塞假钟，deadline 那几档不必真等。
 """
 
@@ -44,7 +43,7 @@ WINDOW_LABELS_BY_CHOICE = WINDOW_LABELS
 
 @dataclass(frozen=True)
 class SummaryOutcome:
-    """一次会中总结的收场（形状由设计口径的接口契约冻结，设计照它回应答体）。"""
+    """一次会中总结的收场（形状冻结）。"""
 
     ok: bool
     window: str
@@ -63,7 +62,6 @@ class SummaryOutcome:
 
     @property
     def sections(self) -> dict[str, tuple[str, ...]]:
-        """三小段的字典形状（`what` / `where` / `lost`），界面照它排。"""
         return {"what": self.what, "where": self.where, "lost": self.lost}
 
 
@@ -77,7 +75,6 @@ def _fail(
     error: str,
     detail: dict[str, Any],
 ) -> SummaryOutcome:
-    """失败那一档的收场（`window_label` 与三小段照常填，界面不必再算一遍）。"""
     return SummaryOutcome(
         ok=False,
         window=window,
@@ -101,13 +98,6 @@ def run_summary(
     wall_clock: Callable[[], float] = time.time,
     started_at: str | None = None,
 ) -> SummaryOutcome:
-    """跑一次会中总结。
-
-    `window` 是四档之一（认不出的值落配置的缺省档，`settings.default_window`）；
-    `client` 不给就按 `settings` 现造一个（真调端点）；`monotonic` 是预算的钟，
-    `wall_clock` 只在缓冲为空、窗口需要一个锚点时用（缓冲非空时锚点是**末行的 `ts`**，
-    见 `select_window()`）；`started_at` 是这场会的开始时刻，写进提示词。
-    """
     choice = str(window) if str(window) in WINDOW_CHOICES else settings.default_window
     choice = choice if choice in WINDOW_CHOICES else DEFAULT_WINDOW
     span = window_seconds_of(choice)
@@ -115,7 +105,7 @@ def run_summary(
 
     started = float(monotonic())
 
-    # 一、配置缺键：**一个请求都不发出去**，先把缺哪几个键说清楚（spec：不静默失败、不空转）
+    # 一、配置缺键：**一个请求都不发出去**，先把缺哪几个键说清楚
     missing = tuple(settings.missing)
     if missing:
         return _fail(
@@ -129,7 +119,7 @@ def run_summary(
         )
 
     # 二、切窗口（按行首时间戳取连续尾部，边界不切进任何一行）
-    # 锚点是**缓冲末行的 ts**（契约口径，见 `select_window()`）；`now_ts` 只在缓冲为空时
+    # 锚点是**缓冲末行的 ts**；`now_ts` 只在缓冲为空时
     # 起作用，这里照旧把当前墙钟传进去给它兜那一格，**不拿它当锚点**。
     selected = select_window(lines, window_seconds=span, now_ts=float(wall_clock()))
     count = len(selected)
@@ -170,7 +160,7 @@ def run_summary(
                 timeout_seconds=max(MIN_ATTEMPT_SECONDS, remaining),
             )
         except SummaryError as exc:
-            # 端点的四档错误当场收工（照 V1：API 报错不再重放一遍）
+            # 端点的四档错误当场收工（API 报错不再重放一遍）
             return _fail(
                 window=choice,
                 window_seconds=span,
@@ -188,7 +178,7 @@ def run_summary(
         if bullets is None:
             last_error = "模型输出的不是合法的 {\"bullets\": [...]} JSON"
             last_detail = {"reason": "bad_json"}
-            continue  # 交回 None：再试一次
+            continue
 
         sections, unlabeled = split_sections(bullets)
         if all_sections_unlabeled(sections, unlabeled):
@@ -235,7 +225,6 @@ def run_summary(
 
 
 def sections_for(outcome: SummaryOutcome) -> dict[str, list[str]]:
-    """收场 → 三小段的可变列表形状（设计往应答体里放时用）。"""
     return {name: list(getattr(outcome, name)) for name in SECTION_ORDER}
 
 
