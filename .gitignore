@@ -2,6 +2,9 @@
 .work/
 .tmp/
 temp/
+# 工作流的过程档案与编辑器状态目录，只在本地留档
+.superworker/
+.zcode/
 
 # 密钥与本地环境文件永远不进库
 .env
