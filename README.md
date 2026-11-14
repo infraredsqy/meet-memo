@@ -35,6 +35,19 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
 它们不在可选 extra 里，因为「没装 extra」会退化成「一场会什么都没录」，
 正是这个产品最不能犯的错。
 
+装（在仓库根，Python ≥ 3.13 的虚拟环境里任选一条）：
+
+    pip install -e .                                     # 只装服务本体，`meeting` 命令随之可用
+    pip install --extra-index-url https://download.pytorch.org/whl/cu128 -e ".[asr]"   # 再带上转写的模型依赖
+
+不装 `-e` 也行：在仓库根 `python -m meeting web` 等价于 `meeting web`（靠 `meeting/__main__.py`
+把模块执行接到命令行入口上，仓库根在 `sys.path` 里就成立）。界面产物 `web/dist` 不进版本控制，
+要真界面就先按「前端开发」那节构建一次；`asr` 那一格的 `torch` 是 CUDA 12.8 构建、PyPI 上没有，
+CPU 档写成 `torch==2.9.1` 且不用那个索引。
+
+`ffmpeg` 与 DSH 都是外部的东西，本仓库不代装：`ffmpeg` 缺席的后果见上表；DSH 缺席时
+「生成纪要」这一层当场记 `failed` 并说明解析不到可执行文件，其余功能不受影响。
+
 ---
 
 ## 1. 怎么起
@@ -288,3 +301,13 @@ PCM 写进场次目录，停下来的收尾把两份 PCM 转成 MP3。`transcrib
   「采集已停止」还要**连续两次**读到 `false` 才弹横幅，单次读数不弹。
 
 两者互不参与对方的计算：收尾预算也不拿这两个周期做任何计算。判据细节见 `docs/state.md`。
+
+---
+
+## 9. 联系与许可
+
+跑起来时撞到的坑、想加到自己的会上、以及能不能商用，写信到
+[infraredsaw@gmail.com](mailto:infraredsaw@gmail.com)。**缺陷与功能请求更适合开一条
+issue** —— 下一个撞同一面墙的人才搜得到。
+
+[MIT](LICENSE)。

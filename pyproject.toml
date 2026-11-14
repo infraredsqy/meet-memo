@@ -25,6 +25,10 @@ build-backend = "setuptools.build_meta"
 name = "meeting"
 version = "0.1.0"
 description = "本地会议录制服务：单进程、只监听 127.0.0.1"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Infrareds", email = "infraredsaw@gmail.com" }]
 requires-python = ">=3.13"
 dependencies = [
     "starlette",
