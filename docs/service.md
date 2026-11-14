@@ -99,7 +99,7 @@
 几点口径：
 
 - `alert.*` 是判定阈值，`alarm.*` 只管出声。两个「心跳」不串线：`heartbeat.interval_seconds` 是**界面**发心跳的周期，服务侧的采集帧心跳窗口见 `docs/state.md`。
-- `asr.*` 五个默认值沿用 V1 实测值（`docs/v1-lineage.md`）；四个 `post.*` 键的取值依据见 `docs/asr-backends.md`。
+- `asr.*` 五个默认值沿用 V1 实测值；四个 `post.*` 键的取值依据见 `docs/asr-backends.md`。
 - **热读键以 `meeting/config.py` 的 `HOT_KEYS` 一处为准**；面向使用者的重启分档速查见 `README.md` 第 3 节。
 
 ### 环境变量
@@ -140,7 +140,7 @@ python -m pytest -q -m "not slow" -n auto --dist loadfile   # 快档并行（每
 
 - 服务本体：起停、`Ctrl+C` 分档、收尾三步跑到终态、配置原子写与热读、端口与三道本地防线（细节见 `docs/contract.md`）。
 - 真采集：两路各自独立、边采边落盘 PCM、0.5 秒电平帧、续接、暂停与逐路开关、收尾转 MP3（PCM 保留）。
-- 真转写：两路各一本会中临时稿、四层退化防护（防护判据见 `docs/v1-lineage.md`，读数不存档）。
+- 真转写：两路各一本会中临时稿、四层退化防护（防护判据见 `docs/asr-backends.md`，读数不存档）。
 - 会后离线：按钮或 `meeting post` 按需拉起，逐块进度落盘、数字静音门拦全零段、`meeting replay` 重放验证。
 - 会后纪要：按钮或 `meeting post` 拉起，DSH 在跑就交付、没在跑才子进程。
 - 会中总结：动作 `summarize` 十到十五秒回三小段，四档窗口，本场记录可回看。

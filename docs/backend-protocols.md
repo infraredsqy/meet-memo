@@ -36,7 +36,7 @@
 | `SourceFacts` | `source` / `stream_alive` |
 | `SourceLost` | `source` / `reason` |
 
-导入顺序（C10，出处 `docs/v1-lineage.md`）：先 `import transformers`、再 `import speechbrain`；反过来 speechbrain 会抢做依赖探测，出现难定位的版本不匹配。`base.py` 模块注释同文。
+导入顺序：先 `import transformers`、再 `import speechbrain`；反过来 speechbrain 会抢做依赖探测，出现难定位的版本不匹配。`base.py` 模块注释同文。
 
 ### `TranscriberBackend` —— 转写
 
@@ -49,7 +49,7 @@
 | `release_gpu()` | **可选成员**：把会中模型移出显存。幂等；没加载过就 no-op；等在飞推理至多 5 秒（到点照旧丢引用并记 warning）；丢引用之后才清一次缓存。抛错不拖垮整场——调用方记一条 log。5 秒的取值依据见 `docs/asr-backends.md` |
 | `acquire_gpu()` | **可选成员**：把会中模型拉回显存。已在手就 no-op；经同一个 factory 重造；造不出来只记 warning、这次动作照常；不碰 `_stopped` 与 `health()`。权重真正的加载在继续之后的第一段转写 |
 
-调用方（收尾第 4 步、暂停 / 继续）防御式取这两个可选成员：取不到、不可调用就跳过，替身省掉这两格照样跑得通。方向只有一条：服务把 sink 交给后端、后端往里送，后端不读服务的状态。行产物格式与失败占位符的正本在 `docs/state.md`（B12 / B13）。
+调用方（收尾第 4 步、暂停 / 继续）防御式取这两个可选成员：取不到、不可调用就跳过，替身省掉这两格照样跑得通。方向只有一条：服务把 sink 交给后端、后端往里送，后端不读服务的状态。行产物格式与失败占位符的正本在 `docs/state.md`。
 
 ### `PostProcessHook` —— 会后钩子（解析落点）
 
@@ -121,5 +121,4 @@
 - 四态、快照、收尾与转码、行格式与占位符、数字静音门、dev 替身用法：`docs/state.md`
 - 纪要层流程与手动跑法：`docs/minutes.md`
 - 两套模型的选型与参数依据：`docs/asr-backends.md`
-- V1 的防护逻辑与标定（C10 / B12 / B13）：`docs/v1-lineage.md`
 - 索引：`docs/spec.md`
