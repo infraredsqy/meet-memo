@@ -1,0 +1,8 @@
+# 源码与文档统一 LF：两者都不需要 CRLF（脚本一律 `pwsh -File` 跑，`*.sh` 由 bash 读），
+# 而 Windows 侧的编辑器会把它们悄悄改成 CRLF，一个仓库里两种行尾。
+#
+# **`*.json` 有意不写在这里**：`contract/fixtures/` 的 golden 样本由 `--regen-contract`
+# 在 Windows 上用 `write_text()` 落盘，落的就是 CRLF；把 JSON 也钉成 LF 会让每次再生成
+# 都对着「行尾不同」报漂移，而样本真正要钉住的是形状，行尾随落盘环境走。
+*.py text=auto eol=lf
+*.md text=auto eol=lf
