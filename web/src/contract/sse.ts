@@ -43,12 +43,12 @@ export const levelsFrameSchema = z
     /** 恒等于该路 `envelope[-1]`，服务侧算好。 */
     bar: nullableDbfsSchema,
     envelope: z.array(dbfsSchema).refine(isFullEnvelope, {
-      message: `levels 帧的包络长度恰 ${ENVELOPE_BAR_COUNT} 根（docs/contract.md 3.2）`,
+      message: `levels 帧的包络长度恰 ${ENVELOPE_BAR_COUNT} 根`,
     }),
   })
   .strict()
   .refine((frame) => frame.bar === frame.envelope[frame.envelope.length - 1], {
-    message: 'levels 帧的 bar 恒等于 envelope[-1]（docs/contract.md 3.2 结构不变量）',
+    message: 'levels 帧的 bar 恒等于 envelope[-1]',
     path: ['bar'],
   });
 
