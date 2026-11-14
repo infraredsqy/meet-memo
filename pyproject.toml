@@ -126,6 +126,8 @@ markers = [
     # 慢档：起真服务子进程 / 真墙钟等待 / 注入慢模型 / 单条实测 > 2.0s 的用例（文件粒度）。
     # 归位判据、23 个文件与三条命令的实测耗时见 `docs/service.md`。
     "slow: 需要真子进程或真实墙钟等待；未改动核心代码时可跳过",
+    # 个别用例把纪要等待上界另设（默认 0.4 秒）：前置阶段较长、共享上界会在等待开始前到点。
+    "minutes_bound(seconds): 覆盖 test_cli_post 的 autouse 纪要等待上界",
 ]
 # `--strict-markers` 管的是代码里 `pytest.mark.xxx` 那一侧：标记名必须已在 markers 里注册，
 # 没注册就当场报 unknown mark。命令行的 `-m` 表达式**不参与**这道校验（pytest 9.0.3 实测）：

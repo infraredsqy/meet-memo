@@ -154,7 +154,11 @@ def test_a_full_session_reconciles_frame_by_frame(tmp_path: Path, monkeypatch):
         session_dir = _session_dir_of(client)
         assert str(session_dir).startswith(str(out_root))
         _wait_transcode_done(session_dir)
-        assert sorted(item.name for item in session_dir.iterdir()) == sorted(
+        # 落定后的清单；原子写留在盘上的 `*.tmp` 是在途件，不算这一档的东西
+        landed = sorted(
+            item.name for item in session_dir.iterdir() if not item.name.endswith(".tmp")
+        )
+        assert landed == sorted(
             [
                 SESSION_FILE_NAME,
                 archive_name("mic"), archive_name("loopback"),

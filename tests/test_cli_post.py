@@ -128,23 +128,27 @@ def _no_real_minutes_hook(monkeypatch: pytest.MonkeyPatch) -> FakeHook:
 
 
 @pytest.fixture(autouse=True)
-def a_short_minutes_bound(monkeypatch: pytest.MonkeyPatch) -> float:
+def a_short_minutes_bound(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> float:
     """把等纪要终态的上界压到 0.4 秒，读的仍是**现成的配置键** `minutes.timeout_seconds`。
 
     真链的缺省是四小时（`meeting/config.py` 的 `DEFAULT_VALUES`），用例不能真等满它。
     `hook == "launched"` 那一档一律等这一趟新落的终态，因此本文件凡是注入假启动器的用例都
     压到秒级：假件落了终态的当场收工，**只登记不落终态的假件也绝不能挂住**（它在上界内
     如实收场，而不是把用例吊死在四小时上）。键本身不新增、取值域不动，只改这一格的**读数**。
+    个别用例的**前置阶段**（归档同步等）就要吃掉一秒上下，0.4 秒会在等待开始前就到点——
+    那一条用 `@pytest.mark.minutes_bound(<秒>)` 另设上界。
     """
+    marker = request.node.get_closest_marker("minutes_bound")
+    bound = float(marker.args[0]) if marker else 0.4
     real_get = config_module.get
     monkeypatch.setattr(
         config_module,
         "get",
         lambda key, default=None: (
-            0.4 if key == "minutes.timeout_seconds" else real_get(key, default)
+            bound if key == "minutes.timeout_seconds" else real_get(key, default)
         ),
     )
-    return 0.4
+    return bound
 
 
 def digest(path: Path) -> str:
@@ -627,6 +631,7 @@ def test_run_post_reports_every_layer_with_absolute_paths(tmp_path: Path) -> Non
     assert launcher.calls == [str(session)]
 
 
+@pytest.mark.minutes_bound(4.0)
 def test_an_injected_launcher_that_settles_is_waited_for(tmp_path: Path) -> None:
     """注入的假启动器**落终态**时，这一趟等它落定再出结论（等待不按「谁拉起的」分叉）。
 
