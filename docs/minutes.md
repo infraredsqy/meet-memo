@@ -110,4 +110,4 @@ python -m meeting.minutes check  <segmentation.json>    # 校验一份分段方�
 - 钩子成员与解析：`docs/backend-protocols.md`
 - 配置键正本：`docs/service.md`
 - 需求锚（R11 / R12）：`docs/requirements.md`
-- 索引：`docs/spec.md`
+- 索引：`docs/AGENTS.md`

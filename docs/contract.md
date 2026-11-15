@@ -40,7 +40,7 @@
 
 挂载次序是硬约束：静态挂载**注册在所有 API 路由与 `/debug` 之后**，否则它会把 `/api/*` 一起吃掉；未匹配任何路由的路径由末端 404 兜底（回 `Not Found`，不是 Starlette 的 405）。**应答头**：`/api/*` 一律 `Cache-Control: no-store`（中间件无条件加，包括动作失败的应答）；**不发 `Access-Control-Allow-Origin`**（不开 CORS），前端与本服务同源。
 
-**端口与监听**：只监听 `127.0.0.1`，不可配（没有 `web.host` 这类键）。默认端口 `8765`；`web.port = 0` 时由系统挑空闲端口，真实端口从监听 socket 的 `getsockname()` 读回，写进快照 `service.port` / `service.url` 并打进终端。端口被占拒绝启动、不静默换端口，口径见仓库根 `README.md`。
+**端口与监听**：只监听 `127.0.0.1`，不可配（没有 `web.host` 这类键）。默认端口 `8765`；`web.port = 0` 时由系统挑空闲端口，真实端口从监听 socket 的 `getsockname()` 读回，写进快照 `service.port` / `service.url` 并打进终端。端口被占拒绝启动、不静默换端口，口径见 `docs/service.md`。
 
 **Host 校验只比 hostname**：`Host` 头的 hostname 部分不是 `127.0.0.1` / `localhost` 就回 **403**（挡 DNS rebinding）。取 hostname：头以 `[` 开头取方括号之间那段（于是 **`Host: [::1]` 会被拒**——这是有意的，服务只绑 IPv4 回环）；否则取第一个 `:` 之前的部分（剥端口）；最后按 `lower()` 比对。
 
@@ -468,9 +468,9 @@
 
 ## 相关文档
 
-- 索引与分册清单：`docs/spec.md`
+- 索引与分册清单：`docs/AGENTS.md`
 - 状态与推送的现状叙述（四态与迁移、收尾三步与共享预算、转码独立工序、`session.json`、告警判定、dev 替身）：`docs/state.md`
 - 界面设计的唯一权威说明（四态、告警分级、心跳本地态、交互清单）：`docs/ui-design.md`
-- 怎么装起、配置键正本、跑测试：`docs/service.md`（log 与退出码的口径在 `README.md`）
+- 怎么装起、配置键正本、log 与退出码、跑测试：`docs/service.md`
 - 后端协议与解析入口：`docs/backend-protocols.md`
 - golden 样本的出处、掩码规则与再生成办法：`contract/README.md`

@@ -448,7 +448,7 @@ def test_api_state_shape_is_the_full_one(tmp_path, client_factory):
         assert item["health"] == "unprobed"  # 空闲态 + null 替身如实报「未探测」
         assert item["device_name"] is None
 
-    # 空闲态的告警区**不出现**（`docs/ui-design.md` 章 2.5 那张表）：`hints` 是空数组。
+    # 空闲态不该挂任何提示级：提示级只在录音与告警态成立。`hints` 是空数组。
     # 下面就绪的 `transcript.health == "stopped"` 是另一件事 —— 那一格报的是「真转写后端
     # 还没起过场次」，空闲态本来就没有「转写停了」这条提示。
     assert snapshot["alerts"] == {"critical": None, "hints": []}

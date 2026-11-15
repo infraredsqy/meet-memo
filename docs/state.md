@@ -116,7 +116,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 | `meeting_audio_<source>_<NNN>.pcm` | 两路各自的段归档：16k / 单声道 / int16 小端裸 PCM、无头、边采边写（强杀最多丢最后一块的尾巴）。NNN 三位零填充、从 1 起，**一段 = 一次录制**，段号一场会共一个计器（下一个 = 各路盘上实有最大段号 + 1）。**未选中的路整段写数字静音，`.pcm` 照常落盘**；暂停不切段 |
 | `meeting_audio_<source>_<NNN>.mp3` | 转码独立工序逐段补的 64k MP3，**转码成功后 PCM 照样留着** |
 | `meeting_transcript_<source>.md` | 会中临时稿，追加写、逐行 flush，每行 `[HH:MM] 正文`，时间戳取**分钟级的采集时刻**（段一入队就盖）。识别不出来也照落一行占位符（双层方括号、裸文本、不含 `**`）：`[[识别失败: 超时 20s]]` / `[[识别失败: 重复循环]]` / `[[识别失败: 无输出]]` / `[[识别失败: 错误]]`；纯噪声与暂停窗一行不产。**续接开场**各路先追加一条注释行 `<!-- [HH:MM] 续接：… -->`（不算发言行，读侧跳过），并经 SSE 各推一条 `kind="gap"` 的行。读头从盘上实有**最大段号**接起，旧正文不抄第二遍。**它是临时稿**：会后那份带说话人编号的稿另落一份，两份平级对拍（R11） |
-| `meeting.log` | 场次级 log（挂摘与口径见 `README.md` 第 2 节） |
+| `meeting.log` | 场次级 log（挂摘与口径见 `docs/service.md`） |
 | `meeting_transcode_status.json` + `meeting_transcode_progress.jsonl` | 转码工序的状态与逐段记录（见「转码独立工序」一节） |
 | `meeting_offline_*.md/.json/.jsonl` | 会后离线产物，见下 |
 | `meeting_speaker_names.json` | 人名表：只存用户确认过的 `(编号, 名字)` 对，由改名动作 `speaker_rename` 写（原子写，`schema_version` 主版本不认识就拒收）。读侧宽容：缺表/坏表不挡出纪要；写侧谨慎：表读不出时改名拒写回 400——不拿读侧的宽容无声覆盖用户确认过的名字 |
@@ -256,7 +256,7 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 
 ## 7. dev 替身与故障注入
 
-`meeting/backends/dev.py` 是**只给开发与测试用的非产品路径，默认关闭**；怎么开见 `README.md` 第 4 节。同一个取值 `dev` 在两个后端键上按 key 分流：`capture.backend = dev` 落采集替身，`transcriber.backend = dev` 落转写替身（它**没有环境变量**，要开在配置文件里写）。
+`meeting/backends/dev.py` 是**只给开发与测试用的非产品路径，默认关闭**；怎么开见 `docs/service.md`。同一个取值 `dev` 在两个后端键上按 key 分流：`capture.backend = dev` 落采集替身，`transcriber.backend = dev` 落转写替身（它**没有环境变量**，要开在配置文件里写）。
 
 **采集替身**给两样东西：
 
@@ -280,4 +280,4 @@ budget = 30 + backlog × (segment_timeout + 5)     下限 30 秒、封顶 300 �
 - 后端怎么被找到、怎么插进来：`docs/backend-protocols.md`
 - ASR 选型与参数依据：`docs/asr-backends.md`
 - 界面怎么画这四态：`docs/ui-design.md`；前端工程：`web/README.md`
-- 契约的 golden 样本与掩码规则：`contract/README.md`；索引：`docs/spec.md`
+- 契约的 golden 样本与掩码规则：`contract/README.md`；索引：`docs/AGENTS.md`

@@ -86,4 +86,4 @@
 - 配置键正本：`docs/service.md`
 - 前端这一侧：`web/README.md`
 - 需求锚（R7 会中一键总结、R6 实时转写是它的前提）：`docs/requirements.md`
-- 索引：`docs/spec.md`
+- 索引：`docs/AGENTS.md`

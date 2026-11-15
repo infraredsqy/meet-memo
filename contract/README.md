@@ -170,6 +170,5 @@ python -m pytest tests/test_contract_fixtures --regen-contract -q
 ## 4. 相关文档
 
 - 契约正文（端点、schema、帧形状、`code`/`detail` 表、心跳、客户端义务、保留登记）：`docs/contract.md`
-- HTTP 面速查：`docs/api.md`
 - 状态与推送的现状叙述：`docs/state.md`
-- 索引：`docs/spec.md`
+- 索引：`docs/AGENTS.md`

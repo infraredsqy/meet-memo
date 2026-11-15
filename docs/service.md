@@ -1,16 +1,18 @@
 # meeting · 服务骨架
 
-> 这份文档写**服务骨架的现状**：怎么装、怎么起、配置键的正本、怎么跑测试。
+> 这份文档写**服务骨架的现状**：怎么装、怎么起、命令面、配置键的正本、log 与退出码、怎么跑测试。
 >
 > 一句话边界：现在起得来的是**一个有会话、能推、能问、能真录音、能边录边出转写临时稿、收尾会转 MP3、会后动作等人按按钮的服务**。
 >
-> 别的面各归各的正本，本文不重复：HTTP 面与动作见 `docs/contract.md`（可机读基准在 `contract/README.md`）；四态状态机、快照、`session.json`、心跳判据、SSE 帧形状见 `docs/state.md`；log 的位置与轮转、退出码的逐档口径见 `README.md` 第 2、5 节；dev 替身的用法见 `README.md` 第 4 节。
+> 别的面各归各的正本，本文不重复：HTTP 面与动作见 `docs/contract.md`（可机读基准在 `contract/README.md`）；四态状态机、快照、`session.json`、心跳判据、SSE 帧形状、dev 替身的语义见 `docs/state.md`；四个后端协议的成员与解析见 `docs/backend-protocols.md`；测试纪律见 `docs/rules.md`。
 
 ## 1. 怎么装、怎么起
 
 - Python ≥ 3.13。运行时依赖：`starlette` / `uvicorn` / `anyio` 三条主干 + **音频四件套** `numpy` / `sounddevice` / `soundcard` / `pydub`（录音是产品主体，不放可选 extra）。转写的模型依赖在 `.[asr]` extra 里；`torch` 那格是 CUDA 12.8 构建，要带索引装：`pip install --extra-index-url https://download.pytorch.org/whl/cu128 "meeting[asr]"`（CPU 档写 `torch==2.9.1`、不用索引）。**不装这一格照样能起服务**：重依赖全在函数体内惰性 import。
 - **`ffmpeg` 要在 PATH 上**（`pydub` 靠它转 MP3）。缺席时服务照常起、照常录，收尾转码如实记 `failed`，PCM 原样留在场次目录里。
-- 开发与测试用的 dev 替身、故障注入见 `README.md` 第 4 节。
+- 开发与测试用的 dev 替身（非产品路径，默认关闭）：把 `capture.backend` 或 `transcriber.backend`
+  写成 `dev`（前者也可走 `MEETING_CAPTURE=dev`）。替身给什么、三档故障怎么注入、恢复口径，
+  见 `docs/state.md`。
 
 命令面三个词（`meeting web` 走装好的 console script，或在仓库根 `python -m meeting web`，两种等价）：
 
@@ -20,7 +22,7 @@
 | `meeting post <场次目录>` | 只跑会后那一套（归档补齐 → 会后离线转写 → 纪要），跑完就退。`--force` 无视终态重跑两层；不给时按幂等闸：完成的不重跑、停在 `running` 拒跑 |
 | `meeting replay <场次目录>` | 重放验证：素材截断复制进 `--out`，在拷贝上重跑会后离线链；只验证、不拉纪要。`--seconds N` / `--chunks N` / `--out` 三个开关，上限两种给其一 |
 
-命令行的开关语义与用法错误行为以 `meeting/cli.py` 的实现为准，`README.md` 第 1 节有面向使用者的口径。
+命令行的开关语义与用法错误行为以 `meeting/cli.py` 的实现为准；面向使用者的三条命令速查在仓库根 `README.md`。
 
 起好之后终端打印 `URL：…` 与 `log 路径：…` 两行；端口用 `MEETING_PORT` 改，浏览器开关用 `MEETING_NO_BROWSER=1`。
 
@@ -41,6 +43,36 @@
 
 - **收尾有步骤 `failed` 时服务不自杀**：进程继续活着、页面还能看，新的「开始录音」一律回 `409 draining`；出路是 `meeting post <场次目录>` 或重启。
 - **关停与换场会同步等转写收尾**（把队列里剩下的段在预算内做完），这一段里各端点暂不应答；预算上界见 `meeting/backends/transcribe.py`，收尾预算的公式见 `docs/state.md`。
+
+### log
+
+两层：一份归服务，一份归这一场。两份都用同一对轮转键。
+
+| 层 | 位置 | 挂摘 |
+|---|---|---|
+| 服务级 | `<配置目录>/logs/meeting.log`（`log.dir` 可改；未设 `MEETING_CONFIG_DIR` 时即 `~/.config/meeting/logs`） | 起服务时建，进程活着就在 |
+| 场次级 | `<场次目录>/meeting.log` | `start` 时挂上，收尾 `log` 步 flush 后摘掉 |
+
+- 轮转按 `log.max_bytes`（默认 5 MiB）与 `log.backup_count`（默认 3 份，整份旧文件保留）构造；两键改完要重启。
+- **主 log 不可写 → 拒绝启动**（退出码 `3`），不静默降级。
+- **场次级 log 写失败不中断录音**（录音是唯一不可再生的东西），但如实上报：收尾 `log` 步落 `failed`、状态里看得见、主 log 里留一条。
+- 这一场结束时，场次 log 的最后一行是结束标记：
+
+      场次结束：state=<draining|done|failed>；收尾步骤：<每步状态>；服务级 log：<路径>
+
+### 退出码
+
+五个出口，常量在 `meeting/cli.py` 模块级（冻结项）：
+
+| 码 | 什么时候 |
+|---|---|
+| `0` | 正常收场：空闲态按 `Ctrl+C`，或收尾干净；`meeting post` / `meeting replay` 那一趟干净跑完 |
+| `1` | 收尾有步骤 `failed`；或 `meeting post` / `meeting replay` 那一趟没做成；或服务起步出意外 |
+| `2` | 端口被占、用法错误、配置值非法 |
+| `3` | 启动前提不成立（`config.json` 损坏、主 log 不可写） |
+| `130` | 收尾中途第二次 `Ctrl+C`（立即中止，盘上绝不写 `done`） |
+
+按 `Ctrl+C` 落在哪一档，见上面那张分档表。纪要那一层落在 `delivered`（已交付 DSH）按成功算。
 
 ## 2. 配置
 
@@ -100,7 +132,7 @@
 
 - `alert.*` 是判定阈值，`alarm.*` 只管出声。两个「心跳」不串线：`heartbeat.interval_seconds` 是**界面**发心跳的周期，服务侧的采集帧心跳窗口见 `docs/state.md`。
 - `asr.*` 五个默认值沿用 V1 实测值；四个 `post.*` 键的取值依据见 `docs/asr-backends.md`。
-- **热读键以 `meeting/config.py` 的 `HOT_KEYS` 一处为准**；面向使用者的重启分档速查见 `README.md` 第 3 节。
+- **热读键以 `meeting/config.py` 的 `HOT_KEYS` 一处为准**。
 
 ### 环境变量
 
@@ -132,7 +164,7 @@ python -m pytest -q -m "not slow" -n auto --dist loadfile   # 快档并行（每
       Get-ChildItem tests -Recurse -Filter test_*.py | Select-String -Pattern 'pytest\.mark\.slow'
 
   （慢档模块也可能住在 `tests\test_*\` 子包，须递归才数得全；`-Filter test_*.py` 这层滤网天然排除 `conftest.py` 与包内 `_common.py` 这类不参与收集的文件。文件头 `pytestmark` 与用例级装饰器两种写法都命中，清单与 `-m slow` 的收集口径一致。）用例数不存档，用 `python -m pytest -q --collect-only` 现算。
-- **快档红线**：每圈并行 ≤ 10 秒；新加测试必须「无 sleep、无真子进程、无真墙钟等待、毫秒级纯逻辑或结构断言」才许进快档，达不到进慢档。用例看门与七道 autouse 安全兜底的实现见 `tests/conftest.py`；测试与验证纪律见 `README.md`。
+- **快档红线**：每圈并行 ≤ 10 秒；新加测试必须「无 sleep、无真子进程、无真墙钟等待、毫秒级纯逻辑或结构断言」才许进快档，达不到进慢档。用例看门与七道 autouse 安全兜底的实现见 `tests/conftest.py`；测试与验证纪律见 `docs/rules.md`。
 - **契约看守**：`python -m pytest tests/test_contract_fixtures -q` 逐文件比对 `contract/fixtures/`；`--regen-contract` 重新生成，规则见 `contract/README.md`。
 - 一个例外判例：`tests/test_transcript_hints.py` 不带 `slow` 标记，但**碰了转写提示级那一路时要单跑它**。
 
@@ -150,9 +182,10 @@ python -m pytest -q -m "not slow" -n auto --dist loadfile   # 快档并行（每
 
 ## 5. 相关文档
 
+- 纪律（测试 / 文档 / 注释）：`docs/rules.md`
 - 状态、场次与推送：`docs/state.md`
 - HTTP 面与动作（端点、动作、`code` 表、端口与本地防线）：`docs/contract.md`；可机读基准：`contract/README.md`
 - 会后纪要：`docs/minutes.md`；会中总结：`docs/summary.md`
 - 后端协议：`docs/backend-protocols.md`；ASR 选型与参数依据：`docs/asr-backends.md`
 - 界面：`docs/ui-design.md`；需求锚：`docs/requirements.md`（R1 / R2 / R5 / R15 / R16 / R17）
-- 索引：`docs/spec.md`
+- 索引：`docs/AGENTS.md`

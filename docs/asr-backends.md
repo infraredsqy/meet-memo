@@ -75,4 +75,4 @@
 ## 9. 相关文档
 
 - 四个 `post.*` 键的当前值与解析：`docs/service.md`、`docs/backend-protocols.md`
-- 索引：`docs/spec.md`
+- 索引：`docs/AGENTS.md`

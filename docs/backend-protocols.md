@@ -121,4 +121,4 @@
 - 四态、快照、收尾与转码、行格式与占位符、数字静音门、dev 替身用法：`docs/state.md`
 - 纪要层流程与手动跑法：`docs/minutes.md`
 - 两套模型的选型与参数依据：`docs/asr-backends.md`
-- 索引：`docs/spec.md`
+- 索引：`docs/AGENTS.md`

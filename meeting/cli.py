@@ -72,7 +72,7 @@ MAIN_DESCRIPTION = """\
 每条命令都认 -h / --help，看各自那份更细的用法，例如 `meeting post --help`。
 """
 
-#: 主解析器的 epilog：五个退出码与各自触发条件（口径以 README「退出码」节为正本）。
+#: 主解析器的 epilog：五个退出码与各自触发条件（口径以 `docs/service.md` 为正本）。
 EXIT_CODE_EPILOG = """\
 退出码：
   0    正常收场（空闲态按 Ctrl+C 收场，或 `meeting post` 收尾干净）
