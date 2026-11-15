@@ -173,7 +173,7 @@ describe('快照样本', () => {
     ]);
   });
 
-  it('顶层恰好九键，多一个键就要红（第 7 章那些键位、连同退场的 notice 都不该冒出来）', () => {
+  it('顶层恰好九键，多一个键就要红（7 那些键位、连同退场的 notice 都不该冒出来）', () => {
     const snap = readFixture('snapshot', 'idle') as Record<string, unknown>;
     expect(Object.keys(snap).sort()).toEqual(
       [

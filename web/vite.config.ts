@@ -13,7 +13,7 @@ import react from '@vitejs/plugin-react';
  *     是**带在转发请求上的**，服务侧读不读它们都随它 —— 它们挡不住中间层对**响应**的缓冲。
  *
  * 契约里要求的那条防缓冲指令是**响应头** `X-Accel-Buffering: no`，由服务自己在
- * `GET /api/events` 的应答上发出（`docs/contract.md` 第 3 章，服务侧
+ * `GET /api/events` 的应答上发出（`docs/contract.md` 3，服务侧
  * `meeting/service/routes.py` 的 `_api_events`）；`Cache-Control: no-store` 同理，
  * 由 `/api/*` 的中间件无条件补上。**这两条不靠 Vite 代发**，配置里这两行只是顺带
  * 把意图写在请求上，真正让 SSE 不被缓冲的是摘掉 `accept-encoding`。

@@ -16,7 +16,7 @@ import { makeSettings } from './live-fixtures';
  * 设置抽屉那份纯逻辑的用例（``）。
  *
  * 三条边界各有一条判据钉在这里：ASR 五参数一个都不进抽屉（`DRAWER_ROW_IDS` 的穷举）、
- * 心跳 1–60 越界当场拒（不发请求）、会中两路设备格禁用（`docs/contract.md` 第 7 章）。
+ * 心跳 1–60 越界当场拒（不发请求）、会中两路设备格禁用（`docs/contract.md` 7）。
  */
 
 /** 两路各两三条的假清单（形状与 `contract/fixtures/devices/all.json` 同源）。 */
@@ -68,7 +68,7 @@ describe('心跳输入（1–60 秒，越界当场拒）', () => {
   });
 });
 
-describe('设备格的会中闸（contract 第 7 章：会中换设备不做）', () => {
+describe('设备格的会中闸（contract 7：会中换设备不做）', () => {
   it('recording 与 alert 禁用，idle 与 ended 可改', () => {
     expect(deviceChangeLocked('idle')).toBe(false);
     expect(deviceChangeLocked('recording')).toBe(true);

@@ -14,11 +14,11 @@
 | `bind(emit, *, config)` | `probe()` 之前调一次。`emit` 是事实出口，`config` 是只读配置视图 |
 | `probe() -> list[SourceProbe]` | 枚举并试开设备，两路各一条（`mic` / `loopback`） |
 | `start(mode, session_dir)` | 按定下的 `mode` 起采集、开始写归档。单路起不来不抛错：只给那一路发一条 `SourceLost`，另一路照跑；该采的路全部起不来才抛 `CaptureUnavailable`。抛错前自己拉起的线程自己收干净 |
-| `writes_real_audio` | **能力声明**（类属性）：本实现写真实音频归档。真采集后端 `True`；替身显式 `False`；没声明的按「没这能力」算。`capabilities_of()` 据此回答 `finalize` / `transcode` 两项（见 §3） |
+| `writes_real_audio` | **能力声明**（类属性）：本实现写真实音频归档。真采集后端 `True`；替身显式 `False`；没声明的按「没这能力」算。`capabilities_of()` 据此回答 `finalize` / `transcode` 两项（见「解析与注入」） |
 | `finalize()` | 收尾第 1 步：停流 + join + 关文件 + `fsync`。幂等 |
 | `stop()` | 停采集（进程关停时调）。幂等，没落过盘就先 `finalize()` |
 
-归档转 MP3 不在后端协议里：那是 `meeting/capture/transcode.py` 的独立工序（flush 落定自动起，判据见 §3 的 `transcode` 能力位）。
+归档转 MP3 不在后端协议里：那是 `meeting/capture/transcode.py` 的独立工序（flush 落定自动起，判据见「解析与注入」的 `transcode` 能力位）。
 
 `SourceProbe.status` 只许报这三档（快照里另外四档由状态迁移写值）；报了取值域之外的档，runtime 记 warning 并落 `probe_failed`，服务照常起：
 

@@ -17,7 +17,7 @@ import type {
  * 而这一批用例验的是「拿到真值之后算出来的字对不对」——`<iso>` 算不出 `20:57`。
  * 所以这里从零造一份**形状与契约逐键相同、值是真值**的快照，仅用于用例。
  *
- * 形状的权威在 `docs/contract.md` 第 2 章，逐键对着写。
+ * 形状的权威在 `docs/contract.md` 2，逐键对着写。
  */
 
 export const T = (hhmmss: string): string => `2026-09-21T${hhmmss}+08:00`;
@@ -52,7 +52,7 @@ export function makeSource(id: SourceId, overrides: Partial<Source> = {}): Sourc
     restored: false,
     level_dbfs: id === 'mic' ? -35.2 : -48.0,
     peak_dbfs: id === 'mic' ? -30.1 : -44.0,
-    // 包络是**真实 dBFS 读数**（契约第 2 章：一根柱 = 那 2 秒窗口里 peak 的最大值），
+    // 包络是**真实 dBFS 读数**（契约 2：一根柱 = 那 2 秒窗口里 peak 的最大值），
     // 所以这里给的是 −37.5 … −20.9 这一档的负数值，不是 0–100 的高度。
     envelope: [-37.5, -35.2, -38.4, -34.4, -32.9, -36.4, -33.6, -34.7, -39.1, -36.9, -34.2, -35.2, -38, -36, -37.1],
     ...overrides,

@@ -165,7 +165,7 @@ python -m pytest tests/test_contract_fixtures --regen-contract -q
 - fixtures 一律**被 git 跟踪**（`.gitignore` 里没有任何规则盖住 `contract/`）。fixtures 的 diff 就是契约的 diff，它要进版本历史。
 - 改了服务行为**就要重跑 `--regen-contract` 并逐条复核差异**，再回写 `docs/contract.md` 的正文。
 - **不要手改 fixtures**：它们是采集产物，手改会在下一次比对时被冲掉，还会让「漂移」这件事失去判据。
-- 加一个新样本的做法是**在 `tests/test_contract_fixtures/` 里加一段真实采集 + `emit({...})`**，跑一次 `--regen-contract` 落盘，然后在上面第 1 章的清单表里补一行出处。
+- 加一个新样本的做法是**在 `tests/test_contract_fixtures/` 里加一段真实采集 + `emit({...})`**，跑一次 `--regen-contract` 落盘，然后在上面那份样本清单里补一行出处。
 
 ## 4. 相关文档
 

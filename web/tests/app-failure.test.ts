@@ -28,7 +28,7 @@ describe('动作失败的画法分档（6.4：403 与失败块分开）', () => 
     expect('detail' in view).toBe(false);
   });
 
-  it('失败信封：走 envelope 那一档，code 与 detail 按第 4 章读', () => {
+  it('失败信封：走 envelope 那一档，code 与 detail 按 4 读', () => {
     const view = failureFrom(
       new ActionFailedError(409, 'already_recording', '已经有一场在录', {
         session_id: '260921',

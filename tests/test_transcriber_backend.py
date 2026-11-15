@@ -676,7 +676,7 @@ def test_transcription_model_runs_on_a_worker_thread(session_dir: Path):
     assert seen.get("thread") not in (None, threading.get_ident()), (
         "模型必须跑在与主线程不同的 worker 线程上"
     )
-# 服务侧快照：积压量写进快照，却不给 `revision` 投票（契约第 3.3 节）
+# 服务侧快照：积压量写进快照，却不给 `revision` 投票（契约 3.3）
 
 #: 这一条投给服务的那一行转写正文
 ONE_TRANSCRIPT_LINE = "按住模型期间来的一行。"

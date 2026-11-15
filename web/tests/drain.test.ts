@@ -10,7 +10,7 @@ import type { Ended } from '../src/contract';
  * 与这一小块共用同一把尺 —— 那条也在这一组里钉住。
  */
 
-/** 造一份 `ended`（`Ended` 的形状，逐键照 `docs/contract.md` 第 2 章）。 */
+/** 造一份 `ended`（`Ended` 的形状，逐键照 `docs/contract.md` 2）。 */
 function ended(over: {
   phase?: 'draining' | 'done';
   error?: string | null;
