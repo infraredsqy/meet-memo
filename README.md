@@ -1,16 +1,17 @@
 # meeting
 
 A local meeting recorder. `meeting web` starts a service bound to `127.0.0.1` only; open its port in
-a browser. It records both speaking sources separately while the meeting runs, produces a provisional
-transcript as it goes, and — on request, once the meeting is over — refined transcripts and minutes.
+a browser. It records both speaking sources separately for the duration of the meeting, produces a
+provisional transcript while recording, and after the meeting can produce refined transcripts and
+minutes on request.
 
 ## What it does
 
 - **Record.** Microphone and system loopback are captured as two independent tracks, written to the
   session directory as 16 kHz mono int16 PCM while recording, then converted segment by segment to
   MP3 at the end; the PCM is kept. If one track fails, the other keeps recording.
-- **Follow along.** Recordings end and sessions are listed on one workbench; the live view shows the
-  service state, per-track levels, the provisional transcript, and alerts.
+- **Follow along.** A workbench lists past sessions and lets you start a recording; the live view
+  shows the service state, per-track levels, the provisional transcript, and alerts.
 - **Ask.** "Summarize" returns three sentences in ten to fifteen seconds: what was just said, where
   the discussion stands, and what was missed. This one feature calls an OpenAI-compatible endpoint you
   configure; everything else runs locally.
